@@ -2518,12 +2518,14 @@ export async function runPhase1StorageAndMigrationTests(): Promise<Phase1TestSui
 
       // Verify dry-run protection when allowDeleteInIsolatedTestDbOnly is false
       const dryRunReport = await adapter.cleanupOrphanScreenshots({
+        ownerScope: 'scope-at11',
         nowMs,
         allowDeleteInIsolatedTestDbOnly: false,
       });
 
       // Execute authorized test-DB cleanup
       const cleanupReport = await adapter.cleanupOrphanScreenshots({
+        ownerScope: 'scope-at11',
         nowMs,
         allowDeleteInIsolatedTestDbOnly: true,
       });
@@ -2547,6 +2549,7 @@ export async function runPhase1StorageAndMigrationTests(): Promise<Phase1TestSui
       });
       lockScreenshotInMemory('sc-at11-6-locked');
       await adapter.cleanupOrphanScreenshots({
+        ownerScope: 'scope-at11',
         nowMs,
         allowDeleteInIsolatedTestDbOnly: true,
       });
