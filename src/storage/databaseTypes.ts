@@ -526,5 +526,6 @@ export interface ILocalDatabaseAdapter {
   getMigrationState(ownerScope: OwnerScope): Promise<MigrationStateRow | null>;
   getQuarantinedRecordsByOwner(ownerScope: OwnerScope): Promise<QuarantinedRecordRow[]>;
 
+  rollbackShadowMigrationScope(ownerScope: OwnerScope): Promise<void>;
   writeShadowMigrationBatchAtomically(batch: PreparedMigrationBatch): Promise<void>;
 }
