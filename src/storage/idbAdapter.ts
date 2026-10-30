@@ -1824,6 +1824,58 @@ export class IdbDatabaseAdapter implements ILocalDatabaseAdapter {
   }
 
   /**
+   * Removes only shadow-migration rows belonging to one owner scope.
+   * The failed migration_state row is intentionally retained for diagnostics.
+   * This method is restricted to the isolated Phase 1 test database.
+   */
+  public async rollbackShadowMigrationScope(ownerScope: OwnerScope): Promise<void> {
+    if (this.dbName !== PHASE_1_TEST_DB_NAME) {
+      throw new Error(
+        `ERR_PRODUCTION_MIGRATION_BLOCKED_IN_PHASE_1: Rollback is restricted to "${PHASE_1_TEST_DB_NAME}".`
+      );
+    }
+
+    const cleanScope = String(ownerScope).trim();
+    const [trades, screenshotMetadata, screenshotFiles, quarantinedRecords] = await Promise.all([
+      this.getTradesByOwner(cleanScope),
+      this.readAllFromStore<ScreenshotMetadataRow>('screenshot_metadata'),
+      this.readAllFromStore<ScreenshotFileRow>('screenshot_files'),
+      this.getQuarantinedRecordsByOwner(cleanScope),
+    ]);
+
+    const tradeIds = trades.map((row) => row.canonical_uuid);
+    const screenshotIds = new Set<string>([
+      ...trades.map((row) => row.screenshot_id).filter((id): id is string => Boolean(id)),
+      ...screenshotMetadata
+        .filter((row) => row.owner_scope === cleanScope)
+        .map((row) => row.screenshot_id),
+      ...screenshotFiles
+        .filter((row) => row.owner_scope === cleanScope)
+        .map((row) => row.screenshot_id),
+    ]);
+    const quarantineIds = quarantinedRecords.map((row) => row.quarantine_id);
+
+    await this.executeAtomicWriteTransaction(
+      [
+        LOCAL_DB_TABLES.TRADES,
+        LOCAL_DB_TABLES.SETTINGS,
+        LOCAL_DB_TABLES.SCREENSHOT_METADATA,
+        LOCAL_DB_TABLES.SCREENSHOT_FILES,
+        LOCAL_DB_TABLES.QUARANTINED_RECORDS,
+      ],
+      (stores) => {
+        for (const id of tradeIds) stores.trades.delete(id);
+        for (const id of screenshotIds) {
+          stores.screenshot_metadata.delete(id);
+          stores.screenshot_files.delete(id);
+        }
+        for (const id of quarantineIds) stores.quarantined_records.delete(id);
+        stores.settings.delete(cleanScope);
+      }
+    );
+  }
+
+  /**
    * Writes an entire pre-validated, pre-hashed shadow migration batch inside a single atomic
    * IndexedDB transaction across trades, settings, screenshot_metadata, screenshot_files, and quarantined_records.
    * Any failure on any record aborts and rolls back the entire transaction.
