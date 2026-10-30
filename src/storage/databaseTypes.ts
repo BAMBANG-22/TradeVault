@@ -366,6 +366,8 @@ export interface EnqueueOutboxParams {
 }
 
 export interface OrphanCleanupOptions {
+  /** Required isolation boundary: cleanup evaluates and mutates screenshots only for this owner scope. */
+  ownerScope: OwnerScope;
   nowMs?: number;
   /** Must be explicitly true AND target DB must be 'tradevault_idb_test' to perform actual deletion */
   allowDeleteInIsolatedTestDbOnly: boolean;
