@@ -1572,9 +1572,19 @@ export class IdbDatabaseAdapter implements ILocalDatabaseAdapter {
     const isDeleteAuthorized =
       this.dbName === PHASE_1_TEST_DB_NAME && options.allowDeleteInIsolatedTestDbOnly === true;
 
-    // Gate 1: Never run cleanup while any migration_state is IN_PROGRESS
+    const cleanScope = String(options.ownerScope).trim();
+    if (!cleanScope) {
+      throw new Error('ERR_SCREENSHOT_CLEANUP_OWNER_SCOPE_REQUIRED');
+    }
+
+    // Gate 1: Never run cleanup while this owner scope has an IN_PROGRESS migration.
     const allMigrations = await this.readAllFromStore<MigrationStateRow>('migration_state');
-    if (allMigrations.some((m) => m.status === 'IN_PROGRESS')) {
+    if (
+      allMigrations.some(
+        (migration) =>
+          migration.owner_scope === cleanScope && migration.status === 'IN_PROGRESS'
+      )
+    ) {
       return {
         isDryRun: !isDeleteAuthorized,
         skippedBecauseMigrationInProgress: true,
@@ -1583,11 +1593,6 @@ export class IdbDatabaseAdapter implements ILocalDatabaseAdapter {
         transitionedToPendingUploadIds: [],
         retainedCount: 0,
       };
-    }
-
-    const cleanScope = String(options.ownerScope).trim();
-    if (!cleanScope) {
-      throw new Error('ERR_SCREENSHOT_CLEANUP_OWNER_SCOPE_REQUIRED');
     }
 
     const [allTradesInStore, allOutboxInStore, allMetaInStore] = await Promise.all([
