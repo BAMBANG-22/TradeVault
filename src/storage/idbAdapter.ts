@@ -1844,16 +1844,23 @@ export class IdbDatabaseAdapter implements ILocalDatabaseAdapter {
     ]);
 
     const tradeIds = trades.map((row) => row.canonical_uuid);
-    // Derive deletable screenshot IDs only from screenshot rows owned by this scope.
-    // A malformed cross-scope trade reference must never authorize deleting another scope's file.
-    const screenshotIds = new Set<string>([
-      ...screenshotMetadata
-        .filter((row) => row.owner_scope === cleanScope)
-        .map((row) => row.screenshot_id),
-      ...screenshotFiles
-        .filter((row) => row.owner_scope === cleanScope)
-        .map((row) => row.screenshot_id),
-    ]);
+    // Delete only screenshots linked to this scope's shadow-migration trades.
+    // Unrelated staged screenshots and malformed cross-scope references are preserved.
+    const tradeIdSet = new Set(tradeIds);
+    const migrationScreenshotMetadata = screenshotMetadata.filter(
+      (row) =>
+        row.owner_scope === cleanScope &&
+        row.trade_canonical_uuid !== null &&
+        tradeIdSet.has(row.trade_canonical_uuid)
+    );
+    const screenshotIds = new Set<string>(
+      migrationScreenshotMetadata.map((row) => row.screenshot_id)
+    );
+    const migrationScreenshotFileIds = new Set(
+      screenshotFiles
+        .filter((row) => row.owner_scope === cleanScope && screenshotIds.has(row.screenshot_id))
+        .map((row) => row.screenshot_id)
+    );
     const quarantineIds = quarantinedRecords.map((row) => row.quarantine_id);
 
     await this.executeAtomicWriteTransaction(
@@ -1868,6 +1875,8 @@ export class IdbDatabaseAdapter implements ILocalDatabaseAdapter {
         for (const id of tradeIds) stores.trades.delete(id);
         for (const id of screenshotIds) {
           stores.screenshot_metadata.delete(id);
+        }
+        for (const id of migrationScreenshotFileIds) {
           stores.screenshot_files.delete(id);
         }
         for (const id of quarantineIds) stores.quarantined_records.delete(id);
