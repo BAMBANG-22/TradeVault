@@ -1844,8 +1844,9 @@ export class IdbDatabaseAdapter implements ILocalDatabaseAdapter {
     ]);
 
     const tradeIds = trades.map((row) => row.canonical_uuid);
+    // Derive deletable screenshot IDs only from screenshot rows owned by this scope.
+    // A malformed cross-scope trade reference must never authorize deleting another scope's file.
     const screenshotIds = new Set<string>([
-      ...trades.map((row) => row.screenshot_id).filter((id): id is string => Boolean(id)),
       ...screenshotMetadata
         .filter((row) => row.owner_scope === cleanScope)
         .map((row) => row.screenshot_id),
