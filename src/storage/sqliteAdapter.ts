@@ -258,6 +258,20 @@ function parseSqliteColumnsFromDdl(ddl: string): EntityColumnSpec[] {
   return cols;
 }
 
+function parseSqliteForeignKeysFromDdl(ddl: string): Array<{
+  fromColumn: string;
+  toTable: string;
+  toColumn: string;
+}> {
+  const parsed: Array<{ fromColumn: string; toTable: string; toColumn: string }> = [];
+  const pattern =
+    /FOREIGN\\s+KEY\\s*\\(\\s*([A-Za-z0-9_]+)\\s*\\)\\s*REFERENCES\\s+([A-Za-z0-9_]+)\\s*\\(\\s*([A-Za-z0-9_]+)\\s*\\)/gi;
+  for (const match of ddl.matchAll(pattern)) {
+    parsed.push({ fromColumn: match[1], toTable: match[2], toColumn: match[3] });
+  }
+  return parsed;
+}
+
 function parseSqliteIndexesFromDdl(indexDdls: string[]): Array<{
   name: string;
   tableName: string;
@@ -417,14 +431,21 @@ export async function verifyDatabaseSchemaParity(
       }
     }
 
-    // 5. Verify Logical Relationships reference existing target tables and target columns
+    // 5. Verify logical relationships against both entity contracts and explicit SQLite FK DDL.
+    const declaredForeignKeys = parseSqliteForeignKeysFromDdl(ddl);
     for (const rel of spec.logicalRelationships) {
       const sourceHasCol = ddlColMap.has(rel.fromColumn);
       const targetSpec = LOGICAL_ENTITY_SCHEMA_SPECS[rel.toTable];
       const targetHasCol = targetSpec?.columns.some((c) => c.name === rel.toColumn) ?? false;
-      if (!sourceHasCol || !targetHasCol) {
+      const foreignKeyDeclared = declaredForeignKeys.some(
+        (fk) =>
+          fk.fromColumn === rel.fromColumn &&
+          fk.toTable === rel.toTable &&
+          fk.toColumn === rel.toColumn
+      );
+      if (!sourceHasCol || !targetHasCol || !foreignKeyDeclared) {
         relationshipMismatches.push(
-          `${tableName}.${rel.fromColumn} -> ${rel.toTable}.${rel.toColumn} logical relationship target missing`
+          `${tableName}.${rel.fromColumn} -> ${rel.toTable}.${rel.toColumn} missing or mismatched SQLite FK declaration`
         );
       }
     }
