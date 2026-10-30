@@ -1,0 +1,1319 @@
+/**
+ * @license
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+import React, { useState, useEffect, useLayoutEffect, useRef, useCallback } from 'react';
+import { Trade } from './types/trade';
+import { AppSettings } from './types/settings';
+import {
+  loadStoredTrades,
+  saveStoredTrades,
+  loadStoredSettings,
+  saveStoredSettings,
+  mergeWithExistingSettings,
+  removeTradeFromLatestList,
+} from './utils/storage';
+import { calculatePerformance } from './utils/calculations';
+import { DEMO_TRADES, isDemoTrade } from './utils/demoData';
+import { getSupabase, getCurrentSession, getCurrentUser } from './utils/supabaseClient';
+import {
+  fetchTradesFromSupabase,
+  saveTradeToSupabase,
+  updateTradeInSupabase,
+  insertTradeToSupabase,
+  deleteTradeFromSupabase,
+  migrateLocalTradesToSupabase,
+  isStoragePath,
+  uploadScreenshotToSupabase,
+  deleteScreenshotFromSupabase,
+  setCachedBase64ForStoragePath,
+  clearSessionSyncCaches,
+  mergeTradesDatasets,
+  deleteTradesListFromSupabase,
+  deleteObsoleteTradesFromSupabase,
+  fetchSettingsFromSupabase,
+  loadUserSettingsWithFallback,
+  saveSettingsToSupabase,
+} from './utils/supabaseSync';
+import { useTheme } from './utils/theme';
+
+// Layout
+import { Sidebar } from './components/layout/Sidebar';
+import { Navbar } from './components/layout/Navbar';
+import { MobileNav } from './components/layout/MobileNav';
+
+// Views
+import { DashboardView } from './components/dashboard/DashboardView';
+import { TradeTable } from './components/trades/TradeTable';
+import { TradeForm } from './components/trades/TradeForm';
+import { AnalyticsView } from './components/analytics/AnalyticsView';
+import { RiskCalculatorView } from './components/risk/RiskCalculatorView';
+import { SettingsView } from './components/settings/SettingsView';
+
+// Modals
+import { DeleteConfirmModal } from './components/trades/DeleteConfirmModal';
+import { TradeDetailModal } from './components/trades/TradeDetailModal';
+import { ScreenshotModal } from './components/trades/ScreenshotModal';
+import { LocalPrototypeModal } from './components/layout/LocalPrototypeModal';
+import { JsonBackupModal } from './components/backup/JsonBackupModal';
+import { ClearDemoModal } from './components/backup/ClearDemoModal';
+import { AuthModal } from './components/auth/AuthModal';
+import { UserAccountModal } from './components/auth/UserAccountModal';
+import { SupabaseConfigModal } from './components/supabase/SupabaseConfigModal';
+
+export default function App() {
+  // Theme state
+  useTheme();
+
+  // Primary state backed by localStorage with live Supabase synchronization
+  const [trades, setTrades] = useState<Trade[]>(() => loadStoredTrades(null));
+  const [settings, setSettings] = useState<AppSettings>(() => loadStoredSettings());
+  const [activeTab, setActiveTab] = useState<string>('dashboard');
+
+  // Supabase Auth States
+  const [currentUser, setCurrentUser] = useState<any | null>(null);
+  const [isAuthModalOpen, setIsAuthModalOpen] = useState<boolean>(false);
+  const [isAccountModalOpen, setIsAccountModalOpen] = useState<boolean>(false);
+  const [isSupabaseConfigOpen, setIsSupabaseConfigOpen] = useState<boolean>(false);
+  const [isCloudSyncing, setIsCloudSyncing] = useState<boolean>(false);
+  const [cloudLoadError, setCloudLoadError] = useState<string | null>(null);
+  const [dataSource, setDataSource] = useState<'cloud' | 'local_fallback' | 'local'>('local');
+
+  // Modal and editing states
+  const [editingTrade, setEditingTrade] = useState<Trade | null>(null);
+  const [tradeForDetail, setTradeForDetail] = useState<Trade | null>(null);
+  const [tradeForDelete, setTradeForDelete] = useState<Trade | null>(null);
+  const [screenshotModal, setScreenshotModal] = useState<{ url: string; title: string } | null>(null);
+  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState<boolean>(false);
+  const [notification, setNotification] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
+
+  // Prototype & Backup Modals
+  const [isLocalInfoModalOpen, setIsLocalInfoModalOpen] = useState<boolean>(false);
+  const [isBackupModalOpen, setIsBackupModalOpen] = useState<boolean>(false);
+  const [isClearDemoModalOpen, setIsClearDemoModalOpen] = useState<boolean>(false);
+
+  // Synchronous concurrency locks & latest references to prevent double-submit and stale closures
+  const isSavingTradeRef = useRef<boolean>(false);
+  const isDeletingTradeRef = useRef<boolean>(false);
+  const tradesRef = useRef<Trade[]>(trades);
+  tradesRef.current = trades;
+
+  // Independent per-page scroll position storage (in-memory for current session)
+  const scrollPositionsRef = useRef<Record<string, number>>({});
+  const activeTabRef = useRef<string>(activeTab);
+  activeTabRef.current = activeTab;
+
+  // Centralized navigation handler to save outgoing tab scroll position before switching
+  const handleNavigateTab = useCallback((nextTab: string) => {
+    const currentTab = activeTabRef.current;
+    if (currentTab && currentTab !== 'add-trade') {
+      scrollPositionsRef.current[currentTab] =
+        window.scrollY || document.documentElement.scrollTop || 0;
+    }
+    if (nextTab === 'add-trade') {
+      scrollPositionsRef.current['add-trade'] = 0;
+    }
+    activeTabRef.current = nextTab;
+    setActiveTab(nextTab);
+  }, []);
+
+  // Continuously track window scroll position for the active main view
+  useEffect(() => {
+    const handleWindowScroll = () => {
+      const currentTab = activeTabRef.current;
+      if (currentTab && currentTab !== 'add-trade') {
+        scrollPositionsRef.current[currentTab] =
+          window.scrollY || document.documentElement.scrollTop || 0;
+      }
+    };
+    window.addEventListener('scroll', handleWindowScroll, { passive: true });
+    return () => window.removeEventListener('scroll', handleWindowScroll);
+  }, []);
+
+  // Synchronously restore target view scroll position before browser paint
+  useLayoutEffect(() => {
+    const targetY =
+      activeTab === 'add-trade' ? 0 : (scrollPositionsRef.current[activeTab] ?? 0);
+    const scrollingEl = document.scrollingElement || document.documentElement;
+    const maxScroll = Math.max(0, scrollingEl.scrollHeight - window.innerHeight);
+    const clampedY = Math.min(Math.max(0, targetY), maxScroll);
+    window.scrollTo({ top: clampedY, left: 0, behavior: 'instant' as ScrollBehavior });
+  }, [activeTab]);
+  const previousUserIdRef = useRef<string | null>(null);
+
+  const resetTransientModalsAndCaches = () => {
+    clearSessionSyncCaches();
+    setEditingTrade(null);
+    setTradeForDetail(null);
+    setTradeForDelete(null);
+    setScreenshotModal(null);
+    setIsClearDemoModalOpen(false);
+  };
+
+  // Session Recovery & Auth Listener
+  useEffect(() => {
+    let isMounted = true;
+
+    // 1. Initial check for persistent session on page load/refresh
+    getCurrentSession().then(({ session }) => {
+      if (isMounted && session?.user) {
+        setCurrentUser(session.user);
+      }
+    });
+
+    // 2. Listen to Supabase auth state changes (sign in, sign out, token refresh)
+    const client = getSupabase();
+    if (client) {
+      const {
+        data: { subscription },
+      } = client.auth.onAuthStateChange((event, session) => {
+        if (!isMounted) return;
+        if (event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED' || event === 'USER_UPDATED') {
+          setCurrentUser(session?.user || null);
+        } else if (event === 'SIGNED_OUT') {
+          resetTransientModalsAndCaches();
+          previousUserIdRef.current = null;
+          setCurrentUser(null);
+          setCloudLoadError(null);
+          setDataSource('local');
+          const guestTrades = loadStoredTrades(null);
+          tradesRef.current = guestTrades;
+          setTrades(guestTrades);
+          setSettings(loadStoredSettings(null));
+        }
+      });
+
+      return () => {
+        isMounted = false;
+        subscription.unsubscribe();
+      };
+    }
+
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
+  // Fetch authenticated user trades and settings from Supabase whenever user logs in or switches account
+  useEffect(() => {
+    const activeUserId = currentUser?.id || null;
+
+    // Clear session caches and transient modals whenever the active user changes or logs out
+    if (previousUserIdRef.current !== activeUserId) {
+      resetTransientModalsAndCaches();
+      previousUserIdRef.current = activeUserId;
+    }
+
+    if (!activeUserId) {
+      setDataSource('local');
+      setCloudLoadError(null);
+      const guestTrades = loadStoredTrades(null);
+      tradesRef.current = guestTrades;
+      setTrades(guestTrades);
+      setSettings(loadStoredSettings(null));
+      return;
+    }
+
+    let isCurrent = true;
+    setIsCloudSyncing(true);
+    setCloudLoadError(null);
+
+    // Pre-load this user's isolated local cache immediately while cloud fetch is pending
+    // (never leaks another account's trades or settings)
+    const userCachedTrades = loadStoredTrades(activeUserId);
+    tradesRef.current = userCachedTrades;
+    setTrades(userCachedTrades);
+    const userCachedSettings = loadStoredSettings(activeUserId);
+    setSettings(userCachedSettings);
+
+    // Load user settings from Supabase with isolated fallback
+    loadUserSettingsWithFallback(activeUserId, fetchSettingsFromSupabase).then((settingsResult) => {
+      if (!isCurrent) return;
+      setSettings(settingsResult.settings);
+    });
+
+    fetchTradesFromSupabase(activeUserId).then((result) => {
+      // Race condition protection: ignore if user logged out or switched accounts during fetch
+      if (!isCurrent) return;
+      setIsCloudSyncing(false);
+
+      if (result.success && result.data) {
+        setCloudLoadError(null);
+        setDataSource('cloud');
+        tradesRef.current = result.data;
+        setTrades(result.data);
+        saveStoredTrades(result.data, activeUserId);
+
+        if (result.data.length > 0) {
+          showToast(`Berhasil memuat ${result.data.length} transaksi dari database Supabase.`);
+        } else {
+          showToast('Terhubung ke database Supabase. Akun ini belum memiliki transaksi cloud.');
+        }
+      } else if (!result.success) {
+        setCloudLoadError(result.error || 'Gagal memuat data dari database Supabase.');
+        setDataSource('local_fallback');
+        const fallbackTrades = loadStoredTrades(activeUserId);
+        tradesRef.current = fallbackTrades;
+        setTrades(fallbackTrades);
+        showToast(
+          `Gagal memuat trade dari Supabase: ${result.error}. Menampilkan data cadangan offline akun ini (${fallbackTrades.length} trade).`,
+          'error'
+        );
+      }
+    });
+
+    return () => {
+      isCurrent = false;
+    };
+  }, [currentUser?.id]);
+
+  const showToast = (message: string, type: 'success' | 'error' = 'success') => {
+    setNotification({ message, type });
+    setTimeout(() => {
+      setNotification(null);
+    }, 3800);
+  };
+
+  // Performance calculation engine (authoritative on trades & settings)
+  const { metrics } = calculatePerformance(trades, settings);
+  const currentEquity = metrics.currentEquity;
+
+  // Save trades handler: writes directly to Supabase public.trades if logged in
+  const handleSaveTrade = async (
+    tradeToSave: Trade,
+    originalId?: string
+  ): Promise<{
+    success: boolean;
+    error?: string;
+    ignored?: boolean;
+    uploadedScreenshotPath?: string;
+  }> => {
+    if (isSavingTradeRef.current) {
+      return { success: false, ignored: true };
+    }
+    isSavingTradeRef.current = true;
+
+    let uploadedScreenshotPath: string | undefined = undefined;
+
+    try {
+      const targetOriginalId = originalId || editingTrade?.id;
+      const isEdit = Boolean(targetOriginalId);
+      const finalTrade = { ...tradeToSave };
+
+      // Duplicate ID guard against latest tradesRef.current: ensure no other trade shares the new ID
+      const latestTradesBeforeSave = tradesRef.current;
+      const isDuplicate = latestTradesBeforeSave.some(
+        (t) =>
+          t.id.toLowerCase() === finalTrade.id.toLowerCase() &&
+          (!targetOriginalId || t.id.toLowerCase() !== targetOriginalId.toLowerCase())
+      );
+      if (isDuplicate) {
+        const duplicateMsg = `ID Trade "${finalTrade.id}" sudah digunakan oleh transaksi lain. Gunakan ID unik.`;
+        showToast(duplicateMsg, 'error');
+        return { success: false, error: duplicateMsg };
+      }
+
+      // Verify authenticated user id from Supabase Auth
+      let verifiedUserId: string | null = null;
+      if (currentUser) {
+        const { user } = await getCurrentUser();
+        if (user?.id) {
+          verifiedUserId = user.id;
+        }
+      }
+
+      // Identify if there is an existing storage screenshot that should be cleaned up
+      // ONLY after new transaction succeeds in database
+      let oldStoragePathToClean: string | null = null;
+      if (isEdit && editingTrade?.screenshotUrl && isStoragePath(editingTrade.screenshotUrl)) {
+        if (editingTrade.screenshotUrl !== finalTrade.screenshotUrl) {
+          oldStoragePathToClean = editingTrade.screenshotUrl;
+        }
+      }
+
+      // If user is logged in and attached a NEW base64 screenshot, upload to private Storage first.
+      // uploadScreenshotToSupabase internally reuses and verifies screenshotUploadCache (and evicts deleted paths).
+      if (
+        verifiedUserId &&
+        finalTrade.screenshotUrl &&
+        finalTrade.screenshotUrl.startsWith('data:image/')
+      ) {
+        const rawBase64 = finalTrade.screenshotUrl;
+        setIsCloudSyncing(true);
+        const uploadRes = await uploadScreenshotToSupabase(
+          rawBase64,
+          finalTrade.id,
+          verifiedUserId
+        );
+        setIsCloudSyncing(false);
+
+        if (!uploadRes.success || !uploadRes.data) {
+          const uploadErrMsg = `Gagal mengunggah screenshot ke Storage: ${uploadRes.error}. Data formulir Anda tetap tersimpan.`;
+          showToast(uploadErrMsg, 'error');
+          // Do NOT close form, do NOT reset editingTrade, do NOT navigate away!
+          return { success: false, error: uploadErrMsg };
+        }
+
+        // Store the relative object path in screenshot_url
+        finalTrade.screenshotUrl = uploadRes.data;
+        uploadedScreenshotPath = uploadRes.data;
+      }
+
+      // If user is logged in, persist to Supabase public.trades
+      if (verifiedUserId) {
+        setIsCloudSyncing(true);
+        const cloudResult = isEdit
+          ? await updateTradeInSupabase(finalTrade, verifiedUserId, targetOriginalId)
+          : await insertTradeToSupabase(finalTrade, verifiedUserId);
+        setIsCloudSyncing(false);
+
+        if (!cloudResult.success) {
+          const dbErrMsg = `Gagal memperbarui database Supabase: ${cloudResult.error}`;
+          showToast(dbErrMsg, 'error');
+          // Do not update the in-memory trade list as a cloud success if cloud write failed
+          return {
+            success: false,
+            error: dbErrMsg,
+            uploadedScreenshotPath,
+          };
+        }
+
+        // Clean up previous storage file ONLY after database update is confirmed successful
+        if (oldStoragePathToClean) {
+          deleteScreenshotFromSupabase(oldStoragePathToClean).catch((err) => {
+            console.warn('Peringatan: Gagal membersihkan screenshot lama dari storage:', err);
+          });
+        }
+      }
+
+      // Update in-memory state and local storage cache ONLY after confirmed cloud success
+      // Read from tradesRef.current to prevent stale closure overwrites after async awaits
+      const currentTrades = tradesRef.current;
+      let existingIndex = -1;
+      if (targetOriginalId) {
+        existingIndex = currentTrades.findIndex(
+          (t) => t.id.toLowerCase() === targetOriginalId.toLowerCase()
+        );
+      }
+      if (existingIndex === -1) {
+        existingIndex = currentTrades.findIndex(
+          (t) => t.id.toLowerCase() === finalTrade.id.toLowerCase()
+        );
+      }
+
+      let updatedTrades: Trade[];
+      if (existingIndex >= 0) {
+        updatedTrades = [...currentTrades];
+        updatedTrades[existingIndex] = finalTrade;
+      } else {
+        updatedTrades = [finalTrade, ...currentTrades];
+      }
+
+      tradesRef.current = updatedTrades;
+
+      // Update local storage backup
+      const saveResult = saveStoredTrades(updatedTrades, verifiedUserId);
+      if (!saveResult.success) {
+        showToast(saveResult.error || 'Gagal menyimpan trade ke penyimpanan lokal.', 'error');
+      }
+      setTrades(updatedTrades);
+
+      setEditingTrade(null);
+      handleNavigateTab('trades');
+
+      if (verifiedUserId) {
+        showToast(
+          isEdit
+            ? `Trade ${finalTrade.id} berhasil diperbarui di database Supabase!`
+            : `Trade ${finalTrade.id} berhasil disimpan ke database Supabase!`
+        );
+      } else {
+        showToast(
+          isEdit
+            ? `Trade ${finalTrade.id} berhasil diperbarui (Lokal).`
+            : `Trade ${finalTrade.id} berhasil dicatat ke jurnal lokal!`
+        );
+      }
+
+      return { success: true, uploadedScreenshotPath };
+    } catch (err: any) {
+      const unexpectedMsg =
+        err?.message || 'Terjadi kesalahan tak terduga saat menyimpan transaksi. Silakan coba lagi.';
+      showToast(unexpectedMsg, 'error');
+      return {
+        success: false,
+        error: unexpectedMsg,
+        uploadedScreenshotPath,
+      };
+    } finally {
+      setIsCloudSyncing(false);
+      isSavingTradeRef.current = false;
+    }
+  };
+
+  // Delete trade handler: deletes from Supabase public.trades if logged in
+  const handleConfirmDelete = async () => {
+    if (!tradeForDelete || isDeletingTradeRef.current) return;
+    isDeletingTradeRef.current = true;
+
+    const targetTrade = tradeForDelete;
+    const deletedId = targetTrade.id;
+    const isDemoTradeItem = Boolean(targetTrade.isDemo);
+
+    try {
+      // Verify authenticated user id
+      let verifiedUserId: string | null = null;
+      if (currentUser) {
+        const { user } = await getCurrentUser();
+        if (user?.id) {
+          verifiedUserId = user.id;
+        }
+      }
+
+      // If logged in, delete row from Supabase
+      if (verifiedUserId) {
+        if (!isDemoTradeItem) {
+          setIsCloudSyncing(true);
+          const deleteResult = await deleteTradeFromSupabase(deletedId, verifiedUserId);
+          setIsCloudSyncing(false);
+
+          if (!deleteResult.success) {
+            showToast(`Gagal menghapus dari database Supabase: ${deleteResult.error}`, 'error');
+            return;
+          }
+
+          // Clean up private storage file ONLY after database deletion is confirmed successful
+          if (targetTrade.screenshotUrl && isStoragePath(targetTrade.screenshotUrl)) {
+            try {
+              await deleteScreenshotFromSupabase(targetTrade.screenshotUrl);
+            } catch (err) {
+              console.warn(
+                `Peringatan: Gagal menghapus file storage "${targetTrade.screenshotUrl}":`,
+                err
+              );
+            }
+          }
+        } else {
+          // If it's a demo trade, try to remove from cloud if previously synced, but don't error out if local-only
+          try {
+            await deleteTradeFromSupabase(deletedId, verifiedUserId);
+          } catch {
+            // ignore
+          }
+        }
+      }
+
+      // Use latest tradesRef.current to prevent stale closure overwrites after adjacent state updates
+      const previousLatest = tradesRef.current;
+      const filtered = removeTradeFromLatestList(tradesRef, deletedId);
+      const saveResult = saveStoredTrades(filtered, verifiedUserId || currentUser?.id || null);
+      if (!saveResult.success) {
+        tradesRef.current = previousLatest;
+        showToast(saveResult.error || 'Gagal menghapus data lokal.', 'error');
+        return;
+      }
+
+      setTrades(filtered);
+      setTradeForDelete(null);
+      if (tradeForDetail?.id === deletedId) {
+        setTradeForDetail(null);
+      }
+
+      if (verifiedUserId && !isDemoTradeItem) {
+        showToast(`Trade ${deletedId} berhasil dihapus dari database Supabase.`);
+      } else {
+        showToast(`Trade ${deletedId} telah dihapus.`);
+      }
+    } finally {
+      setIsCloudSyncing(false);
+      isDeletingTradeRef.current = false;
+    }
+  };
+
+  // Manual trigger to upload local trades to Supabase cloud
+  const handleSyncLocalToCloud = async () => {
+    let verifiedUserId: string | null = null;
+    if (currentUser) {
+      const { user } = await getCurrentUser();
+      if (user?.id) {
+        verifiedUserId = user.id;
+      }
+    }
+
+    if (!verifiedUserId) {
+      showToast('Harap login terlebih dahulu untuk sinkronisasi ke cloud.', 'error');
+      return;
+    }
+
+    const currentTradesToSync = tradesRef.current;
+    if (currentTradesToSync.length === 0) {
+      showToast('Tidak ada transaksi untuk disinkronkan.', 'error');
+      return;
+    }
+
+    setIsCloudSyncing(true);
+    try {
+      const res = await migrateLocalTradesToSupabase(currentTradesToSync, verifiedUserId);
+
+      // Update state & localStorage with synced storage paths for succeeded trades
+      // while preserving original Base64 screenshots for any failed trades
+      if (res.syncedTrades && res.syncedTrades.length > 0) {
+        tradesRef.current = res.syncedTrades;
+        setTrades(res.syncedTrades);
+        saveStoredTrades(res.syncedTrades, verifiedUserId);
+      }
+
+      if (res.success && res.failedCount === 0) {
+        setDataSource('cloud');
+        setCloudLoadError(null);
+        showToast(`Berhasil menyinkronkan seluruh (${res.count}) transaksi ke tabel public.trades!`);
+      } else if (res.count > 0 && res.failedCount > 0) {
+        setDataSource('local_fallback');
+        showToast(`Sinkronisasi parsial: ${res.count} berhasil, ${res.failedCount} gagal (${res.error})`, 'error');
+      } else {
+        setDataSource('local_fallback');
+        showToast(`Gagal menyinkronkan ke cloud: ${res.error}`, 'error');
+      }
+    } finally {
+      setIsCloudSyncing(false);
+    }
+  };
+
+  // Manual trigger to reload fresh trades from Supabase cloud
+  const handleReloadFromCloud = async () => {
+    let verifiedUserId: string | null = null;
+    if (currentUser) {
+      const { user } = await getCurrentUser();
+      if (user?.id) {
+        verifiedUserId = user.id;
+      }
+    }
+
+    if (!verifiedUserId) {
+      showToast('Harap login terlebih dahulu.', 'error');
+      return;
+    }
+
+    setIsCloudSyncing(true);
+    setCloudLoadError(null);
+    const [result, settingsResult] = await Promise.all([
+      fetchTradesFromSupabase(verifiedUserId),
+      loadUserSettingsWithFallback(verifiedUserId, fetchSettingsFromSupabase),
+    ]);
+    setIsCloudSyncing(false);
+
+    // Race condition guard: ignore if user changed during fetch
+    if (currentUser?.id !== verifiedUserId) {
+      return;
+    }
+
+    setSettings(settingsResult.settings);
+
+    if (result.success && result.data) {
+      setCloudLoadError(null);
+      setDataSource('cloud');
+      tradesRef.current = result.data;
+      setTrades(result.data);
+      saveStoredTrades(result.data, verifiedUserId);
+      if (result.data.length > 0) {
+        showToast(`Berhasil memuat ${result.data.length} transaksi dari database Supabase!`);
+      } else {
+        showToast('Terhubung ke database Supabase. Akun ini belum memiliki transaksi cloud.');
+      }
+    } else {
+      setCloudLoadError(result.error || 'Gagal memuat transaksi dari Supabase.');
+      setDataSource('local_fallback');
+      const fallbackTrades = loadStoredTrades(verifiedUserId);
+      tradesRef.current = fallbackTrades;
+      setTrades(fallbackTrades);
+      showToast(
+        `Gagal memuat dari Supabase: ${result.error}. Menggunakan cache offline akun ini (${fallbackTrades.length} trade).`,
+        'error'
+      );
+    }
+  };
+
+  // Clear DEMO data handler with protective feedback and Supabase cloud cleanup
+  const handleConfirmClearDemoTrades = async () => {
+    const currentList = tradesRef.current;
+    const demoTrades = currentList.filter((t) => isDemoTrade(t));
+    const realTrades = currentList.filter((t) => !isDemoTrade(t));
+    const demoCount = demoTrades.length;
+
+    let verifiedUserId: string | null = null;
+    if (currentUser) {
+      const { user } = await getCurrentUser();
+      verifiedUserId = user?.id || currentUser.id || null;
+    }
+
+    if (verifiedUserId && demoTrades.length > 0) {
+      setIsCloudSyncing(true);
+      try {
+        const keepScreenshotPaths = new Set(
+          realTrades
+            .map((t) => (t.screenshotUrl ? String(t.screenshotUrl).trim() : ''))
+            .filter(Boolean)
+        );
+        const cloudDel = await deleteTradesListFromSupabase(
+          demoTrades,
+          verifiedUserId,
+          keepScreenshotPaths
+        );
+        if (!cloudDel.success) {
+          showToast(
+            cloudDel.error || 'Gagal menghapus transaksi DEMO dari database cloud.',
+            'error'
+          );
+          return;
+        }
+      } finally {
+        setIsCloudSyncing(false);
+      }
+    }
+
+    const saveResult = saveStoredTrades(realTrades, verifiedUserId || currentUser?.id || null);
+    if (saveResult.success) {
+      tradesRef.current = realTrades;
+      setTrades(realTrades);
+      showToast(`${demoCount} transaksi DEMO berhasil dibersihkan. Data asli Anda tetap aman.`);
+    } else {
+      showToast('Gagal membersihkan data demo.', 'error');
+    }
+  };
+
+  // Load DEMO trades without deleting real trades (and sync to cloud if logged in)
+  const handleLoadDemoTrades = async () => {
+    const nonDemo = tradesRef.current.filter((t) => !isDemoTrade(t));
+    const demoCopies = DEMO_TRADES.map((t) => ({ ...t, isDemo: true }));
+    const nextTrades = [...nonDemo, ...demoCopies];
+
+    let verifiedUserId: string | null = null;
+    if (currentUser) {
+      const { user } = await getCurrentUser();
+      verifiedUserId = user?.id || currentUser.id || null;
+    }
+
+    const saveResult = saveStoredTrades(nextTrades, verifiedUserId || currentUser?.id || null);
+    if (!saveResult.success) {
+      showToast(saveResult.error || 'Gagal memuat data demo ke penyimpanan lokal.', 'error');
+      return;
+    }
+
+    tradesRef.current = nextTrades;
+    setTrades(nextTrades);
+
+    if (verifiedUserId) {
+      setIsCloudSyncing(true);
+      try {
+        const syncRes = await migrateLocalTradesToSupabase(demoCopies, verifiedUserId);
+        if (syncRes.success) {
+          showToast(`Berhasil memuat ${DEMO_TRADES.length} transaksi DEMO dan menyinkronkannya ke cloud.`);
+        } else {
+          showToast(
+            `Data DEMO dimuat secara lokal, namun sinkronisasi cloud mengalami kendala: ${syncRes.error}`,
+            'error'
+          );
+        }
+      } finally {
+        setIsCloudSyncing(false);
+      }
+    } else {
+      showToast(`Berhasil memuat ${DEMO_TRADES.length} transaksi contoh DEMO.`);
+    }
+  };
+
+  // Clear ALL trades (both local state/storage and Supabase cloud when logged in)
+  const handleClearAllTrades = async () => {
+    const previousTrades = [...tradesRef.current];
+
+    let verifiedUserId: string | null = null;
+    if (currentUser) {
+      const { user } = await getCurrentUser();
+      verifiedUserId = user?.id || currentUser.id || null;
+    }
+
+    if (verifiedUserId) {
+      setIsCloudSyncing(true);
+      try {
+        const cloudClear = await deleteObsoleteTradesFromSupabase([], previousTrades, verifiedUserId);
+        if (!cloudClear.success) {
+          showToast(
+            cloudClear.error || 'Gagal menghapus seluruh transaksi dari database cloud Supabase.',
+            'error'
+          );
+          return;
+        }
+      } finally {
+        setIsCloudSyncing(false);
+      }
+    }
+
+    const saveResult = saveStoredTrades([], verifiedUserId || currentUser?.id || null);
+    if (saveResult.success) {
+      tradesRef.current = [];
+      setTrades([]);
+      setTradeForDetail(null);
+      showToast('Seluruh riwayat transaksi berhasil dihapus hingga bersih.');
+    } else {
+      showToast(saveResult.error || 'Gagal mereset penyimpanan lokal.', 'error');
+    }
+  };
+
+  // Import CSV trades with canonical merge/replace and automatic Supabase cloud sync
+  const handleImportCsvTrades = async (importedTrades: Trade[], mode: 'merge' | 'replace') => {
+    const previousTrades = [...tradesRef.current];
+    const { finalTrades } = mergeTradesDatasets(previousTrades, importedTrades, mode);
+
+    let verifiedUserId: string | null = null;
+    if (currentUser) {
+      const { user } = await getCurrentUser();
+      verifiedUserId = user?.id || currentUser.id || null;
+    }
+
+    const saveResult = saveStoredTrades(finalTrades, verifiedUserId || currentUser?.id || null);
+    if (!saveResult.success && !verifiedUserId) {
+      showToast(saveResult.error || 'Gagal menyimpan hasil impor CSV ke browser.', 'error');
+      return;
+    }
+
+    tradesRef.current = finalTrades;
+    setTrades(finalTrades);
+
+    if (verifiedUserId) {
+      setIsCloudSyncing(true);
+      try {
+        const syncRes = await migrateLocalTradesToSupabase(finalTrades, verifiedUserId);
+        if (syncRes.syncedTrades) {
+          tradesRef.current = syncRes.syncedTrades;
+          setTrades(syncRes.syncedTrades);
+          saveStoredTrades(syncRes.syncedTrades, verifiedUserId);
+        }
+
+        if (syncRes.success && syncRes.failedCount === 0) {
+          if (mode === 'replace') {
+            const cleanupRes = await deleteObsoleteTradesFromSupabase(
+              syncRes.syncedTrades,
+              previousTrades,
+              verifiedUserId
+            );
+            if (!cleanupRes.success) {
+              showToast(
+                `Data CSV tersimpan, namun gagal membersihkan transaksi lama di cloud: ${cleanupRes.error}`,
+                'error'
+              );
+              return;
+            }
+          }
+          setDataSource('cloud');
+          setCloudLoadError(null);
+          showToast(
+            mode === 'replace'
+              ? `Berhasil menggantikan jurnal dengan ${importedTrades.length} trade CSV dan menyinkronkannya ke cloud!`
+              : `Berhasil menggabungkan ${importedTrades.length} trade CSV dan menyinkronkannya ke cloud!`
+          );
+        } else {
+          setDataSource('local_fallback');
+          showToast(
+            `Impor CSV tersimpan di browser, namun sinkronisasi cloud terkendala: ${syncRes.error}`,
+            'error'
+          );
+        }
+      } finally {
+        setIsCloudSyncing(false);
+      }
+    } else {
+      showToast(
+        mode === 'replace'
+          ? `Berhasil menggantikan jurnal dengan ${importedTrades.length} trade dari CSV!`
+          : `Berhasil menggabungkan ${importedTrades.length} trade dari CSV!`
+      );
+    }
+  };
+
+  // Update whole trades array fallback
+  const handleUpdateTrades = (newTrades: Trade[]) => {
+    const saveResult = saveStoredTrades(newTrades, currentUser?.id || null);
+    if (saveResult.success) {
+      tradesRef.current = newTrades;
+      setTrades(newTrades);
+    } else {
+      showToast(saveResult.error || 'Gagal menyimpan perubahan trade.', 'error');
+    }
+  };
+
+  // Restore from JSON or ZIP Backup (with overwrite or merge mode and optional cloud sync)
+  const handleRestoreBackupJson = async (
+    backupTrades: Trade[],
+    backupSettings?: AppSettings,
+    mode: 'replace' | 'merge' = 'replace',
+    syncToCloud: boolean = false
+  ) => {
+    const previousTrades = [...tradesRef.current];
+
+    // Preserve any existing local Base64 screenshot mapping before overwriting tradesRef.current
+    // in case the restored JSON contains a storage path for the same trade ID.
+    const existingById = new Map<string, Trade>(
+      previousTrades.map((t) => [t.id.toLowerCase(), t])
+    );
+    for (const incoming of backupTrades) {
+      const incRef = incoming.screenshotUrl?.trim() || '';
+      if (incRef && isStoragePath(incRef)) {
+        const existingMatch = existingById.get(incoming.id.toLowerCase());
+        const existingRef = existingMatch?.screenshotUrl?.trim() || '';
+        if (existingRef.startsWith('data:image/')) {
+          setCachedBase64ForStoragePath(incRef, existingRef);
+        }
+      }
+    }
+
+    const { finalTrades } = mergeTradesDatasets(previousTrades, backupTrades, mode);
+
+    // Verify authenticated user for cloud sync
+    let verifiedUserId: string | null = null;
+    if (currentUser) {
+      const { user } = await getCurrentUser();
+      if (user?.id) {
+        verifiedUserId = user.id;
+      }
+    }
+
+    const tradeSaveRes = saveStoredTrades(finalTrades, verifiedUserId || currentUser?.id || null);
+    if (!tradeSaveRes.success && !(verifiedUserId && syncToCloud)) {
+      showToast(tradeSaveRes.error || 'Gagal menyimpan data cadangan ke browser.', 'error');
+      return { success: false, error: tradeSaveRes.error };
+    }
+    tradesRef.current = finalTrades;
+    setTrades(finalTrades);
+
+    let mergedSettings: AppSettings | undefined;
+    if (backupSettings && typeof backupSettings === 'object') {
+      mergedSettings = mergeWithExistingSettings(settings, backupSettings);
+      saveStoredSettings(mergedSettings, verifiedUserId || currentUser?.id || null);
+      setSettings(mergedSettings);
+    }
+
+    if (verifiedUserId && syncToCloud) {
+      setIsCloudSyncing(true);
+      showToast('Menyinkronkan transaksi pemulihan ke database Supabase...');
+
+      try {
+        const res = await migrateLocalTradesToSupabase(finalTrades, verifiedUserId);
+
+        if (mergedSettings) {
+          await saveSettingsToSupabase(mergedSettings, verifiedUserId);
+        }
+
+        if (res.syncedTrades) {
+          tradesRef.current = res.syncedTrades;
+          setTrades(res.syncedTrades);
+          saveStoredTrades(res.syncedTrades, verifiedUserId);
+          if (tradeForDetail) {
+            const updatedDetail = res.syncedTrades.find((t) => t.id === tradeForDetail.id);
+            if (updatedDetail) {
+              setTradeForDetail(updatedDetail);
+            } else if (mode === 'replace') {
+              setTradeForDetail(null);
+            }
+          }
+        }
+
+        if (res.success && res.failedCount === 0) {
+          if (mode === 'replace') {
+            const cleanupRes = await deleteObsoleteTradesFromSupabase(
+              res.syncedTrades,
+              previousTrades,
+              verifiedUserId
+            );
+            if (!cleanupRes.success) {
+              setDataSource('local_fallback');
+              showToast(
+                `Data baru tersimpan di cloud, namun gagal menghapus transaksi cloud lama: ${cleanupRes.error}`,
+                'error'
+              );
+              return { success: false, error: cleanupRes.error };
+            }
+          }
+
+          setDataSource('cloud');
+          setCloudLoadError(null);
+          showToast(
+            mode === 'replace'
+              ? `Berhasil menggantikan jurnal dengan ${finalTrades.length} trade dan menyinkronkannya ke database Supabase!`
+              : `Berhasil menggabungkan cadangan (${finalTrades.length} total trade) dan menyinkronkannya ke database Supabase!`
+          );
+        } else if (res.count > 0 && res.failedCount > 0) {
+          setDataSource('local_fallback');
+          showToast(
+            `Pemulihan lokal selesai, namun sinkronisasi cloud parsial: ${res.count} tersimpan, ${res.failedCount} gagal (${res.error}).`,
+            'error'
+          );
+        } else {
+          setDataSource('local_fallback');
+          showToast(
+            `Data berhasil dimuat di browser lokal, namun sinkronisasi ke Supabase gagal: ${res.error}. Transaksi BELUM tersimpan di cloud.`,
+            'error'
+          );
+        }
+      } finally {
+        setIsCloudSyncing(false);
+      }
+    } else {
+      if (currentUser && !syncToCloud) {
+        showToast(
+          `Data cadangan (${backupTrades.length} trade) dimuat ke browser lokal. Data BELUM tersimpan di cloud Supabase. Gunakan tombol 'Sinkronkan ke Cloud' untuk mengunggahnya.`,
+          'error'
+        );
+      } else {
+        showToast(
+          mode === 'replace'
+            ? `Berhasil memulihkan seluruh data (${finalTrades.length} trade) dari file backup!`
+            : `Berhasil menggabungkan ${backupTrades.length} trade dari cadangan ke jurnal!`
+        );
+      }
+    }
+    return { success: true };
+  };
+
+  // Update settings handler
+  const handleUpdateSettings = (newSettings: AppSettings) => {
+    const normalized = mergeWithExistingSettings(settings, newSettings);
+    const saveResult = saveStoredSettings(normalized, currentUser?.id || null);
+    if (saveResult.success) {
+      setSettings(normalized);
+      if (currentUser?.id) {
+        saveSettingsToSupabase(normalized, currentUser.id).catch(() => {
+          // Non-blocking background settings sync
+        });
+      }
+    } else {
+      showToast(saveResult.error || 'Gagal menyimpan pengaturan.', 'error');
+    }
+  };
+
+  // Open Edit
+  const handleOpenEdit = (trade: Trade) => {
+    setEditingTrade(trade);
+    setTradeForDetail(null);
+    handleNavigateTab('add-trade');
+  };
+
+  // Open Screenshot zoom modal
+  const handleViewScreenshot = (url: string, title: string) => {
+    setScreenshotModal({ url, title });
+  };
+
+  return (
+    <div className="min-h-screen bg-[#F5F7FA] text-[#151D2A] dark:bg-[#080A0E] dark:text-[#F2F5F9] flex flex-col font-sans transition-colors duration-150">
+      {/* Toast Notification */}
+      {notification && (
+        <div
+          className={`fixed top-4 left-4 right-4 sm:left-auto sm:right-4 sm:max-w-md z-50 rounded-xl border bg-white dark:bg-[#11151B] border-[#DDE3EA] dark:border-[#252B34] px-4 py-3 shadow-lg text-xs font-semibold animate-in slide-in-from-top duration-150 ${
+            notification.type === 'success'
+              ? 'text-emerald-600 dark:text-emerald-400'
+              : 'text-rose-600 dark:text-rose-400'
+          }`}
+        >
+          {notification.message}
+        </div>
+      )}
+
+      <div className="flex flex-1">
+        {/* Desktop Sidebar Navigation */}
+        <Sidebar
+          activeTab={activeTab}
+          onNavigate={(tab) => {
+            if (tab === 'add-trade') {
+              setEditingTrade(null);
+            }
+            handleNavigateTab(tab);
+          }}
+          tradesCount={trades.length}
+          currentEquity={currentEquity}
+          settings={settings}
+          onOpenLocalInfo={() => setIsLocalInfoModalOpen(true)}
+          onOpenBackupModal={() => setIsBackupModalOpen(true)}
+          currentUser={currentUser}
+          onOpenAuth={() => setIsAuthModalOpen(true)}
+          onOpenAccount={() => setIsAccountModalOpen(true)}
+        />
+
+        {/* Main Content Area */}
+        <div className="flex-1 flex flex-col min-w-0">
+          {/* Top Navbar */}
+          <Navbar
+            currentEquity={currentEquity}
+            settings={settings}
+            activeTab={activeTab}
+            onNavigate={(tab) => {
+              if (tab === 'add-trade') {
+                setEditingTrade(null);
+              }
+              handleNavigateTab(tab);
+            }}
+            onOpenMobileMenu={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
+            isMobileMenuOpen={isMobileMenuOpen}
+            onOpenLocalInfo={() => setIsLocalInfoModalOpen(true)}
+            onOpenBackupModal={() => setIsBackupModalOpen(true)}
+            currentUser={currentUser}
+            onOpenAuth={() => setIsAuthModalOpen(true)}
+            onOpenAccount={() => setIsAccountModalOpen(true)}
+          />
+
+          {/* View Container with bottom padding for mobile navigation */}
+          <main className="flex-1 p-4 sm:p-6 lg:p-8 max-w-7xl w-full mx-auto pb-28 lg:pb-12">
+            {/* Cloud Connection / Load Error Banner */}
+            {cloudLoadError && (
+              <div className="mb-6 p-4 rounded-xl border border-[#DDE3EA] dark:border-[#252B34] bg-white dark:bg-[#11151B] text-[#151D2A] dark:text-[#F2F5F9] flex flex-col sm:flex-row sm:items-center justify-between gap-3 animate-in fade-in duration-150">
+                <div className="flex items-start gap-3">
+                  <div className="p-2 rounded-lg bg-[#EEF2F6] dark:bg-[#171D26] border border-[#DDE3EA] dark:border-[#252B34] text-rose-600 dark:text-rose-400 shrink-0 mt-0.5">
+                    <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        strokeWidth={2}
+                        d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"
+                      />
+                    </svg>
+                  </div>
+                  <div>
+                    <h4 className="text-sm font-bold text-rose-600 dark:text-rose-400">Gagal Mengambil Data dari Supabase</h4>
+                    <p className="text-xs text-[#151D2A] dark:text-[#F2F5F9] mt-0.5">{cloudLoadError}</p>
+                    <p className="text-[11px] text-[#697586] dark:text-[#929BA9] mt-1">
+                      Aplikasi saat ini menampilkan data cadangan lokal sementara. Transaksi baru tidak akan tersimpan ke cloud sampai koneksi berhasil dipulihkan.
+                    </p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2 self-start sm:self-auto shrink-0">
+                  <button
+                    onClick={handleReloadFromCloud}
+                    disabled={isCloudSyncing}
+                    className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg bg-[#1769E8] hover:bg-[#1458C4] text-white text-xs font-semibold transition disabled:opacity-50 cursor-pointer"
+                  >
+                    <span className={isCloudSyncing ? 'animate-spin inline-block' : 'inline-block'}>↻</span>
+                    <span>{isCloudSyncing ? 'Memuat Ulang...' : 'Coba Muat Ulang'}</span>
+                  </button>
+                </div>
+              </div>
+            )}
+
+            <div className={activeTab === 'dashboard' ? 'block' : 'hidden'} aria-hidden={activeTab !== 'dashboard'}>
+              <DashboardView
+                trades={trades}
+                settings={settings}
+                onNavigate={handleNavigateTab}
+                onAddTrade={() => {
+                  setEditingTrade(null);
+                  handleNavigateTab('add-trade');
+                }}
+                onViewTrade={(t) => setTradeForDetail(t)}
+                onClearDemoTrades={() => setIsClearDemoModalOpen(true)}
+              />
+            </div>
+
+            <div className={activeTab === 'trades' ? 'block' : 'hidden'} aria-hidden={activeTab !== 'trades'}>
+              <TradeTable
+                trades={trades}
+                settings={settings}
+                onAddTrade={() => {
+                  setEditingTrade(null);
+                  handleNavigateTab('add-trade');
+                }}
+                onEditTrade={handleOpenEdit}
+                onDeleteTrade={(t) => setTradeForDelete(t)}
+                onViewDetail={(t) => setTradeForDetail(t)}
+                onViewScreenshot={handleViewScreenshot}
+                onClearDemoTrades={() => setIsClearDemoModalOpen(true)}
+                currentUser={currentUser}
+                dataSource={dataSource}
+                isCloudSyncing={isCloudSyncing}
+                cloudLoadError={cloudLoadError}
+                onReloadFromCloud={handleReloadFromCloud}
+                onSyncLocalToCloud={handleSyncLocalToCloud}
+              />
+            </div>
+
+            {activeTab === 'add-trade' && (
+              <TradeForm
+                initialTrade={editingTrade}
+                settings={settings}
+                currentEquity={currentEquity}
+                existingTrades={trades}
+                onSave={handleSaveTrade}
+                onCancel={() => {
+                  setEditingTrade(null);
+                  handleNavigateTab('trades');
+                }}
+              />
+            )}
+
+            <div className={activeTab === 'analytics' ? 'block' : 'hidden'} aria-hidden={activeTab !== 'analytics'}>
+              <AnalyticsView
+                trades={trades}
+                settings={settings}
+                onViewTrade={(t) => setTradeForDetail(t)}
+              />
+            </div>
+
+            <div className={activeTab === 'risk' ? 'block' : 'hidden'} aria-hidden={activeTab !== 'risk'}>
+              <RiskCalculatorView
+                currentEquity={currentEquity}
+                settings={settings}
+                onUpdateSettings={handleUpdateSettings}
+                dailyLossToday={metrics.dailyLossToday}
+                trades={trades}
+              />
+            </div>
+
+            <div className={activeTab === 'settings' ? 'block' : 'hidden'} aria-hidden={activeTab !== 'settings'}>
+              <SettingsView
+                settings={settings}
+                trades={trades}
+                onSaveSettings={handleUpdateSettings}
+                onUpdateTrades={handleUpdateTrades}
+                onImportCsvTrades={handleImportCsvTrades}
+                onLoadDemoTrades={handleLoadDemoTrades}
+                onClearAllTrades={handleClearAllTrades}
+                onRequestClearDemo={() => setIsClearDemoModalOpen(true)}
+                onOpenLocalInfo={() => setIsLocalInfoModalOpen(true)}
+                onOpenBackupModal={() => setIsBackupModalOpen(true)}
+                currentUser={currentUser}
+                onOpenAuth={() => setIsAuthModalOpen(true)}
+                onOpenAccount={() => setIsAccountModalOpen(true)}
+                onOpenConfig={() => setIsSupabaseConfigOpen(true)}
+                isCloudSyncing={isCloudSyncing}
+                onSyncLocalToCloud={handleSyncLocalToCloud}
+                onReloadFromCloud={handleReloadFromCloud}
+              />
+            </div>
+          </main>
+        </div>
+      </div>
+
+      {/* Mobile Navigation Drawer & Bottom Bar */}
+      <MobileNav
+        activeTab={activeTab}
+        onNavigate={(tab) => {
+          if (tab === 'add-trade') {
+            setEditingTrade(null);
+          }
+          handleNavigateTab(tab);
+        }}
+        isOpen={isMobileMenuOpen}
+        onClose={() => setIsMobileMenuOpen(false)}
+        tradesCount={trades.length}
+        currentEquity={currentEquity}
+        settings={settings}
+        onOpenLocalInfo={() => setIsLocalInfoModalOpen(true)}
+        onOpenBackupModal={() => setIsBackupModalOpen(true)}
+        currentUser={currentUser}
+        onOpenAuth={() => setIsAuthModalOpen(true)}
+        onOpenAccount={() => setIsAccountModalOpen(true)}
+      />
+
+      {/* Detail Modal */}
+      <TradeDetailModal
+        trade={tradeForDetail}
+        settings={settings}
+        isOpen={Boolean(tradeForDetail)}
+        isChildModalOpen={Boolean(screenshotModal)}
+        onClose={() => setTradeForDetail(null)}
+        onEdit={handleOpenEdit}
+        onDelete={(t) => {
+          setTradeForDetail(null);
+          setTradeForDelete(t);
+        }}
+        onViewScreenshot={handleViewScreenshot}
+      />
+
+      {/* Delete Confirmation Modal */}
+      <DeleteConfirmModal
+        trade={tradeForDelete}
+        isOpen={Boolean(tradeForDelete)}
+        isDeleting={isCloudSyncing}
+        onConfirm={handleConfirmDelete}
+        onCancel={() => {
+          if (!isCloudSyncing) {
+            setTradeForDelete(null);
+          }
+        }}
+      />
+
+      {/* Screenshot Viewer Modal */}
+      <ScreenshotModal
+        imageUrl={screenshotModal?.url || null}
+        tradeTitle={screenshotModal?.title}
+        isOpen={Boolean(screenshotModal)}
+        onClose={() => setScreenshotModal(null)}
+      />
+
+      {/* Local Prototype Info Modal */}
+      <LocalPrototypeModal
+        isOpen={isLocalInfoModalOpen}
+        onClose={() => setIsLocalInfoModalOpen(false)}
+        onOpenBackupModal={() => setIsBackupModalOpen(true)}
+        tradesCount={trades.length}
+      />
+
+      {/* JSON Backup Export & Import Modal (with Validation & Overwrite Confirmation) */}
+      <JsonBackupModal
+        isOpen={isBackupModalOpen}
+        onClose={() => setIsBackupModalOpen(false)}
+        trades={trades}
+        settings={settings}
+        currentUser={currentUser}
+        onRestoreSuccess={handleRestoreBackupJson}
+      />
+
+      {/* Clear DEMO Confirmation Modal */}
+      <ClearDemoModal
+        isOpen={isClearDemoModalOpen}
+        onClose={() => setIsClearDemoModalOpen(false)}
+        onConfirm={handleConfirmClearDemoTrades}
+        trades={trades}
+      />
+
+      {/* Supabase Authentication Modal (Login, Signup, Forgot Password, Email Verification Notice) */}
+      <AuthModal
+        isOpen={isAuthModalOpen}
+        onClose={() => setIsAuthModalOpen(false)}
+        onAuthSuccess={(user) => {
+          setCurrentUser(user);
+          showToast(`Berhasil masuk sebagai ${user.email}`);
+        }}
+        onOpenConfig={() => {
+          setIsAuthModalOpen(false);
+          setIsSupabaseConfigOpen(true);
+        }}
+      />
+
+      {/* User Account & Logout Confirmation Modal */}
+      <UserAccountModal
+        isOpen={isAccountModalOpen}
+        onClose={() => setIsAccountModalOpen(false)}
+        currentUser={currentUser}
+        onLogoutSuccess={() => {
+          resetTransientModalsAndCaches();
+          previousUserIdRef.current = null;
+          setCurrentUser(null);
+          setCloudLoadError(null);
+          setDataSource('local');
+          const guestTrades = loadStoredTrades(null);
+          tradesRef.current = guestTrades;
+          setTrades(guestTrades);
+          setSettings(loadStoredSettings(null));
+          showToast('Anda telah berhasil keluar dari akun cloud.');
+        }}
+      />
+
+      {/* Supabase Connection & Credentials Modal */}
+      <SupabaseConfigModal
+        isOpen={isSupabaseConfigOpen}
+        onClose={() => setIsSupabaseConfigOpen(false)}
+        onConfigSaved={() => {
+          showToast('Konfigurasi Supabase berhasil disimpan!');
+        }}
+      />
+    </div>
+  );
+}
