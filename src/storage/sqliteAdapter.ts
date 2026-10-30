@@ -75,7 +75,7 @@ CREATE TABLE IF NOT EXISTS trades (
   sync_revision INTEGER NOT NULL DEFAULT 1,
   last_mutation_id TEXT NOT NULL,
   canonical_digest TEXT NOT NULL,
-  FOREIGN KEY (screenshot_id) REFERENCES screenshot_metadata (screenshot_id)
+  FOREIGN KEY (screenshot_id) REFERENCES screenshot_metadata (screenshot_id) DEFERRABLE INITIALLY DEFERRED
 );`.trim(),
 
   settings: `
@@ -123,8 +123,8 @@ CREATE TABLE IF NOT EXISTS screenshot_metadata (
   lease_expires_at INTEGER NULL,
   created_at INTEGER NOT NULL,
   updated_at INTEGER NOT NULL,
-  FOREIGN KEY (trade_canonical_uuid) REFERENCES trades (canonical_uuid),
-  FOREIGN KEY (screenshot_id) REFERENCES screenshot_files (screenshot_id)
+  FOREIGN KEY (trade_canonical_uuid) REFERENCES trades (canonical_uuid) DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (screenshot_id) REFERENCES screenshot_files (screenshot_id) DEFERRABLE INITIALLY DEFERRED
 );`.trim(),
 
   screenshot_files: `
@@ -136,7 +136,7 @@ CREATE TABLE IF NOT EXISTS screenshot_files (
   size_bytes INTEGER NOT NULL,
   sha256_hash TEXT NOT NULL,
   created_at INTEGER NOT NULL,
-  FOREIGN KEY (screenshot_id) REFERENCES screenshot_metadata (screenshot_id)
+  FOREIGN KEY (screenshot_id) REFERENCES screenshot_metadata (screenshot_id) DEFERRABLE INITIALLY DEFERRED
 );`.trim(),
 
   outbox_sync_queue: `
