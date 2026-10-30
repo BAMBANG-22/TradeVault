@@ -581,6 +581,10 @@ export class SqliteDatabaseAdapter implements ILocalDatabaseAdapter {
     throwPhase1StubError();
   }
 
+  public async rollbackShadowMigrationScope(_ownerScope: OwnerScope): Promise<void> {
+    throwPhase1StubError();
+  }
+
   public async writeShadowMigrationBatchAtomically(
     _batch: PreparedMigrationBatch
   ): Promise<void> {
