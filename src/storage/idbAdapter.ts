@@ -1585,9 +1585,20 @@ export class IdbDatabaseAdapter implements ILocalDatabaseAdapter {
       };
     }
 
-    const allTrades = await this.readAllFromStore<LocalTradeRow>('trades');
-    const allOutbox = await this.readAllFromStore<OutboxSyncQueueRow>('outbox_sync_queue');
-    const allMeta = await this.readAllFromStore<ScreenshotMetadataRow>('screenshot_metadata');
+    const cleanScope = String(options.ownerScope).trim();
+    if (!cleanScope) {
+      throw new Error('ERR_SCREENSHOT_CLEANUP_OWNER_SCOPE_REQUIRED');
+    }
+
+    const [allTradesInStore, allOutboxInStore, allMetaInStore] = await Promise.all([
+      this.readAllFromStore<LocalTradeRow>('trades'),
+      this.readAllFromStore<OutboxSyncQueueRow>('outbox_sync_queue'),
+      this.readAllFromStore<ScreenshotMetadataRow>('screenshot_metadata'),
+    ]);
+    // Cleanup must never cross owner boundaries, even inside the isolated test database.
+    const allTrades = allTradesInStore.filter((row) => row.owner_scope === cleanScope);
+    const allOutbox = allOutboxInStore.filter((row) => row.owner_scope === cleanScope);
+    const allMeta = allMetaInStore.filter((row) => row.owner_scope === cleanScope);
 
     // Build set of all referenced screenshot IDs and trade canonical UUIDs
     const referencedScreenshotIds = new Set<string>();
