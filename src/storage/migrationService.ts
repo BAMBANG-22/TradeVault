@@ -626,7 +626,13 @@ export async function runShadowMigration(
     completed_at: Date.now(),
   };
 
-  await adapter.setMigrationState(completedState);
+  try {
+    await adapter.setMigrationState(completedState);
+  } catch (finalizationErr: unknown) {
+    const msg =
+      finalizationErr instanceof Error ? finalizationErr.message : String(finalizationErr);
+    return failMigration(`ERR_SHADOW_FINALIZATION_FAILED: ${msg}`);
+  }
 
   return {
     status: finalStatus,
