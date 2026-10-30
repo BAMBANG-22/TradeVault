@@ -2553,31 +2553,60 @@ export async function runPhase1StorageAndMigrationTests(): Promise<Phase1TestSui
       unlockScreenshotInMemory('sc-at11-6-locked');
       const meta6 = await adapter.getScreenshotMetadata('sc-at11-6-locked');
 
-      const passed =
-        dryRunReport.isDryRun === true &&
-        dryRunReport.deletedScreenshotIds.length === 0 &&
-        cleanupReport.deletedScreenshotIds.length === 1 &&
-        cleanupReport.deletedScreenshotIds[0] === 'sc-at11-5-staged-orphan-25h' &&
-        cleanupReport.transitionedToPendingUploadIds.includes('sc-at11-2-stuck-uploading') &&
-        meta1?.lifecycle_status === 'ACTIVE' &&
-        meta2?.upload_status === 'PENDING_UPLOAD' &&
-        meta2?.lease_owner_id === null &&
-        file2 !== null &&
-        meta3 !== null &&
-        meta4 !== null &&
-        meta5 === null &&
-        file5 === null &&
-        meta6 !== null;
+      // Keep each assertion visible so a failure identifies the exact lifecycle rule.
+      const checks = {
+        dryRunEnabled: dryRunReport.isDryRun === true,
+        dryRunDeletedNothing: dryRunReport.deletedScreenshotIds.length === 0,
+        onlyExpectedOrphanDeleted:
+          cleanupReport.deletedScreenshotIds.length === 1 &&
+          cleanupReport.deletedScreenshotIds[0] === 'sc-at11-5-staged-orphan-25h',
+        stuckUploadingTransitionReported:
+          cleanupReport.transitionedToPendingUploadIds.includes('sc-at11-2-stuck-uploading'),
+        activeScreenshotRetained: meta1?.lifecycle_status === 'ACTIVE',
+        uploadingScreenshotRecovered:
+          meta2?.upload_status === 'PENDING_UPLOAD' && meta2?.lease_owner_id === null,
+        uploadingScreenshotFileRetained: file2 !== null,
+        twentyThreeHourScreenshotRetained: meta3 !== null,
+        outboxReferencedScreenshotRetained: meta4 !== null,
+        twentyFiveHourOrphanMetadataDeleted: meta5 === null,
+        twentyFiveHourOrphanFileDeleted: file5 === null,
+        inMemoryLockedScreenshotRetained: meta6 !== null,
+      };
+      const passed = Object.values(checks).every(Boolean);
+      const actual = {
+        checks,
+        dryRun: {
+          isDryRun: dryRunReport.isDryRun,
+          deletedScreenshotIds: dryRunReport.deletedScreenshotIds,
+          wouldDeleteCandidateIds: dryRunReport.wouldDeleteCandidateIds,
+        },
+        cleanup: {
+          isDryRun: cleanupReport.isDryRun,
+          deletedScreenshotIds: cleanupReport.deletedScreenshotIds,
+          wouldDeleteCandidateIds: cleanupReport.wouldDeleteCandidateIds,
+          transitionedToPendingUploadIds: cleanupReport.transitionedToPendingUploadIds,
+          retainedCount: cleanupReport.retainedCount,
+        },
+        observed: {
+          activeLifecycleStatus: meta1?.lifecycle_status ?? null,
+          uploadingStatus: meta2?.upload_status ?? null,
+          uploadingLeaseOwner: meta2?.lease_owner_id ?? null,
+          uploadingFileExists: file2 !== null,
+          twentyThreeHourExists: meta3 !== null,
+          referencedScreenshotExists: meta4 !== null,
+          orphanMetadataExists: meta5 !== null,
+          orphanFileExists: file5 !== null,
+          lockedScreenshotExists: meta6 !== null,
+        },
+      };
 
       recordTest(
         'AT-11',
         'Screenshot Lease & 24-Hour Orphan Cleanup Rules in Isolated Test DB',
         'AT-10..AT-12 Screenshot Lifecycle & Safety',
         passed,
-        passed
-          ? 'ACTIVE/23h/Referenced retained; 16m UPLOADING->PENDING_UPLOAD; only 25h orphan deleted'
-          : 'Cleanup state machine mismatch',
-        'ACTIVE/23h/Referenced retained; 16m UPLOADING->PENDING_UPLOAD; only 25h orphan deleted'
+        actual,
+        'All 12 named lifecycle and cleanup assertions must be true'
       );
     } catch (err: unknown) {
       recordTest(
