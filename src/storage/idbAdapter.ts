@@ -1469,6 +1469,20 @@ export class IdbDatabaseAdapter implements ILocalDatabaseAdapter {
     return this.readByPrimaryKey<ScreenshotFileRow>('screenshot_files', screenshotId);
   }
 
+  public async getScreenshotMetadataByOwner(
+    ownerScope: OwnerScope
+  ): Promise<ScreenshotMetadataRow[]> {
+    const cleanScope = String(ownerScope).trim();
+    const all = await this.readAllFromStore<ScreenshotMetadataRow>('screenshot_metadata');
+    return all.filter((row) => row.owner_scope === cleanScope);
+  }
+
+  public async getScreenshotFilesByOwner(ownerScope: OwnerScope): Promise<ScreenshotFileRow[]> {
+    const cleanScope = String(ownerScope).trim();
+    const all = await this.readAllFromStore<ScreenshotFileRow>('screenshot_files');
+    return all.filter((row) => row.owner_scope === cleanScope);
+  }
+
   public async acquireScreenshotLease(
     screenshotId: string,
     leaseOwnerId: string,
