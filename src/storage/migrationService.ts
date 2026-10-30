@@ -453,17 +453,22 @@ export async function runShadowMigration(
     canonical_digest: expectedSettingsDigest,
   };
 
-  const failMigration = async (reason: string): Promise<ShadowMigrationReport> => {
+  const failMigration = async (
+    reason: string,
+    cleanupShadowRows = true
+  ): Promise<ShadowMigrationReport> => {
     let finalReason = reason;
 
-    // A post-write verification failure must not leave a partial shadow dataset behind.
-    // The adapter enforces the Phase 1 test-DB boundary and deletes only this owner scope.
-    try {
-      await adapter.rollbackShadowMigrationScope(cleanScope);
-    } catch (cleanupErr: unknown) {
-      const cleanupMessage =
-        cleanupErr instanceof Error ? cleanupErr.message : String(cleanupErr);
-      finalReason = `${reason}; ERR_SHADOW_ROLLBACK_FAILED: ${cleanupMessage}`;
+    // Post-write verification failures require scoped cleanup. Atomic batch-write failures
+    // already rolled back their transaction and must preserve any pre-existing scope rows.
+    if (cleanupShadowRows) {
+      try {
+        await adapter.rollbackShadowMigrationScope(cleanScope);
+      } catch (cleanupErr: unknown) {
+        const cleanupMessage =
+          cleanupErr instanceof Error ? cleanupErr.message : String(cleanupErr);
+        finalReason = `${reason}; ERR_SHADOW_ROLLBACK_FAILED: ${cleanupMessage}`;
+      }
     }
 
     const failedState: MigrationStateRow = {
@@ -498,7 +503,7 @@ export async function runShadowMigration(
     });
   } catch (writeErr: unknown) {
     const msg = writeErr instanceof Error ? writeErr.message : String(writeErr);
-    return failMigration(`ERR_ATOMIC_BATCH_WRITE_FAILED: ${msg}`);
+    return failMigration(`ERR_ATOMIC_BATCH_WRITE_FAILED: ${msg}`, false);
   }
 
   // Optional test hook for AT-09 (simulating source mutation during migration)
