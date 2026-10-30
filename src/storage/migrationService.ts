@@ -161,13 +161,19 @@ export async function runShadowMigration(
 
   // Refuse to overwrite a previously populated shadow scope. A FAILED retry is allowed
   // only after its prior shadow rows have been safely rolled back.
-  const [existingScopeTrades, existingScopeSettings, existingScopeQuarantine] =
-    await Promise.all([
-      adapter.getTradesByOwner(cleanScope),
-      adapter.getSettingsByOwner(cleanScope),
-      adapter.getQuarantinedRecordsByOwner(cleanScope),
-    ]);
+  const [
+    existingMigrationState,
+    existingScopeTrades,
+    existingScopeSettings,
+    existingScopeQuarantine,
+  ] = await Promise.all([
+    adapter.getMigrationState(cleanScope),
+    adapter.getTradesByOwner(cleanScope),
+    adapter.getSettingsByOwner(cleanScope),
+    adapter.getQuarantinedRecordsByOwner(cleanScope),
+  ]);
   if (
+    (existingMigrationState !== null && existingMigrationState.status !== 'FAILED') ||
     existingScopeTrades.length > 0 ||
     existingScopeSettings !== null ||
     existingScopeQuarantine.length > 0
