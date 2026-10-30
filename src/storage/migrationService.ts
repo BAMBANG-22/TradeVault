@@ -454,10 +454,22 @@ export async function runShadowMigration(
   };
 
   const failMigration = async (reason: string): Promise<ShadowMigrationReport> => {
+    let finalReason = reason;
+
+    // A post-write verification failure must not leave a partial shadow dataset behind.
+    // The adapter enforces the Phase 1 test-DB boundary and deletes only this owner scope.
+    try {
+      await adapter.rollbackShadowMigrationScope(cleanScope);
+    } catch (cleanupErr: unknown) {
+      const cleanupMessage =
+        cleanupErr instanceof Error ? cleanupErr.message : String(cleanupErr);
+      finalReason = `${reason}; ERR_SHADOW_ROLLBACK_FAILED: ${cleanupMessage}`;
+    }
+
     const failedState: MigrationStateRow = {
       ...initialState,
       status: 'FAILED',
-      failure_reason: reason,
+      failure_reason: finalReason,
       completed_at: Date.now(),
     };
     await adapter.setMigrationState(failedState);
@@ -470,7 +482,7 @@ export async function runShadowMigration(
       snapshotChecksumStart,
       snapshotChecksumEnd: null,
       isActiveSourceOfTruth: false,
-      failureReason: reason,
+      failureReason: finalReason,
     };
   };
 
