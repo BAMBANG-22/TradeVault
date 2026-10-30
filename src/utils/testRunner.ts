@@ -1921,6 +1921,27 @@ export async function runPhase1StorageAndMigrationTests(): Promise<Phase1TestSui
         'scope-at05-digest-fail'
       );
 
+      // A populated scope must be rejected without replacing its existing trade/settings.
+      const protectedScope = 'scope-at05-preexisting-protected';
+      await adapter.putTrade(cleanTradesFixture[1], { ownerScope: protectedScope });
+      await adapter.putSettings(DEFAULT_SETTINGS, protectedScope);
+      let populatedScopeRejected = false;
+      try {
+        await runShadowMigration({
+          adapter,
+          snapshotProvider: provider,
+          ownerScope: protectedScope,
+          tradesStorageKey: 'synth_trades_clean',
+          settingsStorageKey: 'synth_settings_clean',
+        });
+      } catch (err: unknown) {
+        populatedScopeRejected =
+          err instanceof Error && err.message.startsWith('ERR_MIGRATION_SCOPE_NOT_EMPTY');
+      }
+      const protectedTradesAfterAttempt = await adapter.getTradesByOwner(protectedScope);
+      const protectedSettingsAfterAttempt = await adapter.getSettingsByOwner(protectedScope);
+      const protectedMigrationState = await adapter.getMigrationState(protectedScope);
+
       const passed =
         report.status === 'VERIFIED_SHADOW' &&
         report.migratedTradesCount === 2 &&
@@ -1936,7 +1957,13 @@ export async function runPhase1StorageAndMigrationTests(): Promise<Phase1TestSui
         failedScopeScreenshotMetadata.length === 1 &&
         failedScopeScreenshotMetadata[0].screenshot_id === 'sc-at05-unrelated-staged' &&
         failedScopeScreenshotFiles.length === 1 &&
-        failedScopeScreenshotFiles[0].screenshot_id === 'sc-at05-unrelated-staged';
+        failedScopeScreenshotFiles[0].screenshot_id === 'sc-at05-unrelated-staged' &&
+        populatedScopeRejected &&
+        protectedTradesAfterAttempt.length === 1 &&
+        protectedTradesAfterAttempt[0].id === cleanTradesFixture[1].id &&
+        protectedTradesAfterAttempt[0].netProfit === cleanTradesFixture[1].netProfit &&
+        protectedSettingsAfterAttempt !== null &&
+        protectedMigrationState === null;
 
       recordTest(
         'AT-05',
