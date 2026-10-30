@@ -27,6 +27,39 @@ import {
   mapDatabaseDirectionToApp,
   normalizeTradeDateTimeLocal,
 } from './supabaseSync';
+import {
+  PHASE_1_TEST_DB_NAME,
+  PRODUCTION_DB_NAME_BLOCKED_IN_PHASE_1,
+} from '../storage/databaseTypes';
+import {
+  computeCanonicalSettingsDigest,
+  computeCanonicalTradeDigest,
+  computeSha256Hex,
+  decodeBase64DataUrlToBinary,
+  decodeBase64UrlToUtf8,
+  decodeTradeNotesWithMeta,
+  encodeTradeNotesWithMetaB64,
+  encodeUtf8ToBase64Url,
+} from '../storage/utf8Base64Url';
+import {
+  classifySupabaseSyncError,
+  IdbDatabaseAdapter,
+  lockScreenshotInMemory,
+  mapLocalRowToSettings,
+  mapLocalRowToTrade,
+  unlockScreenshotInMemory,
+  validateAndNormalizeTradeRecord,
+} from '../storage/idbAdapter';
+import {
+  SQLITE_PHASE_1_ERROR_CODE,
+  SqliteDatabaseAdapter,
+  verifyDatabaseSchemaParity,
+} from '../storage/sqliteAdapter';
+import {
+  captureWindowLocalStorageSnapshotDigest,
+  createInMemorySnapshotProvider,
+  runShadowMigration,
+} from '../storage/migrationService';
 
 export interface TestResultItem {
   name: string;
@@ -1364,3 +1397,1559 @@ export function runFinancialCalculationsTests(): TestSuiteSummary {
     results,
   };
 }
+
+export interface Phase1AcceptanceTestItem extends TestResultItem {
+  testId: string;
+  status: 'PASS' | 'FAIL' | 'NOT RUN';
+  databaseUsed: string;
+}
+
+export interface Phase1TestSuiteSummary extends TestSuiteSummary {
+  databaseUsed: typeof PHASE_1_TEST_DB_NAME;
+  localStorageKeyCountBefore: number;
+  localStorageKeyCountAfter: number;
+  localStorageDigestBefore: string;
+  localStorageDigestAfter: string;
+  isLocalStorageUnchanged: boolean;
+  acceptanceResults: Phase1AcceptanceTestItem[];
+}
+
+// Synthetic 1x1 transparent PNG in Base64 for isolated screenshot testing (AT-05, AT-10, AT-11, AT-13)
+const SYNTHETIC_PNG_BASE64_DATA_URL =
+  'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
+
+/**
+ * Runs Phase 1 Acceptance Tests (AT-01 through AT-17) strictly inside 'tradevault_idb_test'.
+ * - Uses synthetic fixtures only.
+ * - Never opens or modifies 'tradevault_idb'.
+ * - Never reads/copies user trade content from window.localStorage into IndexedDB.
+ * - Makes zero Supabase network requests.
+ * - Captures before/after SHA-256 digest of window.localStorage to prove 100% non-destruction.
+ */
+export async function runPhase1StorageAndMigrationTests(): Promise<Phase1TestSuiteSummary> {
+  const startTime = Date.now();
+  const acceptanceResults: Phase1AcceptanceTestItem[] = [];
+
+  const recordTest = (
+    testId: string,
+    name: string,
+    category: string,
+    passed: boolean,
+    actual: unknown,
+    expected: unknown,
+    details?: string
+  ) => {
+    acceptanceResults.push({
+      testId,
+      name: `${testId}: ${name}`,
+      category,
+      passed,
+      status: passed ? 'PASS' : 'FAIL',
+      actual,
+      expected,
+      details,
+      databaseUsed: PHASE_1_TEST_DB_NAME,
+    });
+  };
+
+  // Capture initial window.localStorage SHA-256 snapshot before any test runs (AT-17)
+  const snapshotBefore = await captureWindowLocalStorageSnapshotDigest();
+
+  const adapter = new IdbDatabaseAdapter(PHASE_1_TEST_DB_NAME);
+
+  try {
+    await adapter.destroyDatabaseForTestingOnly();
+    await adapter.open();
+
+    // =========================================================================
+    // AT-01: Trade 27-Field Round-Trip & Canonical Digest
+    // =========================================================================
+    try {
+      const full27FieldTrade: Trade = {
+        id: 'SYNTH-TRD-001',
+        dateTime: '2026-10-15T09:45',
+        instrument: 'XAUUSD',
+        position: 'BUY',
+        strategy: 'London Liquidity Sweep + CHoCH',
+        session: 'London',
+        entryPrice: 2715.25,
+        stopLoss: 2710.25,
+        takeProfit: 2730.25,
+        exitPrice: 2730.25,
+        lotSize: 0.25,
+        riskAmount: 125.0,
+        riskPercentage: 1.25,
+        outcome: 'WIN',
+        grossProfit: 375.0,
+        commission: 7.5,
+        swap: -1.5,
+        netProfit: 366.0,
+        rMultiple: 2.93,
+        screenshotUrl: 'https://example.invalid/chart-001.png',
+        notes: 'Catatan jurnal lengkap [uji karakter ] dan } serta emoji 🚀]',
+        entryReason: 'Konfirmasi sweep low Asia + displacement M5',
+        postTradeEvaluation: 'Eksekusi disiplin sesuai trading plan tanpa geser SL',
+        disciplineRating: 5,
+        executionNotes: 'Slippage 0.05 poin pada saat entry market order',
+        isDemo: false,
+        createdAt: '2026-10-15T09:45:00.000Z',
+        updatedAt: '2026-10-15T11:30:00.000Z',
+      };
+
+      const expectedDigest = await computeCanonicalTradeDigest(full27FieldTrade);
+      await adapter.putTrade(full27FieldTrade, { ownerScope: 'GUEST' });
+
+      const storedRow = await adapter.getTradeByOwnerAndLocalId('GUEST', 'SYNTH-TRD-001');
+      if (!storedRow) {
+        throw new Error('Stored row was not found on read-back.');
+      }
+      const restoredTrade = mapLocalRowToTrade(storedRow);
+      const actualDigest = await computeCanonicalTradeDigest(restoredTrade);
+
+      const all27Match =
+        restoredTrade.id === full27FieldTrade.id &&
+        restoredTrade.dateTime === full27FieldTrade.dateTime &&
+        restoredTrade.instrument === full27FieldTrade.instrument &&
+        restoredTrade.position === full27FieldTrade.position &&
+        restoredTrade.strategy === full27FieldTrade.strategy &&
+        restoredTrade.session === full27FieldTrade.session &&
+        restoredTrade.entryPrice === full27FieldTrade.entryPrice &&
+        restoredTrade.stopLoss === full27FieldTrade.stopLoss &&
+        restoredTrade.takeProfit === full27FieldTrade.takeProfit &&
+        restoredTrade.exitPrice === full27FieldTrade.exitPrice &&
+        restoredTrade.lotSize === full27FieldTrade.lotSize &&
+        restoredTrade.riskAmount === full27FieldTrade.riskAmount &&
+        restoredTrade.riskPercentage === full27FieldTrade.riskPercentage &&
+        restoredTrade.outcome === full27FieldTrade.outcome &&
+        restoredTrade.grossProfit === full27FieldTrade.grossProfit &&
+        restoredTrade.commission === full27FieldTrade.commission &&
+        restoredTrade.swap === full27FieldTrade.swap &&
+        restoredTrade.netProfit === full27FieldTrade.netProfit &&
+        restoredTrade.rMultiple === full27FieldTrade.rMultiple &&
+        restoredTrade.screenshotUrl === full27FieldTrade.screenshotUrl &&
+        restoredTrade.notes === full27FieldTrade.notes &&
+        restoredTrade.entryReason === full27FieldTrade.entryReason &&
+        restoredTrade.postTradeEvaluation === full27FieldTrade.postTradeEvaluation &&
+        restoredTrade.disciplineRating === full27FieldTrade.disciplineRating &&
+        restoredTrade.executionNotes === full27FieldTrade.executionNotes &&
+        restoredTrade.isDemo === full27FieldTrade.isDemo &&
+        restoredTrade.createdAt === full27FieldTrade.createdAt &&
+        restoredTrade.updatedAt === full27FieldTrade.updatedAt &&
+        actualDigest === expectedDigest;
+
+      recordTest(
+        'AT-01',
+        'Trade 27-Field Round-Trip & Canonical SHA-256 Digest Verification',
+        'AT-01..AT-04 Identity & Serialization',
+        all27Match,
+        all27Match ? '27/27 fields + SHA-256 matched' : 'Field or digest mismatch',
+        '27/27 fields + SHA-256 matched',
+        `Digest: ${actualDigest.slice(0, 16)}...`
+      );
+    } catch (err: unknown) {
+      recordTest(
+        'AT-01',
+        'Trade 27-Field Round-Trip & Canonical SHA-256 Digest Verification',
+        'AT-01..AT-04 Identity & Serialization',
+        false,
+        err instanceof Error ? err.message : String(err),
+        '27/27 fields + SHA-256 matched'
+      );
+    }
+
+    // =========================================================================
+    // AT-02: AppSettings 20-Property Round-Trip & Scope Isolation
+    // =========================================================================
+    try {
+      const guestSettings: AppSettings = {
+        currency: 'USD',
+        currencySymbol: '$',
+        startingBalance: 10000,
+        xauusdContractSize: 100,
+        xauusdPointValue: 0.01,
+        xauusdTickSize: 0.01,
+        xauusdTickValue: 1.0,
+        xauusdMinLot: 0.01,
+        xauusdLotStep: 0.01,
+        defaultLeverage: 500,
+        brokerCommissionPerLot: 6,
+        defaultRiskPercent: 1.0,
+        maxTradeRiskPercent: 2.0,
+        maxTradeRiskAmount: 200,
+        maxDailyLossPercent: 3.0,
+        maxDailyLossAmount: 300,
+        maxConsecutiveLossLimit: 3,
+        maxDrawdownLimitPercent: 10.0,
+        resetTimezone: 'WIB (UTC+7)',
+        targetMonthlyReturnPercent: 8,
+      };
+
+      const userASettings: AppSettings = {
+        currency: 'EUR',
+        currencySymbol: '€',
+        startingBalance: 25000,
+        xauusdContractSize: 10,
+        xauusdPointValue: 0.05,
+        xauusdTickSize: 0.05,
+        xauusdTickValue: 0.5,
+        xauusdMinLot: 0.05,
+        xauusdLotStep: 0.05,
+        defaultLeverage: 200,
+        brokerCommissionPerLot: 4.5,
+        defaultRiskPercent: 0.75,
+        maxTradeRiskPercent: 1.5,
+        maxTradeRiskAmount: 375,
+        maxDailyLossPercent: 2.5,
+        maxDailyLossAmount: 625,
+        maxConsecutiveLossLimit: 4,
+        maxDrawdownLimitPercent: 8.5,
+        resetTimezone: 'UTC',
+        targetMonthlyReturnPercent: 12,
+      };
+
+      const expectedGuestDigest = await computeCanonicalSettingsDigest(guestSettings);
+      const expectedUserADigest = await computeCanonicalSettingsDigest(userASettings);
+
+      await adapter.putSettings(guestSettings, 'GUEST');
+      await adapter.putSettings(userASettings, 'synth-user-A');
+
+      const guestRow = await adapter.getSettingsByOwner('GUEST');
+      const userARow = await adapter.getSettingsByOwner('synth-user-A');
+
+      if (!guestRow || !userARow) {
+        throw new Error('Failed to read back scoped settings rows.');
+      }
+
+      const restoredGuest = mapLocalRowToSettings(guestRow);
+      const restoredUserA = mapLocalRowToSettings(userARow);
+
+      const actualGuestDigest = await computeCanonicalSettingsDigest(restoredGuest);
+      const actualUserADigest = await computeCanonicalSettingsDigest(restoredUserA);
+
+      const passed =
+        actualGuestDigest === expectedGuestDigest &&
+        actualUserADigest === expectedUserADigest &&
+        actualGuestDigest !== actualUserADigest &&
+        restoredUserA.defaultLeverage === 200 &&
+        restoredGuest.defaultLeverage === 500 &&
+        restoredUserA.resetTimezone === 'UTC' &&
+        restoredGuest.resetTimezone === 'WIB (UTC+7)';
+
+      recordTest(
+        'AT-02',
+        'AppSettings 20-Property Round-Trip & Multi-Scope Isolation',
+        'AT-01..AT-04 Identity & Serialization',
+        passed,
+        passed ? '20/20 props isolated across GUEST & synth-user-A' : 'Settings mismatch',
+        '20/20 props isolated across GUEST & synth-user-A'
+      );
+    } catch (err: unknown) {
+      recordTest(
+        'AT-02',
+        'AppSettings 20-Property Round-Trip & Multi-Scope Isolation',
+        'AT-01..AT-04 Identity & Serialization',
+        false,
+        err instanceof Error ? err.message : String(err),
+        '20/20 props isolated across GUEST & synth-user-A'
+      );
+    }
+
+    // =========================================================================
+    // AT-03: UTF-8 Base64URL Serialization ([MetaB64] & Legacy [Meta])
+    // =========================================================================
+    try {
+      const complexTrade: Trade = {
+        id: 'TRD-UTF8-03',
+        dateTime: '2026-10-16T14:00',
+        instrument: 'XAUUSD',
+        position: 'SELL',
+        strategy: 'NY Reversal',
+        entryPrice: 2740,
+        lotSize: 0.1,
+        riskAmount: 50,
+        riskPercentage: 0.5,
+        outcome: 'WIN',
+        grossProfit: 150,
+        commission: 0,
+        swap: 0,
+        netProfit: 150,
+        rMultiple: 3.0,
+        disciplineRating: 4,
+        isDemo: true,
+        notes: 'Catatan Bahasa Indonesia: disiplin tinggi! [Kurung siku] & {kurung kurawal} 金相場 🚀📈',
+        entryReason: 'Rejection di area supply H4 + divergence [RSI > 70] }',
+        postTradeEvaluation: 'Target tercapai mulus ✅ 東京・ロンドン',
+        executionNotes: 'Eksekusi limit order tepat di 2740.00',
+      };
+
+      const encodedNotes = encodeTradeNotesWithMetaB64(complexTrade, {
+        syncRevision: 3,
+        lastMutationId: 'mut-utf8-003',
+      });
+      const decoded = decodeTradeNotesWithMeta(encodedNotes);
+
+      // Also verify legacy [LocalID: ...] and [Meta: {...}] backward compatibility
+      const legacyString =
+        '[LocalID: TRD-LEGACY-77] Catatan lama sebelum migrasi [Meta: {"riskAmount":85.5,"riskPercentage":1.5,"rMultiple":2.25,"disciplineRating":5,"isDemo":true}]';
+      const decodedLegacy = decodeTradeNotesWithMeta(legacyString);
+
+      // Also verify explicit rejection of malformed Base64URL input
+      let malformedRejected = false;
+      try {
+        decodeBase64UrlToUtf8('!!!NOT_VALID_BASE64URL$$$');
+      } catch {
+        malformedRejected = true;
+      }
+
+      const utf8RoundTripPassed =
+        decoded.formatDetected === 'METAB64' &&
+        decoded.cleanNotes === complexTrade.notes &&
+        decoded.meta.entryReason === complexTrade.entryReason &&
+        decoded.meta.postTradeEvaluation === complexTrade.postTradeEvaluation &&
+        decoded.meta.executionNotes === complexTrade.executionNotes &&
+        decoded.meta.rMultiple === 3.0 &&
+        decoded.meta.disciplineRating === 4 &&
+        decoded.meta.isDemo === true &&
+        decodedLegacy.formatDetected === 'LEGACY_META' &&
+        decodedLegacy.extractedLocalId === 'TRD-LEGACY-77' &&
+        decodedLegacy.cleanNotes === 'Catatan lama sebelum migrasi' &&
+        decodedLegacy.meta.riskAmount === 85.5 &&
+        decodedLegacy.meta.rMultiple === 2.25 &&
+        malformedRejected &&
+        decodeBase64UrlToUtf8(encodeUtf8ToBase64Url('Uji karakter: é, ü, 日本語, العربية, 🎯')) ===
+          'Uji karakter: é, ü, 日本語, العربية, 🎯';
+
+      recordTest(
+        'AT-03',
+        'UTF-8 Base64URL [MetaB64] Round-Trip, Legacy [Meta] Compatibility & Malformed Input Rejection',
+        'AT-01..AT-04 Identity & Serialization',
+        utf8RoundTripPassed,
+        utf8RoundTripPassed ? 'UTF-8 + Legacy + Validation Verified' : 'Serialization mismatch',
+        'UTF-8 + Legacy + Validation Verified'
+      );
+    } catch (err: unknown) {
+      recordTest(
+        'AT-03',
+        'UTF-8 Base64URL [MetaB64] Round-Trip, Legacy [Meta] Compatibility & Malformed Input Rejection',
+        'AT-01..AT-04 Identity & Serialization',
+        false,
+        err instanceof Error ? err.message : String(err),
+        'UTF-8 + Legacy + Validation Verified'
+      );
+    }
+
+    // =========================================================================
+    // AT-04: Multi-Scope Local ID Coexistence & Canonical UUID Collision Recovery
+    // =========================================================================
+    try {
+      const baseSameIdTrade: Trade = {
+        id: 'TRD-SHARED-100',
+        dateTime: '2026-10-17T10:00',
+        instrument: 'XAUUSD',
+        position: 'BUY',
+        strategy: 'Breakout',
+        entryPrice: 2700,
+        lotSize: 0.1,
+        riskAmount: 50,
+        riskPercentage: 0.5,
+        outcome: 'WIN',
+        grossProfit: 100,
+        commission: 0,
+        swap: 0,
+        netProfit: 100,
+      };
+
+      const rowGuest = await adapter.putTrade(
+        { ...baseSameIdTrade, netProfit: 111, grossProfit: 111 },
+        { ownerScope: 'GUEST' }
+      );
+      const rowUserA = await adapter.putTrade(
+        { ...baseSameIdTrade, netProfit: 222, grossProfit: 222 },
+        { ownerScope: 'synth-user-A' }
+      );
+
+      // Simulate a canonical_uuid collision on attempt #1 for synth-user-B (returns rowUserA.canonical_uuid first, then a fresh UUID)
+      let generatorCallCount = 0;
+      const collidingUuidGenerator = () => {
+        generatorCallCount++;
+        if (generatorCallCount === 1) {
+          return rowUserA.canonical_uuid; // Deliberate collision on primary key!
+        }
+        return crypto.randomUUID();
+      };
+
+      const rowUserB = await adapter.putTrade(
+        { ...baseSameIdTrade, netProfit: 333, grossProfit: 333 },
+        {
+          ownerScope: 'synth-user-B',
+          uuidGenerator: collidingUuidGenerator,
+        }
+      );
+
+      // Verify cloud-bound UUID preservation (isCloudBound = 1)
+      const cloudBoundUuid = '11111111-2222-4333-8444-555555555555';
+      const cloudBoundRow = await adapter.putTrade(
+        { ...baseSameIdTrade, id: 'TRD-CLOUD-BOUND-1', netProfit: 444, grossProfit: 444 },
+        {
+          ownerScope: 'synth-user-A',
+          isCloudBound: 1,
+          canonicalUuid: cloudBoundUuid,
+        }
+      );
+
+      const readGuest = await adapter.getTradeByOwnerAndLocalId('GUEST', 'TRD-SHARED-100');
+      const readUserA = await adapter.getTradeByOwnerAndLocalId('synth-user-A', 'TRD-SHARED-100');
+      const readUserB = await adapter.getTradeByOwnerAndLocalId('synth-user-B', 'TRD-SHARED-100');
+
+      const distinctUuids =
+        new Set([rowGuest.canonical_uuid, rowUserA.canonical_uuid, rowUserB.canonical_uuid]).size ===
+        3;
+
+      const passed =
+        distinctUuids &&
+        generatorCallCount === 2 &&
+        readGuest?.netProfit === 111 &&
+        readUserA?.netProfit === 222 &&
+        readUserB?.netProfit === 333 &&
+        cloudBoundRow.canonical_uuid === cloudBoundUuid &&
+        cloudBoundRow.is_cloud_bound === 1;
+
+      recordTest(
+        'AT-04',
+        'Multi-Scope Local ID Coexistence (GUEST, user-A, user-B) & ConstraintError UUID Collision Recovery',
+        'AT-01..AT-04 Identity & Serialization',
+        passed,
+        passed
+          ? '3 scopes coexist + collision retried after abort + cloud UUID preserved'
+          : 'Scope collision or UUID error',
+        '3 scopes coexist + collision retried after abort + cloud UUID preserved'
+      );
+    } catch (err: unknown) {
+      recordTest(
+        'AT-04',
+        'Multi-Scope Local ID Coexistence (GUEST, user-A, user-B) & ConstraintError UUID Collision Recovery',
+        'AT-01..AT-04 Identity & Serialization',
+        false,
+        err instanceof Error ? err.message : String(err),
+        '3 scopes coexist + collision retried after abort + cloud UUID preserved'
+      );
+    }
+
+    // =========================================================================
+    // AT-05: VERIFIED_SHADOW Full 11-Step Migration & Digest Verification
+    // =========================================================================
+    try {
+      const cleanTradesFixture: Trade[] = [
+        {
+          id: 'MIG-CLEAN-01',
+          dateTime: '2026-10-18T09:00',
+          instrument: 'XAUUSD',
+          position: 'BUY',
+          strategy: 'Order Block',
+          entryPrice: 2710,
+          lotSize: 0.2,
+          riskAmount: 100,
+          riskPercentage: 1.0,
+          outcome: 'WIN',
+          grossProfit: 260,
+          commission: 6,
+          swap: 0,
+          netProfit: 254,
+          screenshotUrl: SYNTHETIC_PNG_BASE64_DATA_URL,
+          entryReason: 'Clean OB tap',
+        },
+        {
+          id: 'MIG-CLEAN-02',
+          dateTime: '2026-10-18T15:00',
+          instrument: 'XAUUSD',
+          position: 'SELL',
+          strategy: 'FVG Fill',
+          entryPrice: 2725,
+          lotSize: 0.1,
+          riskAmount: 50,
+          riskPercentage: 0.5,
+          outcome: 'LOSS',
+          grossProfit: -50,
+          commission: 3,
+          swap: 0,
+          netProfit: -53,
+        },
+      ];
+
+      const provider = createInMemorySnapshotProvider({
+        synth_trades_clean: JSON.stringify(cleanTradesFixture),
+        synth_settings_clean: JSON.stringify(DEFAULT_SETTINGS),
+      });
+
+      const report = await runShadowMigration({
+        adapter,
+        snapshotProvider: provider,
+        ownerScope: 'scope-at05-clean',
+        tradesStorageKey: 'synth_trades_clean',
+        settingsStorageKey: 'synth_settings_clean',
+      });
+
+      const migState = await adapter.getMigrationState('scope-at05-clean');
+
+      // Also verify that if read-back digest mismatches, VERIFIED_SHADOW is rejected and marked FAILED
+      const badDigestReport = await runShadowMigration({
+        adapter,
+        snapshotProvider: provider,
+        ownerScope: 'scope-at05-digest-fail',
+        tradesStorageKey: 'synth_trades_clean',
+        settingsStorageKey: 'synth_settings_clean',
+        simulateReadBackDigestMismatch: true,
+      });
+
+      const passed =
+        report.status === 'VERIFIED_SHADOW' &&
+        report.migratedTradesCount === 2 &&
+        report.migratedScreenshotsCount === 1 &&
+        report.quarantinedCount === 0 &&
+        report.isActiveSourceOfTruth === false &&
+        report.snapshotChecksumStart === report.snapshotChecksumEnd &&
+        migState?.is_active_source_of_truth === 0 &&
+        badDigestReport.status === 'FAILED';
+
+      recordTest(
+        'AT-05',
+        'VERIFIED_SHADOW Shadow Migration (Snapshot + Per-Record Digest + Read-Back Verification)',
+        'AT-05..AT-09 Shadow Migration & Corruption',
+        passed,
+        report.status,
+        'VERIFIED_SHADOW'
+      );
+    } catch (err: unknown) {
+      recordTest(
+        'AT-05',
+        'VERIFIED_SHADOW Shadow Migration (Snapshot + Per-Record Digest + Read-Back Verification)',
+        'AT-05..AT-09 Shadow Migration & Corruption',
+        false,
+        err instanceof Error ? err.message : String(err),
+        'VERIFIED_SHADOW'
+      );
+    }
+
+    // =========================================================================
+    // AT-06: Invalid Top-Level JSON Document Quarantine
+    // =========================================================================
+    try {
+      const malformedJsonStr = '[{"id":"TRD-BROKEN-JSON","instrument":"XAUUSD","entryPrice":2700';
+      const provider = createInMemorySnapshotProvider({
+        synth_trades_malformed_json: malformedJsonStr,
+        synth_settings_malformed_json: JSON.stringify(DEFAULT_SETTINGS),
+      });
+
+      const report = await runShadowMigration({
+        adapter,
+        snapshotProvider: provider,
+        ownerScope: 'scope-at06-badjson',
+        tradesStorageKey: 'synth_trades_malformed_json',
+        settingsStorageKey: 'synth_settings_malformed_json',
+      });
+
+      const quarantined = await adapter.getQuarantinedRecordsByOwner('scope-at06-badjson');
+      const passed =
+        report.status === 'COMPLETED_WITH_QUARANTINE' &&
+        report.migratedTradesCount === 0 &&
+        report.quarantinedCount === 1 &&
+        quarantined.length === 1 &&
+        quarantined[0].corruption_scope === 'TOP_LEVEL_JSON' &&
+        quarantined[0].raw_payload === malformedJsonStr &&
+        provider.getItem('synth_trades_malformed_json') === malformedJsonStr;
+
+      recordTest(
+        'AT-06',
+        'Top-Level Malformed JSON Document Quarantine Without Partial Migration',
+        'AT-05..AT-09 Shadow Migration & Corruption',
+        passed,
+        `${report.status} (quarantined=${report.quarantinedCount}, migrated=${report.migratedTradesCount})`,
+        'COMPLETED_WITH_QUARANTINE (quarantined=1, migrated=0)'
+      );
+    } catch (err: unknown) {
+      recordTest(
+        'AT-06',
+        'Top-Level Malformed JSON Document Quarantine Without Partial Migration',
+        'AT-05..AT-09 Shadow Migration & Corruption',
+        false,
+        err instanceof Error ? err.message : String(err),
+        'COMPLETED_WITH_QUARANTINE (quarantined=1, migrated=0)'
+      );
+    }
+
+    // =========================================================================
+    // AT-07A: Valid JSON Document Containing Invalid Records
+    // =========================================================================
+    try {
+      const mixedJsonRecords = [
+        {
+          id: 'AT07A-VALID-1',
+          dateTime: '2026-10-19T10:00',
+          instrument: 'XAUUSD',
+          position: 'BUY',
+          strategy: 'Valid 1',
+          entryPrice: 2700,
+          lotSize: 0.1,
+          riskAmount: 50,
+          riskPercentage: 0.5,
+          outcome: 'WIN',
+          grossProfit: 100,
+          commission: 0,
+          swap: 0,
+          netProfit: 100,
+        },
+        {
+          id: 'AT07A-VALID-2',
+          dateTime: '2026-10-19T11:00',
+          instrument: 'XAUUSD',
+          position: 'SELL',
+          strategy: 'Valid 2',
+          entryPrice: 2710,
+          lotSize: 0.1,
+          riskAmount: 50,
+          riskPercentage: 0.5,
+          outcome: 'LOSS',
+          grossProfit: -50,
+          commission: 0,
+          swap: 0,
+          netProfit: -50,
+        },
+        // Invalid Record #1: Missing required id and dateTime
+        {
+          instrument: 'XAUUSD',
+          position: 'BUY',
+          entryPrice: 2700,
+          lotSize: 0.1,
+        },
+        // Invalid Record #2: null / string where required numbers are expected
+        {
+          id: 'AT07A-BAD-NUM',
+          dateTime: '2026-10-19T12:00',
+          instrument: 'XAUUSD',
+          position: 'BUY',
+          strategy: 'Invalid Num',
+          entryPrice: null,
+          lotSize: 'not-a-number',
+          riskAmount: 50,
+          riskPercentage: 0.5,
+          outcome: 'WIN',
+          grossProfit: 100,
+          commission: 0,
+          swap: 0,
+          netProfit: null,
+        },
+      ];
+
+      const provider = createInMemorySnapshotProvider({
+        synth_trades_at07a: JSON.stringify(mixedJsonRecords),
+        synth_settings_at07a: JSON.stringify(DEFAULT_SETTINGS),
+      });
+
+      const report = await runShadowMigration({
+        adapter,
+        snapshotProvider: provider,
+        ownerScope: 'scope-at07a',
+        tradesStorageKey: 'synth_trades_at07a',
+        settingsStorageKey: 'synth_settings_at07a',
+      });
+
+      const quarantined = await adapter.getQuarantinedRecordsByOwner('scope-at07a');
+      const storedValid = await adapter.getTradesByOwner('scope-at07a');
+
+      const passed =
+        report.status === 'COMPLETED_WITH_QUARANTINE' &&
+        report.migratedTradesCount === 2 &&
+        report.quarantinedCount === 2 &&
+        storedValid.length === 2 &&
+        quarantined.length === 2 &&
+        quarantined.every((q) => q.corruption_scope === 'ARRAY_ITEM_RECORD');
+
+      recordTest(
+        'AT-07A',
+        'Valid JSON Document with Malformed Records (Preserve Valid, Quarantine Invalid)',
+        'AT-05..AT-09 Shadow Migration & Corruption',
+        passed,
+        `${report.status} (valid=${report.migratedTradesCount}, quarantined=${report.quarantinedCount})`,
+        'COMPLETED_WITH_QUARANTINE (valid=2, quarantined=2)'
+      );
+    } catch (err: unknown) {
+      recordTest(
+        'AT-07A',
+        'Valid JSON Document with Malformed Records (Preserve Valid, Quarantine Invalid)',
+        'AT-05..AT-09 Shadow Migration & Corruption',
+        false,
+        err instanceof Error ? err.message : String(err),
+        'COMPLETED_WITH_QUARANTINE (valid=2, quarantined=2)'
+      );
+    }
+
+    // =========================================================================
+    // AT-07B: In-Memory JavaScript Objects Containing NaN, Infinity, -Infinity
+    // =========================================================================
+    try {
+      const nanTrade: Trade = {
+        id: 'AT07B-NAN',
+        dateTime: '2026-10-19T14:00',
+        instrument: 'XAUUSD',
+        position: 'BUY',
+        strategy: 'NaN Test',
+        entryPrice: Number.NaN,
+        lotSize: 0.1,
+        riskAmount: 50,
+        riskPercentage: 0.5,
+        outcome: 'WIN',
+        grossProfit: 100,
+        commission: 0,
+        swap: 0,
+        netProfit: 100,
+      };
+
+      const posInfTrade: Trade = {
+        ...nanTrade,
+        id: 'AT07B-POS-INF',
+        entryPrice: 2700,
+        netProfit: Number.POSITIVE_INFINITY,
+      };
+
+      const negInfTrade: Trade = {
+        ...nanTrade,
+        id: 'AT07B-NEG-INF',
+        entryPrice: 2700,
+        lotSize: 0.1,
+        stopLoss: Number.NEGATIVE_INFINITY,
+      };
+
+      // 1. Direct adapter putTrade must reject NaN / Infinity / -Infinity
+      let nanRejected = false;
+      let posInfRejected = false;
+      let negInfRejected = false;
+
+      try {
+        await adapter.putTrade(nanTrade, { ownerScope: 'scope-at07b' });
+      } catch {
+        nanRejected = true;
+      }
+      try {
+        await adapter.putTrade(posInfTrade, { ownerScope: 'scope-at07b' });
+      } catch {
+        posInfRejected = true;
+      }
+      try {
+        await adapter.putTrade(negInfTrade, { ownerScope: 'scope-at07b' });
+      } catch {
+        negInfRejected = true;
+      }
+
+      // 2. Shadow migration with in-memory objects must quarantine all 3 non-finite records
+      const provider = createInMemorySnapshotProvider({
+        synth_trades_at07b: '[]',
+        synth_settings_at07b: JSON.stringify(DEFAULT_SETTINGS),
+      });
+
+      const migReport = await runShadowMigration({
+        adapter,
+        snapshotProvider: provider,
+        ownerScope: 'scope-at07b',
+        tradesStorageKey: 'synth_trades_at07b',
+        settingsStorageKey: 'synth_settings_at07b',
+        inMemoryTradeObjectsOverride: [nanTrade, posInfTrade, negInfTrade],
+      });
+
+      const storedTrades = await adapter.getTradesByOwner('scope-at07b');
+      const validatorCheck = validateAndNormalizeTradeRecord(nanTrade, 'scope-at07b');
+
+      const passed =
+        nanRejected &&
+        posInfRejected &&
+        negInfRejected &&
+        !validatorCheck.isValid &&
+        migReport.status === 'COMPLETED_WITH_QUARANTINE' &&
+        migReport.migratedTradesCount === 0 &&
+        migReport.quarantinedCount === 3 &&
+        storedTrades.length === 0;
+
+      recordTest(
+        'AT-07B',
+        'In-Memory NaN, Infinity & -Infinity Rejection and Quarantine (Zero Silent Coercion)',
+        'AT-05..AT-09 Shadow Migration & Corruption',
+        passed,
+        passed
+          ? 'NaN/Infinity/-Infinity rejected & quarantined (0 stored in trades)'
+          : 'Failed to reject non-finite numbers',
+        'NaN/Infinity/-Infinity rejected & quarantined (0 stored in trades)'
+      );
+    } catch (err: unknown) {
+      recordTest(
+        'AT-07B',
+        'In-Memory NaN, Infinity & -Infinity Rejection and Quarantine (Zero Silent Coercion)',
+        'AT-05..AT-09 Shadow Migration & Corruption',
+        false,
+        err instanceof Error ? err.message : String(err),
+        'NaN/Infinity/-Infinity rejected & quarantined (0 stored in trades)'
+      );
+    }
+
+    // =========================================================================
+    // AT-08: Atomic Write Failure Rollback & Retry Recovery
+    // =========================================================================
+    try {
+      const threeValidTrades: Trade[] = [1, 2, 3].map((n) => ({
+        id: `AT08-TRD-${n}`,
+        dateTime: `2026-10-20T1${n}:00`,
+        instrument: 'XAUUSD',
+        position: 'BUY',
+        strategy: 'Atomic Test',
+        entryPrice: 2700 + n,
+        lotSize: 0.1,
+        riskAmount: 50,
+        riskPercentage: 0.5,
+        outcome: 'WIN',
+        grossProfit: 100 * n,
+        commission: 0,
+        swap: 0,
+        netProfit: 100 * n,
+      }));
+
+      const provider = createInMemorySnapshotProvider({
+        synth_trades_at08: JSON.stringify(threeValidTrades),
+        synth_settings_at08: JSON.stringify(DEFAULT_SETTINGS),
+      });
+
+      // Run 1: Simulate write failure on trade index 2 (the 3rd valid trade)
+      const failedReport = await runShadowMigration({
+        adapter,
+        snapshotProvider: provider,
+        ownerScope: 'scope-at08-atomic',
+        tradesStorageKey: 'synth_trades_at08',
+        settingsStorageKey: 'synth_settings_at08',
+        simulateWriteFailureOnTradeIndex: 2,
+      });
+
+      const tradesAfterFailedTx = await adapter.getTradesByOwner('scope-at08-atomic');
+      const stateAfterFailedTx = await adapter.getMigrationState('scope-at08-atomic');
+
+      // Run 2: Retry without simulated error -> must cleanly succeed with 3 trades and 0 duplicates
+      const retryReport = await runShadowMigration({
+        adapter,
+        snapshotProvider: provider,
+        ownerScope: 'scope-at08-atomic',
+        tradesStorageKey: 'synth_trades_at08',
+        settingsStorageKey: 'synth_settings_at08',
+      });
+      const tradesAfterRetry = await adapter.getTradesByOwner('scope-at08-atomic');
+
+      const passed =
+        failedReport.status === 'FAILED' &&
+        stateAfterFailedTx?.status === 'FAILED' &&
+        tradesAfterFailedTx.length === 0 &&
+        retryReport.status === 'VERIFIED_SHADOW' &&
+        tradesAfterRetry.length === 3;
+
+      recordTest(
+        'AT-08',
+        'Atomic Write Failure Rollback (0 Partial Trades Committed, FAILED Status, Clean Retry)',
+        'AT-05..AT-09 Shadow Migration & Corruption',
+        passed,
+        `Run1=${failedReport.status} (rows=${tradesAfterFailedTx.length}), Retry=${retryReport.status} (rows=${tradesAfterRetry.length})`,
+        'Run1=FAILED (rows=0), Retry=VERIFIED_SHADOW (rows=3)'
+      );
+    } catch (err: unknown) {
+      recordTest(
+        'AT-08',
+        'Atomic Write Failure Rollback (0 Partial Trades Committed, FAILED Status, Clean Retry)',
+        'AT-05..AT-09 Shadow Migration & Corruption',
+        false,
+        err instanceof Error ? err.message : String(err),
+        'Run1=FAILED (rows=0), Retry=VERIFIED_SHADOW (rows=3)'
+      );
+    }
+
+    // =========================================================================
+    // AT-09: Source Snapshot Mutation Detection
+    // =========================================================================
+    try {
+      const initialTrades: Trade[] = [
+        {
+          id: 'AT09-TRD-1',
+          dateTime: '2026-10-21T09:00',
+          instrument: 'XAUUSD',
+          position: 'BUY',
+          strategy: 'Snapshot Lock',
+          entryPrice: 2700,
+          lotSize: 0.1,
+          riskAmount: 50,
+          riskPercentage: 0.5,
+          outcome: 'WIN',
+          grossProfit: 100,
+          commission: 0,
+          swap: 0,
+          netProfit: 100,
+        },
+      ];
+
+      const provider = createInMemorySnapshotProvider({
+        synth_trades_at09: JSON.stringify(initialTrades),
+        synth_settings_at09: JSON.stringify(DEFAULT_SETTINGS),
+      });
+
+      const report = await runShadowMigration({
+        adapter,
+        snapshotProvider: provider,
+        ownerScope: 'scope-at09-mutated',
+        tradesStorageKey: 'synth_trades_at09',
+        settingsStorageKey: 'synth_settings_at09',
+        onBeforeFinalSnapshotCheck: () => {
+          // Mutate source snapshot mid-migration before final checksum check
+          provider.mutateKey(
+            'synth_trades_at09',
+            JSON.stringify([...initialTrades, { ...initialTrades[0], id: 'AT09-TRD-INJECTED' }])
+          );
+        },
+      });
+
+      const migState = await adapter.getMigrationState('scope-at09-mutated');
+      const passed =
+        report.status === 'FAILED' &&
+        report.failureReason === 'ERR_SOURCE_SNAPSHOT_MUTATED_DURING_MIGRATION' &&
+        migState?.status === 'FAILED';
+
+      recordTest(
+        'AT-09',
+        'Mid-Migration Source Snapshot Mutation Detection (Checksum Mismatch -> FAILED)',
+        'AT-05..AT-09 Shadow Migration & Corruption',
+        passed,
+        `${report.status} (${report.failureReason})`,
+        'FAILED (ERR_SOURCE_SNAPSHOT_MUTATED_DURING_MIGRATION)'
+      );
+    } catch (err: unknown) {
+      recordTest(
+        'AT-09',
+        'Mid-Migration Source Snapshot Mutation Detection (Checksum Mismatch -> FAILED)',
+        'AT-05..AT-09 Shadow Migration & Corruption',
+        false,
+        err instanceof Error ? err.message : String(err),
+        'FAILED (ERR_SOURCE_SNAPSHOT_MUTATED_DURING_MIGRATION)'
+      );
+    }
+
+    // =========================================================================
+    // AT-10: Screenshot Base64-to-Blob Extraction & SHA-256 Binary Integrity
+    // =========================================================================
+    try {
+      const decodedBinary = await decodeBase64DataUrlToBinary(SYNTHETIC_PNG_BASE64_DATA_URL);
+      const stagedMeta = await adapter.stageScreenshot({
+        screenshotId: 'sc-at10-valid',
+        ownerScope: 'scope-at10',
+        base64DataUrl: SYNTHETIC_PNG_BASE64_DATA_URL,
+        lifecycleStatus: 'ACTIVE',
+        uploadStatus: 'LOCAL_ONLY',
+      });
+
+      const fileRow = await adapter.getScreenshotFile('sc-at10-valid');
+      if (!fileRow) throw new Error('Screenshot file row missing.');
+
+      const readBackBuffer = await fileRow.blob_data.arrayBuffer();
+      const readBackHash = await computeSha256Hex(readBackBuffer);
+
+      const passed =
+        stagedMeta.mime_type === 'image/png' &&
+        stagedMeta.size_bytes === decodedBinary.sizeBytes &&
+        stagedMeta.size_bytes > 0 &&
+        stagedMeta.sha256_hash === decodedBinary.sha256Hex &&
+        readBackHash === decodedBinary.sha256Hex &&
+        fileRow.blob_data instanceof Blob;
+
+      recordTest(
+        'AT-10',
+        'Base64 Screenshot Conversion to Blob & Read-Back SHA-256 Binary Integrity',
+        'AT-10..AT-12 Screenshot Lifecycle & Safety',
+        passed,
+        passed
+          ? `Blob (${fileRow.size_bytes} bytes) + SHA-256 verified`
+          : 'Binary or hash mismatch',
+        `Blob (${decodedBinary.sizeBytes} bytes) + SHA-256 verified`
+      );
+    } catch (err: unknown) {
+      recordTest(
+        'AT-10',
+        'Base64 Screenshot Conversion to Blob & Read-Back SHA-256 Binary Integrity',
+        'AT-10..AT-12 Screenshot Lifecycle & Safety',
+        false,
+        err instanceof Error ? err.message : String(err),
+        'Blob + SHA-256 verified'
+      );
+    }
+
+    // =========================================================================
+    // AT-11: Screenshot Lease & 24-Hour Cleanup State Machine (Isolated Test DB)
+    // =========================================================================
+    try {
+      const nowMs = 1_800_000_000_000;
+      const HOUR = 60 * 60 * 1000;
+      const MIN = 60 * 1000;
+
+      // Fixture 1: ACTIVE item (48 hours old) -> must remain UNCHANGED
+      await adapter.stageScreenshot({
+        screenshotId: 'sc-at11-1-active',
+        ownerScope: 'scope-at11',
+        base64DataUrl: SYNTHETIC_PNG_BASE64_DATA_URL,
+        lifecycleStatus: 'ACTIVE',
+        uploadStatus: 'SYNCED',
+        createdAt: nowMs - 48 * HOUR,
+        updatedAt: nowMs - 48 * HOUR,
+      });
+
+      // Fixture 2: UPLOADING item older than 15m (16m old), expired lease, valid binary -> transitions to PENDING_UPLOAD
+      await adapter.stageScreenshot({
+        screenshotId: 'sc-at11-2-stuck-uploading',
+        ownerScope: 'scope-at11',
+        base64DataUrl: SYNTHETIC_PNG_BASE64_DATA_URL,
+        lifecycleStatus: 'ACTIVE',
+        uploadStatus: 'UPLOADING',
+        leaseOwnerId: 'sess_old::OUTBOX_UPLOAD::1',
+        leaseAcquiredAt: nowMs - 31 * MIN,
+        leaseExpiresAt: nowMs - 1 * MIN, // expired 1 minute ago
+        createdAt: nowMs - 31 * MIN,
+        updatedAt: nowMs - 16 * MIN,
+      });
+
+      // Fixture 3: STAGED item younger than 24h (23 hours old), unreferenced -> must remain UNCHANGED
+      await adapter.stageScreenshot({
+        screenshotId: 'sc-at11-3-staged-young',
+        ownerScope: 'scope-at11',
+        base64DataUrl: SYNTHETIC_PNG_BASE64_DATA_URL,
+        lifecycleStatus: 'STAGED',
+        uploadStatus: 'LOCAL_ONLY',
+        createdAt: nowMs - 23 * HOUR,
+        updatedAt: nowMs - 23 * HOUR,
+      });
+
+      // Fixture 4: STAGED item older than 24h (48 hours old), BUT referenced by an outbox entry -> must remain UNCHANGED
+      await adapter.stageScreenshot({
+        screenshotId: 'sc-at11-4-staged-referenced',
+        ownerScope: 'scope-at11',
+        base64DataUrl: SYNTHETIC_PNG_BASE64_DATA_URL,
+        lifecycleStatus: 'STAGED',
+        uploadStatus: 'LOCAL_ONLY',
+        createdAt: nowMs - 48 * HOUR,
+        updatedAt: nowMs - 48 * HOUR,
+      });
+      await adapter.enqueueOutboxMutation({
+        ownerScope: 'scope-at11',
+        entityType: 'SCREENSHOT',
+        entityKey: 'sc-at11-4-staged-referenced',
+        operationType: 'UPLOAD_SCREENSHOT',
+        payload: { screenshotId: 'sc-at11-4-staged-referenced' },
+        nowMs,
+      });
+
+      // Fixture 5: STAGED item older than 24h (25 hours old), unreferenced, no lease -> ONLY item eligible for deletion in test DB
+      await adapter.stageScreenshot({
+        screenshotId: 'sc-at11-5-staged-orphan-25h',
+        ownerScope: 'scope-at11',
+        base64DataUrl: SYNTHETIC_PNG_BASE64_DATA_URL,
+        lifecycleStatus: 'STAGED',
+        uploadStatus: 'LOCAL_ONLY',
+        createdAt: nowMs - 25 * HOUR,
+        updatedAt: nowMs - 25 * HOUR,
+      });
+
+      // Verify dry-run protection when allowDeleteInIsolatedTestDbOnly is false
+      const dryRunReport = await adapter.cleanupOrphanScreenshots({
+        nowMs,
+        allowDeleteInIsolatedTestDbOnly: false,
+      });
+
+      // Execute authorized test-DB cleanup
+      const cleanupReport = await adapter.cleanupOrphanScreenshots({
+        nowMs,
+        allowDeleteInIsolatedTestDbOnly: true,
+      });
+
+      const meta1 = await adapter.getScreenshotMetadata('sc-at11-1-active');
+      const meta2 = await adapter.getScreenshotMetadata('sc-at11-2-stuck-uploading');
+      const file2 = await adapter.getScreenshotFile('sc-at11-2-stuck-uploading');
+      const meta3 = await adapter.getScreenshotMetadata('sc-at11-3-staged-young');
+      const meta4 = await adapter.getScreenshotMetadata('sc-at11-4-staged-referenced');
+      const meta5 = await adapter.getScreenshotMetadata('sc-at11-5-staged-orphan-25h');
+      const file5 = await adapter.getScreenshotFile('sc-at11-5-staged-orphan-25h');
+
+      // Also verify that an active in-memory lock prevents deletion even if >24h
+      await adapter.stageScreenshot({
+        screenshotId: 'sc-at11-6-locked',
+        ownerScope: 'scope-at11',
+        base64DataUrl: SYNTHETIC_PNG_BASE64_DATA_URL,
+        lifecycleStatus: 'STAGED',
+        createdAt: nowMs - 30 * HOUR,
+        updatedAt: nowMs - 30 * HOUR,
+      });
+      lockScreenshotInMemory('sc-at11-6-locked');
+      await adapter.cleanupOrphanScreenshots({
+        nowMs,
+        allowDeleteInIsolatedTestDbOnly: true,
+      });
+      unlockScreenshotInMemory('sc-at11-6-locked');
+      const meta6 = await adapter.getScreenshotMetadata('sc-at11-6-locked');
+
+      const passed =
+        dryRunReport.isDryRun === true &&
+        dryRunReport.deletedScreenshotIds.length === 0 &&
+        cleanupReport.deletedScreenshotIds.length === 1 &&
+        cleanupReport.deletedScreenshotIds[0] === 'sc-at11-5-staged-orphan-25h' &&
+        cleanupReport.transitionedToPendingUploadIds.includes('sc-at11-2-stuck-uploading') &&
+        meta1?.lifecycle_status === 'ACTIVE' &&
+        meta2?.upload_status === 'PENDING_UPLOAD' &&
+        meta2?.lease_owner_id === null &&
+        file2 !== null &&
+        meta3 !== null &&
+        meta4 !== null &&
+        meta5 === null &&
+        file5 === null &&
+        meta6 !== null;
+
+      recordTest(
+        'AT-11',
+        'Screenshot Lease & 24-Hour Orphan Cleanup Rules in Isolated Test DB',
+        'AT-10..AT-12 Screenshot Lifecycle & Safety',
+        passed,
+        passed
+          ? 'ACTIVE/23h/Referenced retained; 16m UPLOADING->PENDING_UPLOAD; only 25h orphan deleted'
+          : 'Cleanup state machine mismatch',
+        'ACTIVE/23h/Referenced retained; 16m UPLOADING->PENDING_UPLOAD; only 25h orphan deleted'
+      );
+    } catch (err: unknown) {
+      recordTest(
+        'AT-11',
+        'Screenshot Lease & 24-Hour Orphan Cleanup Rules in Isolated Test DB',
+        'AT-10..AT-12 Screenshot Lifecycle & Safety',
+        false,
+        err instanceof Error ? err.message : String(err),
+        'ACTIVE/23h/Referenced retained; 16m UPLOADING->PENDING_UPLOAD; only 25h orphan deleted'
+      );
+    }
+
+    // =========================================================================
+    // AT-12: Corrupt Screenshot Quarantined Without Losing Valid Trade Record
+    // =========================================================================
+    try {
+      const tradeWithCorruptScreenshot: Trade = {
+        id: 'AT12-VALID-TRADE-BAD-IMG',
+        dateTime: '2026-10-22T10:30',
+        instrument: 'XAUUSD',
+        position: 'BUY',
+        strategy: 'London Sweep',
+        entryPrice: 2730,
+        lotSize: 0.25,
+        riskAmount: 125,
+        riskPercentage: 1.25,
+        outcome: 'WIN',
+        grossProfit: 460,
+        commission: 10,
+        swap: 0,
+        netProfit: 450,
+        screenshotUrl: 'data:image/png;base64,!!!CORRUPTED_BASE64_PAYLOAD_$$$===',
+      };
+
+      const provider = createInMemorySnapshotProvider({
+        synth_trades_at12: JSON.stringify([tradeWithCorruptScreenshot]),
+        synth_settings_at12: JSON.stringify(DEFAULT_SETTINGS),
+      });
+
+      const report = await runShadowMigration({
+        adapter,
+        snapshotProvider: provider,
+        ownerScope: 'scope-at12-corrupt-img',
+        tradesStorageKey: 'synth_trades_at12',
+        settingsStorageKey: 'synth_settings_at12',
+      });
+
+      const savedTrade = await adapter.getTradeByOwnerAndLocalId(
+        'scope-at12-corrupt-img',
+        'AT12-VALID-TRADE-BAD-IMG'
+      );
+      const quarantined = await adapter.getQuarantinedRecordsByOwner('scope-at12-corrupt-img');
+
+      const passed =
+        report.status === 'COMPLETED_WITH_QUARANTINE' &&
+        report.migratedTradesCount === 1 &&
+        report.quarantinedCount === 1 &&
+        savedTrade !== null &&
+        savedTrade.netProfit === 450 &&
+        savedTrade.screenshot_id === null &&
+        quarantined.length === 1 &&
+        quarantined[0].corruption_scope === 'SCREENSHOT_DECODE_FAILURE' &&
+        quarantined[0].record_local_id === 'AT12-VALID-TRADE-BAD-IMG';
+
+      recordTest(
+        'AT-12',
+        'Corrupt Base64 Screenshot Quarantined While Preserving Valid Financial Trade Record',
+        'AT-10..AT-12 Screenshot Lifecycle & Safety',
+        passed,
+        passed
+          ? `Trade saved ($${savedTrade?.netProfit}) + screenshot quarantined`
+          : 'Failed to preserve trade or quarantine screenshot',
+        'Trade saved ($450) + screenshot quarantined'
+      );
+    } catch (err: unknown) {
+      recordTest(
+        'AT-12',
+        'Corrupt Base64 Screenshot Quarantined While Preserving Valid Financial Trade Record',
+        'AT-10..AT-12 Screenshot Lifecycle & Safety',
+        false,
+        err instanceof Error ? err.message : String(err),
+        'Trade saved ($450) + screenshot quarantined'
+      );
+    }
+
+    // =========================================================================
+    // AT-13: Pre-Transaction Async Preparation & Atomic Transaction Lifecycle
+    // =========================================================================
+    try {
+      const batchTrades: Trade[] = Array.from({ length: 8 }, (_, idx) => ({
+        id: `AT13-BATCH-${idx + 1}`,
+        dateTime: `2026-10-23T1${idx}:00`,
+        instrument: 'XAUUSD',
+        position: idx % 2 === 0 ? 'BUY' : 'SELL',
+        strategy: 'Batch Async Prep',
+        entryPrice: 2700 + idx,
+        lotSize: 0.1,
+        riskAmount: 50,
+        riskPercentage: 0.5,
+        outcome: 'WIN',
+        grossProfit: 100,
+        commission: 0,
+        swap: 0,
+        netProfit: 100,
+        screenshotUrl: idx < 3 ? SYNTHETIC_PNG_BASE64_DATA_URL : undefined,
+      }));
+
+      const provider = createInMemorySnapshotProvider({
+        synth_trades_at13: JSON.stringify(batchTrades),
+        synth_settings_at13: JSON.stringify(DEFAULT_SETTINGS),
+      });
+
+      const batchReport = await runShadowMigration({
+        adapter,
+        snapshotProvider: provider,
+        ownerScope: 'scope-at13-batch',
+        tradesStorageKey: 'synth_trades_at13',
+        settingsStorageKey: 'synth_settings_at13',
+      });
+
+      // Also verify that passing an async callback into executeAtomicWriteTransaction is rejected
+      let asyncCallbackRejected = false;
+      try {
+        await adapter.executeAtomicWriteTransaction(
+          ['trades'],
+          (async () => {
+            await Promise.resolve();
+          }) as unknown as () => void
+        );
+      } catch (err: unknown) {
+        if (err instanceof Error && err.name === 'TransactionInactiveError') {
+          asyncCallbackRejected = true;
+        }
+      }
+
+      const passed =
+        batchReport.status === 'VERIFIED_SHADOW' &&
+        batchReport.migratedTradesCount === 8 &&
+        batchReport.migratedScreenshotsCount === 3 &&
+        asyncCallbackRejected;
+
+      recordTest(
+        'AT-13',
+        'Pre-Transaction Async Preparation & Atomic IDBTransaction Boundary Enforcement',
+        'AT-13..AT-17 Architecture & Parity',
+        passed,
+        passed
+          ? '8 trades + 3 blobs committed atomically; async tx callback rejected'
+          : 'Transaction boundary failure',
+        '8 trades + 3 blobs committed atomically; async tx callback rejected'
+      );
+    } catch (err: unknown) {
+      recordTest(
+        'AT-13',
+        'Pre-Transaction Async Preparation & Atomic IDBTransaction Boundary Enforcement',
+        'AT-13..AT-17 Architecture & Parity',
+        false,
+        err instanceof Error ? err.message : String(err),
+        '8 trades + 3 blobs committed atomically; async tx callback rejected'
+      );
+    }
+
+    // =========================================================================
+    // AT-14: Outbox Idempotency Key (mutation_id) & CAS Revision Progression
+    // =========================================================================
+    try {
+      const entityKey = '00000000-0000-4000-8000-000000000014';
+
+      // 1. INSERT operation -> sync_revision = 1
+      const insertOp = await adapter.enqueueOutboxMutation({
+        ownerScope: 'scope-at14',
+        entityType: 'TRADE',
+        entityKey,
+        operationType: 'INSERT_TRADE',
+        payload: { id: 'TRD-14', netProfit: 100 },
+        expectedBaseRevision: 0,
+      });
+
+      // 2. Retry of the exact same INSERT operation -> preserves mutation_id and sync_revision = 1, increments retry_count
+      const retryInsertOp = await adapter.enqueueOutboxMutation({
+        ownerScope: 'scope-at14',
+        entityType: 'TRADE',
+        entityKey,
+        operationType: 'INSERT_TRADE',
+        payload: { id: 'TRD-14', netProfit: 100 },
+        existingMutationId: insertOp.mutation_id,
+      });
+
+      // 3. UPDATE operation -> new mutation_id, sync_revision = 2
+      const updateOp = await adapter.enqueueOutboxMutation({
+        ownerScope: 'scope-at14',
+        entityType: 'TRADE',
+        entityKey,
+        operationType: 'UPDATE_TRADE',
+        payload: { id: 'TRD-14', netProfit: 250 },
+        expectedBaseRevision: 1,
+      });
+
+      // 4. DELETE operation -> new mutation_id, sync_revision = 3
+      const deleteOp = await adapter.enqueueOutboxMutation({
+        ownerScope: 'scope-at14',
+        entityType: 'TRADE',
+        entityKey,
+        operationType: 'DELETE_TRADE',
+        payload: { id: 'TRD-14' },
+        expectedBaseRevision: 2,
+      });
+
+      // 5. Stale expectedBaseRevision must throw ERR_CAS_REVISION_CONFLICT
+      let staleCasRejected = false;
+      try {
+        await adapter.enqueueOutboxMutation({
+          ownerScope: 'scope-at14',
+          entityType: 'TRADE',
+          entityKey,
+          operationType: 'UPDATE_TRADE',
+          payload: { id: 'TRD-14', netProfit: 999 },
+          expectedBaseRevision: 1, // Stale! Current is 3
+        });
+      } catch (err: unknown) {
+        if (err instanceof Error && err.message.includes('ERR_CAS_REVISION_CONFLICT')) {
+          staleCasRejected = true;
+        }
+      }
+
+      const queueRows = await adapter.getOutboxQueueByOwner('scope-at14');
+
+      const passed =
+        insertOp.sync_revision === 1 &&
+        retryInsertOp.mutation_id === insertOp.mutation_id &&
+        retryInsertOp.sync_revision === 1 &&
+        retryInsertOp.retry_count === 1 &&
+        updateOp.mutation_id !== insertOp.mutation_id &&
+        updateOp.sync_revision === 2 &&
+        deleteOp.mutation_id !== updateOp.mutation_id &&
+        deleteOp.sync_revision === 3 &&
+        queueRows.length === 3 &&
+        staleCasRejected;
+
+      recordTest(
+        'AT-14',
+        'Outbox Queue Idempotency Key (INSERT/UPDATE/DELETE), Retry Stability & CAS Revision Protection',
+        'AT-13..AT-17 Architecture & Parity',
+        passed,
+        passed
+          ? 'Rev 1->2->3 monotonic, retry preserved mutation_id, stale CAS rejected'
+          : 'Outbox revision or idempotency error',
+        'Rev 1->2->3 monotonic, retry preserved mutation_id, stale CAS rejected'
+      );
+    } catch (err: unknown) {
+      recordTest(
+        'AT-14',
+        'Outbox Queue Idempotency Key (INSERT/UPDATE/DELETE), Retry Stability & CAS Revision Protection',
+        'AT-13..AT-17 Architecture & Parity',
+        false,
+        err instanceof Error ? err.message : String(err),
+        'Rev 1->2->3 monotonic, retry preserved mutation_id, stale CAS rejected'
+      );
+    }
+
+    // =========================================================================
+    // AT-15: PostgreSQL Error Classification (23505 vs 42501 vs Network)
+    // =========================================================================
+    try {
+      const rlsDecision = classifySupabaseSyncError(
+        { code: '42501', message: 'new row violates row-level security policy for table "trades"' },
+        0,
+        false
+      );
+      const netDecision = classifySupabaseSyncError(
+        { message: 'TypeError: Failed to fetch' },
+        0,
+        false
+      );
+      const pkeyUnboundDecision = classifySupabaseSyncError(
+        {
+          code: '23505',
+          constraint: 'trades_pkey',
+          message: 'duplicate key value violates unique constraint "trades_pkey"',
+        },
+        0,
+        false
+      );
+      const otherUniqueDecision = classifySupabaseSyncError(
+        {
+          code: '23505',
+          constraint: 'idx_trades_other_unique',
+          message: 'duplicate key value violates unique constraint "idx_trades_other_unique"',
+        },
+        0,
+        false
+      );
+      const cloudBoundDecision = classifySupabaseSyncError(
+        {
+          code: '23505',
+          constraint: 'trades_pkey',
+          message: 'duplicate key value violates unique constraint "trades_pkey"',
+        },
+        1,
+        false
+      );
+      const selfRetryDecision = classifySupabaseSyncError(
+        {
+          code: '23505',
+          constraint: 'trades_pkey',
+          message: 'duplicate key value violates unique constraint "trades_pkey"',
+        },
+        0,
+        true
+      );
+
+      const passed =
+        rlsDecision.reallocateUuid === false &&
+        netDecision.reallocateUuid === false &&
+        pkeyUnboundDecision.reallocateUuid === true &&
+        otherUniqueDecision.reallocateUuid === false &&
+        cloudBoundDecision.reallocateUuid === false &&
+        selfRetryDecision.reallocateUuid === false;
+
+      recordTest(
+        'AT-15',
+        'PostgreSQL Error Classification Matrix (42501, Network, 23505 trades_pkey vs Cloud-Bound/Other)',
+        'AT-13..AT-17 Architecture & Parity',
+        passed,
+        passed
+          ? '42501=false, Net=false, 23505(pkey,unbound)=true, 23505(other/bound/self)=false'
+          : 'Error classification mismatch',
+        '42501=false, Net=false, 23505(pkey,unbound)=true, 23505(other/bound/self)=false'
+      );
+    } catch (err: unknown) {
+      recordTest(
+        'AT-15',
+        'PostgreSQL Error Classification Matrix (42501, Network, 23505 trades_pkey vs Cloud-Bound/Other)',
+        'AT-13..AT-17 Architecture & Parity',
+        false,
+        err instanceof Error ? err.message : String(err),
+        '42501=false, Net=false, 23505(pkey,unbound)=true, 23505(other/bound/self)=false'
+      );
+    }
+
+    // =========================================================================
+    // AT-16: Deep 7-Entity Schema Parity & SQLite Stub Boundary Verification
+    // =========================================================================
+    try {
+      const parityReport = await verifyDatabaseSchemaParity(adapter);
+      const sqliteStub = new SqliteDatabaseAdapter(PHASE_1_TEST_DB_NAME);
+
+      let stubErrorCode = '';
+      try {
+        await sqliteStub.open();
+      } catch (err: unknown) {
+        stubErrorCode = err instanceof Error ? err.message : String(err);
+      }
+
+      // Also verify that attempting to instantiate IdbDatabaseAdapter with production 'tradevault_idb' is blocked
+      let prodDbBlocked = false;
+      try {
+        new IdbDatabaseAdapter(PRODUCTION_DB_NAME_BLOCKED_IN_PHASE_1);
+      } catch {
+        prodDbBlocked = true;
+      }
+
+      const passed =
+        parityReport.isParityValid === true &&
+        parityReport.verifiedEntityCount === 7 &&
+        stubErrorCode === SQLITE_PHASE_1_ERROR_CODE &&
+        prodDbBlocked;
+
+      recordTest(
+        'AT-16',
+        '7-Entity Schema Parity (Columns, Types, PKs, Unique Indexes, Relationships) & SQLite Stub Guard',
+        'AT-13..AT-17 Architecture & Parity',
+        passed,
+        passed
+          ? `7/7 entities verified + ${SQLITE_PHASE_1_ERROR_CODE} + prod DB blocked`
+          : JSON.stringify(parityReport),
+        `7/7 entities verified + ${SQLITE_PHASE_1_ERROR_CODE} + prod DB blocked`
+      );
+    } catch (err: unknown) {
+      recordTest(
+        'AT-16',
+        '7-Entity Schema Parity (Columns, Types, PKs, Unique Indexes, Relationships) & SQLite Stub Guard',
+        'AT-13..AT-17 Architecture & Parity',
+        false,
+        err instanceof Error ? err.message : String(err),
+        `7/7 entities verified + ${SQLITE_PHASE_1_ERROR_CODE} + prod DB blocked`
+      );
+    }
+  } finally {
+    await adapter.close();
+    await adapter.destroyDatabaseForTestingOnly();
+  }
+
+  // ===========================================================================
+  // AT-17: window.localStorage Isolation & Zero-Mutation SHA-256 Proof
+  // ===========================================================================
+  const snapshotAfter = await captureWindowLocalStorageSnapshotDigest();
+  const isKeysIdentical =
+    snapshotBefore.keyCount === snapshotAfter.keyCount &&
+    snapshotBefore.sortedKeys.join('\u0000') === snapshotAfter.sortedKeys.join('\u0000');
+  const isContentIdentical =
+    isKeysIdentical &&
+    snapshotBefore.sha256Digest === snapshotAfter.sha256Digest &&
+    snapshotBefore.sortedKeys.every(
+      (k) => snapshotBefore.entries[k] === snapshotAfter.entries[k]
+    );
+
+  recordTest(
+    'AT-17',
+    'Isolated Test Execution & window.localStorage Before/After SHA-256 Identity Proof',
+    'AT-13..AT-17 Architecture & Parity',
+    isContentIdentical,
+    `keys=${snapshotAfter.keyCount}, sha256=${snapshotAfter.sha256Digest.slice(0, 16)}...`,
+    `keys=${snapshotBefore.keyCount}, sha256=${snapshotBefore.sha256Digest.slice(0, 16)}...`,
+    `DB="${PHASE_1_TEST_DB_NAME}" destroyed after test; localStorage digest=${snapshotAfter.sha256Digest}`
+  );
+
+  const durationMs = Date.now() - startTime;
+  const passedCount = acceptanceResults.filter((r) => r.passed).length;
+  const failedCount = acceptanceResults.filter((r) => !r.passed).length;
+
+  return {
+    total: acceptanceResults.length,
+    passed: passedCount,
+    failed: failedCount,
+    durationMs,
+    results: acceptanceResults,
+    databaseUsed: PHASE_1_TEST_DB_NAME,
+    localStorageKeyCountBefore: snapshotBefore.keyCount,
+    localStorageKeyCountAfter: snapshotAfter.keyCount,
+    localStorageDigestBefore: snapshotBefore.sha256Digest,
+    localStorageDigestAfter: snapshotAfter.sha256Digest,
+    isLocalStorageUnchanged: isContentIdentical,
+    acceptanceResults,
+  };
+}
+
