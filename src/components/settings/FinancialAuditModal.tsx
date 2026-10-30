@@ -292,7 +292,7 @@ export const FinancialAuditModal: React.FC<FinancialAuditModalProps> = ({
                 </div>
               </div>
 
-              <div className="text-right shrink-0">
+              <div className="text-right shrink-0 max-w-[55%]">
                 <span
                   className={`font-bold ${
                     item.passed
@@ -300,8 +300,18 @@ export const FinancialAuditModal: React.FC<FinancialAuditModalProps> = ({
                       : 'text-rose-600 dark:text-rose-400'
                   }`}
                 >
-                  {item.passed ? 'PASS' : `FAIL (${String(item.actual)} vs ${String(item.expected)})`}
+                  {item.passed ? 'PASS' : `FAIL (expected: ${String(item.expected)})`}
                 </span>
+                {!item.passed && item.actual !== null && typeof item.actual === 'object' && (
+                  <pre className="mt-2 max-h-64 overflow-auto whitespace-pre-wrap break-words rounded-md bg-black/5 dark:bg-white/5 p-2 text-left text-[10px] leading-relaxed font-mono">
+                    {JSON.stringify(item.actual, null, 2)}
+                  </pre>
+                )}
+                {!item.passed && (item.actual === null || typeof item.actual !== 'object') && (
+                  <div className="mt-1 whitespace-pre-wrap break-words text-[10px] text-rose-600 dark:text-rose-400">
+                    Actual: {String(item.actual)}
+                  </div>
+                )}
               </div>
             </div>
           ))}
