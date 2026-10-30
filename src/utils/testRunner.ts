@@ -1456,6 +1456,7 @@ export async function runPhase1StorageAndMigrationTests(): Promise<Phase1TestSui
   const snapshotBefore = await captureWindowLocalStorageSnapshotDigest();
 
   const adapter = new IdbDatabaseAdapter(PHASE_1_TEST_DB_NAME);
+  let testDatabaseCleanupError: string | null = null;
 
   try {
     await adapter.destroyDatabaseForTestingOnly();
@@ -2917,8 +2918,21 @@ export async function runPhase1StorageAndMigrationTests(): Promise<Phase1TestSui
       );
     }
   } finally {
-    await adapter.close();
-    await adapter.destroyDatabaseForTestingOnly();
+    try {
+      await adapter.close();
+    } catch (closeErr: unknown) {
+      testDatabaseCleanupError =
+        closeErr instanceof Error ? closeErr.message : String(closeErr);
+    }
+
+    try {
+      await adapter.destroyDatabaseForTestingOnly();
+    } catch (destroyErr: unknown) {
+      const message = destroyErr instanceof Error ? destroyErr.message : String(destroyErr);
+      testDatabaseCleanupError = testDatabaseCleanupError
+        ? `${testDatabaseCleanupError}; ${message}`
+        : message;
+    }
   }
 
   // ===========================================================================
@@ -2939,10 +2953,14 @@ export async function runPhase1StorageAndMigrationTests(): Promise<Phase1TestSui
     'AT-17',
     'Isolated Test Execution & window.localStorage Before/After SHA-256 Identity Proof',
     'AT-13..AT-17 Architecture & Parity',
-    isContentIdentical,
-    `keys=${snapshotAfter.keyCount}, sha256=${snapshotAfter.sha256Digest.slice(0, 16)}...`,
+    isContentIdentical && testDatabaseCleanupError === null,
+    testDatabaseCleanupError
+      ? `Cleanup failed: ${testDatabaseCleanupError}; localStorage unchanged=${isContentIdentical}`
+      : `keys=${snapshotAfter.keyCount}, sha256=${snapshotAfter.sha256Digest.slice(0, 16)}...`,
     `keys=${snapshotBefore.keyCount}, sha256=${snapshotBefore.sha256Digest.slice(0, 16)}...`,
-    `DB="${PHASE_1_TEST_DB_NAME}" destroyed after test; localStorage digest=${snapshotAfter.sha256Digest}`
+    testDatabaseCleanupError
+      ? `DB cleanup failed: ${testDatabaseCleanupError}; localStorage digest=${snapshotAfter.sha256Digest}`
+      : `DB="${PHASE_1_TEST_DB_NAME}" destroyed after test; localStorage digest=${snapshotAfter.sha256Digest}`
   );
 
   const durationMs = Date.now() - startTime;
