@@ -504,6 +504,8 @@ export interface ILocalDatabaseAdapter {
   stageScreenshot(params: StageScreenshotParams): Promise<ScreenshotMetadataRow>;
   getScreenshotMetadata(screenshotId: string): Promise<ScreenshotMetadataRow | null>;
   getScreenshotFile(screenshotId: string): Promise<ScreenshotFileRow | null>;
+  getScreenshotMetadataByOwner(ownerScope: OwnerScope): Promise<ScreenshotMetadataRow[]>;
+  getScreenshotFilesByOwner(ownerScope: OwnerScope): Promise<ScreenshotFileRow[]>;
   acquireScreenshotLease(
     screenshotId: string,
     leaseOwnerId: string,
