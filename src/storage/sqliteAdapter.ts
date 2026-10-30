@@ -266,7 +266,8 @@ function parseSqliteForeignKeysFromDdl(ddl: string): Array<{
   const parsed: Array<{ fromColumn: string; toTable: string; toColumn: string }> = [];
   const pattern =
     /FOREIGN\\s+KEY\\s*\\(\\s*([A-Za-z0-9_]+)\\s*\\)\\s*REFERENCES\\s+([A-Za-z0-9_]+)\\s*\\(\\s*([A-Za-z0-9_]+)\\s*\\)/gi;
-  for (const match of ddl.matchAll(pattern)) {
+  let match: RegExpExecArray | null;
+  while ((match = pattern.exec(ddl)) !== null) {
     parsed.push({ fromColumn: match[1], toTable: match[2], toColumn: match[3] });
   }
   return parsed;
