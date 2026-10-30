@@ -1893,7 +1893,16 @@ export async function runPhase1StorageAndMigrationTests(): Promise<Phase1TestSui
 
       const migState = await adapter.getMigrationState('scope-at05-clean');
 
-      // Also verify that if read-back digest mismatches, VERIFIED_SHADOW is rejected and marked FAILED
+      // Keep an unrelated staged screenshot in the same owner scope; rollback must preserve it.
+      await adapter.stageScreenshot({
+        screenshotId: 'sc-at05-unrelated-staged',
+        ownerScope: 'scope-at05-digest-fail',
+        base64DataUrl: SYNTHETIC_PNG_BASE64_DATA_URL,
+        lifecycleStatus: 'STAGED',
+        uploadStatus: 'LOCAL_ONLY',
+      });
+
+      // Also verify that if read-back digest mismatches, VERIFIED_SHADOW is rejected and marked FAILED.
       const badDigestReport = await runShadowMigration({
         adapter,
         snapshotProvider: provider,
@@ -1905,6 +1914,12 @@ export async function runPhase1StorageAndMigrationTests(): Promise<Phase1TestSui
       const failedScopeTrades = await adapter.getTradesByOwner('scope-at05-digest-fail');
       const failedScopeSettings = await adapter.getSettingsByOwner('scope-at05-digest-fail');
       const failedScopeQuarantine = await adapter.getQuarantinedRecordsByOwner('scope-at05-digest-fail');
+      const failedScopeScreenshotMetadata = await adapter.getScreenshotMetadataByOwner(
+        'scope-at05-digest-fail'
+      );
+      const failedScopeScreenshotFiles = await adapter.getScreenshotFilesByOwner(
+        'scope-at05-digest-fail'
+      );
 
       const passed =
         report.status === 'VERIFIED_SHADOW' &&
@@ -1917,7 +1932,11 @@ export async function runPhase1StorageAndMigrationTests(): Promise<Phase1TestSui
         badDigestReport.status === 'FAILED' &&
         failedScopeTrades.length === 0 &&
         failedScopeSettings === null &&
-        failedScopeQuarantine.length === 0;
+        failedScopeQuarantine.length === 0 &&
+        failedScopeScreenshotMetadata.length === 1 &&
+        failedScopeScreenshotMetadata[0].screenshot_id === 'sc-at05-unrelated-staged' &&
+        failedScopeScreenshotFiles.length === 1 &&
+        failedScopeScreenshotFiles[0].screenshot_id === 'sc-at05-unrelated-staged';
 
       recordTest(
         'AT-05',
