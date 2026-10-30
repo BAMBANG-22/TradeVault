@@ -601,6 +601,14 @@ export class SqliteDatabaseAdapter implements ILocalDatabaseAdapter {
     throwPhase1StubError();
   }
 
+  public async getScreenshotMetadataByOwner(_ownerScope: OwnerScope): Promise<ScreenshotMetadataRow[]> {
+    throwPhase1StubError();
+  }
+
+  public async getScreenshotFilesByOwner(_ownerScope: OwnerScope): Promise<ScreenshotFileRow[]> {
+    throwPhase1StubError();
+  }
+
   public async acquireScreenshotLease(
     _screenshotId: string,
     _leaseOwnerId: string,
