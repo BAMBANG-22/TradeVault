@@ -506,13 +506,17 @@ export async function runShadowMigration(
     return failMigration(`ERR_ATOMIC_BATCH_WRITE_FAILED: ${msg}`, false);
   }
 
-  // Optional test hook for AT-09 (simulating source mutation during migration)
-  if (options.onBeforeFinalSnapshotCheck) {
+  let verifiedScreenshotsCount = 0;
+  let snapshotChecksumEnd: string | null = null;
+
+  try {
+    // Optional test hook for AT-09 (simulating source mutation during migration)
+    if (options.onBeforeFinalSnapshotCheck) {
     await options.onBeforeFinalSnapshotCheck();
   }
 
   // STEP 6, 7, 8: Read back all written records and compare canonical digests 1-by-1
-  const readBackTrades = await adapter.getTradesByOwner(cleanScope);
+    const readBackTrades = await adapter.getTradesByOwner(cleanScope);
   if (readBackTrades.length !== preparedTrades.length) {
     return failMigration(
       `ERR_READBACK_COUNT_MISMATCH: Expected ${preparedTrades.length} trades, read back ${readBackTrades.length}.`
@@ -523,9 +527,7 @@ export async function runShadowMigration(
     readBackTrades.map((r) => [r.id, r])
   );
 
-  let verifiedScreenshotsCount = 0;
-
-  for (const expectedItem of preparedTrades) {
+    for (const expectedItem of preparedTrades) {
     const storedRow = readBackByLocalId.get(expectedItem.row.id);
     if (!storedRow) {
       return failMigration(
@@ -587,15 +589,19 @@ export async function runShadowMigration(
   }
 
   // STEP 9 & 10: Re-verify source snapshot checksum to detect mid-migration mutation (AT-09)
-  const snapshotChecksumEnd = await computeSourceSnapshotChecksum(
-    snapshotProvider,
-    tradesStorageKey,
-    settingsStorageKey,
-    inMemoryTradeObjectsOverride
-  );
+    snapshotChecksumEnd = await computeSourceSnapshotChecksum(
+      snapshotProvider,
+      tradesStorageKey,
+      settingsStorageKey,
+      inMemoryTradeObjectsOverride
+    );
 
-  if (snapshotChecksumStart !== snapshotChecksumEnd) {
-    return failMigration('ERR_SOURCE_SNAPSHOT_MUTATED_DURING_MIGRATION');
+    if (snapshotChecksumStart !== snapshotChecksumEnd) {
+      return failMigration('ERR_SOURCE_SNAPSHOT_MUTATED_DURING_MIGRATION');
+    }
+  } catch (verificationErr: unknown) {
+    const msg = verificationErr instanceof Error ? verificationErr.message : String(verificationErr);
+    return failMigration(`ERR_SHADOW_VERIFICATION_FAILED: ${msg}`);
   }
 
   // STEP 11: Finalize status -> VERIFIED_SHADOW (if 0 quarantined) or COMPLETED_WITH_QUARANTINE
