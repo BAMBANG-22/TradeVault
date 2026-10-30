@@ -484,6 +484,24 @@ export async function verifyDatabaseSchemaParity(
 
     // 5. Verify logical relationships against both entity contracts and explicit SQLite FK DDL.
     const declaredForeignKeys = parseSqliteForeignKeysFromDdl(ddl);
+    const hasUnexpectedForeignKey = declaredForeignKeys.some(
+      (fk) =>
+        !spec.logicalRelationships.some(
+          (rel) =>
+            rel.fromColumn === fk.fromColumn &&
+            rel.toTable === fk.toTable &&
+            rel.toColumn === fk.toColumn
+        )
+    );
+    if (
+      declaredForeignKeys.length !== spec.logicalRelationships.length ||
+      hasUnexpectedForeignKey
+    ) {
+      relationshipMismatches.push(
+        `${tableName}: SQLite foreign-key declarations do not exactly match the logical relationship contract`
+      );
+    }
+
     for (const rel of spec.logicalRelationships) {
       const sourceHasCol = ddlColMap.has(rel.fromColumn);
       const targetSpec = LOGICAL_ENTITY_SCHEMA_SPECS[rel.toTable];
