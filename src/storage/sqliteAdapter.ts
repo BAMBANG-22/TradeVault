@@ -74,7 +74,8 @@ CREATE TABLE IF NOT EXISTS trades (
   sync_status TEXT NOT NULL,
   sync_revision INTEGER NOT NULL DEFAULT 1,
   last_mutation_id TEXT NOT NULL,
-  canonical_digest TEXT NOT NULL
+  canonical_digest TEXT NOT NULL,
+  FOREIGN KEY (screenshot_id) REFERENCES screenshot_metadata (screenshot_id)
 );`.trim(),
 
   settings: `
@@ -121,7 +122,9 @@ CREATE TABLE IF NOT EXISTS screenshot_metadata (
   lease_acquired_at INTEGER NULL,
   lease_expires_at INTEGER NULL,
   created_at INTEGER NOT NULL,
-  updated_at INTEGER NOT NULL
+  updated_at INTEGER NOT NULL,
+  FOREIGN KEY (trade_canonical_uuid) REFERENCES trades (canonical_uuid),
+  FOREIGN KEY (screenshot_id) REFERENCES screenshot_files (screenshot_id)
 );`.trim(),
 
   screenshot_files: `
@@ -132,7 +135,8 @@ CREATE TABLE IF NOT EXISTS screenshot_files (
   mime_type TEXT NOT NULL,
   size_bytes INTEGER NOT NULL,
   sha256_hash TEXT NOT NULL,
-  created_at INTEGER NOT NULL
+  created_at INTEGER NOT NULL,
+  FOREIGN KEY (screenshot_id) REFERENCES screenshot_metadata (screenshot_id)
 );`.trim(),
 
   outbox_sync_queue: `
