@@ -2555,6 +2555,9 @@ export async function runPhase1StorageAndMigrationTests(): Promise<Phase1TestSui
       });
       unlockScreenshotInMemory('sc-at11-6-locked');
       const meta6 = await adapter.getScreenshotMetadata('sc-at11-6-locked');
+      // A staged orphan from another owner scope must remain untouched.
+      const crossScopeMeta = await adapter.getScreenshotMetadata('sc-at05-unrelated-staged');
+      const crossScopeFile = await adapter.getScreenshotFile('sc-at05-unrelated-staged');
 
       // Keep each assertion visible so a failure identifies the exact lifecycle rule.
       const checks = {
@@ -2574,6 +2577,8 @@ export async function runPhase1StorageAndMigrationTests(): Promise<Phase1TestSui
         twentyFiveHourOrphanMetadataDeleted: meta5 === null,
         twentyFiveHourOrphanFileDeleted: file5 === null,
         inMemoryLockedScreenshotRetained: meta6 !== null,
+        otherOwnerScopeScreenshotRetained: crossScopeMeta?.owner_scope === 'scope-at05-digest-fail',
+        otherOwnerScopeScreenshotFileRetained: crossScopeFile?.owner_scope === 'scope-at05-digest-fail',
       };
       const passed = Object.values(checks).every(Boolean);
       const actual = {
@@ -2600,6 +2605,8 @@ export async function runPhase1StorageAndMigrationTests(): Promise<Phase1TestSui
           orphanMetadataExists: meta5 !== null,
           orphanFileExists: file5 !== null,
           lockedScreenshotExists: meta6 !== null,
+          otherOwnerScopeScreenshotOwner: crossScopeMeta?.owner_scope ?? null,
+          otherOwnerScopeScreenshotFileOwner: crossScopeFile?.owner_scope ?? null,
         },
       };
 
