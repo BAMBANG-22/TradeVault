@@ -2234,6 +2234,7 @@ export async function runPhase1StorageAndMigrationTests(): Promise<Phase1TestSui
       });
 
       const tradesAfterFailedTx = await adapter.getTradesByOwner('scope-at08-atomic');
+      const settingsAfterFailedTx = await adapter.getSettingsByOwner('scope-at08-atomic');
       const stateAfterFailedTx = await adapter.getMigrationState('scope-at08-atomic');
 
       // Run 2: Retry without simulated error -> must cleanly succeed with 3 trades and 0 duplicates
@@ -2250,6 +2251,7 @@ export async function runPhase1StorageAndMigrationTests(): Promise<Phase1TestSui
         failedReport.status === 'FAILED' &&
         stateAfterFailedTx?.status === 'FAILED' &&
         tradesAfterFailedTx.length === 0 &&
+        settingsAfterFailedTx === null &&
         retryReport.status === 'VERIFIED_SHADOW' &&
         tradesAfterRetry.length === 3;
 
