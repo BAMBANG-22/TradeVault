@@ -159,6 +159,24 @@ export async function runShadowMigration(
 
   await adapter.open();
 
+  // Refuse to overwrite a previously populated shadow scope. A FAILED retry is allowed
+  // only after its prior shadow rows have been safely rolled back.
+  const [existingScopeTrades, existingScopeSettings, existingScopeQuarantine] =
+    await Promise.all([
+      adapter.getTradesByOwner(cleanScope),
+      adapter.getSettingsByOwner(cleanScope),
+      adapter.getQuarantinedRecordsByOwner(cleanScope),
+    ]);
+  if (
+    existingScopeTrades.length > 0 ||
+    existingScopeSettings !== null ||
+    existingScopeQuarantine.length > 0
+  ) {
+    throw new Error(
+      'ERR_MIGRATION_SCOPE_NOT_EMPTY: Existing shadow records were preserved; choose a fresh owner scope or inspect the previous migration before retrying.'
+    );
+  }
+
   // STEP 1 & 2: Read initial source snapshot & compute snapshotChecksumStart
   const rawTradesStr = snapshotProvider.getItem(tradesStorageKey);
   const rawSettingsStr = snapshotProvider.getItem(settingsStorageKey);
