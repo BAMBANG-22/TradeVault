@@ -512,83 +512,84 @@ export async function runShadowMigration(
   try {
     // Optional test hook for AT-09 (simulating source mutation during migration)
     if (options.onBeforeFinalSnapshotCheck) {
-    await options.onBeforeFinalSnapshotCheck();
-  }
+      await options.onBeforeFinalSnapshotCheck();
+    }
 
-  // STEP 6, 7, 8: Read back all written records and compare canonical digests 1-by-1
+    // STEP 6, 7, 8: Read back all written records and compare canonical digests 1-by-1
     const readBackTrades = await adapter.getTradesByOwner(cleanScope);
-  if (readBackTrades.length !== preparedTrades.length) {
-    return failMigration(
-      `ERR_READBACK_COUNT_MISMATCH: Expected ${preparedTrades.length} trades, read back ${readBackTrades.length}.`
-    );
-  }
+    if (readBackTrades.length !== preparedTrades.length) {
+      return failMigration(
+        `ERR_READBACK_COUNT_MISMATCH: Expected ${preparedTrades.length} trades, read back ${readBackTrades.length}.`
+      );
+    }
 
-  const readBackByLocalId = new Map<string, LocalTradeRow>(
-    readBackTrades.map((r) => [r.id, r])
-  );
+    const readBackByLocalId = new Map<string, LocalTradeRow>(
+      readBackTrades.map((r) => [r.id, r])
+    );
 
     for (const expectedItem of preparedTrades) {
-    const storedRow = readBackByLocalId.get(expectedItem.row.id);
-    if (!storedRow) {
-      return failMigration(
-        `ERR_MISSING_READBACK_RECORD: Trade "${expectedItem.row.id}" missing on read-back.`
-      );
-    }
-
-    const reconstructedTrade = mapLocalRowToTrade(storedRow);
-    let recomputedDigest = await computeCanonicalTradeDigest(reconstructedTrade);
-    if (options.simulateReadBackDigestMismatch) {
-      recomputedDigest = '0000000000000000000000000000000000000000000000000000000000000000';
-    }
-
-    if (
-      recomputedDigest !== expectedItem.expectedDigest ||
-      storedRow.canonical_digest !== expectedItem.expectedDigest
-    ) {
-      return failMigration(
-        `ERR_CANONICAL_DIGEST_MISMATCH: Digest mismatch on trade "${expectedItem.row.id}".`
-      );
-    }
-
-    // Verify screenshot metadata and binary Blob SHA-256 if trade had a screenshot
-    if (expectedItem.preparedScreenshot) {
-      const scId = expectedItem.preparedScreenshot.screenshotId;
-      const metaRow = await adapter.getScreenshotMetadata(scId);
-      const fileRow = await adapter.getScreenshotFile(scId);
-
-      if (!metaRow || !fileRow || !fileRow.blob_data) {
+      const storedRow = readBackByLocalId.get(expectedItem.row.id);
+      if (!storedRow) {
         return failMigration(
-          `ERR_MISSING_SCREENSHOT_READBACK: Screenshot "${scId}" missing on read-back.`
+          `ERR_MISSING_READBACK_RECORD: Trade "${expectedItem.row.id}" missing on read-back.`
         );
       }
 
-      const buf = await fileRow.blob_data.arrayBuffer();
-      const actualBlobHash = await computeSha256Hex(buf);
+      const reconstructedTrade = mapLocalRowToTrade(storedRow);
+      let recomputedDigest = await computeCanonicalTradeDigest(reconstructedTrade);
+      if (options.simulateReadBackDigestMismatch) {
+        recomputedDigest =
+          '0000000000000000000000000000000000000000000000000000000000000000';
+      }
+
       if (
-        actualBlobHash !== expectedItem.preparedScreenshot.sha256Hex ||
-        metaRow.sha256_hash !== expectedItem.preparedScreenshot.sha256Hex ||
-        fileRow.size_bytes !== expectedItem.preparedScreenshot.sizeBytes
+        recomputedDigest !== expectedItem.expectedDigest ||
+        storedRow.canonical_digest !== expectedItem.expectedDigest
       ) {
         return failMigration(
-          `ERR_SCREENSHOT_SHA256_MISMATCH: Binary hash mismatch for screenshot "${scId}".`
+          `ERR_CANONICAL_DIGEST_MISMATCH: Digest mismatch on trade "${expectedItem.row.id}".`
         );
       }
-      verifiedScreenshotsCount++;
+
+      // Verify screenshot metadata and binary Blob SHA-256 if trade had a screenshot
+      if (expectedItem.preparedScreenshot) {
+        const scId = expectedItem.preparedScreenshot.screenshotId;
+        const metaRow = await adapter.getScreenshotMetadata(scId);
+        const fileRow = await adapter.getScreenshotFile(scId);
+
+        if (!metaRow || !fileRow || !fileRow.blob_data) {
+          return failMigration(
+            `ERR_MISSING_SCREENSHOT_READBACK: Screenshot "${scId}" missing on read-back.`
+          );
+        }
+
+        const buf = await fileRow.blob_data.arrayBuffer();
+        const actualBlobHash = await computeSha256Hex(buf);
+        if (
+          actualBlobHash !== expectedItem.preparedScreenshot.sha256Hex ||
+          metaRow.sha256_hash !== expectedItem.preparedScreenshot.sha256Hex ||
+          fileRow.size_bytes !== expectedItem.preparedScreenshot.sizeBytes
+        ) {
+          return failMigration(
+            `ERR_SCREENSHOT_SHA256_MISMATCH: Binary hash mismatch for screenshot "${scId}".`
+          );
+        }
+        verifiedScreenshotsCount++;
+      }
     }
-  }
 
-  // Verify settings read-back and canonical digest
-  const readBackSettingsRow = await adapter.getSettingsByOwner(cleanScope);
-  if (!readBackSettingsRow) {
-    return failMigration('ERR_MISSING_SETTINGS_READBACK: Settings row missing on read-back.');
-  }
-  const reconstructedSettings = mapLocalRowToSettings(readBackSettingsRow);
-  const recomputedSettingsDigest = await computeCanonicalSettingsDigest(reconstructedSettings);
-  if (recomputedSettingsDigest !== expectedSettingsDigest) {
-    return failMigration('ERR_SETTINGS_DIGEST_MISMATCH: Settings canonical digest mismatch.');
-  }
+    // Verify settings read-back and canonical digest
+    const readBackSettingsRow = await adapter.getSettingsByOwner(cleanScope);
+    if (!readBackSettingsRow) {
+      return failMigration('ERR_MISSING_SETTINGS_READBACK: Settings row missing on read-back.');
+    }
+    const reconstructedSettings = mapLocalRowToSettings(readBackSettingsRow);
+    const recomputedSettingsDigest = await computeCanonicalSettingsDigest(reconstructedSettings);
+    if (recomputedSettingsDigest !== expectedSettingsDigest) {
+      return failMigration('ERR_SETTINGS_DIGEST_MISMATCH: Settings canonical digest mismatch.');
+    }
 
-  // STEP 9 & 10: Re-verify source snapshot checksum to detect mid-migration mutation (AT-09)
+    // STEP 9 & 10: Re-verify source snapshot checksum to detect mid-migration mutation (AT-09)
     snapshotChecksumEnd = await computeSourceSnapshotChecksum(
       snapshotProvider,
       tradesStorageKey,
@@ -600,10 +601,10 @@ export async function runShadowMigration(
       return failMigration('ERR_SOURCE_SNAPSHOT_MUTATED_DURING_MIGRATION');
     }
   } catch (verificationErr: unknown) {
-    const msg = verificationErr instanceof Error ? verificationErr.message : String(verificationErr);
+    const msg =
+      verificationErr instanceof Error ? verificationErr.message : String(verificationErr);
     return failMigration(`ERR_SHADOW_VERIFICATION_FAILED: ${msg}`);
   }
-
   // STEP 11: Finalize status -> VERIFIED_SHADOW (if 0 quarantined) or COMPLETED_WITH_QUARANTINE
   const finalStatus: MigrationStatus =
     quarantinedRows.length === 0 ? 'VERIFIED_SHADOW' : 'COMPLETED_WITH_QUARANTINE';
