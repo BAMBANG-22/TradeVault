@@ -301,6 +301,56 @@ function parseSqliteIndexesFromDdl(indexDdls: string[]): Array<{
 }
 
 /**
+ * Validates declared logical references against synthetic or isolated adapter rows.
+ * This is a Phase 1 contract check only; it does not open SQLite or mutate storage.
+ */
+export function validateLogicalRelationshipRows(
+  rowsByTable: Partial<Record<LocalTableName, Array<Record<string, unknown>>>>
+): { isValid: boolean; relationshipMismatches: string[] } {
+  const relationshipMismatches: string[] = [];
+
+  for (const [tableName, spec] of Object.entries(LOGICAL_ENTITY_SCHEMA_SPECS) as Array<
+    [LocalTableName, (typeof LOGICAL_ENTITY_SCHEMA_SPECS)[LocalTableName]]
+  >) {
+    const sourceRows = rowsByTable[tableName] ?? [];
+
+    for (const rel of spec.logicalRelationships) {
+      const targetRows = rowsByTable[rel.toTable] ?? [];
+      const seenOneToOneValues = new Set<unknown>();
+
+      for (const sourceRow of sourceRows) {
+        const referenceValue = sourceRow[rel.fromColumn];
+        if (referenceValue === null || referenceValue === undefined || referenceValue === '') {
+          continue;
+        }
+
+        if (
+          !targetRows.some((targetRow) => targetRow[rel.toColumn] === referenceValue)
+        ) {
+          relationshipMismatches.push(
+            `${tableName}.${rel.fromColumn} references missing ${rel.toTable}.${rel.toColumn} value "${String(referenceValue)}"`
+          );
+        }
+
+        if (rel.relationType === 'LOGICAL_1_TO_1') {
+          if (seenOneToOneValues.has(referenceValue)) {
+            relationshipMismatches.push(
+              `${tableName}.${rel.fromColumn} duplicates one-to-one reference "${String(referenceValue)}"`
+            );
+          }
+          seenOneToOneValues.add(referenceValue);
+        }
+      }
+    }
+  }
+
+  return {
+    isValid: relationshipMismatches.length === 0,
+    relationshipMismatches,
+  };
+}
+
+/**
  * Performs comprehensive deep parity verification (AT-16) across:
  * 1. Logical Entity Schema Specs (TypeScript contracts)
  * 2. SQLite DDL Table & Index Definitions
