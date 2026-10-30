@@ -1900,6 +1900,9 @@ export async function runPhase1StorageAndMigrationTests(): Promise<Phase1TestSui
         settingsStorageKey: 'synth_settings_clean',
         simulateReadBackDigestMismatch: true,
       });
+      const failedScopeTrades = await adapter.getTradesByOwner('scope-at05-digest-fail');
+      const failedScopeSettings = await adapter.getSettingsByOwner('scope-at05-digest-fail');
+      const failedScopeQuarantine = await adapter.getQuarantinedRecordsByOwner('scope-at05-digest-fail');
 
       const passed =
         report.status === 'VERIFIED_SHADOW' &&
@@ -1909,7 +1912,10 @@ export async function runPhase1StorageAndMigrationTests(): Promise<Phase1TestSui
         report.isActiveSourceOfTruth === false &&
         report.snapshotChecksumStart === report.snapshotChecksumEnd &&
         migState?.is_active_source_of_truth === 0 &&
-        badDigestReport.status === 'FAILED';
+        badDigestReport.status === 'FAILED' &&
+        failedScopeTrades.length === 0 &&
+        failedScopeSettings === null &&
+        failedScopeQuarantine.length === 0;
 
       recordTest(
         'AT-05',
@@ -2308,10 +2314,16 @@ export async function runPhase1StorageAndMigrationTests(): Promise<Phase1TestSui
       });
 
       const migState = await adapter.getMigrationState('scope-at09-mutated');
+      const failedScopeTrades = await adapter.getTradesByOwner('scope-at09-mutated');
+      const failedScopeSettings = await adapter.getSettingsByOwner('scope-at09-mutated');
+      const failedScopeQuarantine = await adapter.getQuarantinedRecordsByOwner('scope-at09-mutated');
       const passed =
         report.status === 'FAILED' &&
         report.failureReason === 'ERR_SOURCE_SNAPSHOT_MUTATED_DURING_MIGRATION' &&
-        migState?.status === 'FAILED';
+        migState?.status === 'FAILED' &&
+        failedScopeTrades.length === 0 &&
+        failedScopeSettings === null &&
+        failedScopeQuarantine.length === 0;
 
       recordTest(
         'AT-09',
