@@ -53,6 +53,7 @@ import {
 import {
   SQLITE_PHASE_1_ERROR_CODE,
   SqliteDatabaseAdapter,
+  validateLogicalRelationshipRows,
   verifyDatabaseSchemaParity,
 } from '../storage/sqliteAdapter';
 import {
@@ -2874,6 +2875,30 @@ export async function runPhase1StorageAndMigrationTests(): Promise<Phase1TestSui
     // =========================================================================
     try {
       const parityReport = await verifyDatabaseSchemaParity(adapter);
+      const validRelationshipFixture = validateLogicalRelationshipRows({
+        trades: [{ canonical_uuid: 'trade-rel-1', screenshot_id: 'shot-rel-1' }],
+        screenshot_metadata: [
+          { screenshot_id: 'shot-rel-1', trade_canonical_uuid: 'trade-rel-1' },
+        ],
+        screenshot_files: [{ screenshot_id: 'shot-rel-1' }],
+      });
+      const invalidRelationshipFixture = validateLogicalRelationshipRows({
+        trades: [{ canonical_uuid: 'trade-rel-1', screenshot_id: 'shot-missing' }],
+        screenshot_metadata: [
+          { screenshot_id: 'shot-missing', trade_canonical_uuid: 'trade-missing' },
+        ],
+        screenshot_files: [],
+      });
+      const duplicateOneToOneFixture = validateLogicalRelationshipRows({
+        trades: [
+          { canonical_uuid: 'trade-rel-1', screenshot_id: 'shot-rel-1' },
+          { canonical_uuid: 'trade-rel-2', screenshot_id: 'shot-rel-1' },
+        ],
+        screenshot_metadata: [
+          { screenshot_id: 'shot-rel-1', trade_canonical_uuid: 'trade-rel-1' },
+        ],
+        screenshot_files: [{ screenshot_id: 'shot-rel-1' }],
+      });
       const sqliteStub = new SqliteDatabaseAdapter(PHASE_1_TEST_DB_NAME);
 
       let stubErrorCode = '';
@@ -2894,6 +2919,10 @@ export async function runPhase1StorageAndMigrationTests(): Promise<Phase1TestSui
       const passed =
         parityReport.isParityValid === true &&
         parityReport.verifiedEntityCount === 7 &&
+        parityReport.relationshipMismatches.length === 0 &&
+        validRelationshipFixture.isValid === true &&
+        invalidRelationshipFixture.isValid === false &&
+        duplicateOneToOneFixture.isValid === false &&
         stubErrorCode === SQLITE_PHASE_1_ERROR_CODE &&
         prodDbBlocked;
 
