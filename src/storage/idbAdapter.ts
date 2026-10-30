@@ -920,7 +920,12 @@ export class IdbDatabaseAdapter implements ILocalDatabaseAdapter {
       const req = globalThis.indexedDB.deleteDatabase(this.dbName);
       req.onsuccess = () => resolve();
       req.onerror = () => reject(req.error || new Error('ERR_IDB_DELETE_FAILED'));
-      req.onblocked = () => resolve();
+      req.onblocked = () =>
+        reject(
+          new Error(
+            'ERR_IDB_DELETE_BLOCKED: Another connection is still holding the isolated Phase 1 test database open.'
+          )
+        );
     });
   }
 
