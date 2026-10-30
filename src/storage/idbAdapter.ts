@@ -1909,9 +1909,23 @@ export class IdbDatabaseAdapter implements ILocalDatabaseAdapter {
   ): Promise<void> {
     await this.open();
 
-    // Check existing records for this owner_scope before starting transaction so retry after failure is clean
-    const existingOwnerTrades = await this.getTradesByOwner(batch.ownerScope);
-    const existingOwnerQuarantine = await this.getQuarantinedRecordsByOwner(batch.ownerScope);
+    // Never replace pre-existing shadow records. Failed attempts are retryable only
+    // after the previous attempt's rollback has left this scope empty.
+    const [existingOwnerTrades, existingOwnerSettings, existingOwnerQuarantine] =
+      await Promise.all([
+        this.getTradesByOwner(batch.ownerScope),
+        this.getSettingsByOwner(batch.ownerScope),
+        this.getQuarantinedRecordsByOwner(batch.ownerScope),
+      ]);
+    if (
+      existingOwnerTrades.length > 0 ||
+      existingOwnerSettings !== null ||
+      existingOwnerQuarantine.length > 0
+    ) {
+      throw new Error(
+        'ERR_MIGRATION_SCOPE_NOT_EMPTY: Refusing to overwrite existing shadow records.'
+      );
+    }
 
     await this.executeAtomicWriteTransaction(
       [
@@ -1922,17 +1936,7 @@ export class IdbDatabaseAdapter implements ILocalDatabaseAdapter {
         LOCAL_DB_TABLES.QUARANTINED_RECORDS,
       ],
       (stores) => {
-        // Clear any prior unverified rows for this specific ownerScope so retry starts clean inside the atomic tx
-        for (const oldTrade of existingOwnerTrades) {
-          stores.trades.delete(oldTrade.canonical_uuid);
-          if (oldTrade.screenshot_id) {
-            stores.screenshot_metadata.delete(oldTrade.screenshot_id);
-            stores.screenshot_files.delete(oldTrade.screenshot_id);
-          }
-        }
-        for (const oldQ of existingOwnerQuarantine) {
-          stores.quarantined_records.delete(oldQ.quarantine_id);
-        }
+        // Scope was checked immediately above. Do not delete or replace pre-existing rows.
 
         // Write valid trades and their extracted screenshots using store.add()
         for (let i = 0; i < batch.trades.length; i++) {
