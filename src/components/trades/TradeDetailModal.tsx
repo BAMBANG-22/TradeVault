@@ -102,14 +102,8 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
   const isLoss = trade.outcome === 'LOSS';
 
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 dark:bg-black/80 backdrop-blur-sm p-4 animate-in fade-in duration-150"
-      onClick={onClose}
-    >
-      <div
-        className="w-full max-w-2xl max-h-[90vh] overflow-y-auto rounded-2xl border border-[#DDE3EA] dark:border-[#252B34] bg-white dark:bg-[#11151B] p-5 sm:p-6 shadow-2xl text-[#151D2A] dark:text-[#F2F5F9]"
-        onClick={(e) => e.stopPropagation()}
-      >
+    <div className="fixed inset-0 z-50 overflow-y-auto bg-[#F5F7FA] dark:bg-[#080A0E] animate-in fade-in duration-150">
+      <div className="min-h-screen w-full max-w-5xl mx-auto bg-[#F5F7FA] dark:bg-[#080A0E] px-4 py-5 sm:px-6 sm:py-7 lg:px-8 text-[#151D2A] dark:text-[#F2F5F9]">
         {/* Header */}
         <div className="flex items-start justify-between pb-4 border-b border-[#DDE3EA] dark:border-[#252B34]">
           <div className="space-y-1">
