@@ -101,15 +101,6 @@ export const TradeTable: React.FC<TradeTableProps> = ({
     return trades.some((t) => t.isDemo);
   }, [trades]);
 
-  // Legacy journal records contain realized outcomes, not lifecycle statuses.
-  // Keep these counters outcome-based until the new status model is implemented.
-  const outcomeSummary = useMemo(() => ({
-    total: filteredTrades.length,
-    wins: filteredTrades.filter((t) => t.outcome === 'WIN').length,
-    losses: filteredTrades.filter((t) => t.outcome === 'LOSS').length,
-    breakeven: filteredTrades.filter((t) => t.outcome === 'BREAKEVEN').length,
-  }), [filteredTrades]);
-
   // Filtered and sorted trades
   const filteredTrades = useMemo(() => {
     return trades
@@ -191,6 +182,16 @@ export const TradeTable: React.FC<TradeTableProps> = ({
         return 0;
       });
   }, [trades, filters]);
+
+  // Legacy journal records contain realized outcomes, not lifecycle statuses.
+  // Keep these counters outcome-based until the new status model is implemented.
+  const outcomeSummary = useMemo(() => ({
+    total: filteredTrades.length,
+    wins: filteredTrades.filter((t) => t.outcome === 'WIN').length,
+    losses: filteredTrades.filter((t) => t.outcome === 'LOSS').length,
+    breakeven: filteredTrades.filter((t) => t.outcome === 'BREAKEVEN').length,
+  }), [filteredTrades]);
+
 
   // Reset page to 1 when filters change
   React.useEffect(() => {
