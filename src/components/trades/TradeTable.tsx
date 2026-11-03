@@ -101,6 +101,15 @@ export const TradeTable: React.FC<TradeTableProps> = ({
     return trades.some((t) => t.isDemo);
   }, [trades]);
 
+  // Legacy journal records contain realized outcomes, not lifecycle statuses.
+  // Keep these counters outcome-based until the new status model is implemented.
+  const outcomeSummary = useMemo(() => ({
+    total: filteredTrades.length,
+    wins: filteredTrades.filter((t) => t.outcome === 'WIN').length,
+    losses: filteredTrades.filter((t) => t.outcome === 'LOSS').length,
+    breakeven: filteredTrades.filter((t) => t.outcome === 'BREAKEVEN').length,
+  }), [filteredTrades]);
+
   // Filtered and sorted trades
   const filteredTrades = useMemo(() => {
     return trades
@@ -239,6 +248,34 @@ export const TradeTable: React.FC<TradeTableProps> = ({
 
   return (
     <div className="space-y-4">
+      {/* Trade Log header and legacy-safe summary */}
+      <section className="space-y-3">
+        <div className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-2">
+          <div>
+            <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-[#151D2A] dark:text-[#F2F5F9]">Trade Log</h1>
+            <p className="text-xs text-[#697586] dark:text-[#929BA9] mt-1">Catatan dan riwayat transaksi trading Anda</p>
+          </div>
+          <span className="text-[11px] text-[#697586] dark:text-[#929BA9]">{outcomeSummary.total} catatan ditemukan</span>
+        </div>
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+          <div className="rounded-xl border border-[#DDE3EA] dark:border-[#252B34] bg-white dark:bg-[#11151B] p-3">
+            <div className="text-[10px] uppercase tracking-wide text-[#697586] dark:text-[#929BA9]">Total Catatan</div>
+            <div className="mt-1 text-xl font-bold tabular-nums text-[#151D2A] dark:text-[#F2F5F9]">{outcomeSummary.total}</div>
+          </div>
+          <div className="rounded-xl border border-[#DDE3EA] dark:border-[#252B34] bg-white dark:bg-[#11151B] p-3">
+            <div className="text-[10px] uppercase tracking-wide text-[#697586] dark:text-[#929BA9]">Win</div>
+            <div className="mt-1 text-xl font-bold tabular-nums text-emerald-600 dark:text-emerald-400">{outcomeSummary.wins}</div>
+          </div>
+          <div className="rounded-xl border border-[#DDE3EA] dark:border-[#252B34] bg-white dark:bg-[#11151B] p-3">
+            <div className="text-[10px] uppercase tracking-wide text-[#697586] dark:text-[#929BA9]">Loss</div>
+            <div className="mt-1 text-xl font-bold tabular-nums text-rose-600 dark:text-rose-400">{outcomeSummary.losses}</div>
+          </div>
+          <div className="rounded-xl border border-[#DDE3EA] dark:border-[#252B34] bg-white dark:bg-[#11151B] p-3">
+            <div className="text-[10px] uppercase tracking-wide text-[#697586] dark:text-[#929BA9]">Break-even</div>
+            <div className="mt-1 text-xl font-bold tabular-nums text-[#697586] dark:text-[#929BA9]">{outcomeSummary.breakeven}</div>
+          </div>
+        </div>
+      </section>
       {/* Top Banner if demo data exists */}
       {hasDemoTrades && (
         <div className="flex flex-col sm:flex-row sm:items-center justify-between p-3.5 rounded-xl bg-white dark:bg-[#11151B] border border-[#DDE3EA] dark:border-[#252B34] text-xs text-[#151D2A] dark:text-[#F2F5F9] gap-3">
