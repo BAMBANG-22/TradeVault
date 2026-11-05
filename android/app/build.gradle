@@ -1,14 +1,26 @@
 apply plugin: 'com.android.application'
 
+def persistentSigningConfigured = System.getenv("ANDROID_KEYSTORE_PATH") != null
+def tradeVaultVersionCode = (System.getenv("VERSION_CODE") ?: "1").toInteger()
+def tradeVaultVersionName = System.getenv("VERSION_NAME") ?: "1.0"
+
 android {
     namespace = "com.tradevault.journal"
     compileSdk = rootProject.ext.compileSdkVersion
+    signingConfigs {
+        persistentDebug {
+            storeFile file(System.getenv("ANDROID_KEYSTORE_PATH") ?: "missing-tradevault-keystore.jks")
+            storePassword System.getenv("ANDROID_KEYSTORE_PASSWORD") ?: ""
+            keyAlias System.getenv("ANDROID_KEY_ALIAS") ?: ""
+            keyPassword System.getenv("ANDROID_KEY_PASSWORD") ?: ""
+        }
+    }
     defaultConfig {
         applicationId "com.tradevault.journal.next"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 1
-        versionName "1.0"
+        versionCode tradeVaultVersionCode
+        versionName tradeVaultVersionName
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         aaptOptions {
              // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.
@@ -17,6 +29,12 @@ android {
         }
     }
     buildTypes {
+        debug {
+            // GitHub Actions supplies a persistent keystore. Local builds without it retain Android's standard debug signing.
+            if (persistentSigningConfigured) {
+                signingConfig signingConfigs.persistentDebug
+            }
+        }
         release {
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
