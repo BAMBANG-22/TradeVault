@@ -1,0 +1,123 @@
+name: Build TradeVault Android APK
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-apk-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build Android Debug APK
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.4
+
+      - name: Setup Java 21 (Temurin)
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '21'
+          cache: 'gradle'
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+        with:
+          packages: 'platform-tools'
+
+      - name: Ensure Android SDK Platform 36
+        run: |
+          echo "=== Accepting Android SDK Licenses ==="
+          set +e
+          yes | sdkmanager --licenses
+          PIPE_STATUS=(${PIPESTATUS[@]})
+          set -e
+          SDK_EXIT=${PIPE_STATUS[1]}
+          if [ "$SDK_EXIT" -ne 0 ]; then
+            echo "ERROR: sdkmanager --licenses failed with exit code $SDK_EXIT"
+            exit $SDK_EXIT
+          fi
+          echo "SDK licenses accepted successfully (exit code $SDK_EXIT)"
+          echo "=== Installing / Verifying Android SDK Platform 36 ==="
+          sdkmanager "platforms;android-36"
+          echo "=== Installed Android SDK Platforms & Build-Tools ==="
+          sdkmanager --list_installed | grep -E "platforms;android-|build-tools;" || true
+
+      - name: Verify toolchain environments
+        run: |
+          echo "=== Java Version ==="
+          java -version
+          echo "=== Node.js Version ==="
+          node -v
+          echo "=== Bun Version ==="
+          bun -v
+          echo "=== Android SDK Path ==="
+          echo "ANDROID_HOME: $ANDROID_HOME"
+          echo "=== Gradle Wrapper Version ==="
+          cd android && ./gradlew --version
+
+      - name: Install dependencies (Bun frozen lockfile)
+        run: bun install --frozen-lockfile
+
+      - name: Build web application
+        env:
+          VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL || '' }}
+          VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY || '' }}
+        run: bun run build
+
+      - name: Sync Capacitor Android
+        run: npx cap sync android
+
+      - name: Verify Android Gradle wrapper permissions
+        run: chmod +x android/gradlew
+
+      - name: Build Android Debug APK
+        run: |
+          cd android
+          ./gradlew assembleDebug --no-daemon
+
+      - name: Verify generated APK
+        run: |
+          APK_PATH="android/app/build/outputs/apk/debug/app-debug.apk"
+          if [ ! -f "$APK_PATH" ]; then
+            echo "ERROR: APK file not found at $APK_PATH"
+            exit 1
+          fi
+          
+          APK_SIZE=$(stat -c%s "$APK_PATH" 2>/dev/null || stat -f%z "$APK_PATH" 2>/dev/null)
+          if [ "$APK_SIZE" -le 0 ]; then
+            echo "ERROR: APK file is empty (0 bytes)"
+            exit 1
+          fi
+          
+          APK_SIZE_HUMAN=$(du -h "$APK_PATH" | cut -f1)
+          echo "SUCCESS: Debug APK generated successfully!"
+          echo "Path: $APK_PATH"
+          echo "Size: $APK_SIZE bytes ($APK_SIZE_HUMAN)"
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: TradeVault-Journal-Debug-APK
+          path: android/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+          retention-days: 14

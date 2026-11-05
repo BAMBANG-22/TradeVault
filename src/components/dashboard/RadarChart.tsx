@@ -5,7 +5,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { RadarIndicators } from '../../utils/calculations';
-import { Award, Target, HelpCircle, X, ShieldAlert } from 'lucide-react';
+import { HelpCircle, X, ShieldAlert } from 'lucide-react';
 
 interface RadarChartProps {
   indicators: RadarIndicators;
@@ -40,28 +40,28 @@ export const RadarChart: React.FC<RadarChartProps> = ({ indicators, size = 320 }
       description: 'Rasio Gross Profit terhadap Gross Loss (Target: >= 1.5 = 70, >= 2.0 = 85, >= 3.0 / ∞ = 100)',
     },
     {
+      key: 'rewardRiskScore',
+      label: 'Avg RR',
+      val: indicators.isDataSufficient ? indicators.rewardRiskScore : 0,
+      description: 'Rata-rata Realized Risk/Reward aktual (Target: 0R = 50, +0.5R = 70, +1R = 85, >= +2R = 100)',
+    },
+    {
       key: 'expectancyScore',
       label: 'Expectancy',
       val: indicators.isDataSufficient ? indicators.expectancyScore : 0,
       description: 'Nilai harapan rata-rata keuntungan per transaksi (Target: Positif > 0, >= 1% modal = 100)',
     },
     {
-      key: 'rewardRiskScore',
-      label: 'Avg R',
-      val: indicators.isDataSufficient ? indicators.rewardRiskScore : 0,
-      description: 'Rata-rata Realized R-Multiple semua trade (Target: 0R = 50, +0.5R = 70, +1R = 85, >= +2R = 100)',
+      key: 'riskControlScore',
+      label: 'Risk Control',
+      val: indicators.isDataSufficient ? (indicators.riskControlScore ?? indicators.drawdownControlScore) : 0,
+      description: 'Pengendalian risiko dan toleransi drawdown (Target: Max DD <= 2% = 100, <= 5% = 85, <= 10% = 70)',
     },
     {
-      key: 'returnScore',
-      label: 'Return',
-      val: indicators.isDataSufficient ? indicators.returnScore : 0,
-      description: 'Pertumbuhan modal terhadap saldo awal (Target: 0% = 50, +5% = 70, +10% = 85, >= +15% = 100)',
-    },
-    {
-      key: 'drawdownControlScore',
-      label: 'DD Control',
-      val: indicators.isDataSufficient ? indicators.drawdownControlScore : 0,
-      description: 'Toleransi penurunan modal (Target: Max DD <= 2% = 100, <= 5% = 85, <= 10% = 70, > 35% = 0)',
+      key: 'consistencyScore',
+      label: 'Consistency',
+      val: indicators.isDataSufficient ? indicators.consistencyScore : 0,
+      description: 'Konsistensi performa harian dan rasio hari profit (Target: >= 60% hari profit = 80+)',
     },
   ];
 
@@ -99,14 +99,9 @@ export const RadarChart: React.FC<RadarChartProps> = ({ indicators, size = 320 }
     <div className="rounded-xl border border-[#DDE3EA] dark:border-[#252B34] bg-white dark:bg-[#11151B] p-4 sm:p-5 relative overflow-hidden">
       {/* Header */}
       <div className="flex flex-wrap items-center justify-between gap-2 pb-3 border-b border-[#DDE3EA] dark:border-[#252B34]">
-        <div className="flex items-center gap-2.5 min-w-0">
-          <div className="rounded-lg bg-[#EEF2F6] dark:bg-[#171D26] p-2 text-[#697586] dark:text-[#929BA9] border border-[#DDE3EA] dark:border-[#252B34] shrink-0">
-            <Award className="h-4 w-4 stroke-[1.75]" />
-          </div>
-          <div className="min-w-0">
-            <h3 className="text-sm font-semibold text-[#151D2A] dark:text-[#F2F5F9]">Performance Profile (Radar 6-Pilar)</h3>
-            <p className="text-xs text-[#697586] dark:text-[#929BA9]">Skor holistik kualitas &amp; konsistensi sistem trading</p>
-          </div>
+        <div className="min-w-0">
+          <h3 className="text-sm font-semibold text-[#151D2A] dark:text-[#F2F5F9]">6 Pillars Radar</h3>
+          <p className="text-xs text-[#697586] dark:text-[#929BA9]">Skor holistik kualitas &amp; konsistensi sistem trading</p>
         </div>
 
         <div className="flex items-center gap-1.5 shrink-0">
@@ -119,8 +114,7 @@ export const RadarChart: React.FC<RadarChartProps> = ({ indicators, size = 320 }
             <HelpCircle className="h-3.5 w-3.5 stroke-[1.75]" />
           </button>
 
-          <div className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-[#EEF2F6] dark:bg-[#171D26] border border-[#DDE3EA] dark:border-[#252B34] text-[#151D2A] dark:text-[#F2F5F9] text-xs font-mono-numbers tabular-nums font-bold">
-            <Target className="h-3.5 w-3.5 stroke-[1.75] text-[#1769E8]" />
+          <div className="px-2.5 py-1 rounded-lg bg-[#EEF2F6] dark:bg-[#171D26] border border-[#DDE3EA] dark:border-[#252B34] text-[#151D2A] dark:text-[#F2F5F9] text-xs font-mono-numbers tabular-nums font-bold">
             <span>
               {indicators.isDataSufficient ? `${overallScore}/100` : 'Data Belum Cukup'}
             </span>
@@ -289,14 +283,9 @@ export const RadarChart: React.FC<RadarChartProps> = ({ indicators, size = 320 }
             onClick={(e) => e.stopPropagation()}
           >
             <div className="flex items-center justify-between pb-3 border-b border-[#DDE3EA] dark:border-[#252B34]">
-              <div className="flex items-center gap-2">
-                <div className="p-1.5 rounded-lg bg-[#EEF2F6] dark:bg-[#171D26] text-[#697586] dark:text-[#929BA9] border border-[#DDE3EA] dark:border-[#252B34]">
-                  <Target className="h-4 w-4 stroke-[1.75]" />
-                </div>
-                <h3 className="text-sm font-bold text-[#151D2A] dark:text-[#F2F5F9]">
-                  Metodologi &amp; Target 6 Pilar Performance Profile
-                </h3>
-              </div>
+              <h3 className="text-sm font-bold text-[#151D2A] dark:text-[#F2F5F9]">
+                Metodologi &amp; Target 6 Pilar Performance Profile
+              </h3>
               <button
                 onClick={() => setShowFormulaModal(false)}
                 className="p-1 rounded-lg text-[#697586] dark:text-[#929BA9] hover:text-[#151D2A] dark:hover:text-[#F2F5F9] hover:bg-[#EEF2F6] dark:hover:bg-[#171D26] transition-colors cursor-pointer"
@@ -334,7 +323,17 @@ export const RadarChart: React.FC<RadarChartProps> = ({ indicators, size = 320 }
 
                 <div className="p-2.5 rounded-lg bg-[#F5F7FA] dark:bg-[#171D26] border border-[#DDE3EA] dark:border-[#252B34]">
                   <div className="flex items-center justify-between font-semibold text-[#151D2A] dark:text-[#F2F5F9]">
-                    <span>3. Expectancy (Nilai Harapan per Trade)</span>
+                    <span>3. Average RR (Risk / Reward Aktual)</span>
+                    <span className="text-[#1769E8] font-mono-numbers">Rata-rata (Net Profit / Risiko)</span>
+                  </div>
+                  <p className="text-[#697586] dark:text-[#929BA9] text-[11px] mt-1">
+                    Rata-rata Realized Risk/Reward aktual dari seluruh transaksi tertutup yang memiliki data risiko valid: 0R = skor 50, +0.5R = skor 70, +1.0R = skor 85, dan ≥ +2.0R = skor 100.
+                  </p>
+                </div>
+
+                <div className="p-2.5 rounded-lg bg-[#F5F7FA] dark:bg-[#171D26] border border-[#DDE3EA] dark:border-[#252B34]">
+                  <div className="flex items-center justify-between font-semibold text-[#151D2A] dark:text-[#F2F5F9]">
+                    <span>4. Expectancy (Nilai Harapan per Trade)</span>
                     <span className="text-[#1769E8] font-mono-numbers">Total Net PnL / Total Trades</span>
                   </div>
                   <p className="text-[#697586] dark:text-[#929BA9] text-[11px] mt-1">
@@ -344,31 +343,21 @@ export const RadarChart: React.FC<RadarChartProps> = ({ indicators, size = 320 }
 
                 <div className="p-2.5 rounded-lg bg-[#F5F7FA] dark:bg-[#171D26] border border-[#DDE3EA] dark:border-[#252B34]">
                   <div className="flex items-center justify-between font-semibold text-[#151D2A] dark:text-[#F2F5F9]">
-                    <span>4. Average R (Realized R-Multiple)</span>
-                    <span className="text-[#1769E8] font-mono-numbers">Rata-rata (Net Profit / Risiko)</span>
+                    <span>5. Risk Control (Pengendalian Risiko)</span>
+                    <span className="text-[#1769E8] font-mono-numbers">Toleransi Max Drawdown</span>
                   </div>
                   <p className="text-[#697586] dark:text-[#929BA9] text-[11px] mt-1">
-                    Rata-rata R-Multiple aktual dari seluruh trade yang memiliki data risiko valid: 0R = skor 50, +0.5R = skor 70, +1.0R = skor 85, dan ≥ +2.0R = skor 100.
+                    Toleransi penurunan modal dari puncak ekuitas: Max DD ≤ 2% = 100, ≤ 5% = 85, ≤ 10% = 70, ≤ 20% = 40, dan &gt; 35% = 0.
                   </p>
                 </div>
 
                 <div className="p-2.5 rounded-lg bg-[#F5F7FA] dark:bg-[#171D26] border border-[#DDE3EA] dark:border-[#252B34]">
                   <div className="flex items-center justify-between font-semibold text-[#151D2A] dark:text-[#F2F5F9]">
-                    <span>5. Return (Pertumbuhan Total)</span>
-                    <span className="text-[#1769E8] font-mono-numbers">Net Profit / Modal Awal</span>
+                    <span>6. Consistency (Konsistensi Harian)</span>
+                    <span className="text-[#1769E8] font-mono-numbers">Rasio Hari Profit</span>
                   </div>
                   <p className="text-[#697586] dark:text-[#929BA9] text-[11px] mt-1">
-                    Target: 0% return = skor 50, +5% = skor 70, +10% = skor 85, dan ≥ +15% = skor 100.
-                  </p>
-                </div>
-
-                <div className="p-2.5 rounded-lg bg-[#F5F7FA] dark:bg-[#171D26] border border-[#DDE3EA] dark:border-[#252B34]">
-                  <div className="flex items-center justify-between font-semibold text-[#151D2A] dark:text-[#F2F5F9]">
-                    <span>6. Drawdown Control (Pengendalian Risiko)</span>
-                    <span className="text-[#1769E8] font-mono-numbers">Peak - Saldo Rendah</span>
-                  </div>
-                  <p className="text-[#697586] dark:text-[#929BA9] text-[11px] mt-1">
-                    Semakin kecil drawdown, semakin tinggi skor. Max DD ≤ 2% = 100, ≤ 5% = 85, ≤ 10% = 70, ≤ 20% = 40, dan &gt; 35% = 0.
+                    Mengukur rasio hari trading yang menghasilkan keuntungan bersih dibanding total hari trading aktif: ≥ 60% hari profit = 80+, 50% = 65.
                   </p>
                 </div>
               </div>

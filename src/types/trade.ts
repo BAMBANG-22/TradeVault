@@ -2,6 +2,29 @@ export type TradeOutcome = 'WIN' | 'LOSS' | 'BREAKEVEN';
 export type TradePosition = 'BUY' | 'SELL';
 export type TradingSession = 'Asian' | 'London' | 'New York' | 'Overlap' | 'Other';
 
+export type TradeLifecycleStatus = 'PLANNED' | 'OPEN' | 'CLOSED' | 'CANCELLED';
+export type TradeOrderType = 'Market' | 'Pending';
+export type TradeCloseType = 'TP' | 'SL' | 'Manual';
+
+export type TradeActivityEventType =
+  | 'TRADE_CREATED'
+  | 'POSITION_OPENED'
+  | 'SL_CHANGED'
+  | 'TP_CHANGED'
+  | 'POSITION_CLOSED'
+  | 'TRADE_CANCELLED'
+  | 'EVALUATION_ADDED';
+
+export interface TradeActivityEvent {
+  id: string;
+  type: TradeActivityEventType;
+  timestamp: string;
+  label: string;
+  previousValue?: string;
+  newValue?: string;
+  note?: string;
+}
+
 export interface Trade {
   id: string;
   dateTime: string; // ISO format: YYYY-MM-DDTHH:mm
@@ -35,6 +58,7 @@ export interface Trade {
 
 export interface TradeFilter {
   search: string;
+  lifecycleStatus?: 'ALL' | TradeLifecycleStatus;
   outcome: 'ALL' | TradeOutcome;
   position: 'ALL' | TradePosition;
   strategy: string;
@@ -44,3 +68,19 @@ export interface TradeFilter {
   endDate: string;
   sortBy: 'date-desc' | 'date-asc' | 'profit-desc' | 'profit-asc' | 'lot-desc';
 }
+
+export interface CsvRowValidationError {
+  rowNumber: number;
+  tradeId?: string;
+  field: string;
+  rawValue: string;
+  reason: string;
+}
+
+export interface CsvImportReport {
+  totalRows: number;
+  acceptedRowsCount: number;
+  rejectedRowsCount: number;
+  rowErrors: CsvRowValidationError[];
+}
+

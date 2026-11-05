@@ -61,6 +61,10 @@ import { ClearDemoModal } from './components/backup/ClearDemoModal';
 import { AuthModal } from './components/auth/AuthModal';
 import { UserAccountModal } from './components/auth/UserAccountModal';
 import { SupabaseConfigModal } from './components/supabase/SupabaseConfigModal';
+import {
+  decodeLifecycleMetaFromExecutionNotes,
+  encodeLifecycleMetaIntoExecutionNotes,
+} from './utils/tradeLifecycle';
 
 export default function App() {
   // Theme state
@@ -82,6 +86,7 @@ export default function App() {
 
   // Modal and editing states
   const [editingTrade, setEditingTrade] = useState<Trade | null>(null);
+  const [isAddTradeModalOpen, setIsAddTradeModalOpen] = useState<boolean>(false);
   const [tradeForDetail, setTradeForDetail] = useState<Trade | null>(null);
   const [tradeForDelete, setTradeForDelete] = useState<Trade | null>(null);
   const [screenshotModal, setScreenshotModal] = useState<{ url: string; title: string } | null>(null);
@@ -106,13 +111,26 @@ export default function App() {
 
   // Centralized navigation handler to save outgoing tab scroll position before switching
   const handleNavigateTab = useCallback((nextTab: string) => {
+    if (nextTab === 'add-trade') {
+      setIsAddTradeModalOpen(true);
+      return;
+    }
     const currentTab = activeTabRef.current;
     if (currentTab && currentTab !== 'add-trade') {
       scrollPositionsRef.current[currentTab] =
         window.scrollY || document.documentElement.scrollTop || 0;
     }
-    if (nextTab === 'add-trade') {
-      scrollPositionsRef.current['add-trade'] = 0;
+    if (nextTab === 'detail') {
+      scrollPositionsRef.current['detail'] = 0;
+      setTradeForDetail((prev) => {
+        if (prev) return prev;
+        const latest = tradesRef.current;
+        if (latest.length === 0) return null;
+        const sorted = [...latest].sort(
+          (a, b) => new Date(b.dateTime).getTime() - new Date(a.dateTime).getTime()
+        );
+        return sorted[0];
+      });
     }
     activeTabRef.current = nextTab;
     setActiveTab(nextTab);
@@ -134,17 +152,21 @@ export default function App() {
   // Synchronously restore target view scroll position before browser paint
   useLayoutEffect(() => {
     const targetY =
-      activeTab === 'add-trade' ? 0 : (scrollPositionsRef.current[activeTab] ?? 0);
+      activeTab === 'add-trade' || activeTab === 'detail'
+        ? 0
+        : (scrollPositionsRef.current[activeTab] ?? 0);
     const scrollingEl = document.scrollingElement || document.documentElement;
     const maxScroll = Math.max(0, scrollingEl.scrollHeight - window.innerHeight);
     const clampedY = Math.min(Math.max(0, targetY), maxScroll);
     window.scrollTo({ top: clampedY, left: 0, behavior: 'instant' as ScrollBehavior });
   }, [activeTab]);
   const previousUserIdRef = useRef<string | null>(null);
+  const authGenerationRef = useRef<number>(0);
 
   const resetTransientModalsAndCaches = () => {
     clearSessionSyncCaches();
     setEditingTrade(null);
+    setIsAddTradeModalOpen(false);
     setTradeForDetail(null);
     setTradeForDelete(null);
     setScreenshotModal(null);
@@ -158,6 +180,7 @@ export default function App() {
     // 1. Initial check for persistent session on page load/refresh
     getCurrentSession().then(({ session }) => {
       if (isMounted && session?.user) {
+        authGenerationRef.current++;
         setCurrentUser(session.user);
       }
     });
@@ -169,6 +192,7 @@ export default function App() {
         data: { subscription },
       } = client.auth.onAuthStateChange((event, session) => {
         if (!isMounted) return;
+        authGenerationRef.current++;
         if (event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED' || event === 'USER_UPDATED') {
           setCurrentUser(session?.user || null);
         } else if (event === 'SIGNED_OUT') {
@@ -282,7 +306,8 @@ export default function App() {
   // Save trades handler: writes directly to Supabase public.trades if logged in
   const handleSaveTrade = async (
     tradeToSave: Trade,
-    originalId?: string
+    originalId?: string,
+    options?: { stayOnCurrentTab?: boolean }
   ): Promise<{
     success: boolean;
     error?: string;
@@ -360,6 +385,49 @@ export default function App() {
         uploadedScreenshotPath = uploadRes.data;
       }
 
+      // Also upload AFTER TRADE screenshot in [TV_META] if present as Base64
+      if (verifiedUserId && finalTrade.executionNotes) {
+        const decodedMeta = decodeLifecycleMetaFromExecutionNotes(finalTrade.executionNotes);
+        if (Object.keys(decodedMeta).length > 0) {
+          let metaChanged = false;
+          const nextMeta = { ...decodedMeta };
+          if (
+            nextMeta.beforeScreenshotUrl &&
+            nextMeta.beforeScreenshotUrl.startsWith('data:image/')
+          ) {
+            if (uploadedScreenshotPath) {
+              nextMeta.beforeScreenshotUrl = uploadedScreenshotPath;
+              metaChanged = true;
+            }
+          }
+          if (
+            nextMeta.afterScreenshotUrl &&
+            nextMeta.afterScreenshotUrl.startsWith('data:image/')
+          ) {
+            setIsCloudSyncing(true);
+            const afterUploadRes = await uploadScreenshotToSupabase(
+              nextMeta.afterScreenshotUrl,
+              `${finalTrade.id}_after`,
+              verifiedUserId
+            );
+            setIsCloudSyncing(false);
+            if (!afterUploadRes.success || !afterUploadRes.data) {
+              const afterErrMsg = `Gagal mengunggah screenshot After Trade ke Storage: ${afterUploadRes.error}.`;
+              showToast(afterErrMsg, 'error');
+              return { success: false, error: afterErrMsg };
+            }
+            nextMeta.afterScreenshotUrl = afterUploadRes.data;
+            metaChanged = true;
+          }
+          if (metaChanged) {
+            finalTrade.executionNotes = encodeLifecycleMetaIntoExecutionNotes(
+              finalTrade.executionNotes,
+              nextMeta
+            );
+          }
+        }
+      }
+
       // If user is logged in, persist to Supabase public.trades
       if (verifiedUserId) {
         setIsCloudSyncing(true);
@@ -387,7 +455,7 @@ export default function App() {
         }
       }
 
-      // Update in-memory state and local storage cache ONLY after confirmed cloud success
+      // Update in-memory state and local storage cache
       // Read from tradesRef.current to prevent stale closure overwrites after async awaits
       const currentTrades = tradesRef.current;
       let existingIndex = -1;
@@ -410,31 +478,71 @@ export default function App() {
         updatedTrades = [finalTrade, ...currentTrades];
       }
 
-      tradesRef.current = updatedTrades;
+      // Guest / Local Mode: saveStoredTrades is the AUTHORITATIVE persistence (F-01)
+      if (!verifiedUserId) {
+        const localSaveResult = saveStoredTrades(updatedTrades, null);
+        if (!localSaveResult.success) {
+          const failMsg = localSaveResult.error || 'Gagal menyimpan transaksi ke penyimpanan lokal.';
+          showToast(failMsg, 'error');
+          // F-01: DO NOT update tradesRef.current, DO NOT update trades state,
+          // DO NOT reset editingTrade, DO NOT navigate away from form!
+          return {
+            success: false,
+            error: failMsg,
+            uploadedScreenshotPath,
+          };
+        }
 
-      // Update local storage backup
-      const saveResult = saveStoredTrades(updatedTrades, verifiedUserId);
-      if (!saveResult.success) {
-        showToast(saveResult.error || 'Gagal menyimpan trade ke penyimpanan lokal.', 'error');
-      }
-      setTrades(updatedTrades);
-
-      setEditingTrade(null);
-      handleNavigateTab('trades');
-
-      if (verifiedUserId) {
-        showToast(
-          isEdit
-            ? `Trade ${finalTrade.id} berhasil diperbarui di database Supabase!`
-            : `Trade ${finalTrade.id} berhasil disimpan ke database Supabase!`
-        );
-      } else {
+        // Local save strictly confirmed: now commit to in-memory state and navigate
+        tradesRef.current = updatedTrades;
+        setTrades(updatedTrades);
+        setEditingTrade(null);
+        setIsAddTradeModalOpen(false);
+        if (
+          tradeForDetail &&
+          (tradeForDetail.id.toLowerCase() === finalTrade.id.toLowerCase() ||
+            (targetOriginalId && tradeForDetail.id.toLowerCase() === targetOriginalId.toLowerCase()))
+        ) {
+          setTradeForDetail(finalTrade);
+        }
+        if (!options?.stayOnCurrentTab && activeTabRef.current !== 'detail') {
+          handleNavigateTab('trades');
+        }
         showToast(
           isEdit
             ? `Trade ${finalTrade.id} berhasil diperbarui (Lokal).`
             : `Trade ${finalTrade.id} berhasil dicatat ke jurnal lokal!`
         );
+        return { success: true, uploadedScreenshotPath };
       }
+
+      // Authenticated Mode: Cloud persistence confirmed above; now update state & offline cache
+      tradesRef.current = updatedTrades;
+      setTrades(updatedTrades);
+
+      const cacheResult = saveStoredTrades(updatedTrades, verifiedUserId);
+      if (!cacheResult.success) {
+        // Non-blocking offline cache warning (cloud write already succeeded)
+        showToast(cacheResult.error || 'Peringatan: Gagal memperbarui cache offline lokal.', 'error');
+      }
+
+      setEditingTrade(null);
+      setIsAddTradeModalOpen(false);
+      if (
+        tradeForDetail &&
+        (tradeForDetail.id.toLowerCase() === finalTrade.id.toLowerCase() ||
+          (targetOriginalId && tradeForDetail.id.toLowerCase() === targetOriginalId.toLowerCase()))
+      ) {
+        setTradeForDetail(finalTrade);
+      }
+      if (!options?.stayOnCurrentTab && activeTabRef.current !== 'detail') {
+        handleNavigateTab('trades');
+      }
+      showToast(
+        isEdit
+          ? `Trade ${finalTrade.id} berhasil diperbarui di database Supabase!`
+          : `Trade ${finalTrade.id} berhasil disimpan ke database Supabase!`
+      );
 
       return { success: true, uploadedScreenshotPath };
     } catch (err: any) {
@@ -518,6 +626,9 @@ export default function App() {
       setTradeForDelete(null);
       if (tradeForDetail?.id === deletedId) {
         setTradeForDetail(null);
+        if (activeTabRef.current === 'detail') {
+          handleNavigateTab('trades');
+        }
       }
 
       if (verifiedUserId && !isDemoTradeItem) {
@@ -763,7 +874,9 @@ export default function App() {
   // Import CSV trades with canonical merge/replace and automatic Supabase cloud sync
   const handleImportCsvTrades = async (importedTrades: Trade[], mode: 'merge' | 'replace') => {
     const previousTrades = [...tradesRef.current];
-    const { finalTrades } = mergeTradesDatasets(previousTrades, importedTrades, mode);
+    const activeOwnerScope = currentUser?.id || 'GUEST';
+    const { finalTrades } = mergeTradesDatasets(previousTrades, importedTrades, mode, activeOwnerScope);
+
 
     let verifiedUserId: string | null = null;
     if (currentUser) {
@@ -867,7 +980,9 @@ export default function App() {
       }
     }
 
-    const { finalTrades } = mergeTradesDatasets(previousTrades, backupTrades, mode);
+    const activeOwnerScope = currentUser?.id || 'GUEST';
+    const { finalTrades } = mergeTradesDatasets(previousTrades, backupTrades, mode, activeOwnerScope);
+
 
     // Verify authenticated user for cloud sync
     let verifiedUserId: string | null = null;
@@ -991,11 +1106,16 @@ export default function App() {
     }
   };
 
-  // Open Edit
+  // Open Edit in Popup Form
   const handleOpenEdit = (trade: Trade) => {
     setEditingTrade(trade);
-    setTradeForDetail(null);
-    handleNavigateTab('add-trade');
+    setIsAddTradeModalOpen(true);
+  };
+
+  // Open Full Page Trade Detail
+  const handleOpenTradeDetail = (trade: Trade) => {
+    setTradeForDetail(trade);
+    handleNavigateTab('detail');
   };
 
   // Open Screenshot zoom modal
@@ -1004,11 +1124,11 @@ export default function App() {
   };
 
   return (
-    <div className="min-h-screen bg-[#F5F7FA] text-[#151D2A] dark:bg-[#080A0E] dark:text-[#F2F5F9] flex flex-col font-sans transition-colors duration-150">
+    <div className="min-h-screen w-full bg-[#F5F7FA] text-[#151D2A] dark:bg-[#080A0E] dark:text-[#F2F5F9] flex flex-col font-sans transition-colors duration-150">
       {/* Toast Notification */}
       {notification && (
         <div
-          className={`fixed top-4 left-4 right-4 sm:left-auto sm:right-4 sm:max-w-md z-50 rounded-xl border bg-white dark:bg-[#11151B] border-[#DDE3EA] dark:border-[#252B34] px-4 py-3 shadow-lg text-xs font-semibold animate-in slide-in-from-top duration-150 ${
+          className={`fixed top-[calc(1rem+env(safe-area-inset-top,0px))] left-4 right-4 sm:left-auto sm:right-4 sm:max-w-md z-50 rounded-xl border bg-white dark:bg-[#11151B] border-[#DDE3EA] dark:border-[#252B34] px-4 py-3 shadow-lg text-xs font-semibold animate-in slide-in-from-top duration-150 ${
             notification.type === 'success'
               ? 'text-emerald-600 dark:text-emerald-400'
               : 'text-rose-600 dark:text-rose-400'
@@ -1018,7 +1138,7 @@ export default function App() {
         </div>
       )}
 
-      <div className="flex flex-1">
+      <div className="flex flex-1 w-full">
         {/* Desktop Sidebar Navigation */}
         <Sidebar
           activeTab={activeTab}
@@ -1039,7 +1159,7 @@ export default function App() {
         />
 
         {/* Main Content Area */}
-        <div className="flex-1 flex flex-col min-w-0">
+        <div className="flex-1 flex flex-col min-w-0 w-full">
           {/* Top Navbar */}
           <Navbar
             currentEquity={currentEquity}
@@ -1060,8 +1180,8 @@ export default function App() {
             onOpenAccount={() => setIsAccountModalOpen(true)}
           />
 
-          {/* View Container with bottom padding for mobile navigation */}
-          <main className="flex-1 p-4 sm:p-6 lg:p-8 max-w-7xl w-full mx-auto pb-28 lg:pb-12">
+          {/* View Container with balanced bottom padding for mobile navigation & Android safe area */}
+          <main className="flex-1 p-4 sm:p-6 lg:p-8 max-w-7xl w-full mx-auto pb-[calc(4.25rem+env(safe-area-inset-bottom,0px))] lg:pb-8">
             {/* Cloud Connection / Load Error Banner */}
             {cloudLoadError && (
               <div className="mb-6 p-4 rounded-xl border border-[#DDE3EA] dark:border-[#252B34] bg-white dark:bg-[#11151B] text-[#151D2A] dark:text-[#F2F5F9] flex flex-col sm:flex-row sm:items-center justify-between gap-3 animate-in fade-in duration-150">
@@ -1104,9 +1224,9 @@ export default function App() {
                 onNavigate={handleNavigateTab}
                 onAddTrade={() => {
                   setEditingTrade(null);
-                  handleNavigateTab('add-trade');
+                  setIsAddTradeModalOpen(true);
                 }}
-                onViewTrade={(t) => setTradeForDetail(t)}
+                onViewTrade={handleOpenTradeDetail}
                 onClearDemoTrades={() => setIsClearDemoModalOpen(true)}
               />
             </div>
@@ -1117,11 +1237,11 @@ export default function App() {
                 settings={settings}
                 onAddTrade={() => {
                   setEditingTrade(null);
-                  handleNavigateTab('add-trade');
+                  setIsAddTradeModalOpen(true);
                 }}
                 onEditTrade={handleOpenEdit}
                 onDeleteTrade={(t) => setTradeForDelete(t)}
-                onViewDetail={(t) => setTradeForDetail(t)}
+                onViewDetail={handleOpenTradeDetail}
                 onViewScreenshot={handleViewScreenshot}
                 onClearDemoTrades={() => setIsClearDemoModalOpen(true)}
                 currentUser={currentUser}
@@ -1130,28 +1250,38 @@ export default function App() {
                 cloudLoadError={cloudLoadError}
                 onReloadFromCloud={handleReloadFromCloud}
                 onSyncLocalToCloud={handleSyncLocalToCloud}
+                onOpenMobileMenu={() => setIsMobileMenuOpen(true)}
+                onUpdateTradeLifecycle={(updatedTrade, origId) =>
+                  handleSaveTrade(updatedTrade, origId, { stayOnCurrentTab: true })
+                }
               />
             </div>
 
-            {activeTab === 'add-trade' && (
-              <TradeForm
-                initialTrade={editingTrade}
+            <div className={activeTab === 'detail' ? 'block' : 'hidden'} aria-hidden={activeTab !== 'detail'}>
+              <TradeDetailModal
+                trade={tradeForDetail || (trades.length > 0 ? trades[0] : null)}
+                allTrades={trades}
                 settings={settings}
-                currentEquity={currentEquity}
-                existingTrades={trades}
-                onSave={handleSaveTrade}
-                onCancel={() => {
-                  setEditingTrade(null);
-                  handleNavigateTab('trades');
-                }}
+                isOpen={activeTab === 'detail'}
+                isFullPage={true}
+                isChildModalOpen={Boolean(screenshotModal)}
+                onClose={() => handleNavigateTab('trades')}
+                onSelectTrade={(t) => setTradeForDetail(t)}
+                onEdit={handleOpenEdit}
+                onDelete={(t) => setTradeForDelete(t)}
+                onViewScreenshot={handleViewScreenshot}
+                onSaveTradeUpdate={(updatedTrade, origId) =>
+                  handleSaveTrade(updatedTrade, origId, { stayOnCurrentTab: true })
+                }
+                onOpenMobileMenu={() => setIsMobileMenuOpen(true)}
               />
-            )}
+            </div>
 
             <div className={activeTab === 'analytics' ? 'block' : 'hidden'} aria-hidden={activeTab !== 'analytics'}>
               <AnalyticsView
                 trades={trades}
                 settings={settings}
-                onViewTrade={(t) => setTradeForDetail(t)}
+                onViewTrade={handleOpenTradeDetail}
               />
             </div>
 
@@ -1199,6 +1329,10 @@ export default function App() {
           }
           handleNavigateTab(tab);
         }}
+        onAddTrade={() => {
+          setEditingTrade(null);
+          setIsAddTradeModalOpen(true);
+        }}
         isOpen={isMobileMenuOpen}
         onClose={() => setIsMobileMenuOpen(false)}
         tradesCount={trades.length}
@@ -1211,20 +1345,23 @@ export default function App() {
         onOpenAccount={() => setIsAccountModalOpen(true)}
       />
 
-      {/* Detail Modal */}
-      <TradeDetailModal
-        trade={tradeForDetail}
-        settings={settings}
-        isOpen={Boolean(tradeForDetail)}
-        isChildModalOpen={Boolean(screenshotModal)}
-        onClose={() => setTradeForDetail(null)}
-        onEdit={handleOpenEdit}
-        onDelete={(t) => {
-          setTradeForDetail(null);
-          setTradeForDelete(t);
-        }}
-        onViewScreenshot={handleViewScreenshot}
-      />
+      {/* Add / Edit Trade Popup Form Modal */}
+      {(isAddTradeModalOpen || activeTab === 'add-trade') && (
+        <TradeForm
+          initialTrade={editingTrade}
+          settings={settings}
+          currentEquity={currentEquity}
+          existingTrades={trades}
+          onSave={handleSaveTrade}
+          onCancel={() => {
+            setEditingTrade(null);
+            setIsAddTradeModalOpen(false);
+            if (activeTab === 'add-trade') {
+              handleNavigateTab('trades');
+            }
+          }}
+        />
+      )}
 
       {/* Delete Confirmation Modal */}
       <DeleteConfirmModal

@@ -366,6 +366,8 @@ export interface EnqueueOutboxParams {
 }
 
 export interface OrphanCleanupOptions {
+  /** Required isolation boundary: cleanup evaluates and mutates screenshots only for this owner scope. */
+  ownerScope: OwnerScope;
   nowMs?: number;
   /** Must be explicitly true AND target DB must be 'tradevault_idb_test' to perform actual deletion */
   allowDeleteInIsolatedTestDbOnly: boolean;
@@ -417,6 +419,10 @@ export interface ShadowMigrationOptions {
   nowMs?: number;
   /** Test hook invoked right before final source snapshot verification (used by AT-09) */
   onBeforeFinalSnapshotCheck?: () => Promise<void> | void;
+  /** Test hook invoked immediately after atomic batch write commits (used by Phase 2.0 HT-07) */
+  onAfterAtomicBatchWrite?: () => Promise<void> | void;
+  /** Test hook to simulate an abrupt process crash right after atomic batch write commits without rollback (used by Phase 2.0 HT-07) */
+  simulateCrashAfterAtomicBatchWrite?: boolean;
   /** Test hook to simulate a write failure on a specific valid trade index (used by AT-08) */
   simulateWriteFailureOnTradeIndex?: number;
   /** Test hook to simulate a read-back digest corruption after write (used by AT-05/AT-08) */
@@ -433,6 +439,7 @@ export interface ShadowMigrationReport {
   snapshotChecksumEnd: string | null;
   isActiveSourceOfTruth: false;
   failureReason?: string;
+  recoveredFromInterruptedMigration?: boolean;
 }
 
 export interface PreparedMigrationScreenshot {
@@ -504,6 +511,8 @@ export interface ILocalDatabaseAdapter {
   stageScreenshot(params: StageScreenshotParams): Promise<ScreenshotMetadataRow>;
   getScreenshotMetadata(screenshotId: string): Promise<ScreenshotMetadataRow | null>;
   getScreenshotFile(screenshotId: string): Promise<ScreenshotFileRow | null>;
+  getScreenshotMetadataByOwner(ownerScope: OwnerScope): Promise<ScreenshotMetadataRow[]>;
+  getScreenshotFilesByOwner(ownerScope: OwnerScope): Promise<ScreenshotFileRow[]>;
   acquireScreenshotLease(
     screenshotId: string,
     leaseOwnerId: string,
@@ -526,5 +535,6 @@ export interface ILocalDatabaseAdapter {
   getMigrationState(ownerScope: OwnerScope): Promise<MigrationStateRow | null>;
   getQuarantinedRecordsByOwner(ownerScope: OwnerScope): Promise<QuarantinedRecordRow[]>;
 
+  rollbackShadowMigrationScope(ownerScope: OwnerScope): Promise<void>;
   writeShadowMigrationBatchAtomically(batch: PreparedMigrationBatch): Promise<void>;
 }

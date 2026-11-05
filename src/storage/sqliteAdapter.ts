@@ -74,7 +74,8 @@ CREATE TABLE IF NOT EXISTS trades (
   sync_status TEXT NOT NULL,
   sync_revision INTEGER NOT NULL DEFAULT 1,
   last_mutation_id TEXT NOT NULL,
-  canonical_digest TEXT NOT NULL
+  canonical_digest TEXT NOT NULL,
+  FOREIGN KEY (screenshot_id) REFERENCES screenshot_metadata (screenshot_id) DEFERRABLE INITIALLY DEFERRED
 );`.trim(),
 
   settings: `
@@ -121,7 +122,9 @@ CREATE TABLE IF NOT EXISTS screenshot_metadata (
   lease_acquired_at INTEGER NULL,
   lease_expires_at INTEGER NULL,
   created_at INTEGER NOT NULL,
-  updated_at INTEGER NOT NULL
+  updated_at INTEGER NOT NULL,
+  FOREIGN KEY (trade_canonical_uuid) REFERENCES trades (canonical_uuid) DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (screenshot_id) REFERENCES screenshot_files (screenshot_id) DEFERRABLE INITIALLY DEFERRED
 );`.trim(),
 
   screenshot_files: `
@@ -132,7 +135,8 @@ CREATE TABLE IF NOT EXISTS screenshot_files (
   mime_type TEXT NOT NULL,
   size_bytes INTEGER NOT NULL,
   sha256_hash TEXT NOT NULL,
-  created_at INTEGER NOT NULL
+  created_at INTEGER NOT NULL,
+  FOREIGN KEY (screenshot_id) REFERENCES screenshot_metadata (screenshot_id) DEFERRABLE INITIALLY DEFERRED
 );`.trim(),
 
   outbox_sync_queue: `
@@ -254,6 +258,21 @@ function parseSqliteColumnsFromDdl(ddl: string): EntityColumnSpec[] {
   return cols;
 }
 
+function parseSqliteForeignKeysFromDdl(ddl: string): Array<{
+  fromColumn: string;
+  toTable: string;
+  toColumn: string;
+}> {
+  const parsed: Array<{ fromColumn: string; toTable: string; toColumn: string }> = [];
+  const pattern =
+    /FOREIGN\s+KEY\s*\(\s*([A-Za-z0-9_]+)\s*\)\s*REFERENCES\s+([A-Za-z0-9_]+)\s*\(\s*([A-Za-z0-9_]+)\s*\)/gi;
+  let match: RegExpExecArray | null;
+  while ((match = pattern.exec(ddl)) !== null) {
+    parsed.push({ fromColumn: match[1], toTable: match[2], toColumn: match[3] });
+  }
+  return parsed;
+}
+
 function parseSqliteIndexesFromDdl(indexDdls: string[]): Array<{
   name: string;
   tableName: string;
@@ -280,6 +299,56 @@ function parseSqliteIndexesFromDdl(indexDdls: string[]): Array<{
     }
   }
   return parsed;
+}
+
+/**
+ * Validates declared logical references against synthetic or isolated adapter rows.
+ * This is a Phase 1 contract check only; it does not open SQLite or mutate storage.
+ */
+export function validateLogicalRelationshipRows(
+  rowsByTable: Partial<Record<LocalTableName, Array<Record<string, unknown>>>>
+): { isValid: boolean; relationshipMismatches: string[] } {
+  const relationshipMismatches: string[] = [];
+
+  for (const [tableName, spec] of Object.entries(LOGICAL_ENTITY_SCHEMA_SPECS) as Array<
+    [LocalTableName, (typeof LOGICAL_ENTITY_SCHEMA_SPECS)[LocalTableName]]
+  >) {
+    const sourceRows = rowsByTable[tableName] ?? [];
+
+    for (const rel of spec.logicalRelationships) {
+      const targetRows = rowsByTable[rel.toTable] ?? [];
+      const seenOneToOneValues = new Set<unknown>();
+
+      for (const sourceRow of sourceRows) {
+        const referenceValue = sourceRow[rel.fromColumn];
+        if (referenceValue === null || referenceValue === undefined || referenceValue === '') {
+          continue;
+        }
+
+        if (
+          !targetRows.some((targetRow) => targetRow[rel.toColumn] === referenceValue)
+        ) {
+          relationshipMismatches.push(
+            `${tableName}.${rel.fromColumn} references missing ${rel.toTable}.${rel.toColumn} value "${String(referenceValue)}"`
+          );
+        }
+
+        if (rel.relationType === 'LOGICAL_1_TO_1') {
+          if (seenOneToOneValues.has(referenceValue)) {
+            relationshipMismatches.push(
+              `${tableName}.${rel.fromColumn} duplicates one-to-one reference "${String(referenceValue)}"`
+            );
+          }
+          seenOneToOneValues.add(referenceValue);
+        }
+      }
+    }
+  }
+
+  return {
+    isValid: relationshipMismatches.length === 0,
+    relationshipMismatches,
+  };
 }
 
 /**
@@ -413,14 +482,39 @@ export async function verifyDatabaseSchemaParity(
       }
     }
 
-    // 5. Verify Logical Relationships reference existing target tables and target columns
+    // 5. Verify logical relationships against both entity contracts and explicit SQLite FK DDL.
+    const declaredForeignKeys = parseSqliteForeignKeysFromDdl(ddl);
+    const hasUnexpectedForeignKey = declaredForeignKeys.some(
+      (fk) =>
+        !spec.logicalRelationships.some(
+          (rel) =>
+            rel.fromColumn === fk.fromColumn &&
+            rel.toTable === fk.toTable &&
+            rel.toColumn === fk.toColumn
+        )
+    );
+    if (
+      declaredForeignKeys.length !== spec.logicalRelationships.length ||
+      hasUnexpectedForeignKey
+    ) {
+      relationshipMismatches.push(
+        `${tableName}: SQLite foreign-key declarations do not exactly match the logical relationship contract`
+      );
+    }
+
     for (const rel of spec.logicalRelationships) {
       const sourceHasCol = ddlColMap.has(rel.fromColumn);
       const targetSpec = LOGICAL_ENTITY_SCHEMA_SPECS[rel.toTable];
       const targetHasCol = targetSpec?.columns.some((c) => c.name === rel.toColumn) ?? false;
-      if (!sourceHasCol || !targetHasCol) {
+      const foreignKeyDeclared = declaredForeignKeys.some(
+        (fk) =>
+          fk.fromColumn === rel.fromColumn &&
+          fk.toTable === rel.toTable &&
+          fk.toColumn === rel.toColumn
+      );
+      if (!sourceHasCol || !targetHasCol || !foreignKeyDeclared) {
         relationshipMismatches.push(
-          `${tableName}.${rel.fromColumn} -> ${rel.toTable}.${rel.toColumn} logical relationship target missing`
+          `${tableName}.${rel.fromColumn} -> ${rel.toTable}.${rel.toColumn} missing or mismatched SQLite FK declaration`
         );
       }
     }
@@ -525,6 +619,14 @@ export class SqliteDatabaseAdapter implements ILocalDatabaseAdapter {
     throwPhase1StubError();
   }
 
+  public async getScreenshotMetadataByOwner(_ownerScope: OwnerScope): Promise<ScreenshotMetadataRow[]> {
+    throwPhase1StubError();
+  }
+
+  public async getScreenshotFilesByOwner(_ownerScope: OwnerScope): Promise<ScreenshotFileRow[]> {
+    throwPhase1StubError();
+  }
+
   public async acquireScreenshotLease(
     _screenshotId: string,
     _leaseOwnerId: string,
@@ -578,6 +680,10 @@ export class SqliteDatabaseAdapter implements ILocalDatabaseAdapter {
   public async getQuarantinedRecordsByOwner(
     _ownerScope: OwnerScope
   ): Promise<QuarantinedRecordRow[]> {
+    throwPhase1StubError();
+  }
+
+  public async rollbackShadowMigrationScope(_ownerScope: OwnerScope): Promise<void> {
     throwPhase1StubError();
   }
 

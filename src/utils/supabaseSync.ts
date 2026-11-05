@@ -9,6 +9,10 @@ import {
   computeRealizedRMultiple,
   computeTradeNetProfit,
 } from './calculations';
+import {
+  decodeTradeNotesWithMeta,
+  encodeTradeNotesWithMetaB64,
+} from '../storage/utf8Base64Url';
 
 export interface SyncResult<T = void> {
   success: boolean;
@@ -91,13 +95,6 @@ export function translateDatabaseError(error: any): string {
 /**
  * Normalizes and strictly validates trade direction for Supabase database constraints.
  * The PostgreSQL table public.trades expects exact title case values: 'Buy' or 'Sell'.
- *
- * Supported user & form variations:
- * - Buy, BUY, Beli, Long -> 'Buy'
- * - Sell, SELL, Jual, Short -> 'Sell'
- *
- * Throws an explicit Error if input is empty, null, undefined, or unrecognized.
- * Will NEVER silently default invalid data.
  */
 export function normalizeTradeDirection(input: unknown): 'Buy' | 'Sell' {
   if (input === null || input === undefined) {
@@ -111,12 +108,10 @@ export function normalizeTradeDirection(input: unknown): 'Buy' | 'Sell' {
 
   const lower = rawStr.toLowerCase();
 
-  // Buy mappings: Buy, BUY, Beli, Long
   if (lower === 'buy' || lower === 'beli' || lower === 'long') {
     return 'Buy';
   }
 
-  // Sell mappings: Sell, SELL, Jual, Short
   if (lower === 'sell' || lower === 'jual' || lower === 'short') {
     return 'Sell';
   }
@@ -128,7 +123,6 @@ export function normalizeTradeDirection(input: unknown): 'Buy' | 'Sell' {
 
 /**
  * Maps a database direction value ('Buy', 'Sell', etc.) back to application TradePosition ('BUY' | 'SELL').
- * Case-insensitive and supports DB variations.
  */
 export function mapDatabaseDirectionToApp(rawDirection: unknown): 'BUY' | 'SELL' {
   if (!rawDirection) return 'BUY';
@@ -139,37 +133,155 @@ export function mapDatabaseDirectionToApp(rawDirection: unknown): 'BUY' | 'SELL'
   return 'BUY';
 }
 
+export const TRADEVAULT_UUID_NAMESPACE = 'tradevault:v2:trade';
+
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const GENERIC_UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+const FORBIDDEN_SENTINEL_UUIDS = new Set([
+  '00000000-0000-0000-0000-000000000000',
+  '00000000-0000-4000-8000-000000000000',
+]);
+
+const FORBIDDEN_CLOUD_SCOPE_TOKENS = new Set(['guest', 'anonymous', 'local', 'null', 'undefined']);
 
 /**
- * In-memory registry mapping non-UUID local trade IDs (from [LocalID: ...])
- * to their actual primary key UUID in Supabase public.trades.
- * Ensures that any previously synced trade (even with a legacy >16-char ID)
- * retains its exact primary key UUID across updates, deletes, and re-syncs.
+ * Validates an ownerScope ('GUEST' or a valid non-sentinel owner identifier).
+ * Rejects empty/whitespace strings and forbidden sentinel UUIDs.
  */
+export function validateOwnerScope(ownerScope: string): string {
+  if (typeof ownerScope !== 'string') {
+    throw new Error('ERR_INVALID_OWNER_SCOPE: Owner scope must be a non-empty string.');
+  }
+  const clean = ownerScope.trim();
+  if (!clean) {
+    throw new Error('ERR_INVALID_OWNER_SCOPE: Owner scope cannot be empty or whitespace.');
+  }
+  if (clean.toUpperCase() === 'GUEST') {
+    return 'GUEST';
+  }
+  if (FORBIDDEN_SENTINEL_UUIDS.has(clean.toLowerCase())) {
+    throw new Error('ERR_INVALID_OWNER_SCOPE: Forbidden sentinel UUID cannot be used as ownerScope.');
+  }
+  return clean;
+}
+
+/**
+ * Strictly validates that a cloud operation has an authenticated user UUID.
+ * Rejects empty strings, 'GUEST', 'ANONYMOUS', 'LOCAL', nil/sentinel UUIDs, and non-UUID strings.
+ */
+export function requireAuthenticatedUserId(userId: string): string {
+  if (typeof userId !== 'string') {
+    throw new Error('ERR_INVALID_CLOUD_USER_ID: Cloud operation requires a valid authenticated user UUID.');
+  }
+  const clean = userId.trim();
+  if (!clean) {
+    throw new Error('ERR_INVALID_CLOUD_USER_ID: Cloud userId cannot be empty or whitespace.');
+  }
+  const lower = clean.toLowerCase();
+  if (FORBIDDEN_CLOUD_SCOPE_TOKENS.has(lower)) {
+    throw new Error(`ERR_INVALID_CLOUD_USER_ID: Scope "${clean}" is not allowed on cloud sync paths.`);
+  }
+  if (FORBIDDEN_SENTINEL_UUIDS.has(lower)) {
+    throw new Error('ERR_INVALID_CLOUD_USER_ID: Sentinel or nil UUID is not a valid cloud userId.');
+  }
+  if (!GENERIC_UUID_REGEX.test(lower)) {
+    throw new Error(`ERR_INVALID_CLOUD_USER_ID: "${clean}" is not a valid UUID.`);
+  }
+  return lower;
+}
+
+/**
+ * Per-user registry of verified cloud primary key UUIDs and localId -> cloudUuid bindings.
+ * Prevents an imported external/CSV UUID or another user's UUID from being treated as a
+ * trusted cloud-bound UUID unless explicitly registered for that userScope.
+ */
+const registeredCloudUuidsByOwner = new Map<string, Set<string>>();
+const knownSyncedUuidByOwnerAndLocalId = new Map<string, Map<string, string>>();
 const knownSyncedUuidByLocalId = new Map<string, string>();
 
-export function registerKnownTradeUuid(localId: string, dbUuid: string): void {
-  if (!localId || !dbUuid) return;
-  const cleanLocal = String(localId).trim();
-  const cleanUuid = String(dbUuid).trim().toLowerCase();
-  if (cleanLocal && UUID_REGEX.test(cleanUuid)) {
-    knownSyncedUuidByLocalId.set(cleanLocal, cleanUuid);
+export function registerCloudTradeUuids(userId: string, cloudUuids: string[]): void {
+  if (!userId || !Array.isArray(cloudUuids)) return;
+  const cleanOwner = String(userId).trim().toLowerCase();
+  if (!cleanOwner || FORBIDDEN_CLOUD_SCOPE_TOKENS.has(cleanOwner)) return;
+  let set = registeredCloudUuidsByOwner.get(cleanOwner);
+  if (!set) {
+    set = new Set<string>();
+    registeredCloudUuidsByOwner.set(cleanOwner, set);
+  }
+  for (const rawUuid of cloudUuids) {
+    if (!rawUuid) continue;
+    const cleanUuid = String(rawUuid).trim().toLowerCase();
+    if (GENERIC_UUID_REGEX.test(cleanUuid) && !FORBIDDEN_SENTINEL_UUIDS.has(cleanUuid)) {
+      set.add(cleanUuid);
+    }
   }
 }
 
-export function unregisterKnownTradeUuid(localId: string): void {
+export function isRegisteredCloudTradeUuid(ownerScope: string, candidateUuid: string): boolean {
+  if (!ownerScope || !candidateUuid) return false;
+  const cleanOwner = String(ownerScope).trim().toLowerCase();
+  const cleanUuid = String(candidateUuid).trim().toLowerCase();
+  if (!GENERIC_UUID_REGEX.test(cleanUuid) || FORBIDDEN_SENTINEL_UUIDS.has(cleanUuid)) {
+    return false;
+  }
+  const set = registeredCloudUuidsByOwner.get(cleanOwner);
+  return Boolean(set && set.has(cleanUuid));
+}
+
+export function clearRegisteredCloudTradeUuids(userId?: string): void {
+  if (userId && typeof userId === 'string' && userId.trim()) {
+    const cleanOwner = userId.trim().toLowerCase();
+    registeredCloudUuidsByOwner.delete(cleanOwner);
+    knownSyncedUuidByOwnerAndLocalId.delete(cleanOwner);
+    return;
+  }
+  registeredCloudUuidsByOwner.clear();
+  knownSyncedUuidByOwnerAndLocalId.clear();
+}
+
+export function registerKnownTradeUuid(localId: string, dbUuid: string, userId?: string): void {
+  if (!localId || !dbUuid) return;
+  const cleanLocal = String(localId).trim();
+  const cleanUuid = String(dbUuid).trim().toLowerCase();
+  if (!cleanLocal || !GENERIC_UUID_REGEX.test(cleanUuid) || FORBIDDEN_SENTINEL_UUIDS.has(cleanUuid)) {
+    return;
+  }
+  knownSyncedUuidByLocalId.set(cleanLocal, cleanUuid);
+  if (userId && typeof userId === 'string' && userId.trim()) {
+    const cleanOwner = userId.trim().toLowerCase();
+    let ownerMap = knownSyncedUuidByOwnerAndLocalId.get(cleanOwner);
+    if (!ownerMap) {
+      ownerMap = new Map<string, string>();
+      knownSyncedUuidByOwnerAndLocalId.set(cleanOwner, ownerMap);
+    }
+    ownerMap.set(cleanLocal, cleanUuid);
+    registerCloudTradeUuids(cleanOwner, [cleanUuid]);
+  }
+}
+
+export function unregisterKnownTradeUuid(localId: string, userId?: string): void {
   if (!localId) return;
-  knownSyncedUuidByLocalId.delete(String(localId).trim());
+  const cleanLocal = String(localId).trim();
+  knownSyncedUuidByLocalId.delete(cleanLocal);
+  if (userId && typeof userId === 'string' && userId.trim()) {
+    const cleanOwner = userId.trim().toLowerCase();
+    knownSyncedUuidByOwnerAndLocalId.get(cleanOwner)?.delete(cleanLocal);
+  } else {
+    for (const ownerMap of knownSyncedUuidByOwnerAndLocalId.values()) {
+      ownerMap.delete(cleanLocal);
+    }
+  }
 }
 
 export function clearKnownTradeUuids(): void {
   knownSyncedUuidByLocalId.clear();
+  clearRegisteredCloudTradeUuids();
 }
 
 /**
  * Legacy hex-based UUID generator used for standard short IDs (<= 16 chars, e.g. "TRD-123456", "DEMO-XAU-101").
- * Preserved 100% so existing short IDs statelessly map to the exact same UUID in Supabase.
+ * Preserved 100% for backward-compatible legacy_candidate_uuid lookup.
  */
 export function legacyAsciiEnsureValidUuid(clean: string): string {
   let hex = '';
@@ -191,10 +303,8 @@ export function legacyAsciiEnsureValidUuid(clean: string): string {
 }
 
 /**
- * Full-string 128-bit deterministic UUID v4 generator for long non-UUID IDs (> 16 chars).
- * Incorporates every character of the input string so IDs sharing the same 16-character prefix
- * (e.g. "CSV-1746800000000-1" vs "CSV-1746800000000-2" or "XAUUSD-2026-10-28-001" vs "XAUUSD-2026-10-28-002")
- * never collide.
+ * Full-string 4-lane 32-bit non-cryptographic Murmur3/FNV-1a avalanche mixer formatted as UUID v4.
+ * Incorporates every UTF-16 code unit of the input string.
  */
 function hashFullStringToUuidV4(clean: string): string {
   let h1 = 0x811c9dc5;
@@ -237,34 +347,92 @@ function hashFullStringToUuidV4(clean: string): string {
 }
 
 /**
- * Ensures any trade ID is safely converted into a valid UUID format for PostgreSQL UUID column.
- * 1. If the ID is already a valid UUID, returns it as-is (lowercased).
- * 2. If the ID is already bound to an existing Supabase row UUID (via mapDatabaseRowToTrade),
- *    returns that exact bound UUID to preserve primary key compatibility.
- * 3. If the ID is <= 16 characters (e.g. "TRD-123456", "DEMO-XAU-101"), uses the legacy ASCII hex mapping
- *    so all existing standard IDs statelessly produce their original UUID.
- * 4. If the ID is > 16 characters and unbound, uses a 128-bit full-string deterministic hash so long IDs
- *    sharing the same prefix never collide.
+ * Derives a deterministic UUID v4 from a canonical seed string using the 4-lane 32-bit hash mixer.
  */
-export function ensureValidUuid(id: string): string {
-  if (!id) return '00000000-0000-4000-8000-000000000000';
-  const clean = String(id).trim();
-  if (!clean) return '00000000-0000-4000-8000-000000000000';
+export function deriveDeterministicUuidFromCanonicalSeed(canonicalSeed: string): string {
+  if (typeof canonicalSeed !== 'string' || canonicalSeed.trim() === '') {
+    throw new Error('ERR_EMPTY_CANONICAL_SEED: Canonical seed cannot be empty.');
+  }
+  return hashFullStringToUuidV4(canonicalSeed);
+}
 
-  if (UUID_REGEX.test(clean)) {
+/**
+ * Computes the legacy unscoped UUID for backward-compatible reconciliation with pre-Phase 2.1 rows.
+ */
+export function computeLegacyUnscopedUuid(id: string): string {
+  if (typeof id !== 'string') {
+    throw new Error('ERR_EMPTY_TRADE_ID: Trade ID must be a string.');
+  }
+  const clean = id.trim();
+  if (!clean) {
+    throw new Error('ERR_EMPTY_TRADE_ID: Trade ID cannot be empty or whitespace.');
+  }
+  if (FORBIDDEN_SENTINEL_UUIDS.has(clean.toLowerCase())) {
+    throw new Error('ERR_FORBIDDEN_SENTINEL_UUID: Sentinel or nil UUID is not allowed.');
+  }
+  if (GENERIC_UUID_REGEX.test(clean)) {
     return clean.toLowerCase();
   }
-
   const boundUuid = knownSyncedUuidByLocalId.get(clean);
   if (boundUuid) {
     return boundUuid;
   }
-
   if (clean.length <= 16) {
     return legacyAsciiEnsureValidUuid(clean);
   }
-
   return hashFullStringToUuidV4(clean);
+}
+
+/**
+ * Ensures any trade ID is converted into a deterministic, owner-scoped UUID v4.
+ * - Strictly rejects empty/whitespace IDs and forbidden sentinel UUIDs (never returns 00000000-0000-4000-8000-000000000000).
+ * - Preserves an existing UUID as-is ONLY if it is explicitly registered as a cloud-bound UUID for `ownerScope`
+ *   (or bound via `registerKnownTradeUuid` for `ownerScope`).
+ * - Otherwise (including imported external/CSV UUIDs or local IDs), derives a deterministic UUID scoped to `ownerScope`
+ *   using `${TRADEVAULT_UUID_NAMESPACE}:${cleanScope.toLowerCase()}:${normalizedId}`.
+ */
+export function ensureValidUuid(id: string, ownerScope: string = 'GUEST'): string {
+  if (id === null || id === undefined || typeof id !== 'string') {
+    throw new Error('ERR_EMPTY_TRADE_ID: Trade ID cannot be null, undefined, or non-string.');
+  }
+  const clean = id.trim();
+  if (!clean) {
+    throw new Error('ERR_EMPTY_TRADE_ID: Trade ID cannot be empty or whitespace.');
+  }
+
+  const lowerId = clean.toLowerCase();
+  if (FORBIDDEN_SENTINEL_UUIDS.has(lowerId)) {
+    throw new Error(
+      `ERR_FORBIDDEN_SENTINEL_UUID: Sentinel UUID "${lowerId}" is forbidden for storage or sync.`
+    );
+  }
+
+  const cleanScope = validateOwnerScope(ownerScope);
+  const lowerScope = cleanScope.toLowerCase();
+
+  // 1. If `clean` is a registered cloud-bound UUID for this specific ownerScope, preserve it
+  if (GENERIC_UUID_REGEX.test(clean) && isRegisteredCloudTradeUuid(cleanScope, lowerId)) {
+    return lowerId;
+  }
+
+  // 2. If `clean` is a localId explicitly bound to a cloud UUID for this ownerScope, preserve it
+  const scopedBound = knownSyncedUuidByOwnerAndLocalId.get(lowerScope)?.get(clean);
+  if (scopedBound) {
+    return scopedBound;
+  }
+
+  // 3. Otherwise derive a deterministic UUID scoped to (TRADEVAULT_UUID_NAMESPACE, lowerScope, clean)
+  const normalizedTradeIdForSeed = UUID_REGEX.test(clean) || GENERIC_UUID_REGEX.test(clean) ? lowerId : clean;
+  const canonicalSeed = `${TRADEVAULT_UUID_NAMESPACE}:${lowerScope}:${normalizedTradeIdForSeed}`;
+  return deriveDeterministicUuidFromCanonicalSeed(canonicalSeed);
+}
+
+/**
+ * Mandatory cloud-path UUID resolver: requires a verified authenticated userId (never defaults to GUEST).
+ */
+export function resolveCloudTradeUuid(id: string, authenticatedUserId: string): string {
+  const validUserId = requireAuthenticatedUserId(authenticatedUserId);
+  return ensureValidUuid(id, validUserId);
 }
 
 /**
@@ -283,7 +451,6 @@ export function parseTradeDateTime(rawDate: unknown): Date | null {
   const clean = rawDate.trim();
   if (!clean) return null;
 
-  // Case 1: Date-only string "YYYY-MM-DD" -> interpret as local midnight
   const dateOnlyMatch = clean.match(/^(\d{4})-(\d{2})-(\d{2})$/);
   if (dateOnlyMatch) {
     const year = parseInt(dateOnlyMatch[1], 10);
@@ -293,7 +460,6 @@ export function parseTradeDateTime(rawDate: unknown): Date | null {
     return isNaN(d.getTime()) ? null : d;
   }
 
-  // Case 2: Local datetime string without timezone offset ("YYYY-MM-DDTHH:mm" or "YYYY-MM-DD HH:mm[:ss[.SSS]]")
   const localMatch = clean.match(
     /^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})(?::(\d{2})(?:\.(\d{1,6}))?)?$/
   );
@@ -309,7 +475,6 @@ export function parseTradeDateTime(rawDate: unknown): Date | null {
     return isNaN(d.getTime()) ? null : d;
   }
 
-  // Case 3: Timezone-qualified timestamp from Postgres / ISO 8601 (e.g. "2025-05-09 20:30:00+00" or "2025-05-09T20:30:00.000Z")
   let normalizedIso = clean.replace(/^(\d{4}-\d{2}-\d{2})\s+(\d{2}:\d{2})/, '$1T$2');
   normalizedIso = normalizedIso.replace(/([+-]\d{2})$/, '$1:00');
   normalizedIso = normalizedIso.replace(/([+-]\d{2})(\d{2})$/, '$1:$2');
@@ -320,9 +485,7 @@ export function parseTradeDateTime(rawDate: unknown): Date | null {
 
 /**
  * Formats a Date or timestamp string (including UTC timestamps from Supabase TIMESTAMPTZ)
- * into the local "YYYY-MM-DDTHH:mm" format required by <input type="datetime-local" />,
- * TradeTable, Analytics date filter, and PerformanceCalendar.
- * Preserves the exact instant in time instead of slicing UTC ISO strings.
+ * into the local "YYYY-MM-DDTHH:mm" format required by <input type="datetime-local" />.
  */
 export function normalizeTradeDateTimeLocal(rawDate: unknown): string {
   const parsed = parseTradeDateTime(rawDate);
@@ -348,48 +511,33 @@ export function formatTradeDateTimeForDatabase(rawDate: unknown): string {
 }
 
 /**
- * Maps an application Trade object to the exact database columns of public.trades
- * Columns in user database: id (UUID), user_id (UUID), trade_date (TIMESTAMPTZ),
- * instrument (TEXT), direction (TEXT), setup (TEXT), entry_price (NUMERIC),
- * stop_loss (NUMERIC), take_profit (NUMERIC), exit_price (NUMERIC), lot_size (NUMERIC),
- * outcome (TEXT), net_pnl (NUMERIC), commission (NUMERIC), swap (NUMERIC),
- * screenshot_url (TEXT), notes (TEXT), trading_session (TEXT), created_at, updated_at
+ * Maps an application Trade object to the exact database columns of public.trades.
+ * Encodes all extended 28-field Trade metadata using collision-proof UTF-8 Base64URL ([MetaB64: ...]).
  */
 export function mapTradeToDatabasePayload(trade: Trade, userId: string) {
-  const dbUuid = ensureValidUuid(trade.id);
+  const validUserId = requireAuthenticatedUserId(userId);
+  const dbUuid = resolveCloudTradeUuid(trade.id, validUserId);
 
-  // Format trade_date properly for Postgres TIMESTAMPTZ preserving the exact local instant
   const formattedTradeDate = formatTradeDateTimeForDatabase(trade.dateTime);
-
-  // Validate and normalize direction ('Buy' | 'Sell') strictly matching trades_direction_check
   const direction: 'Buy' | 'Sell' = normalizeTradeDirection(trade.position);
 
-  // Validate outcome strictly from normalized Net Profit ($0.01 threshold)
   const normalizedNetPnl = computeTradeNetProfit(trade);
   const normalizedComm = Math.abs(Number(trade.commission) || 0);
   const normalizedSwp = Number(trade.swap) || 0;
   const outcome: 'WIN' | 'LOSS' | 'BREAKEVEN' = classifyNetProfitOutcome(normalizedNetPnl);
 
-  // Preserve local non-UUID ID and extra app attributes inside notes
-  const metaObj: Record<string, any> = {};
-  if (trade.riskAmount) metaObj.riskAmount = trade.riskAmount;
-  if (trade.riskPercentage) metaObj.riskPercentage = trade.riskPercentage;
   const realizedR = computeRealizedRMultiple(trade);
-  if (realizedR !== null) metaObj.rMultiple = realizedR;
-  if (trade.disciplineRating !== undefined && trade.disciplineRating !== null) metaObj.disciplineRating = trade.disciplineRating;
-  if (isDemoTrade(trade)) metaObj.isDemo = true;
+  const demoFlag = isDemoTrade(trade);
 
-  let combinedNotes = trade.notes ? trade.notes.trim() : '';
-  if (trade.id !== dbUuid) {
-    // Strip existing [LocalID: ...] tags to avoid repetitive duplication
-    combinedNotes = combinedNotes.replace(/\[LocalID:\s*[^\]]+\]\s*/g, '').trim();
-    combinedNotes = `[LocalID: ${trade.id}] ${combinedNotes}`.trim();
-  }
-  if (Object.keys(metaObj).length > 0) {
-    // Strip existing [Meta: ...] tags to avoid repetitive duplication
-    combinedNotes = combinedNotes.replace(/\[Meta:\s*\{[^}]*\}\]\s*/g, '').trim();
-    combinedNotes = `${combinedNotes} [Meta: ${JSON.stringify(metaObj)}]`.trim();
-  }
+  const tradeForMetaEncoding: Trade = {
+    ...trade,
+    rMultiple: realizedR !== null ? realizedR : trade.rMultiple,
+    isDemo: demoFlag ? true : Boolean(trade.isDemo),
+  };
+
+  const combinedNotes = encodeTradeNotesWithMetaB64(tradeForMetaEncoding, {
+    localId: trade.id,
+  });
 
   const rawScreenshotUrl = trade.screenshotUrl ? String(trade.screenshotUrl).trim() : '';
   if (rawScreenshotUrl.startsWith('data:image/')) {
@@ -400,11 +548,11 @@ export function mapTradeToDatabasePayload(trade: Trade, userId: string) {
 
   return {
     id: dbUuid,
-    user_id: userId,
-    trade_date: formattedTradeDate, // EXACT COLUMN in public.trades
+    user_id: validUserId,
+    trade_date: formattedTradeDate,
     instrument: (trade.instrument || 'XAUUSD').toUpperCase().trim(),
-    direction, // maps from trade.position
-    setup: (trade.strategy || 'Umum').trim(), // maps from trade.strategy
+    direction,
+    setup: (trade.strategy || 'Umum').trim(),
     entry_price: Number(trade.entryPrice) || 0,
     stop_loss:
       trade.stopLoss !== undefined && trade.stopLoss !== null && !isNaN(Number(trade.stopLoss))
@@ -420,61 +568,57 @@ export function mapTradeToDatabasePayload(trade: Trade, userId: string) {
         : null,
     lot_size: Number(trade.lotSize) || 0.01,
     outcome,
-    net_pnl: normalizedNetPnl, // maps from trade.netProfit
+    net_pnl: normalizedNetPnl,
     commission: normalizedComm,
     swap: normalizedSwp,
     screenshot_url: rawScreenshotUrl ? rawScreenshotUrl : null,
     notes: combinedNotes ? combinedNotes : null,
-    trading_session: (trade.session || 'London').trim(), // maps from trade.session
+    trading_session: (trade.session || 'London').trim(),
     created_at: trade.createdAt ? new Date(trade.createdAt).toISOString() : new Date().toISOString(),
-    updated_at: new Date().toISOString(),
+    updated_at: trade.updatedAt ? new Date(trade.updatedAt).toISOString() : new Date().toISOString(),
   };
 }
 
 /**
- * Maps a database row from public.trades back into an application Trade object
+ * Maps a database row from public.trades back into an application Trade object.
+ * Supports both [MetaB64: ...] (all 28 fields) and legacy [LocalID: ...] + [Meta: {...}].
  */
 export function mapDatabaseRowToTrade(row: any): Trade {
-  // Extract local ID from notes tag if present, e.g. [LocalID: TRD-123456]
-  let displayId = String(row.id);
-  let cleanNotes = row.notes ? String(row.notes) : undefined;
-  if (cleanNotes) {
-    const match = cleanNotes.match(/\[LocalID:\s*([^\]]+)\]/);
-    if (match && match[1]) {
-      displayId = match[1].trim();
-      cleanNotes = cleanNotes.replace(/\[LocalID:\s*[^\]]+\]\s*/, '').trim() || undefined;
+  const rawRowId = row?.id ? String(row.id).trim() : '';
+  const rawUserId = row?.user_id ? String(row.user_id).trim() : undefined;
+
+  const decodedNotes = decodeTradeNotesWithMeta(row?.notes ? String(row.notes) : undefined);
+  const displayId = decodedNotes.extractedLocalId || rawRowId;
+  const cleanNotes = decodedNotes.cleanNotes;
+
+  if (rawRowId) {
+    if (rawUserId) {
+      registerCloudTradeUuids(rawUserId, [rawRowId]);
+    }
+    if (displayId) {
+      registerKnownTradeUuid(displayId, rawRowId, rawUserId);
     }
   }
 
-  // Bind displayId to the actual row.id UUID from Supabase so existing rows
-  // (including legacy long IDs) always keep their exact database primary key
-  if (row?.id && displayId) {
-    registerKnownTradeUuid(displayId, String(row.id));
-  }
+  const meta = decodedNotes.meta;
+  const riskAmount =
+    meta.riskAmount !== undefined && Number.isFinite(Number(meta.riskAmount))
+      ? Number(meta.riskAmount)
+      : 0;
+  const riskPercentage =
+    meta.riskPercentage !== undefined && Number.isFinite(Number(meta.riskPercentage))
+      ? Number(meta.riskPercentage)
+      : 1;
+  let rMultiple: number | undefined =
+    meta.rMultiple !== undefined && Number.isFinite(Number(meta.rMultiple))
+      ? Number(meta.rMultiple)
+      : undefined;
+  const disciplineRating: number | undefined =
+    meta.disciplineRating !== undefined && Number.isFinite(Number(meta.disciplineRating))
+      ? Number(meta.disciplineRating)
+      : undefined;
+  let isDemo = meta.isDemo !== undefined ? Boolean(meta.isDemo) : false;
 
-  // Extract extra metadata if stored in notes tag (e.g. riskAmount, rMultiple, disciplineRating, isDemo)
-  let riskAmount = 0;
-  let riskPercentage = 1;
-  let rMultiple: number | undefined = undefined;
-  let disciplineRating: number | undefined = undefined;
-  let isDemo = false;
-
-  if (cleanNotes) {
-    const metaMatch = cleanNotes.match(/\[Meta:\s*([^\]]+)\]/);
-    if (metaMatch && metaMatch[1]) {
-      try {
-        const meta = JSON.parse(metaMatch[1]);
-        if (meta.riskAmount !== undefined) riskAmount = Number(meta.riskAmount);
-        if (meta.riskPercentage !== undefined) riskPercentage = Number(meta.riskPercentage);
-        if (meta.rMultiple !== undefined) rMultiple = Number(meta.rMultiple);
-        if (meta.disciplineRating !== undefined) disciplineRating = Number(meta.disciplineRating);
-        if (meta.isDemo !== undefined) isDemo = Boolean(meta.isDemo);
-        cleanNotes = cleanNotes.replace(/\[Meta:\s*[^\]]+\]\s*/, '').trim() || undefined;
-      } catch {
-        // ignore parse issue
-      }
-    }
-  }
   if (isDemoTrade({ id: displayId, isDemo })) {
     isDemo = true;
   }
@@ -532,7 +676,10 @@ export function mapDatabaseRowToTrade(row: any): Trade {
     rMultiple,
     screenshotUrl: row.screenshot_url || undefined,
     notes: cleanNotes,
+    entryReason: meta.entryReason || undefined,
+    postTradeEvaluation: meta.postTradeEvaluation || undefined,
     disciplineRating,
+    executionNotes: meta.executionNotes || undefined,
     isDemo,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -544,20 +691,26 @@ export function mapDatabaseRowToTrade(row: any): Trade {
  * Strictly filters by authenticated user_id and ensures complete deduplication.
  */
 export async function fetchTradesFromSupabase(userId: string): Promise<SyncResult<Trade[]>> {
+  let validUserId: string;
+  try {
+    validUserId = requireAuthenticatedUserId(userId);
+  } catch (err: any) {
+    return {
+      success: false,
+      error: err?.message || 'User ID tidak valid. Silakan login terlebih dahulu.',
+    };
+  }
+
   const client = getSupabase();
   if (!client) {
     return { success: false, error: 'Supabase client belum terkonfigurasi.' };
-  }
-
-  if (!userId) {
-    return { success: false, error: 'User ID tidak valid. Silakan login terlebih dahulu.' };
   }
 
   try {
     const { data, error } = await client
       .from('trades')
       .select('*')
-      .eq('user_id', userId)
+      .eq('user_id', validUserId)
       .order('trade_date', { ascending: false });
 
     if (error) {
@@ -571,7 +724,6 @@ export async function fetchTradesFromSupabase(userId: string): Promise<SyncResul
 
     for (const row of rawRows) {
       const trade = mapDatabaseRowToTrade(row);
-      // Ensure zero duplicate trade IDs are loaded into the journal
       if (!seenIds.has(trade.id)) {
         seenIds.add(trade.id);
         deduplicatedTrades.push(trade);
@@ -595,21 +747,26 @@ export async function updateTradeInSupabase(
   userId: string,
   originalId?: string
 ): Promise<SyncResult<Trade>> {
+  let validUserId: string;
+  try {
+    validUserId = requireAuthenticatedUserId(userId);
+  } catch (err: any) {
+    return {
+      success: false,
+      error: err?.message || 'User ID tidak valid. Sesi login diperlukan untuk memperbarui database cloud.',
+    };
+  }
+
   const client = getSupabase();
   if (!client) {
     return { success: false, error: 'Supabase client tidak tersedia. Periksa konfigurasi URL dan Key.' };
   }
 
-  if (!userId) {
-    return { success: false, error: 'User ID tidak valid. Sesi login diperlukan untuk memperbarui database cloud.' };
-  }
-
   try {
     const targetId = originalId || trade.id;
-    const targetUuid = ensureValidUuid(targetId);
+    const targetUuid = resolveCloudTradeUuid(targetId, validUserId);
 
-    // Ensure Base64 screenshot is uploaded to Supabase Storage before building DB payload
-    const screenshotSync = await ensureTradeScreenshotSynced(trade, userId);
+    const screenshotSync = await ensureTradeScreenshotSynced(trade, validUserId);
     if (!screenshotSync.success || !screenshotSync.data) {
       return {
         success: false,
@@ -620,10 +777,8 @@ export async function updateTradeInSupabase(
     }
     const tradeWithSyncedScreenshot = screenshotSync.data.trade;
 
-    // Map trade to database columns
-    const fullPayload = mapTradeToDatabasePayload(tradeWithSyncedScreenshot, userId);
+    const fullPayload = mapTradeToDatabasePayload(tradeWithSyncedScreenshot, validUserId);
 
-    // Prepare fields to update (exclude created_at, update updated_at timestamp)
     const updatePayload: Record<string, any> = {
       trade_date: fullPayload.trade_date,
       instrument: fullPayload.instrument,
@@ -644,18 +799,15 @@ export async function updateTradeInSupabase(
       updated_at: new Date().toISOString(),
     };
 
-    // If ID was changed in form, update the primary key id column as well
     if (originalId && originalId !== trade.id) {
-      updatePayload.id = ensureValidUuid(trade.id);
+      updatePayload.id = resolveCloudTradeUuid(trade.id, validUserId);
     }
 
-    // Execute .update(...) with exact target ID and user_id filters
-    // RLS policy: (auth.uid() = user_id)
     const { data, error } = await client
       .from('trades')
       .update(updatePayload)
       .eq('id', targetUuid)
-      .eq('user_id', userId)
+      .eq('user_id', validUserId)
       .select();
 
     if (error) {
@@ -663,7 +815,6 @@ export async function updateTradeInSupabase(
       return { success: false, error: translateDatabaseError(error) };
     }
 
-    // Verify database result: Ensure at least 1 existing row was actually updated
     if (!data || data.length === 0) {
       return {
         success: false,
@@ -672,7 +823,7 @@ export async function updateTradeInSupabase(
     }
 
     if (originalId && originalId !== trade.id) {
-      unregisterKnownTradeUuid(originalId);
+      unregisterKnownTradeUuid(originalId, validUserId);
     }
     const updatedTrade = mapDatabaseRowToTrade(data[0]);
     return { success: true, data: updatedTrade };
@@ -690,18 +841,23 @@ export async function insertTradeToSupabase(
   trade: Trade,
   userId: string
 ): Promise<SyncResult<Trade>> {
+  let validUserId: string;
+  try {
+    validUserId = requireAuthenticatedUserId(userId);
+  } catch (err: any) {
+    return {
+      success: false,
+      error: err?.message || 'User ID tidak valid. Sesi login diperlukan untuk mencatat transaksi cloud.',
+    };
+  }
+
   const client = getSupabase();
   if (!client) {
     return { success: false, error: 'Supabase client tidak tersedia. Periksa konfigurasi URL dan Key.' };
   }
 
-  if (!userId) {
-    return { success: false, error: 'User ID tidak valid. Sesi login diperlukan untuk mencatat transaksi cloud.' };
-  }
-
   try {
-    // Ensure Base64 screenshot is uploaded to Supabase Storage before building DB payload
-    const screenshotSync = await ensureTradeScreenshotSynced(trade, userId);
+    const screenshotSync = await ensureTradeScreenshotSynced(trade, validUserId);
     if (!screenshotSync.success || !screenshotSync.data) {
       return {
         success: false,
@@ -712,7 +868,7 @@ export async function insertTradeToSupabase(
     }
     const tradeWithSyncedScreenshot = screenshotSync.data.trade;
 
-    const payload = mapTradeToDatabasePayload(tradeWithSyncedScreenshot, userId);
+    const payload = mapTradeToDatabasePayload(tradeWithSyncedScreenshot, validUserId);
 
     const { data, error } = await client
       .from('trades')
@@ -757,28 +913,28 @@ export async function saveTradeToSupabase(
 
 /**
  * Idempotently upsert a trade into Supabase public.trades table using verified session userId.
- * - If the trade contains a Base64 screenshot ('data:image/...'), uploads it to Supabase Storage first.
- * - If screenshot upload fails, aborts before writing to public.trades so Base64 is never stored in DB
- *   and the trade is not falsely marked as synced.
- * - If the row ID already exists for this user, updates the record in-place.
- * - If the row ID is new, inserts the record.
  */
 export async function upsertTradeToSupabase(
   trade: Trade,
   userId: string
 ): Promise<SyncResult<Trade>> {
+  let validUserId: string;
+  try {
+    validUserId = requireAuthenticatedUserId(userId);
+  } catch (err: any) {
+    return {
+      success: false,
+      error: err?.message || 'User ID tidak valid. Sesi login diperlukan untuk menyinkronkan transaksi.',
+    };
+  }
+
   const client = getSupabase();
   if (!client) {
     return { success: false, error: 'Supabase client tidak tersedia. Periksa konfigurasi URL dan Key.' };
   }
 
-  if (!userId) {
-    return { success: false, error: 'User ID tidak valid. Sesi login diperlukan untuk menyinkronkan transaksi.' };
-  }
-
   try {
-    // Step 1: Ensure Base64 screenshot is uploaded to Supabase Storage first
-    const screenshotSync = await ensureTradeScreenshotSynced(trade, userId);
+    const screenshotSync = await ensureTradeScreenshotSynced(trade, validUserId);
     if (!screenshotSync.success || !screenshotSync.data) {
       return {
         success: false,
@@ -789,8 +945,7 @@ export async function upsertTradeToSupabase(
     }
     const tradeWithSyncedScreenshot = screenshotSync.data.trade;
 
-    // Step 2: Map to DB payload (which strictly rejects raw Base64) and upsert
-    const payload = mapTradeToDatabasePayload(tradeWithSyncedScreenshot, userId);
+    const payload = mapTradeToDatabasePayload(tradeWithSyncedScreenshot, validUserId);
 
     const { data, error } = await client
       .from('trades')
@@ -821,22 +976,28 @@ export async function upsertTradeToSupabase(
  * Delete trade from Supabase (enforcing authenticated user_id and verifying result)
  */
 export async function deleteTradeFromSupabase(tradeId: string, userId: string): Promise<SyncResult> {
+  let validUserId: string;
+  try {
+    validUserId = requireAuthenticatedUserId(userId);
+  } catch (err: any) {
+    return {
+      success: false,
+      error: err?.message || 'User ID tidak valid. Sesi login diperlukan untuk menghapus dari database cloud.',
+    };
+  }
+
   const client = getSupabase();
   if (!client) {
     return { success: false, error: 'Supabase client tidak tersedia.' };
   }
 
-  if (!userId) {
-    return { success: false, error: 'User ID tidak valid. Sesi login diperlukan untuk menghapus dari database cloud.' };
-  }
-
   try {
-    const dbUuid = ensureValidUuid(tradeId);
+    const dbUuid = resolveCloudTradeUuid(tradeId, validUserId);
     const { data, error } = await client
       .from('trades')
       .delete()
       .eq('id', dbUuid)
-      .eq('user_id', userId)
+      .eq('user_id', validUserId)
       .select();
 
     if (error) {
@@ -844,7 +1005,6 @@ export async function deleteTradeFromSupabase(tradeId: string, userId: string): 
       return { success: false, error: translateDatabaseError(error) };
     }
 
-    // Verify database result: Ensure at least 1 existing row was actually deleted
     if (!data || data.length === 0) {
       return {
         success: false,
@@ -852,7 +1012,7 @@ export async function deleteTradeFromSupabase(tradeId: string, userId: string): 
       };
     }
 
-    unregisterKnownTradeUuid(tradeId);
+    unregisterKnownTradeUuid(tradeId, validUserId);
     return { success: true };
   } catch (err: any) {
     console.error('Unexpected error in deleteTradeFromSupabase:', err);
@@ -860,12 +1020,15 @@ export async function deleteTradeFromSupabase(tradeId: string, userId: string): 
   }
 }
 
+const STORAGE_PATH_UUID_REGEX =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\/[a-zA-Z0-9_.-]+\.(jpg|jpeg|png|webp)$/i;
+
 /**
  * Strict validator for Supabase Storage paths:
- * Pattern: <userId>/<filename>.<ext>
- * Disallows data URLs (Base64) and external HTTP(S) links.
+ * Pattern: <ownerUuid>/<filename>.<ext>
+ * Disallows data URLs (Base64), external HTTP(S) links, directory traversal, and invalid UUIDs.
  */
-export function isStoragePath(path: unknown): path is string {
+export function isStoragePath(path: unknown): boolean {
   if (!path || typeof path !== 'string') return false;
   const clean = path.trim();
   if (
@@ -875,58 +1038,167 @@ export function isStoragePath(path: unknown): path is string {
   ) {
     return false;
   }
-  // Must match <userId>/<tradeId>_<timestamp>.jpg pattern
-  const STORAGE_PATH_REGEX = /^[a-zA-Z0-9_-]+\/[a-zA-Z0-9_.-]+\.(jpg|jpeg|png|webp)$/i;
-  return STORAGE_PATH_REGEX.test(clean);
+  // Strictly reject traversal and null byte tokens
+  if (
+    clean.includes('..') ||
+    clean.includes('\\') ||
+    clean.includes('\0') ||
+    clean.includes('//') ||
+    /%2f/i.test(clean) ||
+    /%5c/i.test(clean)
+  ) {
+    return false;
+  }
+  return STORAGE_PATH_UUID_REGEX.test(clean);
 }
 
 /**
- * Shared in-memory cache mapping (userId, tradeId, Base64 signature) -> uploaded Supabase Storage path.
- * Prevents duplicate uploads when a database write fails after the screenshot was already uploaded
- * and the user retries (compatible across TradeForm save, local migration, and JSON backup restore).
+ * Verified Owner Context (F-26):
+ * Immutable request-bound session credentials preventing auth race conditions.
  */
-const screenshotUploadCache = new Map<string, string>();
+export interface VerifiedOwnerContext {
+  readonly boundUserId: string;
+  readonly boundAccessToken: string;
+  readonly boundAccessTokenHash: string;
+  readonly authGeneration: number;
+  readonly createdAt: number;
+}
+
+export function createVerifiedOwnerContext(
+  userId: string,
+  accessToken: string,
+  generation: number = 0
+): VerifiedOwnerContext {
+  const cleanId = requireAuthenticatedUserId(userId);
+  const cleanToken = String(accessToken || '').trim();
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < cleanToken.length; i++) {
+    hash = Math.imul(hash ^ cleanToken.charCodeAt(i), 0x01000193);
+  }
+  const tokenHash = (hash >>> 0).toString(16).padStart(8, '0');
+
+  return Object.freeze({
+    boundUserId: cleanId,
+    boundAccessToken: cleanToken,
+    boundAccessTokenHash: tokenHash,
+    authGeneration: generation,
+    createdAt: Date.now(),
+  });
+}
 
 /**
- * Bounded in-memory cache mapping storagePath -> Base64 Data URL ('data:image/...;base64,...').
- * Allows:
- * 1. Re-uploading a screenshot if a user deletes a trade (which removes the Storage object) and
- *    subsequently restores a legacy JSON backup that only stored the relative storage path.
- * 2. Embedding self-contained Base64 screenshots when exporting a JSON backup while logged into Cloud
- *    without redundant network downloads.
+ * SyncCacheStore interface (F-29):
+ * Provides strict isolation between production and testing sync caches.
  */
+export interface SyncCacheStore {
+  getUploadCache(key: string): string | undefined;
+  setUploadCache(key: string, storagePath: string): void;
+  getBase64Cache(storagePath: string): string | undefined;
+  setBase64Cache(storagePath: string, base64: string): void;
+  evictByPath(storagePath: string): void;
+  clear(): void;
+  getMutationCount(): number;
+  snapshot(): { uploadCache: Record<string, string>; base64Cache: Record<string, string> };
+  restore(snap: { uploadCache: Record<string, string>; base64Cache: Record<string, string> }): void;
+}
+
 const MAX_BASE64_PATH_CACHE_ENTRIES = 50;
-const base64ByStoragePathCache = new Map<string, string>();
+
+/**
+ * Factory for creating an isolated sync cache store instance.
+ */
+export function createIsolatedSyncCacheStore(): SyncCacheStore {
+  const uploadCache = new Map<string, string>();
+  const base64Cache = new Map<string, string>();
+  let mutationCount = 0;
+
+  return {
+    getUploadCache(key: string): string | undefined {
+      return uploadCache.get(key);
+    },
+    setUploadCache(key: string, storagePath: string): void {
+      uploadCache.set(key, storagePath);
+      mutationCount++;
+    },
+    getBase64Cache(storagePath: string): string | undefined {
+      return base64Cache.get(storagePath);
+    },
+    setBase64Cache(storagePath: string, base64: string): void {
+      if (!base64Cache.has(storagePath) && base64Cache.size >= MAX_BASE64_PATH_CACHE_ENTRIES) {
+        const oldest = base64Cache.keys().next().value;
+        if (oldest) base64Cache.delete(oldest);
+      }
+      base64Cache.set(storagePath, base64);
+      mutationCount++;
+    },
+    evictByPath(storagePath: string): void {
+      for (const [k, v] of uploadCache.entries()) {
+        if (v === storagePath) {
+          uploadCache.delete(k);
+          mutationCount++;
+        }
+      }
+      if (base64Cache.delete(storagePath)) {
+        mutationCount++;
+      }
+    },
+    clear(): void {
+      uploadCache.clear();
+      base64Cache.clear();
+      mutationCount++;
+    },
+    getMutationCount(): number {
+      return mutationCount;
+    },
+    snapshot(): { uploadCache: Record<string, string>; base64Cache: Record<string, string> } {
+      const snapUpload: Record<string, string> = {};
+      for (const [k, v] of uploadCache.entries()) snapUpload[k] = v;
+      const snapBase64: Record<string, string> = {};
+      for (const [k, v] of base64Cache.entries()) snapBase64[k] = v;
+      return { uploadCache: snapUpload, base64Cache: snapBase64 };
+    },
+    restore(snap: { uploadCache: Record<string, string>; base64Cache: Record<string, string> }): void {
+      uploadCache.clear();
+      for (const [k, v] of Object.entries(snap.uploadCache)) uploadCache.set(k, v);
+      base64Cache.clear();
+      for (const [k, v] of Object.entries(snap.base64Cache)) base64Cache.set(k, v);
+      mutationCount++;
+    },
+  };
+}
+
+/**
+ * Global runtime cache store used in production.
+ */
+export const runtimeSyncCacheStore = createIsolatedSyncCacheStore();
 
 export function getCachedBase64ForStoragePath(
   storagePath: string,
-  expectedUserId?: string | null
+  expectedUserId?: string | null,
+  store: SyncCacheStore = runtimeSyncCacheStore
 ): string | undefined {
   if (!storagePath || typeof storagePath !== 'string') return undefined;
   const cleanPath = storagePath.trim();
   if (expectedUserId && typeof expectedUserId === 'string' && expectedUserId.trim() !== '') {
-    const cleanExpectedUser = expectedUserId.trim();
-    const pathOwnerId = cleanPath.split('/')[0];
+    const cleanExpectedUser = expectedUserId.trim().toLowerCase();
+    const pathOwnerId = cleanPath.split('/')[0].toLowerCase();
     if (pathOwnerId && pathOwnerId !== cleanExpectedUser) {
       return undefined;
     }
   }
-  return base64ByStoragePathCache.get(cleanPath);
+  return store.getBase64Cache(cleanPath);
 }
 
-export function setCachedBase64ForStoragePath(storagePath: string, base64DataUrl: string): void {
+export function setCachedBase64ForStoragePath(
+  storagePath: string,
+  base64DataUrl: string,
+  store: SyncCacheStore = runtimeSyncCacheStore
+): void {
   if (!storagePath || !base64DataUrl) return;
   const cleanPath = storagePath.trim();
   const cleanDataUrl = base64DataUrl.trim();
   if (!isStoragePath(cleanPath) || !cleanDataUrl.startsWith('data:image/')) return;
-
-  if (!base64ByStoragePathCache.has(cleanPath) && base64ByStoragePathCache.size >= MAX_BASE64_PATH_CACHE_ENTRIES) {
-    const oldestKey = base64ByStoragePathCache.keys().next().value;
-    if (oldestKey) {
-      base64ByStoragePathCache.delete(oldestKey);
-    }
-  }
-  base64ByStoragePathCache.set(cleanPath, cleanDataUrl);
+  store.setBase64Cache(cleanPath, cleanDataUrl);
 }
 
 export function buildScreenshotUploadCacheKey(
@@ -943,56 +1215,53 @@ export function buildScreenshotUploadCacheKey(
 export function getCachedUploadedScreenshotPath(
   userId: string,
   tradeId: string,
-  base64DataUrl: string
+  base64DataUrl: string,
+  store: SyncCacheStore = runtimeSyncCacheStore
 ): string | undefined {
   if (!userId || !tradeId || !base64DataUrl) return undefined;
-  return screenshotUploadCache.get(buildScreenshotUploadCacheKey(userId, tradeId, base64DataUrl));
+  return store.getUploadCache(buildScreenshotUploadCacheKey(userId, tradeId, base64DataUrl));
 }
 
 export function setCachedUploadedScreenshotPath(
   userId: string,
   tradeId: string,
   base64DataUrl: string,
-  storagePath: string
+  storagePath: string,
+  store: SyncCacheStore = runtimeSyncCacheStore
 ): void {
   if (!userId || !tradeId || !base64DataUrl || !storagePath) return;
   if (isStoragePath(storagePath)) {
     const cleanPath = storagePath.trim();
-    screenshotUploadCache.set(
+    store.setUploadCache(
       buildScreenshotUploadCacheKey(userId, tradeId, base64DataUrl),
       cleanPath
     );
-    setCachedBase64ForStoragePath(cleanPath, base64DataUrl);
+    store.setBase64Cache(cleanPath, base64DataUrl);
   }
 }
 
 /**
  * Evicts any cached upload entries pointing to a storage path that has been deleted or invalidated.
  */
-export function evictScreenshotUploadCacheByPath(storagePath: string): void {
+export function evictScreenshotUploadCacheByPath(
+  storagePath: string,
+  store: SyncCacheStore = runtimeSyncCacheStore
+): void {
   if (!storagePath || typeof storagePath !== 'string') return;
   const target = storagePath.trim();
   if (!target) return;
-  for (const [key, val] of screenshotUploadCache.entries()) {
-    if (val === target) {
-      screenshotUploadCache.delete(key);
-    }
-  }
+  store.evictByPath(target);
 }
 
-export function clearScreenshotUploadCache(): void {
-  screenshotUploadCache.clear();
-  base64ByStoragePathCache.clear();
+export function clearScreenshotUploadCache(store: SyncCacheStore = runtimeSyncCacheStore): void {
+  store.clear();
 }
 
-/**
- * Clears all in-memory session caches (uploaded screenshot paths, Base64 path cache, and bound trade UUIDs).
- * Must be called on logout or when switching between user accounts to prevent cross-account cache leakage.
- */
-export function clearSessionSyncCaches(): void {
-  clearScreenshotUploadCache();
+export function clearSessionSyncCaches(store: SyncCacheStore = runtimeSyncCacheStore): void {
+  store.clear();
   clearKnownTradeUuids();
 }
+
 
 /**
  * Converts a Blob into a normalized 'data:image/...;base64,...' string.
@@ -1945,7 +2214,7 @@ export async function migrateLocalTradesToSupabase(
 
 /**
  * Merges or replaces an existing trades dataset with an incoming trades dataset
- * using canonical UUID matching (case-insensitive and deterministic via ensureValidUuid).
+ * using owner-scoped canonical UUID matching and legacy unscoped UUID bridging.
  * - In 'replace' mode: deduplicates incomingTrades by canonical key and identifies obsolete existing trades.
  * - In 'merge' mode: updates matching trades (preserving existing screenshotUrl if incoming trade has none),
  *   adds new incoming trades, and preserves all unchanged existing trades.
@@ -1953,7 +2222,8 @@ export async function migrateLocalTradesToSupabase(
 export function mergeTradesDatasets(
   existingTrades: Trade[],
   incomingTrades: Trade[],
-  mode: 'replace' | 'merge'
+  mode: 'replace' | 'merge',
+  ownerScope: string = 'GUEST'
 ): {
   finalTrades: Trade[];
   obsoleteTrades: Trade[];
@@ -1961,46 +2231,64 @@ export function mergeTradesDatasets(
   updatedCount: number;
   keptCount: number;
 } {
+  const cleanScope = validateOwnerScope(ownerScope);
   const existingByLowerId = new Map<string, Trade>();
   const existingByUuid = new Map<string, Trade>();
+  const existingByLegacyUuid = new Map<string, Trade>();
 
   for (const ex of existingTrades) {
-    if (!ex || !ex.id) continue;
+    if (!ex || !ex.id || !String(ex.id).trim()) continue;
     const lowerId = String(ex.id).trim().toLowerCase();
-    const uuid = ensureValidUuid(ex.id);
+    const uuid = ensureValidUuid(ex.id, cleanScope);
+    const legacyUuid = computeLegacyUnscopedUuid(ex.id);
     if (!existingByLowerId.has(lowerId)) {
       existingByLowerId.set(lowerId, ex);
     }
     if (!existingByUuid.has(uuid)) {
       existingByUuid.set(uuid, ex);
     }
+    if (!existingByLegacyUuid.has(legacyUuid)) {
+      existingByLegacyUuid.set(legacyUuid, ex);
+    }
   }
 
-  // Deduplicate incoming trades by case-insensitive ID and canonical UUID (first occurrence wins)
+  // Deduplicate incoming trades by case-insensitive ID, scoped canonical UUID, and legacy UUID (first occurrence wins)
   const deduplicatedIncoming: Trade[] = [];
   const incomingLowerIds = new Set<string>();
   const incomingUuids = new Set<string>();
+  const incomingLegacyUuids = new Set<string>();
 
   for (const inc of incomingTrades) {
-    if (!inc || !inc.id) continue;
+    if (!inc || !inc.id || !String(inc.id).trim()) continue;
     const lowerId = String(inc.id).trim().toLowerCase();
-    const uuid = ensureValidUuid(inc.id);
-    if (!incomingLowerIds.has(lowerId) && !incomingUuids.has(uuid)) {
+    const uuid = ensureValidUuid(inc.id, cleanScope);
+    const legacyUuid = computeLegacyUnscopedUuid(inc.id);
+    if (
+      !incomingLowerIds.has(lowerId) &&
+      !incomingUuids.has(uuid) &&
+      !incomingLegacyUuids.has(legacyUuid)
+    ) {
       incomingLowerIds.add(lowerId);
       incomingUuids.add(uuid);
+      incomingLegacyUuids.add(legacyUuid);
       deduplicatedIncoming.push({ ...inc });
     }
   }
 
   const isMatchedByIncoming = (ex: Trade): boolean => {
     const lowerId = String(ex.id).trim().toLowerCase();
-    const uuid = ensureValidUuid(ex.id);
-    return incomingLowerIds.has(lowerId) || incomingUuids.has(uuid);
+    const uuid = ensureValidUuid(ex.id, cleanScope);
+    const legacyUuid = computeLegacyUnscopedUuid(ex.id);
+    return (
+      incomingLowerIds.has(lowerId) ||
+      incomingUuids.has(uuid) ||
+      incomingLegacyUuids.has(legacyUuid)
+    );
   };
 
   if (mode === 'replace') {
     const obsoleteTrades = existingTrades.filter(
-      (ex) => ex && ex.id && !isMatchedByIncoming(ex)
+      (ex) => ex && ex.id && String(ex.id).trim() !== '' && !isMatchedByIncoming(ex)
     );
     return {
       finalTrades: deduplicatedIncoming,
@@ -2018,8 +2306,12 @@ export function mergeTradesDatasets(
 
   for (const inc of deduplicatedIncoming) {
     const lowerId = String(inc.id).trim().toLowerCase();
-    const uuid = ensureValidUuid(inc.id);
-    const existingMatch = existingByLowerId.get(lowerId) || existingByUuid.get(uuid);
+    const uuid = ensureValidUuid(inc.id, cleanScope);
+    const legacyUuid = computeLegacyUnscopedUuid(inc.id);
+    const existingMatch =
+      existingByLowerId.get(lowerId) ||
+      existingByUuid.get(uuid) ||
+      existingByLegacyUuid.get(legacyUuid);
 
     if (existingMatch) {
       updatedCount++;
@@ -2031,7 +2323,6 @@ export function mergeTradesDatasets(
       );
       mergedIncoming.push({
         ...inc,
-        // Preserve existingMatch.id so deterministic UUID in Supabase public.trades stays identical
         id: existingMatch.id,
         screenshotUrl: incomingHasScreenshot
           ? inc.screenshotUrl
@@ -2046,7 +2337,7 @@ export function mergeTradesDatasets(
   }
 
   const unchangedExisting = existingTrades.filter(
-    (ex) => ex && ex.id && !isMatchedByIncoming(ex)
+    (ex) => ex && ex.id && String(ex.id).trim() !== '' && !isMatchedByIncoming(ex)
   );
 
   return {
@@ -2059,51 +2350,108 @@ export function mergeTradesDatasets(
 }
 
 /**
+ * Pure helper that determines which cloud trade UUIDs owned by `userId` are obsolete
+ * when reconciling against `keepTrades`.
+ * Recognizes both the Phase 2.1 user-scoped UUID (`resolveCloudTradeUuid(t.id, userId)`)
+ * AND the pre-Phase 2.1 legacy unscoped UUID (`computeLegacyUnscopedUuid(t.id)`), ensuring
+ * legacy cloud rows are NEVER falsely deleted during a namespace transition.
+ */
+export function computeObsoleteCloudTradeIdsToDelete(
+  keepTrades: Trade[],
+  cloudTradeIdsOwnedByUser: string[],
+  userId: string
+): string[] {
+  const validUserId = requireAuthenticatedUserId(userId);
+  const keepUuids = new Set<string>();
+
+  for (const t of keepTrades) {
+    if (!t || !t.id || !String(t.id).trim()) continue;
+    const cleanId = String(t.id).trim();
+    keepUuids.add(resolveCloudTradeUuid(cleanId, validUserId));
+    keepUuids.add(computeLegacyUnscopedUuid(cleanId));
+    if (GENERIC_UUID_REGEX.test(cleanId)) {
+      keepUuids.add(cleanId.toLowerCase());
+    }
+  }
+
+  const obsoleteIds: string[] = [];
+  const seen = new Set<string>();
+  for (const rawCloudId of cloudTradeIdsOwnedByUser) {
+    if (!rawCloudId) continue;
+    const cleanCloudId = String(rawCloudId).trim().toLowerCase();
+    if (!cleanCloudId || seen.has(cleanCloudId)) continue;
+    seen.add(cleanCloudId);
+    if (!keepUuids.has(cleanCloudId)) {
+      obsoleteIds.push(cleanCloudId);
+    }
+  }
+
+  return obsoleteIds;
+}
+
+/**
  * Deletes a specific list of trades from Supabase public.trades (and removes their private storage
- * screenshots if not in keepScreenshotPaths).
- * Ignores rows that do not exist in cloud (0 rows affected without PostgREST error), while reporting
- * any genuine database or RLS errors.
+ * screenshots if not in keepScreenshotPaths and not referenced elsewhere).
+ * Strictly enforces Database Row Deletion FIRST, then Storage cleanup (F-27).
  */
 export async function deleteTradesListFromSupabase(
   tradesToDelete: Trade[],
   userId: string,
   keepScreenshotPaths: Set<string> = new Set()
 ): Promise<SyncResult<{ deletedCount: number }>> {
+  let validUserId: string;
+  try {
+    validUserId = requireAuthenticatedUserId(userId);
+  } catch (err: any) {
+    return {
+      success: false,
+      error: err?.message || 'User ID tidak valid. Sesi login diperlukan untuk menghapus data dari cloud.',
+    };
+  }
+
   const client = getSupabase();
   if (!client) {
     return { success: false, error: 'Supabase client tidak tersedia.' };
   }
-  if (!userId) {
-    return {
-      success: false,
-      error: 'User ID tidak valid. Sesi login diperlukan untuk menghapus data dari cloud.',
-    };
-  }
 
   let deletedCount = 0;
   const seenUuids = new Set<string>();
+  const tradeUuidsToDelete: string[] = [];
+  const screenshotsPendingCleanup: Array<{ tradeId: string; storagePath: string }> = [];
+
+  for (const trade of tradesToDelete) {
+    if (!trade || !trade.id || !String(trade.id).trim()) continue;
+    const dbUuid = resolveCloudTradeUuid(trade.id, validUserId);
+    if (seenUuids.has(dbUuid)) continue;
+    seenUuids.add(dbUuid);
+    tradeUuidsToDelete.push(dbUuid);
+
+    const rawScreenshot = trade.screenshotUrl ? String(trade.screenshotUrl).trim() : '';
+    if (rawScreenshot && isStoragePath(rawScreenshot) && !keepScreenshotPaths.has(rawScreenshot)) {
+      screenshotsPendingCleanup.push({ tradeId: trade.id, storagePath: rawScreenshot });
+    }
+  }
+
+  if (tradeUuidsToDelete.length === 0) {
+    return { success: true, data: { deletedCount: 0 } };
+  }
 
   try {
+    // 1. TAHAP 1: HAPUS DARI DATABASE TERLEBIH DAHULU (Strict DB-First)
     for (const trade of tradesToDelete) {
       if (!trade || !trade.id) continue;
-      const dbUuid = ensureValidUuid(trade.id);
-      if (seenUuids.has(dbUuid)) continue;
-      seenUuids.add(dbUuid);
-
-      const rawScreenshot = trade.screenshotUrl ? String(trade.screenshotUrl).trim() : '';
-      if (rawScreenshot && isStoragePath(rawScreenshot) && !keepScreenshotPaths.has(rawScreenshot)) {
-        await deleteScreenshotFromSupabase(rawScreenshot);
-      }
+      const dbUuid = resolveCloudTradeUuid(trade.id, validUserId);
 
       const { data, error } = await client
         .from('trades')
         .delete()
         .eq('id', dbUuid)
-        .eq('user_id', userId)
+        .eq('user_id', validUserId)
         .select();
 
       if (error) {
         console.error(`Supabase delete error for trade "${trade.id}":`, error);
+        // DB delete failed: ABORT immediately. Zero screenshots are deleted!
         return {
           success: false,
           error: translateDatabaseError(error),
@@ -2113,7 +2461,20 @@ export async function deleteTradesListFromSupabase(
       if (data && data.length > 0) {
         deletedCount += data.length;
       }
-      unregisterKnownTradeUuid(trade.id);
+      unregisterKnownTradeUuid(trade.id, validUserId);
+    }
+
+    // 2. TAHAP 2: BERSIHKAN SCREENSHOT DARI STORAGE HANYA SETELAH DB ROW TERHAPUS
+    for (const item of screenshotsPendingCleanup) {
+      try {
+        await deleteScreenshotFromSupabase(item.storagePath);
+      } catch (storageErr) {
+        // Non-fatal: Record as orphan candidate, but do not fail the successful trade deletion
+        console.warn(
+          `[Orphan Warning] Screenshot storage "${item.storagePath}" gagal dihapus setelah baris trade terhapus:`,
+          storageErr
+        );
+      }
     }
 
     return { success: true, data: { deletedCount } };
@@ -2127,24 +2488,28 @@ export async function deleteTradesListFromSupabase(
 }
 
 /**
- * Deletes all obsolete cloud trades for a user whose canonical UUID is NOT in keepTrades.
+ * Deletes all obsolete cloud trades for a user whose canonical or legacy UUID is NOT in keepTrades.
  * Also removes orphaned private Storage screenshots that belonged to deleted or overwritten trades.
- * Used by Replace mode (JSON Restore, ZIP Restore, CSV Replace) and Clear All (where keepTrades = []).
+ * Strictly enforces DB Row Deletion FIRST (F-27).
  */
 export async function deleteObsoleteTradesFromSupabase(
   keepTrades: Trade[],
   previousLocalTrades: Trade[],
   userId: string
 ): Promise<SyncResult<{ deletedCount: number }>> {
+  let validUserId: string;
+  try {
+    validUserId = requireAuthenticatedUserId(userId);
+  } catch (err: any) {
+    return {
+      success: false,
+      error: err?.message || 'User ID tidak valid. Sesi login diperlukan untuk menyinkronkan penghapusan cloud.',
+    };
+  }
+
   const client = getSupabase();
   if (!client) {
     return { success: false, error: 'Supabase client tidak tersedia.' };
-  }
-  if (!userId) {
-    return {
-      success: false,
-      error: 'User ID tidak valid. Sesi login diperlukan untuk menyinkronkan penghapusan cloud.',
-    };
   }
 
   try {
@@ -2152,30 +2517,33 @@ export async function deleteObsoleteTradesFromSupabase(
     const keepScreenshotPaths = new Set<string>();
 
     for (const t of keepTrades) {
-      if (!t || !t.id) continue;
-      keepUuids.add(ensureValidUuid(t.id));
+      if (!t || !t.id || !String(t.id).trim()) continue;
+      const cleanId = String(t.id).trim();
+      keepUuids.add(resolveCloudTradeUuid(cleanId, validUserId));
+      keepUuids.add(computeLegacyUnscopedUuid(cleanId));
+      if (GENERIC_UUID_REGEX.test(cleanId)) {
+        keepUuids.add(cleanId.toLowerCase());
+      }
       const rawUrl = t.screenshotUrl ? String(t.screenshotUrl).trim() : '';
       if (rawUrl && isStoragePath(rawUrl)) {
         keepScreenshotPaths.add(rawUrl);
       }
     }
 
-    // Collect candidate trades from both previousLocalTrades and live cloud rows
     const candidateByUuid = new Map<string, Trade>();
     for (const prev of previousLocalTrades) {
-      if (!prev || !prev.id) continue;
-      candidateByUuid.set(ensureValidUuid(prev.id), prev);
+      if (!prev || !prev.id || !String(prev.id).trim()) continue;
+      candidateByUuid.set(resolveCloudTradeUuid(prev.id, validUserId), prev);
     }
 
-    const cloudRes = await fetchTradesFromSupabase(userId);
+    const cloudRes = await fetchTradesFromSupabase(validUserId);
     if (cloudRes.success && cloudRes.data) {
       for (const cloudTrade of cloudRes.data) {
-        if (!cloudTrade || !cloudTrade.id) continue;
-        const uuid = ensureValidUuid(cloudTrade.id);
+        if (!cloudTrade || !cloudTrade.id || !String(cloudTrade.id).trim()) continue;
+        const uuid = resolveCloudTradeUuid(cloudTrade.id, validUserId);
         if (!candidateByUuid.has(uuid)) {
           candidateByUuid.set(uuid, cloudTrade);
         } else {
-          // If cloud row had a storage screenshot not recorded in local copy, preserve reference for cleanup
           const existing = candidateByUuid.get(uuid)!;
           if (!existing.screenshotUrl && cloudTrade.screenshotUrl) {
             candidateByUuid.set(uuid, {
@@ -2187,20 +2555,10 @@ export async function deleteObsoleteTradesFromSupabase(
       }
     }
 
-    // Clean up orphaned screenshots for trades that ARE kept, but whose screenshot path changed
-    for (const [uuid, prevTrade] of candidateByUuid.entries()) {
-      if (keepUuids.has(uuid)) {
-        const oldPath = prevTrade.screenshotUrl ? String(prevTrade.screenshotUrl).trim() : '';
-        if (oldPath && isStoragePath(oldPath) && !keepScreenshotPaths.has(oldPath)) {
-          await deleteScreenshotFromSupabase(oldPath);
-        }
-      }
-    }
-
-    // Filter trades whose UUID is not in keepUuids
     const obsoleteTrades: Trade[] = [];
     for (const [uuid, trade] of candidateByUuid.entries()) {
-      if (!keepUuids.has(uuid)) {
+      const legacyUuid = computeLegacyUnscopedUuid(trade.id);
+      if (!keepUuids.has(uuid) && !keepUuids.has(legacyUuid)) {
         obsoleteTrades.push(trade);
       }
     }
@@ -2209,7 +2567,31 @@ export async function deleteObsoleteTradesFromSupabase(
       return { success: true, data: { deletedCount: 0 } };
     }
 
-    return await deleteTradesListFromSupabase(obsoleteTrades, userId, keepScreenshotPaths);
+    // Delete obsolete trades (DB first, then storage)
+    const deleteResult = await deleteTradesListFromSupabase(
+      obsoleteTrades,
+      validUserId,
+      keepScreenshotPaths
+    );
+
+    // After obsolete trades are confirmed deleted from DB, cleanup screenshots of modified trades
+    if (deleteResult.success) {
+      for (const [uuid, prevTrade] of candidateByUuid.entries()) {
+        const legacyPrevUuid = computeLegacyUnscopedUuid(prevTrade.id);
+        if (keepUuids.has(uuid) || keepUuids.has(legacyPrevUuid)) {
+          const oldPath = prevTrade.screenshotUrl ? String(prevTrade.screenshotUrl).trim() : '';
+          if (oldPath && isStoragePath(oldPath) && !keepScreenshotPaths.has(oldPath)) {
+            try {
+              await deleteScreenshotFromSupabase(oldPath);
+            } catch (err) {
+              console.warn(`Peringatan: Gagal membersihkan screenshot usang "${oldPath}":`, err);
+            }
+          }
+        }
+      }
+    }
+
+    return deleteResult;
   } catch (err: any) {
     console.error('Unexpected error in deleteObsoleteTradesFromSupabase:', err);
     return {
@@ -2218,5 +2600,7 @@ export async function deleteObsoleteTradesFromSupabase(
     };
   }
 }
+
+
 
 

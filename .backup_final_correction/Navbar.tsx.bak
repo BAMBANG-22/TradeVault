@@ -1,0 +1,94 @@
+/**
+ * @license
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+import React from 'react';
+import { Menu, X } from 'lucide-react';
+import { AppSettings } from '../../types/settings';
+import { BrandLogo } from './BrandLogo';
+
+interface NavbarProps {
+  currentEquity: number;
+  settings: AppSettings;
+  activeTab: string;
+  onNavigate: (tab: string) => void;
+  onOpenMobileMenu: () => void;
+  isMobileMenuOpen: boolean;
+  onOpenLocalInfo: () => void;
+  onOpenBackupModal: () => void;
+  currentUser?: any;
+  onOpenAuth: () => void;
+  onOpenAccount: () => void;
+}
+
+/**
+ * Persistent App Header
+ *
+ * - Left: Hamburger menu button, official TradeVault symbol, and TRADEVAULT brand wordmark.
+ * - Always persistent at top of viewport: remains static at top while content scrolls underneath.
+ * - Hamburger menu is always accessible.
+ * - Logo and TRADEVAULT wordmark never fade out or shrink.
+ * - Respects Android / iOS safe area top.
+ */
+export const Navbar: React.FC<NavbarProps> = ({
+  onNavigate,
+  onOpenMobileMenu,
+  isMobileMenuOpen,
+}) => {
+  return (
+    <header
+      data-testid="app-header"
+      className="sticky top-0 z-30 h-[calc(3.5rem+env(safe-area-inset-top,0px))] pt-[env(safe-area-inset-top,0px)] border-b border-[#DDE3EA] dark:border-[#252B34] bg-white/95 dark:bg-[#11151B]/95 backdrop-blur-md transition-colors duration-150"
+    >
+      <div className="h-14 flex items-center justify-between px-4 sm:px-6">
+        {/* Left: Hamburger Menu Button & Official TradeVault Brand Lockup */}
+        <div className="flex items-center gap-3">
+          <button
+            type="button"
+            onClick={onOpenMobileMenu}
+            data-testid="header-hamburger-button"
+            className="inline-flex h-9 w-9 items-center justify-center rounded-lg text-[#151D2A] dark:text-[#F2F5F9] hover:bg-[#F5F7FA] dark:hover:bg-[#171D26] transition-colors cursor-pointer"
+            aria-label={isMobileMenuOpen ? 'Tutup Menu Navigasi' : 'Buka Menu Navigasi'}
+            aria-expanded={isMobileMenuOpen}
+          >
+            {isMobileMenuOpen ? (
+              <X className="h-5 w-5 stroke-[1.75]" />
+            ) : (
+              <Menu className="h-5 w-5 stroke-[1.75]" />
+            )}
+          </button>
+
+          {/* Official TradeVault Logo Symbol + Persistent Brand Wordmark */}
+          <button
+            type="button"
+            onClick={() => onNavigate('dashboard')}
+            className="group flex items-center gap-2 focus:outline-none cursor-pointer"
+            aria-label="TradeVault — Kembali ke Dashboard"
+          >
+            <span className="inline-flex items-center justify-center">
+              <BrandLogo
+                variant="symbol"
+                className="h-7 w-7"
+                title="TradeVault Symbol"
+              />
+            </span>
+            <span
+              data-testid="header-brand-wordmark"
+              className="inline-flex items-center"
+            >
+              <span className="text-sm sm:text-base font-extrabold tracking-[0.06em] uppercase select-none whitespace-nowrap">
+                <span className="text-[#172033] dark:text-[#F8FAFC]">TRADE</span>
+                <span className="text-[#1458C4] dark:text-[#38BDF8]">VAULT</span>
+              </span>
+            </span>
+          </button>
+        </div>
+
+        {/* Right: Intentionally clean (Storage, Cloud, Backup & Theme live in Hamburger Menu) */}
+        <div className="w-9" aria-hidden="true" />
+      </div>
+    </header>
+  );
+};
+

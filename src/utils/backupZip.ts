@@ -7,6 +7,8 @@ import {
   isStoragePath,
   mergeTradesDatasets,
 } from './supabaseSync';
+import { validateAndNormalizeTradeRecord } from '../storage/idbAdapter';
+import { computeSha256Hex } from '../storage/utf8Base64Url';
 
 export type ScreenshotSourceType = 'storage' | 'base64' | 'external' | 'invalid' | 'none';
 
@@ -21,6 +23,7 @@ export interface ScreenshotTaskItem {
   status: 'pending' | 'success' | 'failed' | 'skipped_external';
   error?: string;
   sizeBytes?: number;
+  sha256Hex?: string;
 }
 
 export interface ZipBackupProgress {
@@ -66,6 +69,7 @@ export interface ZipBackupManifest {
     status: 'archived' | 'failed' | 'skipped_external';
     safeReference: string;
     sizeBytes?: number;
+    sha256Hex?: string;
     error?: string;
   }>;
   externalReferences: Array<{
@@ -194,6 +198,7 @@ export interface ExecuteZipRestoreOptions {
   archive: ParsedZipArchive;
   existingTrades: Trade[];
   currentUser?: { id: string; email?: string } | null;
+  activeOwnerScope?: string | null;
   mode: 'replace' | 'merge';
   syncToCloud: boolean;
   uploadCache?: Map<string, string>; // archive key -> uploaded storage path
@@ -234,30 +239,44 @@ export function parseBase64Image(dataUrl: string): {
 
 /**
  * Helper to convert Blob to Base64 data URL (useful for guest/offline restore).
+ * Non-throwing fail-safe implementation.
  */
-export function blobToBase64(blob: Blob, fallbackMime: string = 'image/jpeg'): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onloadend = () => {
-      if (typeof reader.result === 'string') {
-        let result = reader.result;
-        // CRITICAL FIX: Ensure Data URL strictly begins with 'data:image/'
-        // If FileReader output 'data:application/octet-stream;base64,...' or 'data:;base64,...',
-        // sanitize it to 'data:<validMime>;base64,...' so all UI components can display it.
-        if (!result.startsWith('data:image/')) {
-          const mime = blob.type && blob.type.startsWith('image/') ? blob.type : fallbackMime;
-          const commaIdx = result.indexOf(',');
-          const base64Data = commaIdx !== -1 ? result.slice(commaIdx + 1) : result;
-          result = `data:${mime};base64,${base64Data}`;
-        }
-        resolve(result);
-      } else {
-        reject(new Error('Gagal membaca gambar sebagai Data URL'));
+export async function blobToBase64(blob: Blob, fallbackMime: string = 'image/jpeg'): Promise<string> {
+  if (!blob || !(blob instanceof Blob)) return '';
+  try {
+    if (typeof FileReader === 'undefined') {
+      const arrayBuf = await blob.arrayBuffer();
+      const bytes = new Uint8Array(arrayBuf);
+      let binary = '';
+      for (let i = 0; i < bytes.byteLength; i++) {
+        binary += String.fromCharCode(bytes[i]);
       }
-    };
-    reader.onerror = () => reject(new Error('Gagal memproses gambar lokal'));
-    reader.readAsDataURL(blob);
-  });
+      const base64Data = btoa(binary);
+      const mime = blob.type && blob.type.startsWith('image/') ? blob.type : fallbackMime;
+      return `data:${mime};base64,${base64Data}`;
+    }
+    return await new Promise<string>((resolve) => {
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        if (typeof reader.result === 'string') {
+          let result = reader.result;
+          if (!result.startsWith('data:image/')) {
+            const mime = blob.type && blob.type.startsWith('image/') ? blob.type : fallbackMime;
+            const commaIdx = result.indexOf(',');
+            const base64Data = commaIdx !== -1 ? result.slice(commaIdx + 1) : result;
+            result = `data:${mime};base64,${base64Data}`;
+          }
+          resolve(result);
+        } else {
+          resolve('');
+        }
+      };
+      reader.onerror = () => resolve('');
+      reader.readAsDataURL(blob);
+    });
+  } catch {
+    return '';
+  }
 }
 
 /**
@@ -394,6 +413,7 @@ export async function generateFullZipBackup(
               item.ext = parsed.ext || 'jpg';
               item.archiveFileName = generateSafeArchiveFileName(item.tradeId, item.index, item.ext);
               item.sizeBytes = parsed.bytes.byteLength;
+              item.sha256Hex = await computeSha256Hex(parsed.bytes);
               totalAccumulatedBytes += item.sizeBytes;
             }
           } else if (item.sourceType === 'storage') {
@@ -426,6 +446,8 @@ export async function generateFullZipBackup(
                 item.ext = ext;
                 item.archiveFileName = generateSafeArchiveFileName(item.tradeId, item.index, ext);
                 item.sizeBytes = res.blob.size;
+                const blobBytes = new Uint8Array(await res.blob.arrayBuffer());
+                item.sha256Hex = await computeSha256Hex(blobBytes);
                 totalAccumulatedBytes += item.sizeBytes;
               }
             }
@@ -515,6 +537,7 @@ export async function generateFullZipBackup(
             : 'failed',
         safeReference: safeRef,
         sizeBytes: item.sizeBytes,
+        sha256Hex: item.sha256Hex,
         error: item.error,
       };
     }),
@@ -780,21 +803,38 @@ export async function parseAndValidateZipArchive(file: File): Promise<ParsedZipA
     }
   }
 
-  // 6. Validate individual trades
+  // 6. Validate individual trades using strict 28-field validator
   const validTrades: Trade[] = [];
   let invalidTradesCount = 0;
+  const validationOwnerScope = manifest?.exportUser?.id || 'GUEST';
 
   for (const t of parsedTradesRaw) {
-    if (
-      t &&
-      typeof t === 'object' &&
-      typeof t.id === 'string' &&
-      typeof t.dateTime === 'string' &&
-      typeof t.entryPrice === 'number' &&
-      typeof t.netProfit === 'number'
-    ) {
-      validTrades.push(t as Trade);
-    } else {
+    try {
+      if (
+        !t ||
+        typeof t !== 'object' ||
+        typeof t.id !== 'string' ||
+        typeof t.dateTime !== 'string' ||
+        typeof t.entryPrice !== 'number' ||
+        typeof t.netProfit !== 'number' ||
+        !Number.isFinite(t.entryPrice) ||
+        t.entryPrice <= 0 ||
+        !Number.isFinite(t.netProfit)
+      ) {
+        invalidTradesCount++;
+        continue;
+      }
+      const validationRes = validateAndNormalizeTradeRecord(t, validationOwnerScope);
+      if (!validationRes.isValid || !validationRes.normalizedTrade) {
+        invalidTradesCount++;
+        continue;
+      }
+      const normalized: Trade = { ...validationRes.normalizedTrade };
+      if (typeof (t as any)._archivedScreenshot === 'string') {
+        (normalized as any)._archivedScreenshot = (t as any)._archivedScreenshot;
+      }
+      validTrades.push(normalized);
+    } catch {
       invalidTradesCount++;
     }
   }
@@ -803,7 +843,7 @@ export async function parseAndValidateZipArchive(file: File): Promise<ParsedZipA
     errors.push('Semua entri transaksi dalam trades.json tidak memenuhi kriteria validasi.');
   }
 
-  // 7. Extract and index images from zip entries
+  // 7. Extract and index images from zip entries (with SHA-256 verification against manifest)
   for (const [entryPath, zipEntry] of Object.entries(zip.files)) {
     if (zipEntry.dir) continue;
 
@@ -832,6 +872,24 @@ export async function parseAndValidateZipArchive(file: File): Promise<ParsedZipA
             `File gambar "${fileNameOnly}" diabaikan karena bukan format gambar yang valid (${detection.reason || 'signature tidak dikenal'}).`
           );
           continue;
+        }
+
+        // Verify SHA-256 checksum if manifest specifies one for this archive entry
+        if (manifest && Array.isArray(manifest.screenshotMappings)) {
+          const matchingMapping = manifest.screenshotMappings.find(
+            (m) =>
+              m.archivePath === entryPath ||
+              m.archivePath === `screenshots/${fileNameOnly}`
+          );
+          if (matchingMapping && typeof matchingMapping.sha256Hex === 'string' && matchingMapping.sha256Hex.length === 64) {
+            const actualSha256 = await computeSha256Hex(bytes);
+            if (actualSha256.toLowerCase() !== matchingMapping.sha256Hex.toLowerCase()) {
+              errors.push(
+                `Integritas file screenshot "${entryPath}" gagal diverifikasi (SHA-256 mismatch).`
+              );
+              continue;
+            }
+          }
         }
 
         // Construct Blob with strictly typed image MIME type (never application/octet-stream)
@@ -1114,8 +1172,14 @@ export async function executeZipRestore(options: ExecuteZipRestoreOptions): Prom
     preparedTrades.push(cleanTrade);
   }
 
-  // Step 3: Compute final trades list according to Merge or Replace mode using canonical UUID matching
-  const mergeOutcome = mergeTradesDatasets(existingTrades, preparedTrades, mode);
+  // Step 3: Compute final trades list according to Merge or Replace mode using canonical owner-scoped UUID matching
+  const verifiedOwnerScope = options.activeOwnerScope || (currentUser?.id ? currentUser.id : 'GUEST');
+  const mergeOutcome = mergeTradesDatasets(
+    existingTrades,
+    preparedTrades,
+    mode,
+    verifiedOwnerScope
+  );
   const finalTrades: Trade[] = mergeOutcome.finalTrades;
   const duplicateTradesUpdated = mergeOutcome.updatedCount;
   const newTradesAdded = mergeOutcome.addedCount;

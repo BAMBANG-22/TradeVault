@@ -9,6 +9,40 @@ interface CsvImportModalProps {
   onConfirmImport: (trades: Trade[], mode: 'merge' | 'replace') => void;
 }
 
+/**
+ * Stabilizes CSV trade IDs deterministically (F-28) using a composite signature of:
+ * dateTime + instrument + position + entryPrice + lotSize + netProfit + occurrenceIndex.
+ * Ensures re-importing the same CSV yields identical IDs on retries (idempotency).
+ */
+function stabilizeCsvTradesDeterministically(trades: Trade[]): Trade[] {
+  const occurrenceCountMap = new Map<string, number>();
+  return trades.map((t) => {
+    // Only generate stable deterministic ID if original ID was auto-generated (starts with "CSV-")
+    if (!t.id || t.id.startsWith('CSV-')) {
+      const sig = `${t.dateTime}|${(t.instrument || 'XAUUSD').toUpperCase()}|${t.position}|${t.entryPrice}|${t.lotSize}|${t.netProfit}`;
+      const occurrenceIndex = occurrenceCountMap.get(sig) || 0;
+      occurrenceCountMap.set(sig, occurrenceIndex + 1);
+
+      let h1 = 0x811c9dc5;
+      let h2 = 0x9e3779b9;
+      const seed = `${sig}|occ:${occurrenceIndex}`;
+      for (let i = 0; i < seed.length; i++) {
+        const c = seed.charCodeAt(i);
+        h1 = Math.imul(h1 ^ c, 0x01000193);
+        h2 = Math.imul(h2 ^ (c + i), 0x85ebca6b);
+      }
+      const hex1 = (h1 >>> 0).toString(16).padStart(8, '0');
+      const hex2 = (h2 >>> 0).toString(16).padStart(8, '0');
+      const stableId = `TRD-CSV-${hex1.slice(0, 4)}-${hex2.slice(0, 4)}`.toUpperCase();
+      return {
+        ...t,
+        id: stableId,
+      };
+    }
+    return t;
+  });
+}
+
 export const CsvImportModal: React.FC<CsvImportModalProps> = ({
   isOpen,
   onClose,
@@ -17,6 +51,7 @@ export const CsvImportModal: React.FC<CsvImportModalProps> = ({
   const [csvText, setCsvText] = useState<string>('');
   const [importResult, setImportResult] = useState<CsvImportResult | null>(null);
   const [importMode, setImportMode] = useState<'merge' | 'replace'>('merge');
+  const [confirmReplace, setConfirmReplace] = useState<boolean>(false);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -41,7 +76,11 @@ export const CsvImportModal: React.FC<CsvImportModalProps> = ({
       if (text) {
         setCsvText(text);
         const result = parseCsvToTrades(text);
-        setImportResult(result);
+        const stabilizedTrades = stabilizeCsvTradesDeterministically(result.validTrades);
+        setImportResult({
+          ...result,
+          validTrades: stabilizedTrades,
+        });
       }
     };
     reader.readAsText(file);
@@ -52,7 +91,11 @@ export const CsvImportModal: React.FC<CsvImportModalProps> = ({
     setCsvText(text);
     if (text.trim().length > 0) {
       const result = parseCsvToTrades(text);
-      setImportResult(result);
+      const stabilizedTrades = stabilizeCsvTradesDeterministically(result.validTrades);
+      setImportResult({
+        ...result,
+        validTrades: stabilizedTrades,
+      });
     } else {
       setImportResult(null);
     }
@@ -60,10 +103,14 @@ export const CsvImportModal: React.FC<CsvImportModalProps> = ({
 
   const handleCommit = () => {
     if (importResult && importResult.validTrades.length > 0) {
+      if (importMode === 'replace' && !confirmReplace) {
+        return;
+      }
       onConfirmImport(importResult.validTrades, importMode);
       onClose();
     }
   };
+
 
   return (
     <div
@@ -117,19 +164,31 @@ export const CsvImportModal: React.FC<CsvImportModalProps> = ({
             <div className="space-y-3 pt-2">
               {/* Summary Stats */}
               <div className="flex flex-wrap items-center justify-between p-3 rounded-xl bg-[#F5F7FA] dark:bg-[#080A0E] border border-[#DDE3EA] dark:border-[#252B34] text-xs gap-2">
-                <div className="flex items-center gap-2">
-                  <CheckCircle className="h-4 w-4 text-emerald-600 dark:text-emerald-400 stroke-[1.75]" />
-                  <span>
-                    Valid: <strong className="text-emerald-600 dark:text-emerald-400 font-mono-numbers">{importResult.validTrades.length}</strong> trade ditemukan
-                  </span>
-                </div>
-                {importResult.errors.length > 0 && (
-                  <div className="flex items-center gap-2 text-rose-600 dark:text-rose-400">
-                    <AlertCircle className="h-4 w-4 stroke-[1.75]" />
-                    <span>{importResult.errors.length} baris tidak valid</span>
+                <div className="flex items-center gap-3">
+                  <div className="flex items-center gap-1.5">
+                    <CheckCircle className="h-4 w-4 text-emerald-600 dark:text-emerald-400 stroke-[1.75]" />
+                    <span>
+                      Diterima:{' '}
+                      <strong className="text-emerald-600 dark:text-emerald-400 font-mono-numbers">
+                        {importResult.acceptedRowsCount ?? importResult.validTrades.length}
+                      </strong>{' '}
+                      dari <span className="font-mono-numbers">{importResult.totalRows}</span> baris
+                    </span>
                   </div>
-                )}
-                <div className="flex items-center gap-2">
+                  {(importResult.rejectedRowsCount > 0 || importResult.errors.length > 0) && (
+                    <div className="flex items-center gap-1.5 text-rose-600 dark:text-rose-400">
+                      <AlertCircle className="h-4 w-4 stroke-[1.75]" />
+                      <span>
+                        Ditolak:{' '}
+                        <strong className="font-mono-numbers">
+                          {importResult.rejectedRowsCount || importResult.errors.length}
+                        </strong>{' '}
+                        baris tidak valid
+                      </span>
+                    </div>
+                  )}
+                </div>
+                <div className="flex flex-col sm:flex-row sm:items-center gap-2">
                   <span className="text-[#697586] dark:text-[#929BA9]">Mode Simpan:</span>
                   <select
                     value={importMode}
@@ -142,12 +201,41 @@ export const CsvImportModal: React.FC<CsvImportModalProps> = ({
                 </div>
               </div>
 
+              {/* Replace Mode Safety Warning */}
+              {importMode === 'replace' && (
+                <div className="p-3 rounded-xl bg-amber-500/10 border border-amber-500/30 text-xs text-amber-700 dark:text-amber-400 space-y-2">
+                  <div className="flex items-start gap-2">
+                    <AlertCircle className="h-4 w-4 shrink-0 mt-0.5" />
+                    <span>
+                      <strong>Perhatian:</strong> Mode <em>Gantikan Seluruh Data</em> akan menghapus
+                      transaksi yang tidak ada di dalam file CSV ini dari jurnal (dan dari database Supabase jika login).
+                    </span>
+                  </div>
+                  <label className="flex items-center gap-2 font-semibold cursor-pointer pt-1">
+                    <input
+                      type="checkbox"
+                      checked={confirmReplace}
+                      onChange={(e) => setConfirmReplace(e.target.checked)}
+                      className="rounded border-[#DDE3EA] dark:border-[#252B34] text-[#1769E8] focus:ring-[#1769E8]"
+                    />
+                    <span>Saya memahami risiko dan mengonfirmasi penggantian seluruh data</span>
+                  </label>
+                </div>
+              )}
+
               {/* Errors List if any */}
-              {importResult.errors.length > 0 && (
-                <div className="p-3 rounded-xl bg-[#F5F7FA] dark:bg-[#080A0E] border border-[#DDE3EA] dark:border-[#252B34] text-xs text-rose-600 dark:text-rose-400 space-y-1 max-h-24 overflow-y-auto">
-                  {importResult.errors.map((err, i) => (
-                    <div key={i}>• {err}</div>
-                  ))}
+              {(importResult.rowErrors?.length > 0 || importResult.errors.length > 0) && (
+                <div className="p-3 rounded-xl bg-[#F5F7FA] dark:bg-[#080A0E] border border-[#DDE3EA] dark:border-[#252B34] text-xs text-rose-600 dark:text-rose-400 space-y-1 max-h-28 overflow-y-auto">
+                  {importResult.rowErrors && importResult.rowErrors.length > 0
+                    ? importResult.rowErrors.map((rowErr, i) => (
+                        <div key={i} className="font-mono-numbers">
+                          • Baris {rowErr.rowNumber}
+                          {rowErr.tradeId ? ` [${rowErr.tradeId}]` : ''} — Field{' '}
+                          <strong>{rowErr.field}</strong>: {rowErr.reason} (nilai:{' '}
+                          <code>{rowErr.rawValue || 'kosong'}</code>)
+                        </div>
+                      ))
+                    : importResult.errors.map((err, i) => <div key={i}>• {err}</div>)}
                 </div>
               )}
 
@@ -204,9 +292,15 @@ export const CsvImportModal: React.FC<CsvImportModalProps> = ({
           </button>
           <button
             onClick={handleCommit}
-            disabled={!importResult || importResult.validTrades.length === 0}
+            disabled={
+              !importResult ||
+              importResult.validTrades.length === 0 ||
+              (importMode === 'replace' && !confirmReplace)
+            }
             className={`flex items-center gap-1.5 px-5 py-2.5 rounded-lg text-xs font-bold transition-colors ${
-              importResult && importResult.validTrades.length > 0
+              importResult &&
+              importResult.validTrades.length > 0 &&
+              (importMode !== 'replace' || confirmReplace)
                 ? 'bg-[#1769E8] hover:bg-[#1458C4] text-white cursor-pointer'
                 : 'bg-[#EEF2F6] dark:bg-[#171D26] text-[#697586] dark:text-[#929BA9] cursor-not-allowed'
             }`}

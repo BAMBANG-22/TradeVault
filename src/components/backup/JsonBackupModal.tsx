@@ -24,7 +24,9 @@ import {
 } from 'lucide-react';
 import { Trade } from '../../types/trade';
 import { AppSettings } from '../../types/settings';
-import { generateBackupJson } from '../../utils/storage';
+import { generateBackupJson, parseAndRestoreBackup } from '../../utils/storage';
+import { exportTradesToCsv, downloadCsvFile } from '../../utils/csv';
+
 import { formatCurrency } from '../../utils/calculations';
 import {
   generateFullZipBackup,
@@ -39,6 +41,7 @@ import {
   executeZipRestore,
 } from '../../utils/backupZip';
 import { isStoragePath, prepareTradesForJsonBackup } from '../../utils/supabaseSync';
+import { exportFile } from '../../utils/fileExport';
 
 interface JsonBackupModalProps {
   isOpen: boolean;
@@ -94,6 +97,7 @@ export const JsonBackupModal: React.FC<JsonBackupModalProps> = ({
   const [confirmOverwrite, setConfirmOverwrite] = useState<boolean>(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [isExportingJson, setIsExportingJson] = useState<boolean>(false);
+  const [isExportingCsv, setIsExportingCsv] = useState<boolean>(false);
   const [isRestoringJson, setIsRestoringJson] = useState<boolean>(false);
 
   // Restore ZIP Progress & Execution States (Tahap 2)
@@ -108,17 +112,24 @@ export const JsonBackupModal: React.FC<JsonBackupModalProps> = ({
   // Upload cache: prevents re-uploading already succeeded files when user clicks Retry
   const uploadCacheRef = useRef<Map<string, string>>(new Map());
 
-  // Export ZIP States (Tahap 1)
-  const [exportFormat, setExportFormat] = useState<'zip' | 'json'>('zip');
+  // Export States
+  const [exportFormat, setExportFormat] = useState<'zip' | 'json' | 'csv'>('zip');
   const [zipPhase, setZipPhase] = useState<'idle' | 'running' | 'completed' | 'failed'>('idle');
   const [zipProgress, setZipProgress] = useState<ZipBackupProgress | null>(null);
   const [zipResult, setZipResult] = useState<GenerateZipResult | null>(null);
   const [zipFailedItems, setZipFailedItems] = useState<ZipBackupFailedItem[]>([]);
+  const [isRedownloadingZip, setIsRedownloadingZip] = useState<boolean>(false);
+  const [exportStatusMsg, setExportStatusMsg] = useState<{
+    text: string;
+    type: 'success' | 'info' | 'error';
+  } | null>(null);
   const exportAbortControllerRef = useRef<AbortController | null>(null);
 
   const isBackupOrRestoreBusy =
     isAnalyzingFile ||
     isExportingJson ||
+    isExportingCsv ||
+    isRedownloadingZip ||
     isRestoringJson ||
     zipPhase === 'running' ||
     restoreZipPhase === 'uploading';
@@ -173,38 +184,83 @@ export const JsonBackupModal: React.FC<JsonBackupModalProps> = ({
 
   if (!isOpen) return null;
 
-  // Helper to trigger browser file download
-  const triggerDownload = (blob: Blob, filename: string) => {
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = filename;
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    setTimeout(() => URL.revokeObjectURL(url), 2000);
-  };
-
   // Handle Standard JSON Export (Tahap 1 & Lama)
   // Resolves private Storage paths into self-contained Base64 Data URLs in the exported JSON copy
   // so restoring the JSON backup after deleting trades can always re-upload screenshots to Storage.
   const handleDownloadBackup = async () => {
     if (isExportingJson) return;
     setIsExportingJson(true);
+    setExportStatusMsg(null);
     try {
       const exportReadyTrades = await prepareTradesForJsonBackup(trades, currentUser?.id || null);
       const jsonStr = generateBackupJson(exportReadyTrades, settings);
-      const blob = new Blob([jsonStr], { type: 'application/json' });
-      triggerDownload(blob, `TradeVault_Backup_${new Date().toISOString().slice(0, 10)}.json`);
+      const fileName = `TradeVault_Backup_${new Date().toISOString().slice(0, 10)}.json`;
+      const result = await exportFile({
+        data: jsonStr,
+        fileName,
+        mimeType: 'application/json',
+      });
+      if (result.status === 'saved') {
+        setExportStatusMsg({
+          text: `File cadangan JSON (${result.fileName}) berhasil disimpan.`,
+          type: 'success',
+        });
+      } else {
+        setExportStatusMsg({
+          text: 'Penyimpanan cadangan JSON dibatalkan oleh pengguna.',
+          type: 'info',
+        });
+      }
+    } catch (err: any) {
+      setExportStatusMsg({
+        text: err?.message || 'Gagal menyimpan file cadangan JSON.',
+        type: 'error',
+      });
     } finally {
       setIsExportingJson(false);
     }
   };
 
+  // Handle CSV Spreadsheet Export
+  const handleDownloadCsv = async () => {
+    if (isExportingCsv) return;
+    if (trades.length === 0) {
+      setExportStatusMsg({ text: 'Belum ada transaksi untuk diekspor ke CSV.', type: 'error' });
+      return;
+    }
+    setIsExportingCsv(true);
+    setExportStatusMsg(null);
+    try {
+      const csvStr = exportTradesToCsv(trades);
+      const fileName = `TradeVault_Export_${new Date().toISOString().slice(0, 10)}.csv`;
+      const res = await downloadCsvFile(csvStr, fileName);
+      if (res.status === 'saved') {
+        setExportStatusMsg({
+          text: `Berkas CSV (${fileName}) berhasil disimpan.`,
+          type: 'success',
+        });
+      } else {
+        setExportStatusMsg({
+          text: 'Penyimpanan berkas CSV dibatalkan oleh pengguna.',
+          type: 'info',
+        });
+      }
+    } catch (err: any) {
+      setExportStatusMsg({
+        text: err?.message || 'Gagal menyimpan berkas CSV.',
+        type: 'error',
+      });
+    } finally {
+      setIsExportingCsv(false);
+    }
+  };
+
   // Handle Full ZIP Backup Export (Tahap 1)
   const handleStartZipBackup = async (allowPartial = false) => {
+    if (zipPhase === 'running' || isRedownloadingZip) return;
     const controller = new AbortController();
     exportAbortControllerRef.current = controller;
+    setExportStatusMsg(null);
     setZipPhase('running');
     setZipProgress({
       phase: 'scanning',
@@ -232,8 +288,30 @@ export const JsonBackupModal: React.FC<JsonBackupModalProps> = ({
       setZipResult(res);
 
       if (res.success && res.blob && res.fileName) {
-        triggerDownload(res.blob, res.fileName);
+        setZipProgress({
+          phase: 'packaging',
+          currentStep: trades.length,
+          totalSteps: trades.length,
+          message: 'Menyimpan arsip ZIP ke perangkat...',
+          percent: 99,
+        });
+        const saveRes = await exportFile({
+          data: res.blob,
+          fileName: res.fileName,
+          mimeType: 'application/zip',
+        });
         setZipPhase('completed');
+        if (saveRes.status === 'saved') {
+          setExportStatusMsg({
+            text: `Cadangan lengkap ZIP (${saveRes.fileName}) berhasil disimpan.`,
+            type: 'success',
+          });
+        } else {
+          setExportStatusMsg({
+            text: 'Penyimpanan ZIP dibatalkan. Anda dapat menekan "Unduh Ulang ZIP" tanpa membuat ulang arsip.',
+            type: 'info',
+          });
+        }
       } else {
         setZipFailedItems(res.failedItems || []);
         setZipPhase('failed');
@@ -249,13 +327,44 @@ export const JsonBackupModal: React.FC<JsonBackupModalProps> = ({
             tradeId: 'GLOBAL',
             sourceType: 'storage',
             pathOrRef: 'Arsip Backup',
-            error: err?.message || 'Gagal memproses arsip ZIP.',
+            error: err?.message || 'Gagal memproses atau menyimpan arsip ZIP.',
           },
         ]);
         setZipPhase('failed');
       }
     } finally {
       exportAbortControllerRef.current = null;
+    }
+  };
+
+  const handleRedownloadZip = async () => {
+    if (!zipResult?.blob || !zipResult?.fileName || isRedownloadingZip) return;
+    setIsRedownloadingZip(true);
+    setExportStatusMsg(null);
+    try {
+      const saveRes = await exportFile({
+        data: zipResult.blob,
+        fileName: zipResult.fileName,
+        mimeType: 'application/zip',
+      });
+      if (saveRes.status === 'saved') {
+        setExportStatusMsg({
+          text: `Cadangan lengkap ZIP (${saveRes.fileName}) berhasil disimpan.`,
+          type: 'success',
+        });
+      } else {
+        setExportStatusMsg({
+          text: 'Penyimpanan ulang ZIP dibatalkan oleh pengguna.',
+          type: 'info',
+        });
+      }
+    } catch (err: any) {
+      setExportStatusMsg({
+        text: err?.message || 'Gagal menyimpan ulang arsip ZIP.',
+        type: 'error',
+      });
+    } finally {
+      setIsRedownloadingZip(false);
     }
   };
 
@@ -271,6 +380,7 @@ export const JsonBackupModal: React.FC<JsonBackupModalProps> = ({
     setZipPhase('idle');
     setZipProgress(null);
     setZipFailedItems([]);
+    setExportStatusMsg(null);
   };
 
   // ==========================================================================
@@ -347,72 +457,47 @@ export const JsonBackupModal: React.FC<JsonBackupModalProps> = ({
     }
   };
 
-  // Validate JSON File (Preserved 100%)
+  // Validate JSON File with Fail-Closed Sanitizer and Active Owner Scope
   const validateSelectedJsonFile = (file: File) => {
     setParsedZipArchive(null);
     const reader = new FileReader();
     reader.onload = (event) => {
       try {
         const content = event.target?.result as string;
-        const parsed = JSON.parse(content);
+        const activeScope = currentUser?.id || 'GUEST';
+        const restoreParsed = parseAndRestoreBackup(content, settings, activeScope);
 
-        const errors: string[] = [];
-        let parsedTradesArray: any[] = [];
-        let fileSettings: AppSettings | undefined = undefined;
-
-        if (Array.isArray(parsed)) {
-          parsedTradesArray = parsed;
-        } else if (parsed && typeof parsed === 'object') {
-          if (Array.isArray(parsed.trades)) {
-            parsedTradesArray = parsed.trades;
-          } else {
-            errors.push('File JSON tidak memiliki daftar transaksi (trades array).');
-          }
-
-          if (parsed.settings && typeof parsed.settings === 'object') {
-            fileSettings = parsed.settings;
-          }
-        } else {
-          errors.push('Format data JSON tidak dikenali.');
+        if (!restoreParsed.success || !restoreParsed.trades) {
+          setValidationReport({
+            isValid: false,
+            fileFormat: 'json',
+            fileName: file.name,
+            fileSize: file.size,
+            totalParsedTrades: 0,
+            validTradesCount: 0,
+            invalidTradesCount: 0,
+            hasSettings: false,
+            errors: [restoreParsed.message || 'File JSON tidak valid.'],
+          });
+          return;
         }
 
-        const validTrades: Trade[] = [];
-        let invalidCount = 0;
-
-        for (const t of parsedTradesArray) {
-          if (
-            t &&
-            typeof t === 'object' &&
-            typeof t.id === 'string' &&
-            typeof t.dateTime === 'string' &&
-            typeof t.entryPrice === 'number' &&
-            typeof t.netProfit === 'number'
-          ) {
-            validTrades.push(t as Trade);
-          } else {
-            invalidCount++;
-          }
-        }
-
-        if (validTrades.length === 0 && parsedTradesArray.length > 0) {
-          errors.push('Semua entri transaksi dalam file memiliki properti yang tidak sesuai.');
-        }
-
+        const validTrades = restoreParsed.trades;
         const totalProfit = validTrades.reduce((acc, t) => acc + (t.netProfit || 0), 0);
 
         setValidationReport({
-          isValid: errors.length === 0 && validTrades.length > 0,
+          isValid: validTrades.length > 0,
           fileFormat: 'json',
           fileName: file.name,
           fileSize: file.size,
-          totalParsedTrades: parsedTradesArray.length,
+          totalParsedTrades: validTrades.length,
           validTradesCount: validTrades.length,
-          invalidTradesCount: invalidCount,
-          hasSettings: Boolean(fileSettings),
-          backupSettings: fileSettings,
+          invalidTradesCount: 0,
+          hasSettings: Boolean(restoreParsed.settings),
+          backupSettings: restoreParsed.settings,
           backupTrades: validTrades,
           backupTotalProfit: totalProfit,
-          errors,
+          errors: validTrades.length === 0 ? ['Tidak ada transaksi yang valid dalam file JSON.'] : [],
         });
       } catch (err: any) {
         setValidationReport({
@@ -490,6 +575,7 @@ export const JsonBackupModal: React.FC<JsonBackupModalProps> = ({
         archive: parsedZipArchive,
         existingTrades: trades,
         currentUser: currentUser ? { id: currentUser.id, email: currentUser.email } : null,
+        activeOwnerScope: currentUser?.id || 'GUEST',
         mode: importMode,
         syncToCloud: Boolean(currentUser && syncToCloud),
         uploadCache: uploadCacheRef.current,
@@ -644,7 +730,10 @@ export const JsonBackupModal: React.FC<JsonBackupModalProps> = ({
 
               <button
                 type="button"
-                onClick={() => setExportFormat('json')}
+                onClick={() => {
+                  setExportFormat('json');
+                  setExportStatusMsg(null);
+                }}
                 className={`p-3.5 rounded-xl border text-left transition-colors flex flex-col justify-between ${
                   exportFormat === 'json'
                     ? 'bg-[#1769E8]/10 dark:bg-[#1769E8]/15 border-[#1769E8]'
@@ -667,6 +756,27 @@ export const JsonBackupModal: React.FC<JsonBackupModalProps> = ({
                 </p>
               </button>
             </div>
+
+            {exportStatusMsg && (
+              <div
+                className={`p-3 rounded-xl border bg-[#F5F7FA] dark:bg-[#080A0E] border-[#DDE3EA] dark:border-[#252B34] text-xs flex items-center gap-2 ${
+                  exportStatusMsg.type === 'success'
+                    ? 'text-emerald-600 dark:text-emerald-400'
+                    : exportStatusMsg.type === 'error'
+                    ? 'text-rose-600 dark:text-rose-400'
+                    : 'text-[#697586] dark:text-[#929BA9]'
+                }`}
+              >
+                {exportStatusMsg.type === 'success' ? (
+                  <CheckCircle2 className="h-4 w-4 shrink-0 stroke-[1.75]" />
+                ) : exportStatusMsg.type === 'error' ? (
+                  <AlertTriangle className="h-4 w-4 shrink-0 stroke-[1.75]" />
+                ) : (
+                  <Info className="h-4 w-4 shrink-0 stroke-[1.75]" />
+                )}
+                <span>{exportStatusMsg.text}</span>
+              </div>
+            )}
 
             {/* FORMAT A: FULL ZIP BACKUP (TAHAP 1) */}
             {exportFormat === 'zip' && (
@@ -765,7 +875,7 @@ export const JsonBackupModal: React.FC<JsonBackupModalProps> = ({
                   <div className="p-4 rounded-xl bg-[#F5F7FA] dark:bg-[#080A0E] border border-[#DDE3EA] dark:border-[#252B34] space-y-3">
                     <div className="flex items-center gap-2 text-xs text-emerald-600 dark:text-emerald-400 font-bold">
                       <CheckCircle2 className="h-4 w-4 text-emerald-600 dark:text-emerald-400 stroke-[1.75]" />
-                      <span>Cadangan Lengkap Berhasil Dibuat & Diunduh!</span>
+                      <span>Cadangan Lengkap ZIP Siap!</span>
                     </div>
                     <div className="text-[11px] text-[#151D2A] dark:text-[#F2F5F9] space-y-1">
                       <p>
@@ -784,17 +894,19 @@ export const JsonBackupModal: React.FC<JsonBackupModalProps> = ({
                       {zipResult.blob && zipResult.fileName && (
                         <button
                           type="button"
-                          onClick={() => triggerDownload(zipResult.blob!, zipResult.fileName!)}
-                          className="py-2 px-3 rounded-lg bg-[#1769E8] hover:bg-[#1458C4] text-white font-bold text-xs flex items-center gap-1.5 transition-colors"
+                          onClick={handleRedownloadZip}
+                          disabled={isRedownloadingZip}
+                          className="py-2 px-3 rounded-lg bg-[#1769E8] hover:bg-[#1458C4] disabled:opacity-50 disabled:cursor-not-allowed text-white font-bold text-xs flex items-center gap-1.5 transition-colors"
                         >
                           <Download className="h-3.5 w-3.5 stroke-[1.75]" />
-                          <span>Unduh Ulang ZIP</span>
+                          <span>{isRedownloadingZip ? 'Menyimpan ZIP...' : 'Unduh Ulang ZIP'}</span>
                         </button>
                       )}
                       <button
                         type="button"
                         onClick={handleResetZipState}
-                        className="py-2 px-3 rounded-lg bg-white dark:bg-[#11151B] border border-[#DDE3EA] dark:border-[#252B34] hover:bg-[#EEF2F6] dark:hover:bg-[#171D26] text-[#151D2A] dark:text-[#F2F5F9] text-xs transition-colors"
+                        disabled={isRedownloadingZip}
+                        className="py-2 px-3 rounded-lg bg-white dark:bg-[#11151B] border border-[#DDE3EA] dark:border-[#252B34] hover:bg-[#EEF2F6] dark:hover:bg-[#171D26] disabled:opacity-50 text-[#151D2A] dark:text-[#F2F5F9] text-xs transition-colors"
                       >
                         Selesai
                       </button>

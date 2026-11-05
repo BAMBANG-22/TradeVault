@@ -3,6 +3,7 @@ import { Trade } from '../../types/trade';
 import { AppSettings } from '../../types/settings';
 import { generateBackupJson } from '../../utils/storage';
 import { migrateLocalTradesToSupabase, prepareTradesForJsonBackup } from '../../utils/supabaseSync';
+import { exportFile } from '../../utils/fileExport';
 import { formatCurrency } from '../../utils/calculations';
 import {
   X,
@@ -33,13 +34,14 @@ export const MigrationModal: React.FC<MigrationModalProps> = ({
 }) => {
   const [excludeDemo, setExcludeDemo] = useState(true);
   const [hasBackedUp, setHasBackedUp] = useState(false);
+  const [isExportingBackup, setIsExportingBackup] = useState(false);
   const [isMigrating, setIsMigrating] = useState(false);
   const [progress, setProgress] = useState<{ done: number; total: number }>({ done: 0, total: 0 });
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const [migrationDone, setMigrationDone] = useState(false);
 
   useEffect(() => {
-    if (!isOpen || isMigrating) return;
+    if (!isOpen || isMigrating || isExportingBackup) return;
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
         onClose();
@@ -47,7 +49,7 @@ export const MigrationModal: React.FC<MigrationModalProps> = ({
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [isOpen, isMigrating, onClose]);
+  }, [isOpen, isMigrating, isExportingBackup, onClose]);
 
   if (!isOpen) return null;
 
@@ -56,16 +58,28 @@ export const MigrationModal: React.FC<MigrationModalProps> = ({
     : localTrades;
 
   const handleDownloadBackup = async () => {
-    const portableTrades = await prepareTradesForJsonBackup(localTrades, userId || null);
-    const jsonStr = generateBackupJson(portableTrades, settings);
-    const blob = new Blob([jsonStr], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `Pre_Migration_TradeVault_Backup_${new Date().toISOString().slice(0, 10)}.json`;
-    a.click();
-    URL.revokeObjectURL(a.href);
-    setHasBackedUp(true);
+    if (isExportingBackup || isMigrating) return;
+    setIsExportingBackup(true);
+    setStatusMessage(null);
+    try {
+      const portableTrades = await prepareTradesForJsonBackup(localTrades, userId || null);
+      const jsonStr = generateBackupJson(portableTrades, settings);
+      const fileName = `Pre_Migration_TradeVault_Backup_${new Date().toISOString().slice(0, 10)}.json`;
+      const result = await exportFile({
+        data: jsonStr,
+        fileName,
+        mimeType: 'application/json',
+      });
+      if (result.status === 'saved') {
+        setHasBackedUp(true);
+      } else {
+        setStatusMessage('Penyimpanan cadangan dibatalkan. Silakan simpan cadangan terlebih dahulu.');
+      }
+    } catch (err: any) {
+      setStatusMessage(err?.message || 'Gagal menyimpan file cadangan pra-migrasi.');
+    } finally {
+      setIsExportingBackup(false);
+    }
   };
 
   const handleStartMigration = async () => {
@@ -153,10 +167,15 @@ export const MigrationModal: React.FC<MigrationModalProps> = ({
           <button
             type="button"
             onClick={handleDownloadBackup}
-            className="flex items-center gap-1.5 px-3.5 py-2 rounded-lg bg-[#EEF2F6] hover:bg-[#DDE3EA] dark:bg-[#171D26] dark:hover:bg-[#252B34] border border-[#DDE3EA] dark:border-[#252B34] text-xs font-semibold text-[#151D2A] dark:text-[#F2F5F9] transition-colors"
+            disabled={isExportingBackup || isMigrating}
+            className="flex items-center gap-1.5 px-3.5 py-2 rounded-lg bg-[#EEF2F6] hover:bg-[#DDE3EA] dark:bg-[#171D26] dark:hover:bg-[#252B34] disabled:opacity-50 disabled:cursor-not-allowed border border-[#DDE3EA] dark:border-[#252B34] text-xs font-semibold text-[#151D2A] dark:text-[#F2F5F9] transition-colors"
           >
             <Download className="h-4 w-4 text-[#1769E8] dark:text-[#60A5FA] stroke-[1.75]" />
-            <span>Download Backup JSON ({localTrades.length} Trade)</span>
+            <span>
+              {isExportingBackup
+                ? 'Menyimpan Backup JSON...'
+                : `Download Backup JSON (${localTrades.length} Trade)`}
+            </span>
           </button>
         </div>
 

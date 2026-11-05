@@ -1,6 +1,12 @@
 import { Trade } from '../types/trade';
 import { AppSettings, DEFAULT_SETTINGS } from '../types/settings';
-import { ensureValidUuid, parseTradeDateTime } from '../utils/supabaseSync';
+import {
+  computeLegacyUnscopedUuid,
+  ensureValidUuid,
+  isRegisteredCloudTradeUuid,
+  parseTradeDateTime,
+  validateOwnerScope,
+} from '../utils/supabaseSync';
 import {
   EnqueueOutboxParams,
   EntitySchemaSpec,
@@ -35,6 +41,55 @@ import {
 
 const UUID_V4_REGEX =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+export interface ResolvedTradeIdentity {
+  canonicalUuid: string;
+  ownerScope: string;
+  localId: string;
+  legacyCandidateUuid: string;
+  isCloudBound: 0 | 1;
+}
+
+/**
+ * Resolves the canonical owner-scoped UUID and legacy unscoped candidate UUID for any Trade record.
+ * Used identically by idbAdapter.putTrade() and migrationService.runShadowMigration() so the
+ * same (ownerScope, trade.id) always produces the exact same canonical_uuid and legacy_candidate_uuid.
+ */
+export function resolveCanonicalTradeIdentity(
+  rawTradeId: string,
+  ownerScope: string,
+  explicitCloudUuid?: string,
+  explicitIsCloudBound?: 0 | 1
+): ResolvedTradeIdentity {
+  const cleanScope = validateOwnerScope(ownerScope);
+  const cleanId = typeof rawTradeId === 'string' ? rawTradeId.trim() : '';
+  if (!cleanId) {
+    throw new Error('ERR_EMPTY_TRADE_ID: Trade ID cannot be empty or whitespace.');
+  }
+
+  const legacyCandidateUuid = computeLegacyUnscopedUuid(cleanId);
+
+  if (explicitIsCloudBound === 1 && explicitCloudUuid && UUID_V4_REGEX.test(explicitCloudUuid.trim())) {
+    return {
+      canonicalUuid: explicitCloudUuid.trim().toLowerCase(),
+      ownerScope: cleanScope,
+      localId: cleanId,
+      legacyCandidateUuid,
+      isCloudBound: 1,
+    };
+  }
+
+  const isRegisteredCloud = isRegisteredCloudTradeUuid(cleanScope, cleanId);
+  const canonicalUuid = ensureValidUuid(cleanId, cleanScope);
+
+  return {
+    canonicalUuid,
+    ownerScope: cleanScope,
+    localId: cleanId,
+    legacyCandidateUuid,
+    isCloudBound: isRegisteredCloud ? 1 : 0,
+  };
+}
 
 export const DEFAULT_SCREENSHOT_LEASE_DURATION_MS = 15 * 60 * 1000; // 15 minutes
 export const STUCK_UPLOADING_THRESHOLD_MS = 15 * 60 * 1000; // 15 minutes
@@ -844,6 +899,9 @@ export class IdbDatabaseAdapter implements ILocalDatabaseAdapter {
   public readonly dbName: string;
   private idbConnection: IDBDatabase | null = null;
   private isOpen = false;
+  private openPromise: Promise<void> | null = null;
+  private openGeneration = 0;
+  private openInvocationCount = 0;
   private readonly useNativeIdb: boolean;
 
   constructor(dbName: string = PHASE_1_TEST_DB_NAME) {
@@ -856,20 +914,59 @@ export class IdbDatabaseAdapter implements ILocalDatabaseAdapter {
     this.useNativeIdb = typeof globalThis !== 'undefined' && typeof globalThis.indexedDB !== 'undefined';
   }
 
+  /**
+   * Diagnostic counter for testing CC-RACE-02 connection coalescing.
+   */
+  public getOpenInvocationCountForTesting(): number {
+    return this.openInvocationCount;
+  }
+
   public async open(): Promise<void> {
     if (this.dbName !== PHASE_1_TEST_DB_NAME) {
       throw new Error(`ERR_PRODUCTION_DB_BLOCKED_IN_PHASE_1: Cannot open "${this.dbName}".`);
     }
-    if (this.isOpen) return;
+    if (this.isOpen && (!this.useNativeIdb || this.idbConnection !== null)) {
+      return;
+    }
+    if (this.openPromise !== null) {
+      return this.openPromise;
+    }
+
+    const currentGeneration = ++this.openGeneration;
+    const pendingOpen = this.executeOpenAttempt(currentGeneration);
+
+    this.openPromise = pendingOpen;
+
+    try {
+      await pendingOpen;
+    } finally {
+      if (this.openPromise === pendingOpen) {
+        this.openPromise = null;
+      }
+    }
+  }
+
+  private async executeOpenAttempt(currentGeneration: number): Promise<void> {
+    this.openInvocationCount++;
 
     if (!this.useNativeIdb) {
       ensureNodeFallbackDbInitialized(this.dbName);
+      await Promise.resolve();
+      if (this.openGeneration !== currentGeneration) {
+        return;
+      }
       this.isOpen = true;
       return;
     }
 
-    this.idbConnection = await new Promise<IDBDatabase>((resolve, reject) => {
-      const req = globalThis.indexedDB.open(this.dbName, LOCAL_DB_SCHEMA_VERSION);
+    const openedDb = await new Promise<IDBDatabase | null>((resolve, reject) => {
+      let req: IDBOpenDBRequest;
+      try {
+        req = globalThis.indexedDB.open(this.dbName, LOCAL_DB_SCHEMA_VERSION);
+      } catch (syncOpenErr) {
+        reject(syncOpenErr instanceof Error ? syncOpenErr : new Error(String(syncOpenErr)));
+        return;
+      }
 
       req.onupgradeneeded = () => {
         const db = req.result;
@@ -888,19 +985,54 @@ export class IdbDatabaseAdapter implements ILocalDatabaseAdapter {
         }
       };
 
-      req.onsuccess = () => resolve(req.result);
+      req.onsuccess = () => {
+        const db = req.result;
+        db.onversionchange = () => {
+          db.close();
+          if (this.idbConnection === db) {
+            this.idbConnection = null;
+            this.isOpen = false;
+          }
+        };
+
+        if (this.openGeneration !== currentGeneration) {
+          // close() was called while indexedDB.open() was still in flight.
+          // Immediately close the newly opened handle so it never leaks.
+          db.close();
+          resolve(null);
+          return;
+        }
+
+        resolve(db);
+      };
+
       req.onerror = () => reject(req.error || new Error('ERR_IDB_OPEN_FAILED'));
     });
 
-    this.isOpen = true;
+    if (this.openGeneration === currentGeneration && openedDb !== null) {
+      this.idbConnection = openedDb;
+      this.isOpen = true;
+    }
   }
 
   public async close(): Promise<void> {
+    const inFlightOpen = this.openPromise;
+    this.openGeneration++;
+    this.openPromise = null;
+
     if (this.idbConnection) {
       this.idbConnection.close();
       this.idbConnection = null;
     }
     this.isOpen = false;
+
+    if (inFlightOpen) {
+      try {
+        await inFlightOpen;
+      } catch {
+        // Ignore open errors when closing an in-flight open attempt.
+      }
+    }
   }
 
   public async destroyDatabaseForTestingOnly(): Promise<void> {
@@ -920,7 +1052,12 @@ export class IdbDatabaseAdapter implements ILocalDatabaseAdapter {
       const req = globalThis.indexedDB.deleteDatabase(this.dbName);
       req.onsuccess = () => resolve();
       req.onerror = () => reject(req.error || new Error('ERR_IDB_DELETE_FAILED'));
-      req.onblocked = () => resolve();
+      req.onblocked = () =>
+        reject(
+          new Error(
+            'ERR_IDB_DELETE_BLOCKED: Another connection is still holding the isolated Phase 1 test database open.'
+          )
+        );
     });
   }
 
@@ -1231,10 +1368,18 @@ export class IdbDatabaseAdapter implements ILocalDatabaseAdapter {
 
     const cleanTrade = validation.normalizedTrade;
     const canonicalDigest = await computeCanonicalTradeDigest(cleanTrade);
-    const legacyCandidateUuid = ensureValidUuid(cleanTrade.id);
+    const identity = resolveCanonicalTradeIdentity(
+      cleanTrade.id,
+      options.ownerScope,
+      options.canonicalUuid,
+      options.isCloudBound
+    );
+    const legacyCandidateUuid = identity.legacyCandidateUuid;
     const parsedDate = parseTradeDateTime(cleanTrade.dateTime) || new Date();
     const nowIso = new Date(options.nowMs ?? Date.now()).toISOString();
-    const isCloudBound: 0 | 1 = options.isCloudBound === 1 ? 1 : 0;
+    const isCloudBound: 0 | 1 =
+      options.isCloudBound !== undefined ? (options.isCloudBound === 1 ? 1 : 0) : identity.isCloudBound;
+    const hasCustomUuidGenerator = typeof options.uuidGenerator === 'function';
     const uuidGenerator = options.uuidGenerator ?? (() => crypto.randomUUID());
 
     const MAX_ATTEMPTS = 4;
@@ -1259,9 +1404,12 @@ export class IdbDatabaseAdapter implements ILocalDatabaseAdapter {
         targetCanonicalUuid = options.canonicalUuid.trim().toLowerCase();
         isNewInsert = true;
       } else {
-        // New unbound local record: allocate a fresh UUID from uuidGenerator
+        // New unbound local record:
+        // On attempt 1 (without a custom test uuidGenerator override), use the deterministic owner-scoped canonicalUuid
         if (attempt === 1 && options.canonicalUuid && UUID_V4_REGEX.test(options.canonicalUuid)) {
           targetCanonicalUuid = options.canonicalUuid.trim().toLowerCase();
+        } else if (attempt === 1 && !hasCustomUuidGenerator) {
+          targetCanonicalUuid = identity.canonicalUuid;
         } else {
           targetCanonicalUuid = uuidGenerator().trim().toLowerCase();
         }
@@ -1464,6 +1612,20 @@ export class IdbDatabaseAdapter implements ILocalDatabaseAdapter {
     return this.readByPrimaryKey<ScreenshotFileRow>('screenshot_files', screenshotId);
   }
 
+  public async getScreenshotMetadataByOwner(
+    ownerScope: OwnerScope
+  ): Promise<ScreenshotMetadataRow[]> {
+    const cleanScope = String(ownerScope).trim();
+    const all = await this.readAllFromStore<ScreenshotMetadataRow>('screenshot_metadata');
+    return all.filter((row) => row.owner_scope === cleanScope);
+  }
+
+  public async getScreenshotFilesByOwner(ownerScope: OwnerScope): Promise<ScreenshotFileRow[]> {
+    const cleanScope = String(ownerScope).trim();
+    const all = await this.readAllFromStore<ScreenshotFileRow>('screenshot_files');
+    return all.filter((row) => row.owner_scope === cleanScope);
+  }
+
   public async acquireScreenshotLease(
     screenshotId: string,
     leaseOwnerId: string,
@@ -1553,9 +1715,19 @@ export class IdbDatabaseAdapter implements ILocalDatabaseAdapter {
     const isDeleteAuthorized =
       this.dbName === PHASE_1_TEST_DB_NAME && options.allowDeleteInIsolatedTestDbOnly === true;
 
-    // Gate 1: Never run cleanup while any migration_state is IN_PROGRESS
+    const cleanScope = String(options.ownerScope).trim();
+    if (!cleanScope) {
+      throw new Error('ERR_SCREENSHOT_CLEANUP_OWNER_SCOPE_REQUIRED');
+    }
+
+    // Gate 1: Never run cleanup while this owner scope has an IN_PROGRESS migration.
     const allMigrations = await this.readAllFromStore<MigrationStateRow>('migration_state');
-    if (allMigrations.some((m) => m.status === 'IN_PROGRESS')) {
+    if (
+      allMigrations.some(
+        (migration) =>
+          migration.owner_scope === cleanScope && migration.status === 'IN_PROGRESS'
+      )
+    ) {
       return {
         isDryRun: !isDeleteAuthorized,
         skippedBecauseMigrationInProgress: true,
@@ -1566,9 +1738,15 @@ export class IdbDatabaseAdapter implements ILocalDatabaseAdapter {
       };
     }
 
-    const allTrades = await this.readAllFromStore<LocalTradeRow>('trades');
-    const allOutbox = await this.readAllFromStore<OutboxSyncQueueRow>('outbox_sync_queue');
-    const allMeta = await this.readAllFromStore<ScreenshotMetadataRow>('screenshot_metadata');
+    const [allTradesInStore, allOutboxInStore, allMetaInStore] = await Promise.all([
+      this.readAllFromStore<LocalTradeRow>('trades'),
+      this.readAllFromStore<OutboxSyncQueueRow>('outbox_sync_queue'),
+      this.readAllFromStore<ScreenshotMetadataRow>('screenshot_metadata'),
+    ]);
+    // Cleanup must never cross owner boundaries, even inside the isolated test database.
+    const allTrades = allTradesInStore.filter((row) => row.owner_scope === cleanScope);
+    const allOutbox = allOutboxInStore.filter((row) => row.owner_scope === cleanScope);
+    const allMeta = allMetaInStore.filter((row) => row.owner_scope === cleanScope);
 
     // Build set of all referenced screenshot IDs and trade canonical UUIDs
     const referencedScreenshotIds = new Set<string>();
@@ -1819,18 +1997,49 @@ export class IdbDatabaseAdapter implements ILocalDatabaseAdapter {
   }
 
   /**
-   * Writes an entire pre-validated, pre-hashed shadow migration batch inside a single atomic
-   * IndexedDB transaction across trades, settings, screenshot_metadata, screenshot_files, and quarantined_records.
-   * Any failure on any record aborts and rolls back the entire transaction.
+   * Removes only shadow-migration rows belonging to one owner scope.
+   * The failed migration_state row is intentionally retained for diagnostics.
+   * This method is restricted to the isolated Phase 1 test database.
    */
-  public async writeShadowMigrationBatchAtomically(
-    batch: PreparedMigrationBatch
-  ): Promise<void> {
-    await this.open();
+  public async rollbackShadowMigrationScope(ownerScope: OwnerScope): Promise<void> {
+    if (this.dbName !== PHASE_1_TEST_DB_NAME) {
+      throw new Error(
+        `ERR_PRODUCTION_MIGRATION_BLOCKED_IN_PHASE_1: Rollback is restricted to "${PHASE_1_TEST_DB_NAME}".`
+      );
+    }
 
-    // Check existing records for this owner_scope before starting transaction so retry after failure is clean
-    const existingOwnerTrades = await this.getTradesByOwner(batch.ownerScope);
-    const existingOwnerQuarantine = await this.getQuarantinedRecordsByOwner(batch.ownerScope);
+    const cleanScope = String(ownerScope).trim();
+    const [trades, screenshotMetadata, screenshotFiles, quarantinedRecords] = await Promise.all([
+      this.getTradesByOwner(cleanScope),
+      this.readAllFromStore<ScreenshotMetadataRow>('screenshot_metadata'),
+      this.readAllFromStore<ScreenshotFileRow>('screenshot_files'),
+      this.getQuarantinedRecordsByOwner(cleanScope),
+    ]);
+
+    const tradeIds = trades.map((row) => row.canonical_uuid);
+    // Delete only screenshots linked to this scope's shadow-migration trades (or orphaned
+    // ACTIVE/LOCAL_ONLY migration screenshots with a non-null trade_canonical_uuid in this scope).
+    // Unrelated staged screenshots (lifecycle_status === 'STAGED') and cross-scope references are preserved.
+    const tradeIdSet = new Set(tradeIds);
+    const migrationScreenshotMetadata = screenshotMetadata.filter(
+      (row) =>
+        row.owner_scope === cleanScope &&
+        row.trade_canonical_uuid !== null &&
+        (tradeIdSet.has(row.trade_canonical_uuid) ||
+          (row.lifecycle_status === 'ACTIVE' &&
+            row.upload_status === 'LOCAL_ONLY' &&
+            row.lease_owner_id === null &&
+            row.remote_storage_path === null))
+    );
+    const screenshotIds = new Set<string>(
+      migrationScreenshotMetadata.map((row) => row.screenshot_id)
+    );
+    const migrationScreenshotFileIds = new Set(
+      screenshotFiles
+        .filter((row) => row.owner_scope === cleanScope && screenshotIds.has(row.screenshot_id))
+        .map((row) => row.screenshot_id)
+    );
+    const quarantineIds = quarantinedRecords.map((row) => row.quarantine_id);
 
     await this.executeAtomicWriteTransaction(
       [
@@ -1841,72 +2050,249 @@ export class IdbDatabaseAdapter implements ILocalDatabaseAdapter {
         LOCAL_DB_TABLES.QUARANTINED_RECORDS,
       ],
       (stores) => {
-        // Clear any prior unverified rows for this specific ownerScope so retry starts clean inside the atomic tx
-        for (const oldTrade of existingOwnerTrades) {
-          stores.trades.delete(oldTrade.canonical_uuid);
-          if (oldTrade.screenshot_id) {
-            stores.screenshot_metadata.delete(oldTrade.screenshot_id);
-            stores.screenshot_files.delete(oldTrade.screenshot_id);
-          }
+        for (const id of tradeIds) stores.trades.delete(id);
+        for (const id of screenshotIds) {
+          stores.screenshot_metadata.delete(id);
         }
-        for (const oldQ of existingOwnerQuarantine) {
-          stores.quarantined_records.delete(oldQ.quarantine_id);
+        for (const id of migrationScreenshotFileIds) {
+          stores.screenshot_files.delete(id);
         }
-
-        // Write valid trades and their extracted screenshots using store.add()
-        for (let i = 0; i < batch.trades.length; i++) {
-          if (
-            batch.simulateWriteFailureOnTradeIndex !== undefined &&
-            i === batch.simulateWriteFailureOnTradeIndex
-          ) {
-            throw new Error(
-              `ERR_SIMULATED_ATOMIC_WRITE_FAILURE: Simulated write failure on trade index ${i}.`
-            );
-          }
-
-          const item = batch.trades[i];
-          if (item.preparedScreenshot) {
-            const sc = item.preparedScreenshot;
-            const metaRow: ScreenshotMetadataRow = {
-              screenshot_id: sc.screenshotId,
-              owner_scope: batch.ownerScope,
-              trade_canonical_uuid: item.row.canonical_uuid,
-              mime_type: sc.mimeType,
-              size_bytes: sc.sizeBytes,
-              sha256_hash: sc.sha256Hex,
-              lifecycle_status: 'ACTIVE',
-              upload_status: 'LOCAL_ONLY',
-              remote_storage_path: null,
-              lease_owner_id: null,
-              lease_acquired_at: null,
-              lease_expires_at: null,
-              created_at: sc.createdAt,
-              updated_at: sc.createdAt,
-            };
-            const fileRow: ScreenshotFileRow = {
-              screenshot_id: sc.screenshotId,
-              owner_scope: batch.ownerScope,
-              blob_data: sc.blob,
-              mime_type: sc.mimeType,
-              size_bytes: sc.sizeBytes,
-              sha256_hash: sc.sha256Hex,
-              created_at: sc.createdAt,
-            };
-            stores.screenshot_metadata.add(metaRow as unknown as Record<string, unknown>);
-            stores.screenshot_files.add(fileRow as unknown as Record<string, unknown>);
-          }
-
-          stores.trades.add(item.row as unknown as Record<string, unknown>);
-        }
-
-        // Write settings for this owner_scope
-        stores.settings.put(batch.settingsRow as unknown as Record<string, unknown>);
-
-        // Write quarantined records using store.add()
-        for (const qRow of batch.quarantinedRows) {
-          stores.quarantined_records.add(qRow as unknown as Record<string, unknown>);
-        }
+        for (const id of quarantineIds) stores.quarantined_records.delete(id);
+        stores.settings.delete(cleanScope);
       }
     );
+  }
+
+  /**
+   * Writes an entire pre-validated, pre-hashed shadow migration batch inside a single atomic
+   * IndexedDB transaction across trades, settings, screenshot_metadata, screenshot_files, and quarantined_records.
+   * Performs the target-scope emptiness check inside the SAME readwrite transaction so no concurrent
+   * writer can interleave records between the check and the batch write.
+   * Any failure on any record aborts and rolls back the entire transaction.
+   */
+  public async writeShadowMigrationBatchAtomically(
+    batch: PreparedMigrationBatch
+  ): Promise<void> {
+    await this.open();
+
+    const cleanScope = String(batch.ownerScope).trim();
+    const storeNames: LocalTableName[] = [
+      LOCAL_DB_TABLES.TRADES,
+      LOCAL_DB_TABLES.SETTINGS,
+      LOCAL_DB_TABLES.SCREENSHOT_METADATA,
+      LOCAL_DB_TABLES.SCREENSHOT_FILES,
+      LOCAL_DB_TABLES.QUARANTINED_RECORDS,
+    ];
+
+    const writeBatchToStoreHandles = (
+      stores: Record<LocalTableName, SynchronousStoreHandle>
+    ): void => {
+      for (let i = 0; i < batch.trades.length; i++) {
+        if (
+          batch.simulateWriteFailureOnTradeIndex !== undefined &&
+          i === batch.simulateWriteFailureOnTradeIndex
+        ) {
+          throw new Error(
+            `ERR_SIMULATED_ATOMIC_WRITE_FAILURE: Simulated write failure on trade index ${i}.`
+          );
+        }
+
+        const item = batch.trades[i];
+        if (item.preparedScreenshot) {
+          const sc = item.preparedScreenshot;
+          const metaRow: ScreenshotMetadataRow = {
+            screenshot_id: sc.screenshotId,
+            owner_scope: cleanScope,
+            trade_canonical_uuid: item.row.canonical_uuid,
+            mime_type: sc.mimeType,
+            size_bytes: sc.sizeBytes,
+            sha256_hash: sc.sha256Hex,
+            lifecycle_status: 'ACTIVE',
+            upload_status: 'LOCAL_ONLY',
+            remote_storage_path: null,
+            lease_owner_id: null,
+            lease_acquired_at: null,
+            lease_expires_at: null,
+            created_at: sc.createdAt,
+            updated_at: sc.createdAt,
+          };
+          const fileRow: ScreenshotFileRow = {
+            screenshot_id: sc.screenshotId,
+            owner_scope: cleanScope,
+            blob_data: sc.blob,
+            mime_type: sc.mimeType,
+            size_bytes: sc.sizeBytes,
+            sha256_hash: sc.sha256Hex,
+            created_at: sc.createdAt,
+          };
+          stores.screenshot_metadata.add(metaRow as unknown as Record<string, unknown>);
+          stores.screenshot_files.add(fileRow as unknown as Record<string, unknown>);
+        }
+
+        stores.trades.add(item.row as unknown as Record<string, unknown>);
+      }
+
+      stores.settings.put(batch.settingsRow as unknown as Record<string, unknown>);
+
+      for (const qRow of batch.quarantinedRows) {
+        stores.quarantined_records.add(qRow as unknown as Record<string, unknown>);
+      }
+    };
+
+    if (!this.useNativeIdb) {
+      await this.executeAtomicWriteTransaction(storeNames, (stores) => {
+        const dbStores = ensureNodeFallbackDbInitialized(this.dbName);
+        const tradesRecords = Array.from(
+          dbStores.get(LOCAL_DB_TABLES.TRADES)!.records.values()
+        );
+        const settingsRecords = dbStores.get(LOCAL_DB_TABLES.SETTINGS)!.records;
+        const quarantineRecords = Array.from(
+          dbStores.get(LOCAL_DB_TABLES.QUARANTINED_RECORDS)!.records.values()
+        );
+        const hasExistingTrades = tradesRecords.some((r) => r.owner_scope === cleanScope);
+        const hasExistingSettings = settingsRecords.has(cleanScope);
+        const hasExistingQuarantine = quarantineRecords.some(
+          (r) => r.owner_scope === cleanScope
+        );
+        if (hasExistingTrades || hasExistingSettings || hasExistingQuarantine) {
+          throw new Error(
+            'ERR_MIGRATION_SCOPE_NOT_EMPTY: Refusing to overwrite existing shadow records.'
+          );
+        }
+
+        writeBatchToStoreHandles(stores);
+      });
+      return;
+    }
+
+    const db = this.idbConnection!;
+    await new Promise<void>((resolve, reject) => {
+      const tx = db.transaction(storeNames, 'readwrite');
+      let requestError: Error | null = null;
+
+      const handles = {} as Record<LocalTableName, SynchronousStoreHandle>;
+      for (const sName of storeNames) {
+        const os = tx.objectStore(sName);
+        handles[sName] = {
+          add: (row: Record<string, unknown>) => {
+            const req = os.add(row);
+            req.onerror = () => {
+              requestError = req.error || createConstraintError('IDB add() failed.');
+            };
+          },
+          put: (row: Record<string, unknown>) => {
+            const req = os.put(row);
+            req.onerror = () => {
+              requestError = req.error || createConstraintError('IDB put() failed.');
+            };
+          },
+          delete: (primaryKey: string) => {
+            const req = os.delete(primaryKey);
+            req.onerror = () => {
+              requestError = req.error || new Error('IDB delete() failed.');
+            };
+          },
+        };
+      }
+
+      const abortWithError = (err: Error) => {
+        requestError = err;
+        try {
+          tx.abort();
+        } catch {
+          // ignore if already aborting
+        }
+      };
+
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => {
+        reject(requestError || tx.error || createConstraintError('IDB transaction error.'));
+      };
+      tx.onabort = () => {
+        reject(requestError || tx.error || createConstraintError('IDB transaction aborted.'));
+      };
+
+      try {
+        const scopeKeyRange = IDBKeyRange.bound(
+          [cleanScope, -Infinity],
+          [cleanScope, '\uffff']
+        );
+        const tradesIdx = tx
+          .objectStore(LOCAL_DB_TABLES.TRADES)
+          .index('idx_trades_owner_local_id');
+        const tradesCountReq = tradesIdx.count(scopeKeyRange);
+
+        tradesCountReq.onerror = () => {
+          abortWithError(
+            tradesCountReq.error || new Error('Failed to check existing trades in scope.')
+          );
+        };
+
+        tradesCountReq.onsuccess = () => {
+          if ((tradesCountReq.result || 0) > 0) {
+            abortWithError(
+              new Error(
+                'ERR_MIGRATION_SCOPE_NOT_EMPTY: Refusing to overwrite existing shadow records.'
+              )
+            );
+            return;
+          }
+
+          const settingsCountReq = tx
+            .objectStore(LOCAL_DB_TABLES.SETTINGS)
+            .count(cleanScope);
+
+          settingsCountReq.onerror = () => {
+            abortWithError(
+              settingsCountReq.error || new Error('Failed to check existing settings in scope.')
+            );
+          };
+
+          settingsCountReq.onsuccess = () => {
+            if ((settingsCountReq.result || 0) > 0) {
+              abortWithError(
+                new Error(
+                  'ERR_MIGRATION_SCOPE_NOT_EMPTY: Refusing to overwrite existing shadow records.'
+                )
+              );
+              return;
+            }
+
+            const quarantineIdx = tx
+              .objectStore(LOCAL_DB_TABLES.QUARANTINED_RECORDS)
+              .index('idx_quarantine_owner');
+            const quarantineCountReq = quarantineIdx.count(scopeKeyRange);
+
+            quarantineCountReq.onerror = () => {
+              abortWithError(
+                quarantineCountReq.error ||
+                  new Error('Failed to check existing quarantined records in scope.')
+              );
+            };
+
+            quarantineCountReq.onsuccess = () => {
+              if ((quarantineCountReq.result || 0) > 0) {
+                abortWithError(
+                  new Error(
+                    'ERR_MIGRATION_SCOPE_NOT_EMPTY: Refusing to overwrite existing shadow records.'
+                  )
+                );
+                return;
+              }
+
+              try {
+                writeBatchToStoreHandles(handles);
+              } catch (syncErr) {
+                abortWithError(
+                  syncErr instanceof Error ? syncErr : new Error(String(syncErr))
+                );
+              }
+            };
+          };
+        };
+      } catch (outerErr) {
+        abortWithError(outerErr instanceof Error ? outerErr : new Error(String(outerErr)));
+      }
+    });
   }
 }

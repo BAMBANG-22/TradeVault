@@ -14,11 +14,11 @@ import {
   computeRealizedRMultiple,
   formatRMultiple,
   resolveTradeOutcome,
+  formatCalendarAdaptivePnl,
 } from '../../utils/calculations';
 import { AppSettings } from '../../types/settings';
 import { Trade } from '../../types/trade';
 import {
-  Calendar as CalendarIcon,
   TrendingUp,
   TrendingDown,
   ChevronLeft,
@@ -195,22 +195,17 @@ export const PerformanceCalendar: React.FC<PerformanceCalendarProps> = ({
     <div className="rounded-xl border border-[#DDE3EA] dark:border-[#252B34] bg-white dark:bg-[#11151B] p-4 sm:p-5 space-y-4">
       {/* Header & Tabs */}
       <div className="flex flex-wrap items-center justify-between gap-3 pb-3 border-b border-[#DDE3EA] dark:border-[#252B34]">
-        <div className="flex items-center gap-2.5">
-          <div className="rounded-lg bg-[#EEF2F6] dark:bg-[#171D26] p-2 text-[#697586] dark:text-[#929BA9] border border-[#DDE3EA] dark:border-[#252B34]">
-            <CalendarIcon className="h-4 w-4 stroke-[1.75]" />
-          </div>
-          <div>
-            <h3 className="text-sm font-semibold text-[#151D2A] dark:text-[#F2F5F9]">
-              {activeTab === 'calendar'
-                ? 'Kalender Visual Performa Trading'
-                : activeTab === 'daily'
-                ? 'Daftar Hasil Harian'
-                : 'Ringkasan Bulanan'}
-            </h3>
-            <p className="text-xs text-[#697586] dark:text-[#929BA9]">
-              Distribusi hasil transaksi aktual berdasarkan tanggal penutupan (klik tanggal untuk rincian trade)
-            </p>
-          </div>
+        <div>
+          <h3 className="text-sm font-semibold text-[#151D2A] dark:text-[#F2F5F9]">
+            {activeTab === 'calendar'
+              ? 'Kalender Visual Performa Trading'
+              : activeTab === 'daily'
+              ? 'Daftar Hasil Harian'
+              : 'Ringkasan Bulanan'}
+          </h3>
+          <p className="text-xs text-[#697586] dark:text-[#929BA9]">
+            Distribusi hasil transaksi aktual berdasarkan tanggal penutupan (klik tanggal untuk rincian trade)
+          </p>
         </div>
 
         <div className="flex rounded-lg bg-[#F5F7FA] dark:bg-[#080A0E] p-1 border border-[#DDE3EA] dark:border-[#252B34] text-xs select-none">
@@ -292,8 +287,7 @@ export const PerformanceCalendar: React.FC<PerformanceCalendarProps> = ({
             >
               <ChevronLeft className="h-4 w-4 stroke-[1.75]" />
             </button>
-            <div className="font-semibold text-[#151D2A] dark:text-[#F2F5F9] flex items-center gap-2 font-mono-numbers tabular-nums">
-              <CalendarIcon className="h-3.5 w-3.5 stroke-[1.75] text-[#697586] dark:text-[#929BA9]" />
+            <div className="font-semibold text-[#151D2A] dark:text-[#F2F5F9] font-mono-numbers tabular-nums">
               <span>{activeMonth}</span>
             </div>
             <button
@@ -327,7 +321,7 @@ export const PerformanceCalendar: React.FC<PerformanceCalendarProps> = ({
                     return (
                       <div
                         key={`empty-${idx}`}
-                        className="min-h-[84px] sm:min-h-[90px] rounded-lg bg-[#F5F7FA]/50 dark:bg-[#080A0E]/50 border border-[#DDE3EA]/40 dark:border-[#252B34]/40 opacity-40"
+                        className="min-h-[84px] sm:min-h-[90px] rounded-xl bg-[#F5F7FA]/50 dark:bg-[#080A0E]/50 border border-transparent opacity-40"
                       />
                     );
                   }
@@ -350,56 +344,44 @@ export const PerformanceCalendar: React.FC<PerformanceCalendarProps> = ({
                           ? `Tanggal ${cell.dateStr}, ${cell.perf!.tradesCount} transaksi, Net P/L ${formattedCellPl}, Win Rate ${cell.perf!.winRate}%`
                           : `Tanggal ${cell.dateStr}, tanpa transaksi`
                       }
-                      className={`min-h-[84px] sm:min-h-[90px] p-2 sm:p-2.5 rounded-lg border transition-colors flex flex-col justify-between text-left w-full cursor-pointer focus-visible:outline-2 focus-visible:outline-[#1769E8] hover:border-[#1769E8] ${
+                      className={`min-h-[84px] sm:min-h-[90px] p-2 sm:p-2.5 rounded-xl border flex flex-col justify-between items-center text-center transition-all cursor-pointer relative bg-[#F5F7FA] dark:bg-[#080A0E] ${
                         isSelected
-                          ? 'border-[#1769E8] bg-[#EEF2F6] dark:bg-[#171D26]'
-                          : !hasTrade
-                          ? 'bg-[#F5F7FA] dark:bg-[#080A0E] border-[#DDE3EA] dark:border-[#252B34] text-[#697586] dark:text-[#929BA9]'
-                          : 'bg-[#EEF2F6] dark:bg-[#171D26] border-[#DDE3EA] dark:border-[#252B34] text-[#151D2A] dark:text-[#F2F5F9]'
+                          ? 'ring-2 ring-[#1769E8] border-[#1769E8] shadow-sm z-10'
+                          : 'border-[#DDE3EA] dark:border-[#252B34] hover:border-[#697586] dark:hover:border-[#484F58]'
                       }`}
                     >
-                      <div className="flex items-center justify-between gap-1 w-full text-[11px]">
-                        <span
-                          className={`font-mono-numbers tabular-nums font-bold ${
-                            hasTrade
-                              ? 'text-[#151D2A] dark:text-[#F2F5F9]'
-                              : 'text-[#697586] dark:text-[#929BA9]'
-                          }`}
-                        >
-                          {cell.dayNum}
+                      {/* 1. Angka Tanggal */}
+                      <span className="text-[11px] sm:text-xs leading-none font-semibold text-[#697586] dark:text-[#929BA9]">
+                        {cell.dayNum}
+                      </span>
+
+                      {/* 2. Nominal Net Profit / Loss */}
+                      {hasTrade ? (
+                        <div className="w-full my-auto flex flex-col items-center justify-center px-0.5">
+                          <span
+                            className={`block text-[10px] sm:text-[11px] md:text-xs font-bold leading-tight font-mono-numbers tabular-nums whitespace-nowrap overflow-hidden text-ellipsis ${
+                              isProfit
+                                ? 'text-[#059669] dark:text-[#34D399]'
+                                : isLoss
+                                ? 'text-[#E11D48] dark:text-[#FB7185]'
+                                : 'text-[#697586] dark:text-[#929BA9]'
+                            }`}
+                          >
+                            {formatCalendarAdaptivePnl(cell.perf!.netProfit, settings, isPrivacyMode, 'adaptive')}
+                          </span>
+                        </div>
+                      ) : (
+                        <div className="flex-1" />
+                      )}
+
+                      {/* 3. Jumlah Closed Trades */}
+                      {hasTrade ? (
+                        <span className="text-[9px] sm:text-[10px] font-medium leading-none text-[#697586] dark:text-[#929BA9] font-mono-numbers tabular-nums">
+                          {cell.perf!.tradesCount}T
                         </span>
-                        {hasTrade && (
-                          <span className="text-[10px] px-1 py-0.5 rounded bg-white/80 dark:bg-[#11151B]/80 text-[#697586] dark:text-[#929BA9] font-mono-numbers tabular-nums leading-none">
-                            {cell.perf!.tradesCount}T
-                          </span>
-                        )}
-                      </div>
-
-                      <div className="my-1 w-full text-center font-mono-numbers tabular-nums">
-                        {!hasTrade ? (
-                          <span className="text-[10px] text-[#697586]/60 dark:text-[#929BA9]/60 flex items-center justify-center">
-                            <Minus className="h-2.5 w-2.5" />
-                          </span>
-                        ) : (
-                          <div className="text-[11px] sm:text-xs font-bold leading-snug whitespace-nowrap">
-                            <span
-                              className={
-                                isProfit
-                                  ? 'text-emerald-600 dark:text-emerald-400'
-                                  : isLoss
-                                  ? 'text-rose-600 dark:text-rose-400'
-                                  : 'text-[#151D2A] dark:text-[#F2F5F9]'
-                              }
-                            >
-                              {formattedCellPl}
-                            </span>
-                          </div>
-                        )}
-                      </div>
-
-                      <div className="w-full text-[10px] text-[#697586] dark:text-[#929BA9] text-center font-mono-numbers tabular-nums leading-none min-h-[12px]">
-                        {hasTrade ? `WR: ${cell.perf!.winRate}%` : ''}
-                      </div>
+                      ) : (
+                        <span className="h-2.5" />
+                      )}
                     </button>
                   );
                 })}
@@ -411,11 +393,11 @@ export const PerformanceCalendar: React.FC<PerformanceCalendarProps> = ({
           <div className="pt-2 flex flex-wrap items-center justify-between gap-2 text-[11px] text-[#697586] dark:text-[#929BA9] border-t border-[#DDE3EA] dark:border-[#252B34]">
             <div className="flex flex-wrap items-center gap-3">
               <div className="flex items-center gap-1.5">
-                <span className="font-semibold text-emerald-600 dark:text-emerald-400">+PnL</span>
+                <span className="font-semibold text-[#059669] dark:text-[#34D399]">+PnL</span>
                 <span>Profit</span>
               </div>
               <div className="flex items-center gap-1.5">
-                <span className="font-semibold text-rose-600 dark:text-rose-400">-PnL</span>
+                <span className="font-semibold text-[#E11D48] dark:text-[#FB7185]">-PnL</span>
                 <span>Loss</span>
               </div>
               <div className="flex items-center gap-1.5">
@@ -564,23 +546,18 @@ export const PerformanceCalendar: React.FC<PerformanceCalendarProps> = ({
           >
             {/* Modal Header */}
             <div className="flex items-center justify-between px-4 py-3.5 border-b border-[#DDE3EA] dark:border-[#252B34]">
-              <div className="flex items-center gap-2.5">
-                <div className="p-2 rounded-lg bg-[#EEF2F6] dark:bg-[#171D26] border border-[#DDE3EA] dark:border-[#252B34] text-[#697586] dark:text-[#929BA9]">
-                  <CalendarIcon className="h-4 w-4 stroke-[1.75]" />
-                </div>
-                <div>
-                  <h4
-                    id="calendar-date-modal-title"
-                    className="text-sm font-bold text-[#151D2A] dark:text-[#F2F5F9] font-mono-numbers tabular-nums"
-                  >
-                    Rincian Transaksi — {selectedDate}
-                  </h4>
-                  <p className="text-[11px] text-[#697586] dark:text-[#929BA9]">
-                    {selectedDateTrades.length > 0
-                      ? `${selectedDateTrades.length} transaksi tercatat pada tanggal ini`
-                      : 'Tidak ada transaksi tercatat pada tanggal ini'}
-                  </p>
-                </div>
+              <div>
+                <h4
+                  id="calendar-date-modal-title"
+                  className="text-sm font-bold text-[#151D2A] dark:text-[#F2F5F9] font-mono-numbers tabular-nums"
+                >
+                  Rincian Transaksi — {selectedDate}
+                </h4>
+                <p className="text-[11px] text-[#697586] dark:text-[#929BA9]">
+                  {selectedDateTrades.length > 0
+                    ? `${selectedDateTrades.length} transaksi tercatat pada tanggal ini`
+                    : 'Tidak ada transaksi tercatat pada tanggal ini'}
+                </p>
               </div>
 
               <button

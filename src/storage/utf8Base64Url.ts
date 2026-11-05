@@ -123,9 +123,12 @@ export function encodeTradeNotesWithMetaB64(
   if (extraMeta?.syncRevision !== undefined) payload.syncRevision = extraMeta.syncRevision;
   if (extraMeta?.lastMutationId) payload.lastMutationId = extraMeta.lastMutationId;
 
-  // Strip any existing [MetaB64: ...] tags from the end of notes to avoid duplication
+  // Strip any existing [MetaB64: ...], [LocalID: ...], or [Meta: ...] tags from notes to avoid duplication
   let cleanUserNotes = trade.notes ?? '';
-  cleanUserNotes = cleanUserNotes.replace(/\s*\[MetaB64:\s*[A-Za-z0-9_-]+\]\s*$/, '');
+  cleanUserNotes = cleanUserNotes
+    .replace(/\s*\[MetaB64:\s*[A-Za-z0-9_-]+\]\s*$/, '')
+    .replace(/^\[LocalID:\s*[^\]]+\]\s*/, '')
+    .replace(/\s*\[Meta:\s*\{[^}]*\}\]\s*$/, '');
 
   const jsonStr = JSON.stringify(payload);
   const encodedB64 = encodeUtf8ToBase64Url(jsonStr);
@@ -260,7 +263,7 @@ export async function computeSha256Hex(
 }
 
 /**
- * Produces a deterministic canonical JSON string across all 27 properties of a Trade record.
+ * Produces a deterministic canonical JSON string across all 28 properties of a Trade record.
  * Rejects any non-finite numeric property (NaN, Infinity, -Infinity).
  */
 export function canonicalizeTradeForDigest(trade: Trade): string {
@@ -301,7 +304,7 @@ export function canonicalizeTradeForDigest(trade: Trade): string {
     }
   }
 
-  // Deterministic ordered 27-tuple covering every property in src/types/trade.ts
+  // Deterministic ordered 28-tuple covering every property in src/types/trade.ts
   const orderedEntries: Array<[string, unknown]> = [
     ['id', String(trade.id).trim()],
     ['dateTime', String(trade.dateTime).trim()],
@@ -361,7 +364,7 @@ export function canonicalizeTradeForDigest(trade: Trade): string {
 }
 
 /**
- * Computes the canonical SHA-256 hex digest of all 27 properties of a Trade object.
+ * Computes the canonical SHA-256 hex digest of all 28 properties of a Trade object.
  */
 export async function computeCanonicalTradeDigest(trade: Trade): Promise<string> {
   const canonicalJson = canonicalizeTradeForDigest(trade);

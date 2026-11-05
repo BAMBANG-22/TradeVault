@@ -3,34 +3,16 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useEffect } from 'react';
-import { AppSettings, CurrencyCode } from '../../types/settings';
+import React, { useState } from 'react';
+import { AppSettings } from '../../types/settings';
 import { Trade } from '../../types/trade';
-import { exportTradesToCsv, downloadCsvFile } from '../../utils/csv';
-import { generateBackupJson } from '../../utils/storage';
-import { prepareTradesForJsonBackup, mergeTradesDatasets } from '../../utils/supabaseSync';
-import { DEMO_TRADES, isDemoTrade } from '../../utils/demoData';
+import { formatCurrency } from '../../utils/calculations';
+import { isDemoTrade, DEMO_TRADES } from '../../utils/demoData';
+import { mergeTradesDatasets } from '../../utils/supabaseSync';
 import { useTheme } from '../../utils/theme';
 import { CsvImportModal } from './CsvImportModal';
 import { FinancialAuditModal } from './FinancialAuditModal';
-import {
-  Save,
-  Download,
-  Upload,
-  RefreshCw,
-  HardDrive,
-  ShieldCheck,
-  AlertTriangle,
-  FileSpreadsheet,
-  FileJson,
-  Terminal,
-  Info,
-  LogIn,
-  User,
-  Database,
-  Sun,
-  Moon,
-} from 'lucide-react';
+import { TradingPreferencesModal, PreferenceCategory } from './TradingPreferencesModal';
 
 interface SettingsViewProps {
   settings: AppSettings;
@@ -71,58 +53,26 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   onSyncLocalToCloud,
   onReloadFromCloud,
 }) => {
-  const { theme, setTheme, isDark } = useTheme();
-  const [formData, setFormData] = useState<AppSettings>({ ...settings });
+  const { theme, setTheme } = useTheme();
+
+  // Modals state
+  const [activePrefModal, setActivePrefModal] = useState<PreferenceCategory | null>(null);
   const [isCsvModalOpen, setIsCsvModalOpen] = useState(false);
   const [isAuditModalOpen, setIsAuditModalOpen] = useState(false);
   const [isConfirmingClearAll, setIsConfirmingClearAll] = useState(false);
   const [feedbackMsg, setFeedbackMsg] = useState<{ text: string; type: 'success' | 'error' } | null>(null);
 
-  // Keep formData synchronized whenever settings prop changes (e.g. after JSON/ZIP restore or cloud sync)
-  useEffect(() => {
-    setFormData({ ...settings });
-  }, [settings]);
-
   const demoCount = trades.filter((t) => isDemoTrade(t)).length;
   const realCount = trades.filter((t) => !isDemoTrade(t)).length;
 
-  const handleCurrencyChange = (curr: CurrencyCode) => {
-    let symbol = '$';
-    if (curr === 'IDR') symbol = 'Rp';
-    if (curr === 'EUR') symbol = '€';
-    setFormData({ ...formData, currency: curr, currencySymbol: symbol });
+  const showFeedback = (text: string, type: 'success' | 'error' = 'success') => {
+    setFeedbackMsg({ text, type });
+    setTimeout(() => setFeedbackMsg(null), 3500);
   };
 
-  const handleSave = (e: React.FormEvent) => {
-    e.preventDefault();
-    onSaveSettings(formData);
-    setFeedbackMsg({ text: 'Pengaturan akun berhasil disimpan ke browser!', type: 'success' });
-    setTimeout(() => setFeedbackMsg(null), 3000);
-  };
-
-  const handleExportCsv = () => {
-    if (trades.length === 0) {
-      setFeedbackMsg({ text: 'Belum ada trade untuk diekspor ke CSV.', type: 'error' });
-      return;
-    }
-    const csvStr = exportTradesToCsv(trades);
-    downloadCsvFile(csvStr, `TradeVault_Export_${new Date().toISOString().slice(0, 10)}.csv`);
-    setFeedbackMsg({ text: 'File CSV berhasil diunduh.', type: 'success' });
-    setTimeout(() => setFeedbackMsg(null), 3000);
-  };
-
-  const handleQuickExportJson = async () => {
-    const portableTrades = await prepareTradesForJsonBackup(trades, currentUser?.id || null);
-    const jsonStr = generateBackupJson(portableTrades, formData);
-    const blob = new Blob([jsonStr], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `TradeVault_FullBackup_${new Date().toISOString().slice(0, 10)}.json`;
-    a.click();
-    URL.revokeObjectURL(a.href);
-    setFeedbackMsg({ text: 'Cadangan data JSON berhasil dibuat dan diunduh.', type: 'success' });
-    setTimeout(() => setFeedbackMsg(null), 3000);
+  const handleSavePreferences = (newSettings: AppSettings) => {
+    onSaveSettings(newSettings);
+    showFeedback('Pengaturan berhasil diperbarui!');
   };
 
   const handleLoadDemo = async () => {
@@ -132,8 +82,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
       const nonDemo = trades.filter((t) => !isDemoTrade(t));
       onUpdateTrades([...nonDemo, ...DEMO_TRADES]);
     }
-    setFeedbackMsg({ text: `Berhasil memuat ${DEMO_TRADES.length} transaksi contoh DEMO.`, type: 'success' });
-    setTimeout(() => setFeedbackMsg(null), 3000);
+    showFeedback(`Berhasil memuat ${DEMO_TRADES.length} transaksi contoh DEMO.`);
   };
 
   const handleConfirmClearAllTrades = async () => {
@@ -143,8 +92,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
     } else {
       onUpdateTrades([]);
     }
-    setFeedbackMsg({ text: 'Seluruh riwayat trade telah dihapus.', type: 'success' });
-    setTimeout(() => setFeedbackMsg(null), 3000);
+    showFeedback('Seluruh riwayat transaksi telah dihapus.');
   };
 
   const handleImportCsvSuccess = async (newTrades: Trade[], mode: 'merge' | 'replace') => {
@@ -154,564 +102,448 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
       const { finalTrades } = mergeTradesDatasets(trades, newTrades, mode);
       onUpdateTrades(finalTrades);
     }
-    setFeedbackMsg({ text: `Berhasil mengimpor ${newTrades.length} trade dari CSV!`, type: 'success' });
-    setTimeout(() => setFeedbackMsg(null), 3000);
+    showFeedback(`Berhasil mengimpor ${newTrades.length} transaksi dari CSV!`);
   };
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 max-w-4xl mx-auto pb-10">
       {/* Top Header */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 pb-3 border-b border-[#DDE3EA] dark:border-[#252B34]">
-        <div>
-          <h2 className="text-xl font-bold text-[#151D2A] dark:text-[#F2F5F9]">
-            Pengaturan Akun & Cadangan Data
-          </h2>
-          <p className="text-xs text-[#697586] dark:text-[#929BA9] mt-0.5">
-            Kelola modal awal, mata uang, spesifikasi broker XAUUSD, tema tampilan, ekspor/impor CSV, dan backup persisten
-          </p>
-        </div>
-
-        {/* Persistence & Prototype Status */}
-        <button
-          type="button"
-          onClick={onOpenLocalInfo}
-          className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-white dark:bg-[#11151B] border border-[#DDE3EA] dark:border-[#252B34] text-xs text-[#151D2A] dark:text-[#F2F5F9] hover:bg-[#EEF2F6] dark:hover:bg-[#171D26] transition-colors cursor-pointer"
-        >
-          <span className="h-2 w-2 rounded-full bg-amber-500" />
-          <HardDrive className="h-4 w-4 stroke-[1.75] text-[#697586] dark:text-[#929BA9]" />
-          <span className="font-semibold">PROTOTIPE LOKAL ({trades.length} Trade Tersimpan)</span>
-        </button>
+      <div className="pb-3 border-b border-[#DDE3EA] dark:border-[#252B34]">
+        <h2 className="text-xl font-bold tracking-tight text-[#151D2A] dark:text-[#F2F5F9]">
+          Pengaturan &amp; Cadangan
+        </h2>
+        <p className="text-xs text-[#697586] dark:text-[#929BA9] mt-0.5">
+          Workspace minimalis untuk mengelola tampilan antarmuka, akun trading, sinkronisasi cloud, cadangan data, dan dataset.
+        </p>
       </div>
 
+      {/* Feedback Message Banner */}
       {feedbackMsg && (
-        <div className="p-3.5 rounded-xl border bg-white dark:bg-[#11151B] border-[#DDE3EA] dark:border-[#252B34] text-[#151D2A] dark:text-[#F2F5F9] text-xs flex items-center gap-2 font-medium animate-in fade-in">
-          {feedbackMsg.type === 'success' ? (
-            <ShieldCheck className="h-4 w-4 shrink-0 text-emerald-600 dark:text-emerald-400 stroke-[1.75]" />
-          ) : (
-            <AlertTriangle className="h-4 w-4 shrink-0 text-rose-600 dark:text-rose-400 stroke-[1.75]" />
-          )}
-          <span className={feedbackMsg.type === 'success' ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'}>
-            {feedbackMsg.text}
-          </span>
+        <div
+          className={`px-4 py-2.5 rounded-xl border text-xs font-semibold animate-in fade-in duration-150 ${
+            feedbackMsg.type === 'success'
+              ? 'bg-[#EEF2F6] dark:bg-[#171D26] border-emerald-500/30 text-emerald-600 dark:text-emerald-400'
+              : 'bg-[#EEF2F6] dark:bg-[#171D26] border-rose-500/30 text-rose-600 dark:text-rose-400'
+          }`}
+        >
+          {feedbackMsg.text}
         </div>
       )}
 
-      {/* Interface Theme & Appearance Card */}
-      <div id="settings-appearance" className="rounded-xl border border-[#DDE3EA] dark:border-[#252B34] bg-white dark:bg-[#11151B] p-5 space-y-4 scroll-mt-20">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-3 border-b border-[#DDE3EA] dark:border-[#252B34]">
+      {/* ========================================================================= */}
+      {/* A. TAMPILAN */}
+      {/* ========================================================================= */}
+      <div className="space-y-2">
+        <span className="text-[11px] font-semibold uppercase tracking-[0.08em] text-[#697586] dark:text-[#929BA9] block px-1">
+          Tampilan
+        </span>
+        <div className="bg-white dark:bg-[#11151B] border border-[#DDE3EA] dark:border-[#252B34] rounded-xl px-4 py-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
           <div>
-            <h3 className="text-sm font-semibold text-[#151D2A] dark:text-[#F2F5F9] flex items-center gap-2">
-              {isDark ? (
-                <Moon className="h-4 w-4 stroke-[1.75] text-[#697586] dark:text-[#929BA9]" />
-              ) : (
-                <Sun className="h-4 w-4 stroke-[1.75] text-[#697586] dark:text-[#929BA9]" />
-              )}
-              <span>Tema & Tampilan Antarmuka (Light / Dark Mode)</span>
-            </h3>
-            <p className="text-xs text-[#697586] dark:text-[#929BA9] mt-0.5">
-              Pilihan tema disimpan secara mandiri di browser dan dipertahankan saat reload atau login
-            </p>
+            <span className="text-xs font-semibold text-[#151D2A] dark:text-[#F2F5F9] block">
+              Tema Tampilan
+            </span>
+            <span className="text-[11px] text-[#697586] dark:text-[#929BA9] block mt-0.5">
+              Pilihan mode visual aplikasi TradeVault disimpan di browser Anda
+            </span>
           </div>
-          <span className="text-[11px] font-mono-numbers px-2.5 py-1 rounded-lg bg-[#F5F7FA] dark:bg-[#080A0E] border border-[#DDE3EA] dark:border-[#252B34] text-[#697586] dark:text-[#929BA9] self-start sm:self-auto">
-            Tema Aktif: <strong className="text-[#1769E8] dark:text-[#60A5FA] capitalize">{theme === 'dark' ? 'Mode Gelap (Dark)' : 'Mode Terang (Light)'}</strong>
-          </span>
-        </div>
 
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
-          {/* Dark Mode Choice Card */}
-          <button
-            type="button"
-            onClick={() => setTheme('dark')}
-            className={`flex items-start gap-3.5 p-4 rounded-xl border text-left transition-colors cursor-pointer ${
-              theme === 'dark'
-                ? 'bg-[#080A0E] border-[#1769E8] text-[#F2F5F9]'
-                : 'bg-[#F5F7FA] dark:bg-[#080A0E] border-[#DDE3EA] dark:border-[#252B34] text-[#697586] dark:text-[#929BA9] hover:border-[#697586]'
-            }`}
-          >
-            <div
-              className={`p-2.5 rounded-lg border shrink-0 ${
-                theme === 'dark'
-                  ? 'bg-[#171D26] text-[#F2F5F9] border-[#252B34]'
-                  : 'bg-white dark:bg-[#11151B] text-[#697586] dark:text-[#929BA9] border-[#DDE3EA] dark:border-[#252B34]'
-              }`}
-            >
-              <Moon className="h-5 w-5 stroke-[1.75]" />
-            </div>
-            <div className="space-y-1">
-              <div className="flex items-center gap-2">
-                <span className={`text-xs font-bold ${theme === 'dark' ? 'text-[#F2F5F9]' : 'text-[#151D2A] dark:text-[#F2F5F9]'}`}>
-                  Mode Gelap (Dark Mode)
-                </span>
-                {theme === 'dark' && (
-                  <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-[#1769E8] text-white">
-                    Aktif
-                  </span>
-                )}
-              </div>
-              <p className={`text-[11px] leading-relaxed ${theme === 'dark' ? 'text-[#929BA9]' : 'text-[#697586] dark:text-[#929BA9]'}`}>
-                Permukaan netral gelap dengan aksen biru terfokus, kontras tinggi, dan minim silau untuk sesi analisis panjang.
-              </p>
-            </div>
-          </button>
-
-          {/* Light Mode Choice Card */}
-          <button
-            type="button"
-            onClick={() => setTheme('light')}
-            className={`flex items-start gap-3.5 p-4 rounded-xl border text-left transition-colors cursor-pointer ${
-              theme === 'light'
-                ? 'bg-white border-[#1769E8] text-[#151D2A]'
-                : 'bg-[#F5F7FA] dark:bg-[#080A0E] border-[#DDE3EA] dark:border-[#252B34] text-[#697586] dark:text-[#929BA9] hover:border-[#697586]'
-            }`}
-          >
-            <div
-              className={`p-2.5 rounded-lg border shrink-0 ${
+          <div className="flex items-center rounded-lg bg-[#F5F7FA] dark:bg-[#080A0E] p-1 border border-[#DDE3EA] dark:border-[#252B34] shrink-0 self-start sm:self-auto">
+            <button
+              type="button"
+              onClick={() => setTheme('light')}
+              className={`px-3 py-1 text-xs rounded-md transition-colors cursor-pointer ${
                 theme === 'light'
-                  ? 'bg-[#EEF2F6] text-[#151D2A] border-[#DDE3EA]'
-                  : 'bg-white dark:bg-[#11151B] text-[#697586] dark:text-[#929BA9] border-[#DDE3EA] dark:border-[#252B34]'
+                  ? 'bg-white text-[#1458C4] font-semibold shadow-xs'
+                  : 'text-[#697586] dark:text-[#929BA9] hover:text-[#151D2A] dark:hover:text-[#F2F5F9]'
               }`}
             >
-              <Sun className="h-5 w-5 stroke-[1.75]" />
-            </div>
-            <div className="space-y-1">
-              <div className="flex items-center gap-2">
-                <span className="text-xs font-bold text-[#151D2A] dark:text-[#F2F5F9]">Mode Terang (Light Mode)</span>
-                {theme === 'light' && (
-                  <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-[#1769E8] text-white">
-                    Aktif
-                  </span>
-                )}
-              </div>
-              <p className="text-[11px] text-[#697586] dark:text-[#929BA9] leading-relaxed">
-                Permukaan netral cerah berlatar putih bersih, kontras tajam, dan optimal untuk pemakaian di siang hari.
-              </p>
-            </div>
-          </button>
-        </div>
-      </div>
-
-      {/* PROTOTIPE LOKAL Architecture Banner */}
-      <div className="rounded-xl border border-[#DDE3EA] dark:border-[#252B34] bg-white dark:bg-[#11151B] p-5 space-y-3">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-          <div className="flex items-center gap-3">
-            <div className="h-10 w-10 rounded-xl bg-[#EEF2F6] dark:bg-[#171D26] border border-[#DDE3EA] dark:border-[#252B34] flex items-center justify-center text-[#697586] dark:text-[#929BA9] shrink-0">
-              <HardDrive className="h-5 w-5 stroke-[1.75]" />
-            </div>
-            <div>
-              <div className="flex items-center gap-2">
-                <span className="px-2 py-0.5 rounded text-[10px] font-bold uppercase bg-[#EEF2F6] dark:bg-[#171D26] text-amber-600 dark:text-amber-400 border border-[#DDE3EA] dark:border-[#252B34]">
-                  PROTOTIPE LOKAL
-                </span>
-                <span className="text-xs text-[#151D2A] dark:text-[#F2F5F9] font-semibold">
-                  100% Gratis & Mandiri (Tanpa Supabase)
-                </span>
-              </div>
-              <p className="text-xs text-[#697586] dark:text-[#929BA9] mt-1">
-                Data disimpan di memori browser Anda (<code className="text-[#1769E8] dark:text-[#60A5FA] font-semibold">localStorage</code>) dan tetap ada setelah browser di-refresh. Data tidak otomatis tersinkronkan antarperangkat.
-              </p>
-            </div>
-          </div>
-
-          <div className="flex items-center gap-2 shrink-0">
-            <button
-              type="button"
-              onClick={onOpenLocalInfo}
-              className="px-3 py-1.5 rounded-lg bg-[#EEF2F6] dark:bg-[#171D26] hover:bg-[#DDE3EA] dark:hover:bg-[#252B34] text-[#151D2A] dark:text-[#F2F5F9] text-xs font-semibold transition-colors flex items-center gap-1.5 border border-[#DDE3EA] dark:border-[#252B34] cursor-pointer"
-            >
-              <Info className="h-3.5 w-3.5 stroke-[1.75] text-[#697586] dark:text-[#929BA9]" />
-              <span>Info Lengkap</span>
+              Terang
             </button>
             <button
               type="button"
-              onClick={onOpenBackupModal}
-              className="px-3 py-1.5 rounded-lg bg-[#1769E8] hover:bg-[#1458C4] text-white text-xs font-semibold transition-colors flex items-center gap-1.5 cursor-pointer"
+              onClick={() => setTheme('dark')}
+              className={`px-3 py-1 text-xs rounded-md transition-colors cursor-pointer ${
+                theme === 'dark'
+                  ? 'bg-[#171D26] text-[#38BDF8] font-semibold shadow-xs'
+                  : 'text-[#697586] dark:text-[#929BA9] hover:text-[#151D2A] dark:hover:text-[#F2F5F9]'
+              }`}
             >
-              <Download className="h-3.5 w-3.5 stroke-[1.75]" />
-              <span>Menu Backup JSON</span>
+              Gelap
             </button>
           </div>
         </div>
       </div>
 
-      {/* Supabase Cloud & Account Card */}
-      <div className="rounded-xl border border-[#DDE3EA] dark:border-[#252B34] bg-white dark:bg-[#11151B] p-5 space-y-4">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-          <div className="flex items-center gap-3">
-            <div className="h-10 w-10 rounded-xl bg-[#EEF2F6] dark:bg-[#171D26] border border-[#DDE3EA] dark:border-[#252B34] flex items-center justify-center text-[#697586] dark:text-[#929BA9] shrink-0">
-              <Database className="h-5 w-5 stroke-[1.75]" />
-            </div>
-            <div>
-              <div className="flex items-center gap-2">
-                <h3 className="text-sm font-bold text-[#151D2A] dark:text-[#F2F5F9]">Supabase Cloud Database & Auth</h3>
-                {currentUser ? (
-                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-[#EEF2F6] dark:bg-[#171D26] text-emerald-600 dark:text-emerald-400 border border-[#DDE3EA] dark:border-[#252B34]">
-                    <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
-                    Terhubung ({currentUser.email})
-                  </span>
-                ) : (
-                  <span className="px-2 py-0.5 rounded text-[10px] font-semibold bg-[#EEF2F6] dark:bg-[#171D26] text-[#697586] dark:text-[#929BA9]">
-                    Belum Masuk
-                  </span>
-                )}
-              </div>
-              <p className="text-xs text-[#697586] dark:text-[#929BA9] mt-1">
-                {currentUser
-                  ? 'Tersambung ke tabel public.trades dengan proteksi Row Level Security (RLS).'
-                  : 'Daftar atau masuk dengan email & kata sandi untuk sinkronisasi ke tabel Supabase.'}
-              </p>
-            </div>
-          </div>
-
-          <div className="flex items-center gap-2 shrink-0">
-            {currentUser ? (
-              <button
-                type="button"
-                onClick={onOpenAccount}
-                className="px-3.5 py-1.5 rounded-lg bg-[#EEF2F6] dark:bg-[#171D26] hover:bg-[#DDE3EA] dark:hover:bg-[#252B34] text-[#151D2A] dark:text-[#F2F5F9] border border-[#DDE3EA] dark:border-[#252B34] text-xs font-semibold transition-colors flex items-center gap-1.5 cursor-pointer"
-              >
-                <User className="h-3.5 w-3.5 stroke-[1.75] text-[#697586] dark:text-[#929BA9]" />
-                <span>Kelola Akun</span>
-              </button>
-            ) : (
-              <button
-                type="button"
-                onClick={onOpenAuth}
-                className="px-3.5 py-1.5 rounded-lg bg-[#1769E8] hover:bg-[#1458C4] text-white text-xs font-bold transition-colors flex items-center gap-1.5 cursor-pointer"
-              >
-                <LogIn className="h-3.5 w-3.5 stroke-[1.75]" />
-                <span>Masuk / Daftar</span>
-              </button>
-            )}
-
-            <button
-              type="button"
-              onClick={onOpenConfig}
-              className="px-3 py-1.5 rounded-lg bg-[#EEF2F6] dark:bg-[#171D26] hover:bg-[#DDE3EA] dark:hover:bg-[#252B34] text-[#151D2A] dark:text-[#F2F5F9] text-xs font-semibold transition-colors flex items-center gap-1.5 border border-[#DDE3EA] dark:border-[#252B34] cursor-pointer"
-              title="Pengaturan URL & Kunci API Supabase"
-            >
-              <Database className="h-3.5 w-3.5 stroke-[1.75] text-[#697586] dark:text-[#929BA9]" />
-              <span>Konfigurasi</span>
-            </button>
-          </div>
-        </div>
-
-        {/* Sync Controls & Info for Authenticated User */}
-        {currentUser && (
-          <div className="pt-3 border-t border-[#DDE3EA] dark:border-[#252B34] flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
-            <div className="flex items-center gap-2 text-[#697586] dark:text-[#929BA9]">
-              <ShieldCheck className="h-4 w-4 text-emerald-600 dark:text-emerald-400 shrink-0 stroke-[1.75]" />
-              <span>
-                Tabel <code className="text-[#1769E8] dark:text-[#60A5FA] font-mono-numbers font-semibold">public.trades</code> aktif. Transaksi tersimpan per pengguna (<code className="text-[#151D2A] dark:text-[#F2F5F9] font-mono-numbers font-semibold">auth.uid() = user_id</code>).
+      {/* ========================================================================= */}
+      {/* B. AKUN & PREFERENSI TRADING */}
+      {/* ========================================================================= */}
+      <div className="space-y-2">
+        <span className="text-[11px] font-semibold uppercase tracking-[0.08em] text-[#697586] dark:text-[#929BA9] block px-1">
+          Akun &amp; Preferensi Trading
+        </span>
+        <div className="bg-white dark:bg-[#11151B] border border-[#DDE3EA] dark:border-[#252B34] rounded-xl divide-y divide-[#DDE3EA] dark:divide-[#252B34]">
+          {/* Row 1: Saldo Akun */}
+          <div className="px-4 py-3 flex items-center justify-between gap-4">
+            <div className="min-w-0">
+              <span className="text-xs font-semibold text-[#151D2A] dark:text-[#F2F5F9] block">
+                Saldo Akun (Modal Awal)
+              </span>
+              <span className="text-[11px] text-[#697586] dark:text-[#929BA9] block mt-0.5">
+                Dasar kalkulasi pertumbuhan dan risiko
               </span>
             </div>
-
-            <div className="flex items-center gap-2 shrink-0">
-              {onSyncLocalToCloud && trades.length > 0 && (
-                <button
-                  type="button"
-                  disabled={isCloudSyncing}
-                  onClick={onSyncLocalToCloud}
-                  className="px-3 py-1.5 rounded-lg bg-[#1769E8] hover:bg-[#1458C4] text-white text-xs font-semibold transition-colors flex items-center gap-1.5 disabled:opacity-50 cursor-pointer"
-                  title="Unggah seluruh transaksi lokal ke database Supabase"
-                >
-                  <Upload className="h-3.5 w-3.5 stroke-[1.75]" />
-                  <span>{isCloudSyncing ? 'Menyinkronkan...' : `Unggah ${trades.length} Trade ke Supabase`}</span>
-                </button>
-              )}
-
-              {onReloadFromCloud && (
-                <button
-                  type="button"
-                  disabled={isCloudSyncing}
-                  onClick={onReloadFromCloud}
-                  className="px-3 py-1.5 rounded-lg bg-[#EEF2F6] dark:bg-[#171D26] hover:bg-[#DDE3EA] dark:hover:bg-[#252B34] text-[#151D2A] dark:text-[#F2F5F9] border border-[#DDE3EA] dark:border-[#252B34] text-xs font-semibold transition-colors flex items-center gap-1.5 disabled:opacity-50 cursor-pointer"
-                  title="Ambil data transaksi terbaru dari Supabase"
-                >
-                  <RefreshCw className={`h-3.5 w-3.5 stroke-[1.75] ${isCloudSyncing ? 'animate-spin text-[#1769E8]' : 'text-[#697586] dark:text-[#929BA9]'}`} />
-                  <span>Ambil dari Cloud</span>
-                </button>
-              )}
-            </div>
-          </div>
-        )}
-      </div>
-
-      {/* Grid: Account Settings & Broker Specs */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* Form: Account Balance & Currency */}
-        <form onSubmit={handleSave} className="rounded-xl border border-[#DDE3EA] dark:border-[#252B34] bg-white dark:bg-[#11151B] p-5 space-y-4">
-          <div className="pb-3 border-b border-[#DDE3EA] dark:border-[#252B34]">
-            <h3 className="text-sm font-semibold text-[#151D2A] dark:text-[#F2F5F9]">Parameter Akun & Saldo</h3>
-            <p className="text-xs text-[#697586] dark:text-[#929BA9]">Dasar perhitungan metrik pertumbuhan dan kalkulator risiko</p>
-          </div>
-
-          <div className="space-y-3 text-xs">
-            <div>
-              <label className="block text-[#151D2A] dark:text-[#F2F5F9] font-medium mb-1">Mata Uang Akun</label>
-              <div className="grid grid-cols-3 gap-2">
-                {(['USD', 'IDR', 'EUR'] as CurrencyCode[]).map((c) => (
-                  <button
-                    key={c}
-                    type="button"
-                    onClick={() => handleCurrencyChange(c)}
-                    className={`py-2 rounded-lg border font-bold transition-colors cursor-pointer ${
-                      formData.currency === c
-                        ? 'bg-[#1769E8] text-white border-[#1769E8]'
-                        : 'bg-[#F5F7FA] dark:bg-[#080A0E] text-[#697586] dark:text-[#929BA9] border-[#DDE3EA] dark:border-[#252B34] hover:text-[#151D2A] dark:hover:text-[#F2F5F9]'
-                    }`}
-                  >
-                    {c} ({c === 'IDR' ? 'Rp' : c === 'EUR' ? '€' : '$'})
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            <div>
-              <label className="block text-[#151D2A] dark:text-[#F2F5F9] font-medium mb-1">
-                Modal Awal Akun ({formData.currencySymbol})
-              </label>
-              <input
-                type="number"
-                step="1"
-                value={formData.startingBalance}
-                onChange={(e) =>
-                  setFormData({ ...formData, startingBalance: parseFloat(e.target.value) || 0 })
-                }
-                className="w-full rounded-lg bg-[#F5F7FA] dark:bg-[#080A0E] border border-[#DDE3EA] dark:border-[#252B34] px-3 py-2 font-mono-numbers text-[#151D2A] dark:text-[#F2F5F9] focus:border-[#1769E8] focus:outline-none"
-                required
-              />
-            </div>
-
-            <div>
-              <label className="block text-[#151D2A] dark:text-[#F2F5F9] font-medium mb-1">
-                Default Risiko per Trade (%)
-              </label>
-              <input
-                type="number"
-                step="0.1"
-                value={formData.defaultRiskPercent}
-                onChange={(e) =>
-                  setFormData({ ...formData, defaultRiskPercent: parseFloat(e.target.value) || 1.0 })
-                }
-                className="w-full rounded-lg bg-[#F5F7FA] dark:bg-[#080A0E] border border-[#DDE3EA] dark:border-[#252B34] px-3 py-2 font-mono-numbers text-[#151D2A] dark:text-[#F2F5F9] focus:border-[#1769E8] focus:outline-none"
-                required
-              />
-            </div>
-
-            <div>
-              <label className="block text-[#151D2A] dark:text-[#F2F5F9] font-medium mb-1">
-                Target Return Bulanan (%)
-              </label>
-              <input
-                type="number"
-                step="0.5"
-                value={formData.targetMonthlyReturnPercent}
-                onChange={(e) =>
-                  setFormData({ ...formData, targetMonthlyReturnPercent: parseFloat(e.target.value) || 8.0 })
-                }
-                className="w-full rounded-lg bg-[#F5F7FA] dark:bg-[#080A0E] border border-[#DDE3EA] dark:border-[#252B34] px-3 py-2 font-mono-numbers text-[#151D2A] dark:text-[#F2F5F9] focus:border-[#1769E8] focus:outline-none"
-              />
-            </div>
-          </div>
-
-          <div className="pt-2 flex justify-end">
-            <button
-              type="submit"
-              className="flex items-center gap-1.5 px-5 py-2.5 rounded-lg bg-[#1769E8] hover:bg-[#1458C4] text-white text-xs font-bold transition-colors cursor-pointer"
-            >
-              <Save className="h-4 w-4 stroke-[1.75]" />
-              <span>Simpan Perubahan</span>
-            </button>
-          </div>
-        </form>
-
-        {/* Broker XAUUSD Specifications */}
-        <div className="rounded-xl border border-[#DDE3EA] dark:border-[#252B34] bg-white dark:bg-[#11151B] p-5 space-y-4">
-          <div className="pb-3 border-b border-[#DDE3EA] dark:border-[#252B34]">
-            <h3 className="text-sm font-semibold text-[#151D2A] dark:text-[#F2F5F9]">Spesifikasi Broker (XAUUSD)</h3>
-            <p className="text-xs text-[#697586] dark:text-[#929BA9]">
-              Setiap broker memiliki nilai kontrak berbeda; sesuaikan agar kalkulasi lot akurat
-            </p>
-          </div>
-
-          <div className="space-y-3 text-xs">
-            <div>
-              <label className="block text-[#151D2A] dark:text-[#F2F5F9] font-medium mb-1">
-                Contract Size (Troy Ounces per 1.0 Standard Lot)
-              </label>
-              <select
-                value={formData.xauusdContractSize}
-                onChange={(e) =>
-                  setFormData({ ...formData, xauusdContractSize: Number(e.target.value) })
-                }
-                className="w-full rounded-lg bg-[#F5F7FA] dark:bg-[#080A0E] border border-[#DDE3EA] dark:border-[#252B34] px-3 py-2 text-[#151D2A] dark:text-[#F2F5F9] focus:border-[#1769E8] focus:outline-none"
+            <div className="flex items-center gap-3 shrink-0">
+              <span className="text-xs font-bold font-mono-numbers tabular-nums text-[#151D2A] dark:text-[#F2F5F9]">
+                {formatCurrency(settings.startingBalance, settings)}
+              </span>
+              <button
+                type="button"
+                onClick={() => setActivePrefModal('balance')}
+                className="text-xs font-semibold text-[#1458C4] dark:text-[#38BDF8] hover:underline cursor-pointer"
               >
-                <option value={100}>100 oz (Standar Industri Forex/CFD)</option>
-                <option value={10}>10 oz (Akun Mini)</option>
-                <option value={1}>1 oz (Akun Micro / Cent)</option>
-              </select>
+                Ubah ›
+              </button>
             </div>
+          </div>
 
-            <div>
-              <label className="block text-[#151D2A] dark:text-[#F2F5F9] font-medium mb-1">
-                Perkiraan Komisi Broker per Lot ($)
-              </label>
-              <input
-                type="number"
-                step="0.5"
-                value={formData.brokerCommissionPerLot}
-                onChange={(e) =>
-                  setFormData({ ...formData, brokerCommissionPerLot: parseFloat(e.target.value) || 0 })
-                }
-                className="w-full rounded-lg bg-[#F5F7FA] dark:bg-[#080A0E] border border-[#DDE3EA] dark:border-[#252B34] px-3 py-2 font-mono-numbers text-[#151D2A] dark:text-[#F2F5F9] focus:border-[#1769E8] focus:outline-none"
-              />
+          {/* Row 2: Mata Uang */}
+          <div className="px-4 py-3 flex items-center justify-between gap-4">
+            <div className="min-w-0">
+              <span className="text-xs font-semibold text-[#151D2A] dark:text-[#F2F5F9] block">
+                Mata Uang Akun
+              </span>
+              <span className="text-[11px] text-[#697586] dark:text-[#929BA9] block mt-0.5">
+                Format simbol moneter jurnal
+              </span>
             </div>
+            <div className="flex items-center gap-3 shrink-0">
+              <span className="text-xs font-medium text-[#151D2A] dark:text-[#F2F5F9]">
+                {settings.currency} ({settings.currencySymbol})
+              </span>
+              <button
+                type="button"
+                onClick={() => setActivePrefModal('currency')}
+                className="text-xs font-semibold text-[#1458C4] dark:text-[#38BDF8] hover:underline cursor-pointer"
+              >
+                Ubah ›
+              </button>
+            </div>
+          </div>
 
-            <div className="p-3.5 rounded-lg bg-[#F5F7FA] dark:bg-[#080A0E] border border-[#DDE3EA] dark:border-[#252B34] text-[11px] space-y-1.5 text-[#697586] dark:text-[#929BA9]">
-              <span className="font-semibold text-[#151D2A] dark:text-[#F2F5F9] block">Catatan Perhitungan:</span>
-              <p>
-                Jika broker Anda menggunakan akun Cent atau nilai 10 oz, pilih opsi di atas agar kalkulator posisi dan simulasi risiko tidak over-leveraging.
-              </p>
+          {/* Row 3: Spesifikasi Broker */}
+          <div className="px-4 py-3 flex items-center justify-between gap-4">
+            <div className="min-w-0">
+              <span className="text-xs font-semibold text-[#151D2A] dark:text-[#F2F5F9] block">
+                Spesifikasi Broker (XAUUSD)
+              </span>
+              <span className="text-[11px] text-[#697586] dark:text-[#929BA9] block mt-0.5 truncate">
+                1 Pip = ${settings.xauusdPipSize === 0.1 ? '0.10' : '1.00'} • {settings.xauusdContractSize} oz • Komisi ${settings.brokerCommissionPerLot}/lot
+              </span>
+            </div>
+            <div className="shrink-0">
+              <button
+                type="button"
+                onClick={() => setActivePrefModal('broker')}
+                className="text-xs font-semibold text-[#1458C4] dark:text-[#38BDF8] hover:underline cursor-pointer"
+              >
+                Atur ›
+              </button>
+            </div>
+          </div>
+
+          {/* Row 4: Parameter Risiko & Target */}
+          <div className="px-4 py-3 flex items-center justify-between gap-4">
+            <div className="min-w-0">
+              <span className="text-xs font-semibold text-[#151D2A] dark:text-[#F2F5F9] block">
+                Parameter Risiko &amp; Target
+              </span>
+              <span className="text-[11px] text-[#697586] dark:text-[#929BA9] block mt-0.5 truncate">
+                Risiko {settings.defaultRiskPercent}% per trade ({settings.riskCapitalBasis === 'BALANCE' ? 'Saldo Awal' : 'Ekuitas'}) • Target {settings.targetMonthlyReturnPercent}%/bln
+              </span>
+            </div>
+            <div className="shrink-0">
+              <button
+                type="button"
+                onClick={() => setActivePrefModal('risk')}
+                className="text-xs font-semibold text-[#1458C4] dark:text-[#38BDF8] hover:underline cursor-pointer"
+              >
+                Atur ›
+              </button>
+            </div>
+          </div>
+
+          {/* Row 5: Penyesuaian Modal (Deposit / WD) */}
+          <div className="px-4 py-3 flex items-center justify-between gap-4">
+            <div className="min-w-0">
+              <span className="text-xs font-semibold text-[#151D2A] dark:text-[#F2F5F9] block">
+                Penyesuaian Modal
+              </span>
+              <span className="text-[11px] text-[#697586] dark:text-[#929BA9] block mt-0.5 truncate">
+                Deposit +{formatCurrency(settings.totalDeposits ?? 0, settings)} • Penarikan -{formatCurrency(settings.totalWithdrawals ?? 0, settings)}
+              </span>
+            </div>
+            <div className="shrink-0">
+              <button
+                type="button"
+                onClick={() => setActivePrefModal('adjustments')}
+                className="text-xs font-semibold text-[#1458C4] dark:text-[#38BDF8] hover:underline cursor-pointer"
+              >
+                Atur ›
+              </button>
             </div>
           </div>
         </div>
       </div>
 
-      {/* Backup, CSV Export/Import & Demo Data Management */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* CSV & JSON Export / Import */}
-        <div className="rounded-xl border border-[#DDE3EA] dark:border-[#252B34] bg-white dark:bg-[#11151B] p-5 space-y-4">
-          <div className="pb-3 border-b border-[#DDE3EA] dark:border-[#252B34]">
-            <h3 className="text-sm font-semibold text-[#151D2A] dark:text-[#F2F5F9] flex items-center gap-2">
-              <FileJson className="h-4 w-4 stroke-[1.75] text-[#697586] dark:text-[#929BA9]" />
-              <span>Ekspor & Cadangan Data (Backup)</span>
-            </h3>
-            <p className="text-xs text-[#697586] dark:text-[#929BA9]">
-              Ekspor ke spreadsheet Excel/CSV atau kelola backup pemulihan JSON dengan verifikasi
-            </p>
+      {/* ========================================================================= */}
+      {/* C. AKUN & KONEKSI */}
+      {/* ========================================================================= */}
+      <div className="space-y-2">
+        <span className="text-[11px] font-semibold uppercase tracking-[0.08em] text-[#697586] dark:text-[#929BA9] block px-1">
+          Akun &amp; Koneksi
+        </span>
+        <div className="bg-white dark:bg-[#11151B] border border-[#DDE3EA] dark:border-[#252B34] rounded-xl divide-y divide-[#DDE3EA] dark:divide-[#252B34]">
+          {/* Row 1: Informasi Akun TradeVault */}
+          <div className="px-4 py-3 flex items-center justify-between gap-4">
+            <div className="min-w-0">
+              <span className="text-xs font-semibold text-[#151D2A] dark:text-[#F2F5F9] block">
+                Akun TradeVault
+              </span>
+              <span className="text-[11px] text-[#697586] dark:text-[#929BA9] block mt-0.5 truncate">
+                {currentUser ? currentUser.email : 'Mode Offline / Lokal (Belum Masuk)'}
+              </span>
+            </div>
+            <div className="shrink-0">
+              {currentUser ? (
+                <button
+                  type="button"
+                  onClick={onOpenAccount}
+                  className="text-xs font-semibold text-[#1458C4] dark:text-[#38BDF8] hover:underline cursor-pointer"
+                >
+                  Kelola ›
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={onOpenAuth}
+                  className="text-xs font-semibold text-[#1458C4] dark:text-[#38BDF8] hover:underline cursor-pointer"
+                >
+                  Masuk ›
+                </button>
+              )}
+            </div>
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
-            <button
-              onClick={handleExportCsv}
-              className="flex items-center justify-center gap-2 p-3 rounded-xl bg-[#F5F7FA] dark:bg-[#080A0E] border border-[#DDE3EA] dark:border-[#252B34] hover:border-[#1769E8]/50 hover:bg-[#EEF2F6] dark:hover:bg-[#171D26] text-xs font-semibold text-[#151D2A] dark:text-[#F2F5F9] transition-colors cursor-pointer"
-            >
-              <FileSpreadsheet className="h-4 w-4 stroke-[1.75] text-[#697586] dark:text-[#929BA9]" />
-              <span>Ekspor ke CSV</span>
-            </button>
-
-            <button
-              onClick={() => setIsCsvModalOpen(true)}
-              className="flex items-center justify-center gap-2 p-3 rounded-xl bg-[#F5F7FA] dark:bg-[#080A0E] border border-[#DDE3EA] dark:border-[#252B34] hover:border-[#1769E8]/50 hover:bg-[#EEF2F6] dark:hover:bg-[#171D26] text-xs font-semibold text-[#151D2A] dark:text-[#F2F5F9] transition-colors cursor-pointer"
-            >
-              <Upload className="h-4 w-4 stroke-[1.75] text-[#697586] dark:text-[#929BA9]" />
-              <span>Impor dari CSV...</span>
-            </button>
-
-            <button
-              onClick={handleQuickExportJson}
-              className="flex items-center justify-center gap-2 p-3 rounded-xl bg-[#F5F7FA] dark:bg-[#080A0E] border border-[#DDE3EA] dark:border-[#252B34] hover:border-[#1769E8]/50 hover:bg-[#EEF2F6] dark:hover:bg-[#171D26] text-xs font-semibold text-[#151D2A] dark:text-[#F2F5F9] transition-colors cursor-pointer"
-            >
-              <Download className="h-4 w-4 stroke-[1.75] text-[#697586] dark:text-[#929BA9]" />
-              <span>Download Backup JSON</span>
-            </button>
-
-            <button
-              onClick={onOpenBackupModal}
-              className="flex items-center justify-center gap-2 p-3 rounded-xl bg-[#1769E8]/10 dark:bg-[#1769E8]/15 border border-[#1769E8]/30 hover:bg-[#1769E8]/20 text-xs font-semibold text-[#1769E8] dark:text-[#60A5FA] transition-colors cursor-pointer"
-            >
-              <RefreshCw className="h-4 w-4 stroke-[1.75]" />
-              <span>Impor & Validasi JSON...</span>
-            </button>
-          </div>
-        </div>
-
-        {/* Demo Data & Database Management */}
-        <div className="rounded-xl border border-[#DDE3EA] dark:border-[#252B34] bg-white dark:bg-[#11151B] p-5 space-y-4">
-          <div className="pb-3 border-b border-[#DDE3EA] dark:border-[#252B34]">
-            <h3 className="text-sm font-semibold text-[#151D2A] dark:text-[#F2F5F9]">Manajemen Data & Dataset Demo</h3>
-            <p className="text-xs text-[#697586] dark:text-[#929BA9]">
-              Data transaksi asli: <strong className="text-emerald-600 dark:text-emerald-400 font-mono-numbers">{realCount}</strong> •
-              Data DEMO: <strong className="text-amber-600 dark:text-amber-400 font-mono-numbers">{demoCount}</strong>
-            </p>
-          </div>
-
-          <div className="space-y-3">
-            <div className="flex flex-col sm:flex-row items-center justify-between gap-2 p-3 rounded-xl bg-[#F5F7FA] dark:bg-[#080A0E] border border-[#DDE3EA] dark:border-[#252B34]">
-              <div className="text-xs">
-                <span className="font-semibold text-[#151D2A] dark:text-[#F2F5F9] block">Muat Ulang Transaksi DEMO</span>
-                <span className="text-[11px] text-[#697586] dark:text-[#929BA9]">
-                  Tambahkan 8 transaksi contoh XAUUSD realistis untuk menguji dashboard.
+          {/* Row 2: Sinkronisasi Cloud */}
+          <div className="px-4 py-3.5 space-y-2">
+            <div className="flex items-center justify-between gap-4">
+              <div className="min-w-0">
+                <span className="text-xs font-semibold text-[#151D2A] dark:text-[#F2F5F9] block">
+                  Sinkronisasi Cloud Supabase
+                </span>
+                <span className="text-[11px] text-[#697586] dark:text-[#929BA9] block mt-0.5">
+                  {currentUser
+                    ? 'Tabel public.trades aktif • RLS terlindungi'
+                    : 'Sinkronisasi nonaktif. Masuk akun untuk mengaktifkan sinkronisasi.'}
                 </span>
               </div>
+              <div className="shrink-0">
+                <button
+                  type="button"
+                  onClick={onOpenConfig}
+                  className="text-xs font-semibold text-[#1458C4] dark:text-[#38BDF8] hover:underline cursor-pointer"
+                >
+                  Konfigurasi ›
+                </button>
+              </div>
+            </div>
+
+            {/* Cloud Controls if logged in */}
+            {currentUser && (
+              <div className="pt-2 flex flex-wrap items-center gap-2">
+                {onSyncLocalToCloud && trades.length > 0 && (
+                  <button
+                    type="button"
+                    disabled={isCloudSyncing}
+                    onClick={onSyncLocalToCloud}
+                    className="px-3 py-1.5 rounded-lg bg-[#1458C4] hover:bg-[#11469e] text-white text-[11px] font-semibold transition-colors disabled:opacity-50 cursor-pointer"
+                  >
+                    {isCloudSyncing ? 'Menyinkronkan...' : `Unggah ${trades.length} Trade ke Cloud`}
+                  </button>
+                )}
+                {onReloadFromCloud && (
+                  <button
+                    type="button"
+                    disabled={isCloudSyncing}
+                    onClick={onReloadFromCloud}
+                    className="px-3 py-1.5 rounded-lg border border-[#DDE3EA] dark:border-[#252B34] text-[#151D2A] dark:text-[#F2F5F9] hover:bg-[#EEF2F6] dark:hover:bg-[#171D26] text-[11px] font-medium transition-colors disabled:opacity-50 cursor-pointer"
+                  >
+                    Ambil dari Cloud
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
+
+          {/* Row 3: Penyimpanan Lokal */}
+          <div className="px-4 py-3 flex items-center justify-between gap-4">
+            <div className="min-w-0">
+              <span className="text-xs font-semibold text-[#151D2A] dark:text-[#F2F5F9] block">
+                Penyimpanan Lokal Browser
+              </span>
+              <span className="text-[11px] text-[#697586] dark:text-[#929BA9] block mt-0.5">
+                {trades.length} Transaksi tersimpan di browser (localStorage)
+              </span>
+            </div>
+            <div className="shrink-0">
               <button
+                type="button"
+                onClick={onOpenLocalInfo}
+                className="text-xs font-semibold text-[#1458C4] dark:text-[#38BDF8] hover:underline cursor-pointer"
+              >
+                Detail ›
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* ========================================================================= */}
+      {/* D. BACKUP & PEMULIHAN */}
+      {/* ========================================================================= */}
+      <div className="space-y-2">
+        <span className="text-[11px] font-semibold uppercase tracking-[0.08em] text-[#697586] dark:text-[#929BA9] block px-1">
+          Backup &amp; Pemulihan
+        </span>
+        <div className="bg-white dark:bg-[#11151B] border border-[#DDE3EA] dark:border-[#252B34] rounded-xl px-4 py-3.5 flex items-center justify-between gap-4">
+          <div className="min-w-0">
+            <span className="text-xs font-semibold text-[#151D2A] dark:text-[#F2F5F9] block">
+              Cadangan Data (Backup &amp; Restore)
+            </span>
+            <span className="text-[11px] text-[#697586] dark:text-[#929BA9] block mt-0.5">
+              Simpan atau pulihkan transaksi dan data pendukung TradeVault dalam format ZIP lengkap, JSON, atau CSV.
+            </span>
+          </div>
+          <div className="shrink-0">
+            <button
+              type="button"
+              onClick={onOpenBackupModal}
+              className="text-xs font-semibold text-[#1458C4] dark:text-[#38BDF8] hover:underline cursor-pointer"
+            >
+              Buka ›
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {/* ========================================================================= */}
+      {/* E. MANAJEMEN DATA */}
+      {/* ========================================================================= */}
+      <div className="space-y-2">
+        <span className="text-[11px] font-semibold uppercase tracking-[0.08em] text-[#697586] dark:text-[#929BA9] block px-1">
+          Manajemen Data
+        </span>
+        <div className="bg-white dark:bg-[#11151B] border border-[#DDE3EA] dark:border-[#252B34] rounded-xl divide-y divide-[#DDE3EA] dark:divide-[#252B34]">
+          {/* Row 1: Transaksi Demo */}
+          <div className="px-4 py-3 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+            <div className="min-w-0">
+              <span className="text-xs font-semibold text-[#151D2A] dark:text-[#F2F5F9] block">
+                Dataset Transaksi Demo
+              </span>
+              <span className="text-[11px] text-[#697586] dark:text-[#929BA9] block mt-0.5">
+                {demoCount} transaksi contoh • {realCount} transaksi asli
+              </span>
+            </div>
+            <div className="flex items-center gap-2 shrink-0 self-start sm:self-auto">
+              <button
+                type="button"
                 onClick={handleLoadDemo}
-                className="px-3.5 py-1.5 rounded-lg bg-[#EEF2F6] dark:bg-[#171D26] hover:bg-[#DDE3EA] dark:hover:bg-[#252B34] text-[#151D2A] dark:text-[#F2F5F9] border border-[#DDE3EA] dark:border-[#252B34] text-xs font-semibold transition-colors shrink-0 cursor-pointer"
+                className="px-3 py-1.5 rounded-lg border border-[#DDE3EA] dark:border-[#252B34] hover:bg-[#EEF2F6] dark:hover:bg-[#171D26] text-[#151D2A] dark:text-[#F2F5F9] text-xs font-medium transition-colors cursor-pointer"
               >
                 Muat Demo
               </button>
-            </div>
-
-            {demoCount > 0 && (
-              <div className="flex flex-col sm:flex-row items-center justify-between gap-2 p-3 rounded-xl bg-[#F5F7FA] dark:bg-[#080A0E] border border-[#DDE3EA] dark:border-[#252B34]">
-                <div className="text-xs">
-                  <span className="font-semibold text-amber-600 dark:text-amber-400 block">Hapus Khusus Data DEMO</span>
-                  <span className="text-[11px] text-[#697586] dark:text-[#929BA9]">
-                    Bersihkan {demoCount} transaksi contoh tanpa menyentuh data asli Anda.
-                  </span>
-                </div>
+              {demoCount > 0 && (
                 <button
                   type="button"
                   onClick={onRequestClearDemo}
-                  className="px-3.5 py-1.5 rounded-lg bg-[#EEF2F6] dark:bg-[#171D26] text-amber-600 dark:text-amber-400 border border-[#DDE3EA] dark:border-[#252B34] text-xs font-semibold hover:bg-[#DDE3EA] dark:hover:bg-[#252B34] transition-colors shrink-0 cursor-pointer"
+                  className="px-3 py-1.5 rounded-lg border border-[#DDE3EA] dark:border-[#252B34] text-amber-600 dark:text-amber-400 hover:bg-[#EEF2F6] dark:hover:bg-[#171D26] text-xs font-semibold transition-colors cursor-pointer"
                 >
                   Hapus Demo ({demoCount})
                 </button>
-              </div>
-            )}
+              )}
+            </div>
+          </div>
 
-            <div className="flex flex-col sm:flex-row items-center justify-between gap-2 p-3 rounded-xl bg-[#F5F7FA] dark:bg-[#080A0E] border border-[#DDE3EA] dark:border-[#252B34]">
-              <div className="text-xs">
-                <span className="font-semibold text-[#151D2A] dark:text-[#F2F5F9] block flex items-center gap-1.5">
-                  <Terminal className="h-3.5 w-3.5 stroke-[1.75] text-[#697586] dark:text-[#929BA9]" />
-                  Pengujian Otomatis Modul Finansial
-                </span>
-                <span className="text-[11px] text-[#697586] dark:text-[#929BA9]">
-                  Uji 46 poin rumus (Win Rate, Profit Factor, Expectancy, Max DD, Lot Sizing) dengan dataset tiruan terisolasi.
-                </span>
-              </div>
+          {/* Row 2: Audit Rumus Finansial */}
+          <div className="px-4 py-3 flex items-center justify-between gap-4">
+            <div className="min-w-0">
+              <span className="text-xs font-semibold text-[#151D2A] dark:text-[#F2F5F9] block">
+                Audit Rumus Finansial
+              </span>
+              <span className="text-[11px] text-[#697586] dark:text-[#929BA9] block mt-0.5 truncate">
+                Uji 46 formula matematis (Win Rate, Profit Factor, Expectancy, Drawdown, Lot Sizing)
+              </span>
+            </div>
+            <div className="shrink-0">
               <button
                 type="button"
                 onClick={() => setIsAuditModalOpen(true)}
-                className="px-3.5 py-1.5 rounded-lg bg-[#1769E8] hover:bg-[#1458C4] text-white text-xs font-bold transition-colors shrink-0 cursor-pointer"
+                className="text-xs font-semibold text-[#1458C4] dark:text-[#38BDF8] hover:underline cursor-pointer"
               >
-                Jalankan Pengujian
+                Jalankan ›
               </button>
             </div>
+          </div>
 
-            <div className="flex flex-col sm:flex-row items-center justify-between gap-2 p-3 rounded-xl bg-[#F5F7FA] dark:bg-[#080A0E] border border-[#DDE3EA] dark:border-[#252B34]">
-              <div className="text-xs">
-                <span className="font-semibold text-rose-600 dark:text-rose-400 block">Reset Total Jurnal</span>
-                <span className="text-[11px] text-[#697586] dark:text-[#929BA9]">
-                  Hapus seluruh data transaksi untuk memulai jurnal baru dari nol.
-                </span>
-              </div>
+          {/* Row 3: Impor CSV Spreadsheet */}
+          <div className="px-4 py-3 flex items-center justify-between gap-4">
+            <div className="min-w-0">
+              <span className="text-xs font-semibold text-[#151D2A] dark:text-[#F2F5F9] block">
+                Impor Transaksi Spreadsheet (CSV)
+              </span>
+              <span className="text-[11px] text-[#697586] dark:text-[#929BA9] block mt-0.5">
+                Unggah riwayat transaksi dari format tabel CSV/Excel
+              </span>
+            </div>
+            <div className="shrink-0">
+              <button
+                type="button"
+                onClick={() => setIsCsvModalOpen(true)}
+                className="text-xs font-semibold text-[#1458C4] dark:text-[#38BDF8] hover:underline cursor-pointer"
+              >
+                Impor ›
+              </button>
+            </div>
+          </div>
+
+          {/* Row 4: Tindakan Sensitif — Reset Total Jurnal */}
+          <div className="px-4 py-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div className="min-w-0">
+              <span className="text-xs font-semibold text-rose-600 dark:text-rose-400 block">
+                Reset Total Jurnal
+              </span>
+              <span className="text-[11px] text-[#697586] dark:text-[#929BA9] block mt-0.5">
+                Hapus seluruh transaksi untuk memulai jurnal baru dari nol. Tindakan ini tidak dapat dibatalkan.
+              </span>
+            </div>
+
+            <div className="shrink-0 self-start sm:self-auto">
               {!isConfirmingClearAll ? (
                 <button
                   type="button"
                   disabled={isCloudSyncing || trades.length === 0}
                   onClick={() => setIsConfirmingClearAll(true)}
-                  className="px-3.5 py-1.5 rounded-lg bg-[#EEF2F6] dark:bg-[#171D26] text-rose-600 dark:text-rose-400 border border-[#DDE3EA] dark:border-[#252B34] text-xs font-semibold hover:bg-[#DDE3EA] dark:hover:bg-[#252B34] disabled:opacity-50 disabled:cursor-not-allowed transition-colors shrink-0 cursor-pointer"
+                  className="px-3.5 py-1.5 rounded-lg border border-[#DDE3EA] dark:border-[#252B34] text-[#697586] dark:text-[#929BA9] hover:text-rose-600 dark:hover:text-rose-400 hover:border-rose-300 dark:hover:border-rose-900 text-xs font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
                 >
                   Reset Semua
                 </button>
               ) : (
-                <div className="flex items-center gap-2 shrink-0">
+                <div className="flex items-center gap-2">
                   <button
                     type="button"
                     disabled={isCloudSyncing}
                     onClick={() => setIsConfirmingClearAll(false)}
-                    className="px-3 py-1.5 rounded-lg bg-[#EEF2F6] dark:bg-[#171D26] text-[#151D2A] dark:text-[#F2F5F9] border border-[#DDE3EA] dark:border-[#252B34] text-xs font-semibold hover:bg-[#DDE3EA] dark:hover:bg-[#252B34] transition-colors cursor-pointer"
+                    className="px-3 py-1.5 rounded-lg border border-[#DDE3EA] dark:border-[#252B34] text-[#151D2A] dark:text-[#F2F5F9] text-xs font-medium hover:bg-[#EEF2F6] dark:hover:bg-[#171D26] transition-colors cursor-pointer"
                   >
                     Batal
                   </button>
@@ -719,7 +551,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                     type="button"
                     disabled={isCloudSyncing}
                     onClick={handleConfirmClearAllTrades}
-                    className="px-3.5 py-1.5 rounded-lg bg-rose-600 text-white text-xs font-bold hover:bg-rose-500 transition-colors cursor-pointer"
+                    className="px-3.5 py-1.5 rounded-lg bg-rose-600 text-white text-xs font-bold hover:bg-rose-700 transition-colors cursor-pointer"
                   >
                     Ya, Hapus Semua
                   </button>
@@ -729,6 +561,15 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
           </div>
         </div>
       </div>
+
+      {/* Trading Preferences Modal (Group B Editor) */}
+      <TradingPreferencesModal
+        isOpen={Boolean(activePrefModal)}
+        onClose={() => setActivePrefModal(null)}
+        category={activePrefModal || 'balance'}
+        settings={settings}
+        onSave={handleSavePreferences}
+      />
 
       {/* CSV Import Modal */}
       <CsvImportModal

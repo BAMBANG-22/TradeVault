@@ -1,27 +1,59 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { Trade, TradeOutcome, TradePosition, TradingSession } from '../../types/trade';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
+import {
+  Trade,
+  TradeOutcome,
+  TradePosition,
+  TradingSession,
+  TradeLifecycleStatus,
+  TradeOrderType,
+  TradeCloseType,
+} from '../../types/trade';
 import { AppSettings } from '../../types/settings';
-import { calculateXauusdLot } from '../../utils/riskCalculator';
+import {
+  calculateXauusdLot,
+  buildUnifiedXauusdLotInput,
+  POSITION_SIZING_RISK_PRESETS,
+  XAUUSD_PIP_SIZE,
+  calculateLotBasedOrderMetrics,
+  validateSlTpDirection,
+  RiskCapitalBasis,
+} from '../../utils/riskCalculator';
 import {
   classifyNetProfitOutcome,
   computeGrossFromNet,
   computeNetFromGross,
+  computePlannedRiskReward,
   computeRealizedRMultiple,
+  formatCurrency,
+  formatPlannedRR,
 } from '../../utils/calculations';
+import {
+  evaluateTradeCompliance,
+  parseExecutionAdherenceTag,
+  encodeExecutionAdherenceNotes,
+  ExecutionAdherenceTag,
+} from '../../utils/complianceRating';
 import {
   isStoragePath,
   createScreenshotSignedUrl,
   normalizeTradeDateTimeLocal,
 } from '../../utils/supabaseSync';
 import {
+  resolveTradeLifecycle,
+  encodeLifecycleMetaIntoExecutionNotes,
+  createActivityEvent,
+  TradeLifecycleMeta,
+} from '../../utils/tradeLifecycle';
+import {
   Save,
   X,
   Upload,
-  Calculator,
   AlertCircle,
   RefreshCw,
-  Clock,
   Loader2,
+  ChevronDown,
+  Check,
+  Search,
 } from 'lucide-react';
 
 export interface TradeSaveResult {
@@ -41,7 +73,19 @@ interface TradeFormProps {
     originalId?: string
   ) => Promise<TradeSaveResult | void> | TradeSaveResult | void;
   onCancel: () => void;
+  isPopupModal?: boolean;
 }
+
+const COMMON_INSTRUMENTS = [
+  'XAUUSD',
+  'EURUSD',
+  'GBPUSD',
+  'USDJPY',
+  'BTCUSD',
+  'US30',
+  'NAS100',
+  'ETHUSD',
+];
 
 const COMMON_STRATEGIES = [
   'London Open Liquidity Sweep',
@@ -55,12 +99,17 @@ const COMMON_STRATEGIES = [
   'News Retest & Continuation',
 ];
 
-const COMMON_SESSIONS: { key: TradingSession; label: string; timeHint: string }[] = [
-  { key: 'London', label: 'London', timeHint: '14:00 - 22:00 WIB' },
-  { key: 'New York', label: 'New York', timeHint: '19:00 - 03:00 WIB' },
-  { key: 'Overlap', label: 'London/NY Overlap', timeHint: '19:00 - 22:00 WIB (High Volatility)' },
-  { key: 'Asian', label: 'Asian', timeHint: '06:00 - 14:00 WIB' },
-  { key: 'Other', label: 'Lainnya', timeHint: 'Off-session / Custom' },
+const PRIMARY_SESSIONS: { key: TradingSession; label: string; desc: string }[] = [
+  { key: 'Asian', label: 'Asia', desc: 'Tokyo / Sydney' },
+  { key: 'London', label: 'London', desc: 'European Session' },
+  { key: 'New York', label: 'New York', desc: 'US Market' },
+];
+
+const EXECUTION_ADHERENCE_OPTIONS: { value: ExecutionAdherenceTag; label: string }[] = [
+  { value: 'AUTO', label: 'Deteksi Otomatis dari Harga Entry, SL, TP & Exit' },
+  { value: 'PLAN_FOLLOWED', label: 'Patuh Rencana — Penutupan Terukur Sesuai Sistem' },
+  { value: 'SL_MOVED_VIOLATION', label: 'Pelanggaran — SL Digeser / Diperlebar Saat Floating Loss' },
+  { value: 'TP_MODIFIED_VIOLATION', label: 'Deviasi — TP Diubah / Ditutup Prematur Tanpa Aturan' },
 ];
 
 export const TradeForm: React.FC<TradeFormProps> = ({
@@ -70,24 +119,45 @@ export const TradeForm: React.FC<TradeFormProps> = ({
   existingTrades = [],
   onSave,
   onCancel,
+  isPopupModal = true,
 }) => {
-  // Generate random unique ID
   const generateUniqueId = () => {
     const randomSuffix = Math.floor(100000 + Math.random() * 900000);
     return `TRD-${randomSuffix}`;
   };
 
-  // Form State
+  const initialResolved = initialTrade ? resolveTradeLifecycle(initialTrade) : null;
+  const initialLocalDateTime = initialTrade?.dateTime
+    ? normalizeTradeDateTimeLocal(initialTrade.dateTime)
+    : normalizeTradeDateTimeLocal(new Date());
+
+  // Core Form State
   const [id, setId] = useState(initialTrade?.id || generateUniqueId());
-  const [dateTime, setDateTime] = useState(
-    initialTrade?.dateTime
-      ? normalizeTradeDateTimeLocal(initialTrade.dateTime)
-      : normalizeTradeDateTimeLocal(new Date())
-  );
+  const [tradeDate, setTradeDate] = useState<string>(initialLocalDateTime.slice(0, 10));
+  const [tradeTime, setTradeTime] = useState<string>(initialLocalDateTime.slice(11, 16) || '14:00');
   const [instrument, setInstrument] = useState(initialTrade?.instrument || 'XAUUSD');
+  const [isInstrumentDropdownOpen, setIsInstrumentDropdownOpen] = useState<boolean>(false);
+  const [instrumentSearch, setInstrumentSearch] = useState<string>('');
+
   const [position, setPosition] = useState<TradePosition>(initialTrade?.position || 'BUY');
+  const [orderType, setOrderType] = useState<TradeOrderType>(
+    initialResolved?.orderType || 'Market'
+  );
+  const [lifecycleStatus, setLifecycleStatus] = useState<TradeLifecycleStatus>(
+    initialResolved ? initialResolved.status : 'PLANNED'
+  );
+  const [closeType, setCloseType] = useState<TradeCloseType>(
+    initialResolved?.closeType || 'TP'
+  );
+
   const [strategy, setStrategy] = useState(initialTrade?.strategy || '');
+  const [isStrategyPickerOpen, setIsStrategyPickerOpen] = useState<boolean>(false);
+  const [customStrategyInput, setCustomStrategyInput] = useState<string>('');
+
   const [session, setSession] = useState<string>(initialTrade?.session || 'London');
+  const [lotSize, setLotSize] = useState<string>(
+    initialTrade?.lotSize !== undefined ? String(initialTrade.lotSize) : '0.01'
+  );
   const [entryPrice, setEntryPrice] = useState<string>(
     initialTrade?.entryPrice !== undefined ? String(initialTrade.entryPrice) : ''
   );
@@ -106,19 +176,21 @@ export const TradeForm: React.FC<TradeFormProps> = ({
       ? String(initialTrade.exitPrice)
       : ''
   );
-  const [lotSize, setLotSize] = useState<string>(
-    initialTrade?.lotSize !== undefined ? String(initialTrade.lotSize) : '0.10'
+
+  const capitalBasisType: RiskCapitalBasis = settings.riskCapitalBasis || 'EQUITY';
+  const [selectedRiskPercent, setSelectedRiskPercent] = useState<number>(
+    initialTrade?.riskPercentage && initialTrade.riskPercentage > 0
+      ? initialTrade.riskPercentage
+      : settings.defaultRiskPercent || 1.0
   );
+  const [isAutoLotActive, setIsAutoLotActive] = useState<boolean>(!initialTrade);
   const [riskAmount, setRiskAmount] = useState<string>(
-    initialTrade?.riskAmount !== undefined
-      ? String(initialTrade.riskAmount)
-      : String(Math.round((currentEquity * settings.defaultRiskPercent) / 100))
+    initialTrade?.riskAmount !== undefined ? String(initialTrade.riskAmount) : '0'
   );
   const [riskPercentage, setRiskPercentage] = useState<string>(
-    initialTrade?.riskPercentage !== undefined
-      ? String(initialTrade.riskPercentage)
-      : String(settings.defaultRiskPercent)
+    initialTrade?.riskPercentage !== undefined ? String(initialTrade.riskPercentage) : '0'
   );
+
   const [outcome, setOutcome] = useState<TradeOutcome>(initialTrade?.outcome || 'WIN');
   const [grossProfit, setGrossProfit] = useState<string>(
     initialTrade?.grossProfit !== undefined ? String(initialTrade.grossProfit) : ''
@@ -132,22 +204,51 @@ export const TradeForm: React.FC<TradeFormProps> = ({
   const [netProfit, setNetProfit] = useState<string>(
     initialTrade?.netProfit !== undefined ? String(initialTrade.netProfit) : ''
   );
-  const [screenshotUrl, setScreenshotUrl] = useState<string>(
-    initialTrade?.screenshotUrl || ''
+  const [screenshotUrl, setScreenshotUrl] = useState<string>(initialTrade?.screenshotUrl || '');
+  const [afterScreenshotUrl, setAfterScreenshotUrl] = useState<string>(
+    initialResolved?.afterScreenshotUrl || ''
   );
   const [notes, setNotes] = useState<string>(initialTrade?.notes || '');
   const [entryReason, setEntryReason] = useState<string>(initialTrade?.entryReason || '');
   const [postTradeEvaluation, setPostTradeEvaluation] = useState<string>(
     initialTrade?.postTradeEvaluation || ''
   );
-  const [disciplineRating, setDisciplineRating] = useState<number>(
-    initialTrade?.disciplineRating || 5
+
+  const initialParsedAdherence = parseExecutionAdherenceTag(initialTrade?.executionNotes);
+  const [adherenceTag, setAdherenceTag] = useState<ExecutionAdherenceTag>(
+    initialParsedAdherence.tag
   );
+  const [cleanExecutionNotes, setCleanExecutionNotes] = useState<string>(
+    initialParsedAdherence.cleanNotes
+  );
+
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
   const isSubmittingRef = useRef<boolean>(false);
   const errorRef = useRef<HTMLDivElement>(null);
   const pnlInputModeRef = useRef<'gross' | 'net'>('gross');
+  const preserveInitialRiskRef = useRef<boolean>(Boolean(initialTrade));
+
+  const dateTime = `${tradeDate}T${tradeTime || '00:00'}`;
+
+  const activeCapitalBasisValue =
+    capitalBasisType === 'BALANCE'
+      ? settings.startingBalance
+      : currentEquity > 0
+      ? currentEquity
+      : settings.startingBalance;
+
+  // Escape key dismissal for popup modal
+  useEffect(() => {
+    if (!isPopupModal) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && !isSubmittingRef.current) {
+        onCancel();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isPopupModal, onCancel]);
 
   const triggerValidationError = (msg: string) => {
     setErrorMsg(msg);
@@ -155,11 +256,9 @@ export const TradeForm: React.FC<TradeFormProps> = ({
       try {
         if (errorRef.current) {
           errorRef.current.scrollIntoView({ behavior: 'smooth', block: 'center' });
-        } else {
-          window.scrollTo({ top: 0, behavior: 'smooth' });
         }
       } catch {
-        window.scrollTo({ top: 0, behavior: 'smooth' });
+        // ignore
       }
     }, 50);
   };
@@ -212,16 +311,22 @@ export const TradeForm: React.FC<TradeFormProps> = ({
   // Synchronize form when initialTrade changes
   useEffect(() => {
     if (initialTrade) {
+      preserveInitialRiskRef.current = true;
+      const resolved = resolveTradeLifecycle(initialTrade);
+      const normDt = initialTrade.dateTime
+        ? normalizeTradeDateTimeLocal(initialTrade.dateTime)
+        : normalizeTradeDateTimeLocal(new Date());
       setId(initialTrade.id);
-      setDateTime(
-        initialTrade.dateTime
-          ? normalizeTradeDateTimeLocal(initialTrade.dateTime)
-          : normalizeTradeDateTimeLocal(new Date())
-      );
+      setTradeDate(normDt.slice(0, 10));
+      setTradeTime(normDt.slice(11, 16) || '14:00');
       setInstrument(initialTrade.instrument || 'XAUUSD');
       setPosition(initialTrade.position || 'BUY');
+      setOrderType(resolved.orderType);
+      setLifecycleStatus(resolved.status);
+      setCloseType(resolved.closeType || 'TP');
       setStrategy(initialTrade.strategy || '');
       setSession(initialTrade.session || 'London');
+      setLotSize(initialTrade.lotSize !== undefined ? String(initialTrade.lotSize) : '0.01');
       setEntryPrice(initialTrade.entryPrice !== undefined ? String(initialTrade.entryPrice) : '');
       setStopLoss(
         initialTrade.stopLoss !== undefined && initialTrade.stopLoss > 0
@@ -238,17 +343,18 @@ export const TradeForm: React.FC<TradeFormProps> = ({
           ? String(initialTrade.exitPrice)
           : ''
       );
-      setLotSize(initialTrade.lotSize !== undefined ? String(initialTrade.lotSize) : '0.10');
       setRiskAmount(
-        initialTrade.riskAmount !== undefined
-          ? String(initialTrade.riskAmount)
-          : String(Math.round((currentEquity * settings.defaultRiskPercent) / 100))
+        initialTrade.riskAmount !== undefined ? String(initialTrade.riskAmount) : '0'
       );
       setRiskPercentage(
-        initialTrade.riskPercentage !== undefined
-          ? String(initialTrade.riskPercentage)
-          : String(settings.defaultRiskPercent)
+        initialTrade.riskPercentage !== undefined ? String(initialTrade.riskPercentage) : '0'
       );
+      setSelectedRiskPercent(
+        initialTrade.riskPercentage && initialTrade.riskPercentage > 0
+          ? initialTrade.riskPercentage
+          : settings.defaultRiskPercent || 1.0
+      );
+      setIsAutoLotActive(false);
       setOutcome(initialTrade.outcome || 'WIN');
       setGrossProfit(
         initialTrade.grossProfit !== undefined ? String(initialTrade.grossProfit) : ''
@@ -259,69 +365,234 @@ export const TradeForm: React.FC<TradeFormProps> = ({
       setSwap(initialTrade.swap !== undefined ? String(initialTrade.swap) : '0');
       setNetProfit(initialTrade.netProfit !== undefined ? String(initialTrade.netProfit) : '');
       setScreenshotUrl(initialTrade.screenshotUrl || '');
+      setAfterScreenshotUrl(resolved.afterScreenshotUrl || '');
       setNotes(initialTrade.notes || '');
       setEntryReason(initialTrade.entryReason || '');
       setPostTradeEvaluation(initialTrade.postTradeEvaluation || '');
-      setDisciplineRating(initialTrade.disciplineRating || 5);
+      const parsedAdherence = parseExecutionAdherenceTag(initialTrade.executionNotes);
+      setAdherenceTag(parsedAdherence.tag);
+      setCleanExecutionNotes(parsedAdherence.cleanNotes);
       setErrorMsg(null);
     } else {
+      preserveInitialRiskRef.current = false;
+      const normDt = normalizeTradeDateTimeLocal(new Date());
       setId(generateUniqueId());
-      setDateTime(normalizeTradeDateTimeLocal(new Date()));
+      setTradeDate(normDt.slice(0, 10));
+      setTradeTime(normDt.slice(11, 16) || '14:00');
       setInstrument('XAUUSD');
       setPosition('BUY');
+      setOrderType('Market');
+      setLifecycleStatus('PLANNED');
+      setCloseType('TP');
       setStrategy('');
       setSession('London');
+      setLotSize('0.01');
       setEntryPrice('');
       setStopLoss('');
       setTakeProfit('');
       setExitPrice('');
-      setLotSize('0.10');
-      setRiskAmount(String(Math.round((currentEquity * settings.defaultRiskPercent) / 100)));
-      setRiskPercentage(String(settings.defaultRiskPercent));
+      setRiskAmount('0');
+      setRiskPercentage('0');
+      setSelectedRiskPercent(settings.defaultRiskPercent || 1.0);
+      setIsAutoLotActive(true);
       setOutcome('WIN');
       setGrossProfit('');
       setCommission('0');
       setSwap('0');
       setNetProfit('');
       setScreenshotUrl('');
+      setAfterScreenshotUrl('');
       setNotes('');
       setEntryReason('');
       setPostTradeEvaluation('');
-      setDisciplineRating(5);
+      setAdherenceTag('AUTO');
+      setCleanExecutionNotes('');
       setErrorMsg(null);
     }
     pnlInputModeRef.current = 'gross';
-  }, [initialTrade, currentEquity, settings.defaultRiskPercent]);
+  }, [initialTrade, settings.defaultRiskPercent]);
 
-  // Auto calculate net profit (when in gross mode) or gross profit (when in manual net mode and fee/swap changes)
+  // Internal Lot-based Pip Value, SL/TP Distance, Risk Amount, Potential Profit & Dynamic RR Engine
+  const numEntry = parseFloat(entryPrice);
+  const numSL = stopLoss.trim() !== '' ? parseFloat(stopLoss) : undefined;
+  const numTP = takeProfit.trim() !== '' ? parseFloat(takeProfit) : undefined;
+  const numExit = exitPrice.trim() !== '' ? parseFloat(exitPrice) : undefined;
+  const numLot = parseFloat(lotSize);
+
+  const isXauInstrument = useMemo(() => {
+    const clean = (instrument || 'XAUUSD').trim().toUpperCase();
+    return clean.includes('XAU') || clean.includes('GOLD');
+  }, [instrument]);
+
+  const xauBrokerSpecOverride = useMemo(() => {
+    if (!isXauInstrument) return undefined;
+    const cSize = settings.xauusdContractSize || 100;
+    const basePip001 =
+      typeof settings.xauusdPipValuePer001Lot === 'number' &&
+      Number.isFinite(settings.xauusdPipValuePer001Lot) &&
+      settings.xauusdPipValuePer001Lot > 0
+        ? settings.xauusdPipValuePer001Lot
+        : 0.1;
+    const stdLotPipVal = Number((basePip001 * cSize).toFixed(4));
+    return {
+      pipSize: XAUUSD_PIP_SIZE,
+      contractSize: cSize,
+      pipValuePerStandardLot: stdLotPipVal,
+      pipValuePer001Lot: Number((stdLotPipVal / 100).toFixed(4)),
+      minLot: settings.xauusdMinLot || 0.01,
+      lotStep: settings.xauusdLotStep || 0.01,
+    };
+  }, [
+    isXauInstrument,
+    settings.xauusdContractSize,
+    settings.xauusdPipValuePer001Lot,
+    settings.xauusdMinLot,
+    settings.xauusdLotStep,
+  ]);
+
+  // Shared XAUUSD Lot Calculation Engine (identical to Risk Calculator -> Position Sizing)
+  const xauLotCalcResult = useMemo(() => {
+    return calculateXauusdLot(
+      buildUnifiedXauusdLotInput(
+        {
+          equity: activeCapitalBasisValue,
+          riskPercent: selectedRiskPercent,
+          entryPrice: !isNaN(numEntry) && numEntry > 0 ? numEntry : 0,
+          stopLossPrice: numSL !== undefined && !isNaN(numSL) && numSL > 0 ? numSL : 0,
+          takeProfitPrice: numTP !== undefined && !isNaN(numTP) && numTP > 0 ? numTP : undefined,
+          position,
+          contractSize: settings.xauusdContractSize || 100,
+          minLot: settings.xauusdMinLot || 0.01,
+          lotStep: settings.xauusdLotStep || 0.01,
+          maxLot: 100,
+          leverage: settings.defaultLeverage || 500,
+          accountCurrency: settings.currency,
+        },
+        settings
+      ),
+      settings
+    );
+  }, [
+    activeCapitalBasisValue,
+    selectedRiskPercent,
+    numEntry,
+    numSL,
+    numTP,
+    position,
+    settings,
+  ]);
+
+  // Auto-synchronize Lot Size in Trade Log when Auto-Lot is active and XAUUSD Entry & SL are valid
   useEffect(() => {
-    const comm = Math.abs(parseFloat(commission) || 0);
-    const swp = parseFloat(swap) || 0;
-
-    if (pnlInputModeRef.current === 'net') {
-      const numNet = parseFloat(netProfit);
-      if (!isNaN(numNet)) {
-        const syncedGross = computeGrossFromNet(numNet, comm, swp);
-        setGrossProfit(syncedGross.toFixed(2));
-        setOutcome(classifyNetProfitOutcome(numNet));
-      }
+    if (!isXauInstrument || !isAutoLotActive || preserveInitialRiskRef.current) {
       return;
     }
-
-    const gross = parseFloat(grossProfit);
-    if (!isNaN(gross)) {
-      const net = computeNetFromGross(gross, comm, swp);
-      setNetProfit(net.toFixed(2));
-      setOutcome(classifyNetProfitOutcome(net));
+    if (xauLotCalcResult.isValid && xauLotCalcResult.recommendedLot > 0) {
+      setLotSize(String(xauLotCalcResult.recommendedLot));
     }
-  }, [grossProfit, commission, swap]);
+  }, [
+    isXauInstrument,
+    isAutoLotActive,
+    xauLotCalcResult.isValid,
+    xauLotCalcResult.recommendedLot,
+  ]);
+
+  const lotOrderMetrics = calculateLotBasedOrderMetrics(
+    {
+      symbol: instrument,
+      position,
+      lotSize: !isNaN(numLot) && numLot > 0 ? numLot : 0,
+      entryPrice: !isNaN(numEntry) && numEntry > 0 ? numEntry : 0,
+      stopLossPrice: numSL !== undefined && !isNaN(numSL) && numSL > 0 ? numSL : undefined,
+      takeProfitPrice: numTP !== undefined && !isNaN(numTP) && numTP > 0 ? numTP : undefined,
+      exitPrice: numExit !== undefined && !isNaN(numExit) && numExit > 0 ? numExit : undefined,
+      capitalBasis: activeCapitalBasisValue,
+      capitalBasisType,
+      customSpecOverride: xauBrokerSpecOverride,
+    },
+    settings
+  );
+
+  const plannedRR = computePlannedRiskReward(
+    !isNaN(numEntry) ? numEntry : undefined,
+    numSL,
+    numTP,
+    position
+  );
+
+  // Synchronize internal Risk Amount & Risk % automatically whenever Lot, Entry, SL, Position, or Instrument changes
+  useEffect(() => {
+    if (preserveInitialRiskRef.current) {
+      return;
+    }
+    if (
+      lotOrderMetrics.isSlValid &&
+      lotOrderMetrics.riskAmount !== null &&
+      lotOrderMetrics.riskPercent !== null
+    ) {
+      setRiskAmount(String(lotOrderMetrics.riskAmount));
+      setRiskPercentage(String(lotOrderMetrics.riskPercent));
+    } else if (stopLoss.trim() === '') {
+      setRiskAmount('0');
+      setRiskPercentage('0');
+    }
+  }, [
+    lotOrderMetrics.isSlValid,
+    lotOrderMetrics.riskAmount,
+    lotOrderMetrics.riskPercent,
+    stopLoss,
+  ]);
+
+  const handleExitPriceChange = (val: string) => {
+    setExitPrice(val);
+    const parsedEx = parseFloat(val);
+    if (
+      !isNaN(parsedEx) &&
+      parsedEx > 0 &&
+      !isNaN(numEntry) &&
+      numEntry > 0 &&
+      !isNaN(numLot) &&
+      numLot > 0
+    ) {
+      const liveEstimatedMetrics = calculateLotBasedOrderMetrics(
+        {
+          symbol: instrument,
+          position,
+          lotSize: numLot,
+          entryPrice: numEntry,
+          exitPrice: parsedEx,
+          capitalBasis: activeCapitalBasisValue,
+          capitalBasisType,
+          customSpecOverride: xauBrokerSpecOverride,
+        },
+        settings
+      );
+      if (liveEstimatedMetrics.estimatedExitGrossProfit !== null) {
+        pnlInputModeRef.current = 'gross';
+        const estGross = liveEstimatedMetrics.estimatedExitGrossProfit;
+        setGrossProfit(estGross.toFixed(2));
+        const comm = Math.abs(parseFloat(commission) || 0);
+        const swp = parseFloat(swap) || 0;
+        const autoNet = computeNetFromGross(estGross, comm, swp);
+        setNetProfit(autoNet.toFixed(2));
+        setOutcome(classifyNetProfitOutcome(autoNet));
+      }
+    }
+  };
 
   const handleGrossProfitChange = (val: string) => {
     pnlInputModeRef.current = 'gross';
     setGrossProfit(val);
+    const numGross = parseFloat(val);
+    if (!isNaN(numGross)) {
+      const comm = Math.abs(parseFloat(commission) || 0);
+      const swp = parseFloat(swap) || 0;
+      const syncedNet = computeNetFromGross(numGross, comm, swp);
+      setNetProfit(syncedNet.toFixed(2));
+      setOutcome(classifyNetProfitOutcome(syncedNet));
+    }
   };
 
-  // If user modifies netProfit directly, synchronize grossProfit and outcome accordingly
   const handleNetProfitChange = (val: string) => {
     pnlInputModeRef.current = 'net';
     setNetProfit(val);
@@ -335,27 +606,26 @@ export const TradeForm: React.FC<TradeFormProps> = ({
     }
   };
 
-  // Quick lot calculator preview based on entry & SL
-  const numEntry = parseFloat(entryPrice);
-  const numSL = parseFloat(stopLoss);
-  const numRisk = parseFloat(riskAmount);
+  const encodedExecutionNotesPreview = encodeExecutionAdherenceNotes(
+    adherenceTag,
+    cleanExecutionNotes
+  );
+  const liveComplianceEval = evaluateTradeCompliance(
+    {
+      instrument: instrument.trim().toUpperCase() || 'XAUUSD',
+      position,
+      lotSize: !isNaN(numLot) && numLot > 0 ? numLot : 0,
+      entryPrice: !isNaN(numEntry) && numEntry > 0 ? numEntry : 0,
+      stopLoss: numSL !== undefined && !isNaN(numSL) && numSL > 0 ? numSL : undefined,
+      takeProfit: numTP !== undefined && !isNaN(numTP) && numTP > 0 ? numTP : undefined,
+      exitPrice: numExit !== undefined && !isNaN(numExit) && numExit > 0 ? numExit : undefined,
+      riskAmount: parseFloat(riskAmount) || 0,
+      netProfit: parseFloat(netProfit) || 0,
+      executionNotes: encodedExecutionNotesPreview || undefined,
+    },
+    settings
+  );
 
-  const lotCalcResult =
-    !isNaN(numEntry) && !isNaN(numSL) && numEntry > 0 && numSL > 0
-      ? calculateXauusdLot(
-          {
-            equity: currentEquity,
-            riskPercent: parseFloat(riskPercentage) || 1,
-            riskAmountManual: numRisk > 0 ? numRisk : undefined,
-            entryPrice: numEntry,
-            stopLossPrice: numSL,
-            position,
-          },
-          settings
-        )
-      : null;
-
-  // Handle image upload from computer / phone with automatic resizing & compression
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -403,23 +673,38 @@ export const TradeForm: React.FC<TradeFormProps> = ({
     reader.readAsDataURL(file);
   };
 
-  const handleApplyCalculatedLot = () => {
-    if (lotCalcResult?.isValid && lotCalcResult.recommendedLot > 0) {
-      setLotSize(String(lotCalcResult.recommendedLot));
-    }
-  };
-
-  // Outcome quick preset helpers
   const handleOutcomeChange = (newOutcome: TradeOutcome) => {
     pnlInputModeRef.current = 'gross';
+    setLifecycleStatus('CLOSED');
     setOutcome(newOutcome);
-    const riskVal = parseFloat(riskAmount) || 100;
+    const currentRiskVal =
+      lotOrderMetrics.riskAmount !== null && lotOrderMetrics.riskAmount > 0
+        ? lotOrderMetrics.riskAmount
+        : parseFloat(riskAmount) || 0;
+
     if (newOutcome === 'LOSS') {
-      setGrossProfit((-riskVal).toFixed(2));
+      if (
+        lotOrderMetrics.estimatedExitGrossProfit !== null &&
+        lotOrderMetrics.estimatedExitGrossProfit < 0
+      ) {
+        setGrossProfit(lotOrderMetrics.estimatedExitGrossProfit.toFixed(2));
+      } else if (currentRiskVal > 0) {
+        setGrossProfit((-currentRiskVal).toFixed(2));
+      }
     } else if (newOutcome === 'BREAKEVEN') {
       setGrossProfit('0.00');
     } else if (newOutcome === 'WIN') {
-      setGrossProfit((riskVal * 2).toFixed(2));
+      if (
+        lotOrderMetrics.estimatedExitGrossProfit !== null &&
+        lotOrderMetrics.estimatedExitGrossProfit > 0
+      ) {
+        setGrossProfit(lotOrderMetrics.estimatedExitGrossProfit.toFixed(2));
+      } else if (
+        lotOrderMetrics.potentialProfit !== null &&
+        lotOrderMetrics.potentialProfit > 0
+      ) {
+        setGrossProfit(lotOrderMetrics.potentialProfit.toFixed(2));
+      }
     }
   };
 
@@ -447,36 +732,38 @@ export const TradeForm: React.FC<TradeFormProps> = ({
         (t) => t.id.toLowerCase() === cleanId.toLowerCase() && t.id !== initialTrade?.id
       );
       if (duplicateExists) {
-        triggerValidationError(`ID Transaksi "${cleanId}" sudah digunakan oleh trade lain. Gunakan ID unik.`);
+        triggerValidationError(
+          `ID Transaksi "${cleanId}" sudah digunakan oleh trade lain. Gunakan ID unik.`
+        );
         return;
       }
     }
 
-    if (!dateTime) {
-      triggerValidationError('Tanggal dan waktu transaksi harus ditentukan.');
+    if (!tradeDate || !tradeTime) {
+      triggerValidationError('Tanggal dan jam transaksi wajib diisi.');
       return;
     }
 
     const cleanInstrument = instrument.trim().toUpperCase();
     if (!cleanInstrument) {
-      triggerValidationError('Instrumen trading harus diisi (contoh: XAUUSD).');
+      triggerValidationError('Simbol instrumen harus diisi (contoh: XAUUSD).');
       return;
     }
 
     if (!position || (position !== 'BUY' && position !== 'SELL')) {
-      triggerValidationError('Arah transaksi (posisi) harus dipilih: Buy atau Sell.');
-      return;
-    }
-
-    const parsedEntry = parseFloat(entryPrice);
-    if (isNaN(parsedEntry) || parsedEntry <= 0) {
-      triggerValidationError('Entry Price harus berupa angka positif yang valid.');
+      triggerValidationError('Arah transaksi (BUY / SELL) wajib dipilih.');
       return;
     }
 
     const parsedLot = parseFloat(lotSize);
     if (isNaN(parsedLot) || parsedLot <= 0) {
-      triggerValidationError('Lot Size harus berupa angka positif lebih dari 0.');
+      triggerValidationError('Lot harus berupa angka positif lebih dari 0.');
+      return;
+    }
+
+    const parsedEntry = parseFloat(entryPrice);
+    if (isNaN(parsedEntry) || parsedEntry <= 0) {
+      triggerValidationError('Entry price harus berupa angka positif yang valid.');
       return;
     }
 
@@ -500,6 +787,14 @@ export const TradeForm: React.FC<TradeFormProps> = ({
       parsedTP = num;
     }
 
+    const directionCheck = validateSlTpDirection(position, parsedEntry, parsedSL, parsedTP);
+    if (!directionCheck.isValid) {
+      triggerValidationError(
+        directionCheck.errorMessage || 'Arah Stop Loss / Take Profit tidak sesuai posisi order.'
+      );
+      return;
+    }
+
     let parsedExit: number | undefined = undefined;
     if (exitPrice.trim() !== '') {
       const num = parseFloat(exitPrice);
@@ -510,33 +805,193 @@ export const TradeForm: React.FC<TradeFormProps> = ({
       parsedExit = num;
     }
 
-    const parsedNet = parseFloat(netProfit);
-    if (isNaN(parsedNet)) {
-      triggerValidationError('Hasil bersih (Net Profit) harus berupa angka yang valid.');
-      return;
-    }
+    const effectiveStatus: TradeLifecycleStatus =
+      parsedExit !== undefined && lifecycleStatus === 'PLANNED'
+        ? 'CLOSED'
+        : lifecycleStatus;
 
-    const parsedGross = parseFloat(grossProfit);
     const normalizedComm = Math.abs(parseFloat(commission) || 0);
     const parsedSwp = parseFloat(swap) || 0;
     const parsedRiskAmt = parseFloat(riskAmount) || 0;
     const parsedRiskPct = parseFloat(riskPercentage) || 0;
-    const normalizedNet = Number(parsedNet.toFixed(2));
 
-    const computedR = computeRealizedRMultiple({
-      netProfit: normalizedNet,
-      riskAmount: parsedRiskAmt,
-    });
+    let normalizedNet = 0;
+    let synchronizedGross = 0;
+
+    if (effectiveStatus === 'CLOSED') {
+      const rawNet =
+        netProfit.trim() !== ''
+          ? parseFloat(netProfit)
+          : lotOrderMetrics.estimatedExitGrossProfit !== null
+          ? computeNetFromGross(
+              lotOrderMetrics.estimatedExitGrossProfit,
+              normalizedComm,
+              parsedSwp
+            )
+          : 0;
+      if (isNaN(rawNet)) {
+        triggerValidationError('Hasil bersih (Net Profit) harus berupa angka yang valid.');
+        return;
+      }
+      normalizedNet = Number(rawNet.toFixed(2));
+      const parsedGross = parseFloat(grossProfit);
+      synchronizedGross =
+        isNaN(parsedGross) ||
+        pnlInputModeRef.current === 'net' ||
+        Math.abs(computeNetFromGross(parsedGross, normalizedComm, parsedSwp) - normalizedNet) >
+          0.005
+          ? computeGrossFromNet(normalizedNet, normalizedComm, parsedSwp)
+          : Number(parsedGross.toFixed(2));
+    }
+
+    const computedR =
+      effectiveStatus === 'CLOSED'
+        ? computeRealizedRMultiple({
+            netProfit: normalizedNet,
+            riskAmount: parsedRiskAmt,
+          })
+        : null;
     const rMultiple: number | undefined = computedR !== null ? computedR : undefined;
+    const finalOutcome: TradeOutcome =
+      effectiveStatus === 'CLOSED' ? classifyNetProfitOutcome(normalizedNet) : 'BREAKEVEN';
 
-    const finalOutcome: TradeOutcome = classifyNetProfitOutcome(normalizedNet);
+    const baseExecutionNotes = encodeExecutionAdherenceNotes(adherenceTag, cleanExecutionNotes);
+    const finalCompliance = evaluateTradeCompliance(
+      {
+        instrument: cleanInstrument,
+        position,
+        lotSize: parsedLot,
+        entryPrice: parsedEntry,
+        stopLoss: parsedSL,
+        takeProfit: parsedTP,
+        exitPrice: effectiveStatus === 'CLOSED' ? parsedExit : undefined,
+        riskAmount: parsedRiskAmt,
+        netProfit: normalizedNet,
+        executionNotes: baseExecutionNotes || undefined,
+      },
+      settings
+    );
 
-    const synchronizedGross =
-      isNaN(parsedGross) ||
-      pnlInputModeRef.current === 'net' ||
-      Math.abs(computeNetFromGross(parsedGross, normalizedComm, parsedSwp) - normalizedNet) > 0.005
-        ? computeGrossFromNet(normalizedNet, normalizedComm, parsedSwp)
-        : Number(parsedGross.toFixed(2));
+    // Build genuine Activity Log & preserve initial Trade Plan on edits
+    const nowIso = new Date().toISOString();
+    const existingResolved = initialTrade ? resolveTradeLifecycle(initialTrade) : null;
+    const nextActivityLog = existingResolved ? [...existingResolved.activityLog] : [];
+
+    if (!initialTrade) {
+      nextActivityLog.push(
+        createActivityEvent('TRADE_CREATED', `Trade Created (${orderType} • ${effectiveStatus})`, {
+          timestamp: nowIso,
+          newValue: `${cleanInstrument} ${position} ${parsedLot.toFixed(2)} Lot @ ${parsedEntry.toFixed(2)}`,
+        })
+      );
+      if (effectiveStatus === 'OPEN' || effectiveStatus === 'CLOSED') {
+        nextActivityLog.push(
+          createActivityEvent('POSITION_OPENED', 'Position Opened', {
+            timestamp: dateTime,
+            newValue: `Entry: ${parsedEntry.toFixed(2)} (${parsedLot.toFixed(2)} Lot)`,
+          })
+        );
+      }
+      if (effectiveStatus === 'CLOSED') {
+        nextActivityLog.push(
+          createActivityEvent('POSITION_CLOSED', `Position Closed (${closeType})`, {
+            timestamp: nowIso,
+            newValue: `Net P/L: ${normalizedNet >= 0 ? '+' : ''}${normalizedNet.toFixed(2)}`,
+          })
+        );
+      }
+      if (postTradeEvaluation.trim()) {
+        nextActivityLog.push(
+          createActivityEvent('EVALUATION_ADDED', 'Evaluation Added', {
+            timestamp: nowIso,
+          })
+        );
+      }
+    } else {
+      if (initialTrade.stopLoss !== parsedSL) {
+        nextActivityLog.push(
+          createActivityEvent('SL_CHANGED', 'Stop Loss Changed', {
+            timestamp: nowIso,
+            previousValue:
+              initialTrade.stopLoss !== undefined ? initialTrade.stopLoss.toFixed(2) : 'Kosong',
+            newValue: parsedSL !== undefined ? parsedSL.toFixed(2) : 'Kosong',
+          })
+        );
+      }
+      if (initialTrade.takeProfit !== parsedTP) {
+        nextActivityLog.push(
+          createActivityEvent('TP_CHANGED', 'Take Profit Changed', {
+            timestamp: nowIso,
+            previousValue:
+              initialTrade.takeProfit !== undefined
+                ? initialTrade.takeProfit.toFixed(2)
+                : 'Kosong',
+            newValue: parsedTP !== undefined ? parsedTP.toFixed(2) : 'Kosong',
+          })
+        );
+      }
+      if (
+        postTradeEvaluation.trim() &&
+        postTradeEvaluation.trim() !== (initialTrade.postTradeEvaluation || '').trim()
+      ) {
+        nextActivityLog.push(
+          createActivityEvent('EVALUATION_ADDED', 'Evaluation Added / Updated', {
+            timestamp: nowIso,
+          })
+        );
+      }
+    }
+
+    const preservePlanFromExisting =
+      existingResolved && existingResolved.status !== 'PLANNED';
+
+    const lifecycleMeta: TradeLifecycleMeta = {
+      status: effectiveStatus,
+      orderType,
+      plannedEntry: preservePlanFromExisting
+        ? existingResolved.plannedEntry
+        : parsedEntry,
+      plannedLot: preservePlanFromExisting
+        ? existingResolved.plannedLot
+        : parsedLot,
+      plannedStopLoss: preservePlanFromExisting
+        ? existingResolved.plannedStopLoss ?? parsedSL
+        : parsedSL,
+      plannedTakeProfit: preservePlanFromExisting
+        ? existingResolved.plannedTakeProfit ?? parsedTP
+        : parsedTP,
+      plannedDateTime: preservePlanFromExisting
+        ? existingResolved.plannedDateTime
+        : dateTime,
+      actualEntry:
+        effectiveStatus === 'OPEN' || effectiveStatus === 'CLOSED'
+          ? parsedEntry
+          : undefined,
+      actualLot:
+        effectiveStatus === 'OPEN' || effectiveStatus === 'CLOSED'
+          ? parsedLot
+          : undefined,
+      actualExit: effectiveStatus === 'CLOSED' ? parsedExit : undefined,
+      entryTime:
+        effectiveStatus === 'OPEN' || effectiveStatus === 'CLOSED'
+          ? existingResolved?.entryTime || dateTime
+          : undefined,
+      exitTime:
+        effectiveStatus === 'CLOSED'
+          ? existingResolved?.exitTime || nowIso
+          : undefined,
+      closeType: effectiveStatus === 'CLOSED' ? closeType : undefined,
+      beforeScreenshotUrl: screenshotUrl.trim() || undefined,
+      afterScreenshotUrl: afterScreenshotUrl.trim() || undefined,
+      cancellationReason: existingResolved?.cancellationReason,
+      cancelledAt: existingResolved?.cancelledAt,
+      activityLog: nextActivityLog,
+    };
+
+    const finalExecutionNotes = encodeLifecycleMetaIntoExecutionNotes(
+      baseExecutionNotes,
+      lifecycleMeta
+    );
 
     const tradeData: Trade = {
       id: cleanId,
@@ -548,7 +1003,7 @@ export const TradeForm: React.FC<TradeFormProps> = ({
       entryPrice: parsedEntry,
       stopLoss: parsedSL,
       takeProfit: parsedTP,
-      exitPrice: parsedExit,
+      exitPrice: effectiveStatus === 'CLOSED' ? parsedExit : undefined,
       lotSize: parsedLot,
       riskAmount: parsedRiskAmt,
       riskPercentage: parsedRiskPct,
@@ -562,9 +1017,14 @@ export const TradeForm: React.FC<TradeFormProps> = ({
       notes: notes.trim() || undefined,
       entryReason: entryReason.trim() || undefined,
       postTradeEvaluation: postTradeEvaluation.trim() || undefined,
-      disciplineRating,
+      disciplineRating:
+        effectiveStatus === 'CLOSED' && finalCompliance.rating !== null
+          ? finalCompliance.rating
+          : undefined,
+      executionNotes: finalExecutionNotes || undefined,
       isDemo: initialTrade?.isDemo || false,
-      updatedAt: new Date().toISOString(),
+      createdAt: initialTrade?.createdAt || nowIso,
+      updatedAt: nowIso,
     };
 
     isSubmittingRef.current = true;
@@ -576,8 +1036,10 @@ export const TradeForm: React.FC<TradeFormProps> = ({
         if (saveResult.uploadedScreenshotPath) {
           setScreenshotUrl(saveResult.uploadedScreenshotPath);
         }
-        if (!saveResult.success && !saveResult.ignored && saveResult.error) {
-          triggerValidationError(saveResult.error);
+        if (!saveResult.success && !saveResult.ignored) {
+          triggerValidationError(
+            saveResult.error || 'Gagal menyimpan transaksi. Data formulir Anda tetap tersimpan.'
+          );
         }
       }
     } catch (err: any) {
@@ -590,23 +1052,32 @@ export const TradeForm: React.FC<TradeFormProps> = ({
     }
   };
 
-  return (
-    <div className="relative rounded-2xl border border-[#DDE3EA] dark:border-[#252B34] bg-white dark:bg-[#11151B] p-4 sm:p-6 transition-colors duration-150">
-      {/* Header */}
-      <div className="flex items-center justify-between pb-4 border-b border-[#DDE3EA] dark:border-[#252B34]">
+  const filteredInstruments = COMMON_INSTRUMENTS.filter((sym) =>
+    sym.toLowerCase().includes(instrumentSearch.toLowerCase().trim())
+  );
+
+  const formCardContent = (
+    <form
+      onSubmit={handleSubmit}
+      data-testid="add-trade-popup-form"
+      className="w-full max-w-xl max-h-[calc(100vh-1.5rem)] sm:max-h-[calc(100vh-2rem)] supports-[height:100dvh]:max-h-[calc(100dvh-1.5rem)] sm:supports-[height:100dvh]:max-h-[calc(100dvh-2rem)] my-auto shrink-0 flex flex-col rounded-2xl border border-[#DDE3EA] dark:border-[#252B34] bg-white dark:bg-[#11151B] shadow-2xl text-[#151D2A] dark:text-[#F2F5F9] font-sans transition-colors duration-150 overflow-hidden"
+      onClick={(e) => e.stopPropagation()}
+    >
+      {/* 1. Page Header (Fixed shrink-0, always visible) */}
+      <div className="flex items-center justify-between p-4 sm:p-5 pb-3.5 border-b border-[#DDE3EA] dark:border-[#252B34] bg-white dark:bg-[#11151B] shrink-0">
         <div>
-          <h2 className="text-lg font-bold text-[#151D2A] dark:text-[#F2F5F9]">
-            {initialTrade ? `Edit Transaksi: ${initialTrade.id}` : 'Catat Transaksi Baru'}
+          <h2 className="text-base sm:text-lg font-bold text-[#151D2A] dark:text-[#F2F5F9]">
+            {initialTrade ? `Edit Transaksi (${initialTrade.id})` : 'Tambah Transaksi'}
           </h2>
-          <p className="text-xs text-[#697586] dark:text-[#929BA9]">
-            Sumber data tunggal Trade Log • Tersinkronisasi otomatis ke Dashboard, Analitik &amp; Kurva Ekuitas
+          <p className="text-[11px] text-[#697586] dark:text-[#929BA9]">
+            Input jurnal trading terpadu dengan kalkulasi presisi
           </p>
         </div>
         <button
           type="button"
           onClick={onCancel}
           disabled={isSubmitting}
-          className="rounded-lg p-2 text-[#697586] dark:text-[#929BA9] hover:bg-[#EEF2F6] dark:hover:bg-[#171D26] hover:text-[#151D2A] dark:hover:text-[#F2F5F9] transition-colors disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
+          className="rounded-lg p-1.5 text-[#697586] dark:text-[#929BA9] hover:bg-[#EEF2F6] dark:hover:bg-[#171D26] hover:text-[#151D2A] dark:hover:text-[#F2F5F9] transition-colors disabled:opacity-50 cursor-pointer"
           title="Tutup Form"
           aria-label="Tutup form transaksi"
         >
@@ -614,434 +1085,735 @@ export const TradeForm: React.FC<TradeFormProps> = ({
         </button>
       </div>
 
-      {/* Non-destructive Error Banner */}
-      <div ref={errorRef} tabIndex={-1} className="outline-none">
-        {errorMsg && (
-          <div className="mt-4 flex items-center gap-2 rounded-lg bg-[#F5F7FA] dark:bg-[#171D26] border border-[#DDE3EA] dark:border-[#252B34] p-3 text-xs text-rose-600 dark:text-rose-400 animate-in fade-in duration-150">
-            <AlertCircle className="h-4 w-4 stroke-[1.75] shrink-0 text-rose-600 dark:text-rose-400" />
-            <span>{errorMsg}</span>
-          </div>
-        )}
-      </div>
-
-      <form onSubmit={handleSubmit} className="mt-5 space-y-5">
-        {/* Row 1: ID Transaksi, Tanggal/Waktu, Instrumen, Arah Transaksi */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-          {/* ID Transaksi */}
-          <div>
-            <div className="flex items-center justify-between mb-1">
-              <label className="text-xs font-semibold text-[#151D2A] dark:text-[#F2F5F9]">ID Transaksi Unik</label>
-              <button
-                type="button"
-                onClick={handleRegenerateId}
-                disabled={isSubmitting}
-                className="text-[10px] text-[#1769E8] hover:underline flex items-center gap-0.5 disabled:opacity-50 disabled:cursor-not-allowed"
-                title="Buat ID baru secara acak"
-              >
-                <RefreshCw className="h-3 w-3 stroke-[1.75]" />
-                <span>Acak ID</span>
-              </button>
+      {/* Scrollable Form Body */}
+      <div className="flex-1 overflow-y-auto p-4 sm:p-5 space-y-4 min-h-0">
+        {/* Error Banner */}
+        <div ref={errorRef} tabIndex={-1} className="outline-none">
+          {errorMsg && (
+            <div className="mb-3 flex items-center gap-2 rounded-lg bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-900/60 p-3 text-xs text-rose-600 dark:text-rose-400">
+              <AlertCircle className="h-4 w-4 stroke-[1.75] shrink-0" />
+              <span>{errorMsg}</span>
             </div>
-            <input
-              type="text"
-              value={id}
-              onChange={(e) => setId(e.target.value)}
-              className="w-full rounded-lg bg-[#F5F7FA] dark:bg-[#080A0E] border border-[#DDE3EA] dark:border-[#252B34] px-3 py-2 text-xs text-[#151D2A] dark:text-[#F2F5F9] focus:border-[#1769E8] focus:outline-none font-mono-numbers tabular-nums font-semibold"
-              placeholder="TRD-XXXXXX"
-              required
-            />
-          </div>
-
-          {/* Tanggal & Waktu */}
-          <div>
-            <label className="block text-xs font-semibold text-[#151D2A] dark:text-[#F2F5F9] mb-1">
-              Tanggal &amp; Waktu
-            </label>
-            <input
-              type="datetime-local"
-              value={dateTime}
-              onChange={(e) => setDateTime(e.target.value)}
-              className="w-full rounded-lg bg-[#F5F7FA] dark:bg-[#080A0E] border border-[#DDE3EA] dark:border-[#252B34] px-3 py-2 text-xs text-[#151D2A] dark:text-[#F2F5F9] focus:border-[#1769E8] focus:outline-none font-mono-numbers tabular-nums"
-              required
-            />
-          </div>
-
-          {/* Instrumen */}
-          <div>
-            <label className="block text-xs font-semibold text-[#151D2A] dark:text-[#F2F5F9] mb-1">
-              Instrumen (Default: XAUUSD)
-            </label>
-            <input
-              type="text"
-              value={instrument}
-              onChange={(e) => setInstrument(e.target.value.toUpperCase())}
-              placeholder="XAUUSD"
-              className="w-full rounded-lg bg-[#F5F7FA] dark:bg-[#080A0E] border border-[#DDE3EA] dark:border-[#252B34] px-3 py-2 text-xs text-[#151D2A] dark:text-[#F2F5F9] focus:border-[#1769E8] focus:outline-none font-bold uppercase tracking-wider"
-              required
-            />
-          </div>
-
-          {/* Arah Transaksi */}
-          <div>
-            <label className="block text-xs font-semibold text-[#151D2A] dark:text-[#F2F5F9] mb-1">
-              Arah Transaksi (Posisi)
-            </label>
-            <div className="grid grid-cols-2 gap-2">
-              <button
-                type="button"
-                onClick={() => setPosition('BUY')}
-                className={`py-2 rounded-lg text-xs font-bold transition-colors border ${
-                  position === 'BUY'
-                    ? 'bg-[#EEF2F6] dark:bg-[#171D26] text-emerald-600 dark:text-emerald-400 border-[#1769E8]'
-                    : 'bg-[#F5F7FA] dark:bg-[#080A0E] text-[#697586] dark:text-[#929BA9] border-[#DDE3EA] dark:border-[#252B34] hover:text-[#151D2A] dark:hover:text-[#F2F5F9]'
-                }`}
-              >
-                BUY / LONG
-              </button>
-              <button
-                type="button"
-                onClick={() => setPosition('SELL')}
-                className={`py-2 rounded-lg text-xs font-bold transition-colors border ${
-                  position === 'SELL'
-                    ? 'bg-[#EEF2F6] dark:bg-[#171D26] text-rose-600 dark:text-rose-400 border-[#1769E8]'
-                    : 'bg-[#F5F7FA] dark:bg-[#080A0E] text-[#697586] dark:text-[#929BA9] border-[#DDE3EA] dark:border-[#252B34] hover:text-[#151D2A] dark:hover:text-[#F2F5F9]'
-                }`}
-              >
-                SELL / SHORT
-              </button>
-            </div>
-          </div>
+          )}
         </div>
-
-        {/* Row 2: Setup Strategi & Sesi Trading */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <div>
-            <label className="block text-xs font-semibold text-[#151D2A] dark:text-[#F2F5F9] mb-1">
-              Setup / Strategi Trading
-            </label>
-            <div className="flex flex-col sm:flex-row gap-2">
-              <input
-                type="text"
-                value={strategy}
-                onChange={(e) => setStrategy(e.target.value)}
-                placeholder="Contoh: London Open Liquidity Sweep + CHoCH"
-                className="flex-1 rounded-lg bg-[#F5F7FA] dark:bg-[#080A0E] border border-[#DDE3EA] dark:border-[#252B34] px-3 py-2 text-xs text-[#151D2A] dark:text-[#F2F5F9] placeholder-[#697586] dark:placeholder-[#929BA9] focus:border-[#1769E8] focus:outline-none"
-              />
-              <select
-                onChange={(e) => {
-                  if (e.target.value) setStrategy(e.target.value);
-                }}
-                className="rounded-lg bg-[#F5F7FA] dark:bg-[#080A0E] border border-[#DDE3EA] dark:border-[#252B34] px-3 py-2 text-xs text-[#697586] dark:text-[#929BA9] focus:border-[#1769E8] focus:outline-none"
-              >
-                <option value="">Pilih Preset...</option>
-                {COMMON_STRATEGIES.map((s) => (
-                  <option key={s} value={s}>
-                    {s}
-                  </option>
-                ))}
-              </select>
-            </div>
+        {/* 2. TRANSACTION STATUS (Section A - Text Only Heading, Neutral Selected-State) */}
+        <div className="p-3.5 rounded-xl bg-[#F5F7FA] dark:bg-[#171D26] border border-[#DDE3EA] dark:border-[#252B34] space-y-2.5">
+          <div className="flex items-center justify-between">
+            <span className="text-[11px] font-bold uppercase tracking-wider text-[#697586] dark:text-[#929BA9]">
+              Status Transaksi
+            </span>
+            <span className="text-[10px] text-[#697586] dark:text-[#929BA9]">
+              {lifecycleStatus === 'PLANNED' && 'Rencana setup (belum dieksekusi)'}
+              {lifecycleStatus === 'OPEN' && 'Posisi aktif berjalan'}
+              {lifecycleStatus === 'CLOSED' && 'Posisi telah selesai / ditutup'}
+            </span>
           </div>
 
-          <div>
-            <label className="block text-xs font-semibold text-[#151D2A] dark:text-[#F2F5F9] mb-1 flex items-center justify-between">
-              <span className="flex items-center gap-1.5">
-                <Clock className="h-3.5 w-3.5 stroke-[1.75] text-[#697586] dark:text-[#929BA9]" />
-                Sesi Trading
-              </span>
-              <span className="text-[10px] text-[#697586] dark:text-[#929BA9]">Waktu Pasar Aktif</span>
-            </label>
-            <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
-              {COMMON_SESSIONS.map((sess) => (
+          <div className="grid grid-cols-3 gap-1.5 p-1 rounded-xl bg-white dark:bg-[#080A0E] border border-[#DDE3EA] dark:border-[#252B34]">
+            {(
+              [
+                { key: 'PLANNED', label: 'Planned' },
+                { key: 'OPEN', label: 'Open' },
+                { key: 'CLOSED', label: 'Closed' },
+              ] as const
+            ).map((st) => {
+              const isActive = lifecycleStatus === st.key;
+              return (
                 <button
-                  key={sess.key}
+                  key={st.key}
                   type="button"
-                  onClick={() => setSession(sess.key)}
-                  className={`py-1.5 px-2.5 rounded-lg text-xs font-medium border text-left transition-colors ${
-                    session === sess.key
-                      ? 'bg-[#1769E8] text-white border-[#1769E8]'
-                      : 'bg-[#F5F7FA] dark:bg-[#080A0E] text-[#697586] dark:text-[#929BA9] border-[#DDE3EA] dark:border-[#252B34] hover:text-[#151D2A] dark:hover:text-[#F2F5F9]'
+                  onClick={() => setLifecycleStatus(st.key)}
+                  className={`py-2 px-3 rounded-lg text-xs font-bold transition-all text-center cursor-pointer ${
+                    isActive
+                      ? 'bg-[#1769E8] text-white shadow-sm'
+                      : 'text-[#697586] dark:text-[#929BA9] hover:text-[#151D2A] dark:hover:text-[#F2F5F9] hover:bg-[#EEF2F6] dark:hover:bg-[#171D26]'
                   }`}
-                  title={sess.timeHint}
                 >
-                  <span className="block font-semibold truncate">{sess.label}</span>
+                  {st.label}
                 </button>
-              ))}
-            </div>
+              );
+            })}
           </div>
         </div>
 
-        {/* Row 3: Entry Price, Stop Loss, Take Profit, Exit Price */}
+        {/* 3. RENCANA TRADING (Section B - Text Only Heading, Dropdown Instrument, Neutral BUY/SELL, No Asterisks) */}
         <div className="p-3.5 rounded-xl bg-[#F5F7FA] dark:bg-[#171D26] border border-[#DDE3EA] dark:border-[#252B34] space-y-3">
           <div className="flex items-center justify-between">
-            <span className="text-xs font-semibold text-[#151D2A] dark:text-[#F2F5F9] flex items-center gap-1.5">
-              <Calculator className="h-3.5 w-3.5 stroke-[1.75] text-[#697586] dark:text-[#929BA9]" />
-              Tingkat Harga Transaksi (XAUUSD)
+            <span className="text-[11px] font-bold uppercase tracking-wider text-[#697586] dark:text-[#929BA9]">
+              Rencana Trading
             </span>
-            {lotCalcResult?.isValid && (
-              <span className="text-[11px] font-mono-numbers tabular-nums text-[#697586] dark:text-[#929BA9]">
-                Jarak SL:{' '}
-                <span className="text-rose-600 dark:text-rose-400 font-semibold">${lotCalcResult.slDistancePrice}</span>{' '}
-                ({lotCalcResult.slDistancePips} pips)
-              </span>
-            )}
           </div>
 
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-            <div>
-              <label className="block text-[11px] text-[#151D2A] dark:text-[#F2F5F9] font-medium mb-1">
-                Entry Price <span className="text-rose-500">*</span>
+          {/* Row 1: Instrument (MANDATORY DROPDOWN) & Direction (BUY/SELL) */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            {/* Instrument Dropdown */}
+            <div className="relative">
+              <label className="block text-[11px] font-semibold text-[#151D2A] dark:text-[#F2F5F9] mb-1">
+                Instrument
               </label>
+              <button
+                type="button"
+                onClick={() => setIsInstrumentDropdownOpen(!isInstrumentDropdownOpen)}
+                className="w-full flex items-center justify-between rounded-lg bg-white dark:bg-[#080A0E] border border-[#DDE3EA] dark:border-[#252B34] px-3 py-2 text-xs font-bold uppercase tracking-wider text-[#151D2A] dark:text-[#F2F5F9] hover:border-[#1769E8] transition-colors cursor-pointer"
+              >
+                <span>{instrument || 'Pilih Instrument'}</span>
+                <ChevronDown
+                  className={`h-4 w-4 stroke-[1.75] text-[#697586] transition-transform ${
+                    isInstrumentDropdownOpen ? 'rotate-180' : ''
+                  }`}
+                />
+              </button>
+
+              {/* Dropdown Popover */}
+              {isInstrumentDropdownOpen && (
+                <div className="absolute left-0 right-0 top-full mt-1.5 z-30 p-2.5 rounded-xl bg-white dark:bg-[#11151B] border border-[#DDE3EA] dark:border-[#252B34] shadow-xl space-y-2 animate-in fade-in zoom-in-95 duration-100">
+                  {/* Search / Custom Symbol input */}
+                  <div className="flex items-center gap-1.5 px-2 py-1.5 rounded-lg bg-[#F5F7FA] dark:bg-[#080A0E] border border-[#DDE3EA] dark:border-[#252B34]">
+                    <Search className="h-3.5 w-3.5 text-[#697586] shrink-0" />
+                    <input
+                      type="text"
+                      value={instrumentSearch}
+                      onChange={(e) => setInstrumentSearch(e.target.value.toUpperCase())}
+                      placeholder="Cari atau ketik simbol..."
+                      className="w-full bg-transparent text-xs font-bold uppercase tracking-wider text-[#151D2A] dark:text-[#F2F5F9] focus:outline-none"
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' && instrumentSearch.trim()) {
+                          e.preventDefault();
+                          preserveInitialRiskRef.current = false;
+                          setInstrument(instrumentSearch.trim());
+                          setInstrumentSearch('');
+                          setIsInstrumentDropdownOpen(false);
+                        }
+                      }}
+                    />
+                  </div>
+
+                  {/* Instrument Options List */}
+                  <div className="max-h-40 overflow-y-auto space-y-0.5 pr-1">
+                    {filteredInstruments.map((sym) => {
+                      const isSelected = instrument === sym;
+                      return (
+                        <button
+                          key={sym}
+                          type="button"
+                          onClick={() => {
+                            preserveInitialRiskRef.current = false;
+                            setInstrument(sym);
+                            setInstrumentSearch('');
+                            setIsInstrumentDropdownOpen(false);
+                          }}
+                          className={`w-full flex items-center justify-between text-left px-2.5 py-1.5 rounded-lg text-xs font-semibold uppercase tracking-wider transition-colors cursor-pointer ${
+                            isSelected
+                              ? 'bg-[#1769E8]/10 text-[#1769E8]'
+                              : 'text-[#151D2A] dark:text-[#F2F5F9] hover:bg-[#F5F7FA] dark:hover:bg-[#171D26]'
+                          }`}
+                        >
+                          <span>{sym}</span>
+                          {isSelected && <Check className="h-3.5 w-3.5 text-[#1769E8]" />}
+                        </button>
+                      );
+                    })}
+
+                    {filteredInstruments.length === 0 && instrumentSearch.trim() && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          preserveInitialRiskRef.current = false;
+                          setInstrument(instrumentSearch.trim());
+                          setInstrumentSearch('');
+                          setIsInstrumentDropdownOpen(false);
+                        }}
+                        className="w-full text-left px-2.5 py-1.5 rounded-lg text-xs font-bold text-[#1769E8] hover:bg-[#F5F7FA] dark:hover:bg-[#171D26] cursor-pointer"
+                      >
+                        Pilih Simbol Baru: &quot;{instrumentSearch.trim()}&quot;
+                      </button>
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Direction BUY / SELL (Neutral subtle contrast, no neon green/red, no decorative arrows) */}
+            <div>
+              <label className="block text-[11px] font-semibold text-[#151D2A] dark:text-[#F2F5F9] mb-1">
+                Direction
+              </label>
+              <div className="grid grid-cols-2 gap-1.5 p-1 rounded-xl bg-white dark:bg-[#080A0E] border border-[#DDE3EA] dark:border-[#252B34]">
+                <button
+                  type="button"
+                  onClick={() => {
+                    preserveInitialRiskRef.current = false;
+                    setPosition('BUY');
+                  }}
+                  className={`py-1.5 px-3 rounded-lg text-xs font-bold transition-all text-center cursor-pointer ${
+                    position === 'BUY'
+                      ? 'bg-[#EEF2F6] dark:bg-[#171D26] text-[#151D2A] dark:text-[#F2F5F9] border border-[#DDE3EA] dark:border-[#252B34] shadow-sm'
+                      : 'text-[#697586] dark:text-[#929BA9] hover:text-[#151D2A] dark:hover:text-[#F2F5F9]'
+                  }`}
+                >
+                  BUY
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    preserveInitialRiskRef.current = false;
+                    setPosition('SELL');
+                  }}
+                  className={`py-1.5 px-3 rounded-lg text-xs font-bold transition-all text-center cursor-pointer ${
+                    position === 'SELL'
+                      ? 'bg-[#EEF2F6] dark:bg-[#171D26] text-[#151D2A] dark:text-[#F2F5F9] border border-[#DDE3EA] dark:border-[#252B34] shadow-sm'
+                      : 'text-[#697586] dark:text-[#929BA9] hover:text-[#151D2A] dark:hover:text-[#F2F5F9]'
+                  }`}
+                >
+                  SELL
+                </button>
+              </div>
+            </div>
+          </div>
+
+          {/* Row 2: Order Type & Lot Size */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            {/* Order Type */}
+            <div>
+              <label className="block text-[11px] font-semibold text-[#151D2A] dark:text-[#F2F5F9] mb-1">
+                Tipe Order
+              </label>
+              <div className="grid grid-cols-2 gap-1.5">
+                {(
+                  [
+                    { key: 'Market', label: 'Market' },
+                    { key: 'Pending', label: 'Pending' },
+                  ] as const
+                ).map((ot) => (
+                  <button
+                    key={ot.key}
+                    type="button"
+                    onClick={() => {
+                      setOrderType(ot.key);
+                      if (ot.key === 'Pending' && !initialTrade) {
+                        setLifecycleStatus('PLANNED');
+                      }
+                    }}
+                    className={`py-2 rounded-lg text-xs font-semibold transition-colors border cursor-pointer ${
+                      orderType === ot.key
+                        ? 'bg-white dark:bg-[#11151B] text-[#1769E8] border-[#1769E8]'
+                        : 'bg-white dark:bg-[#080A0E] text-[#697586] dark:text-[#929BA9] border-[#DDE3EA] dark:border-[#252B34]'
+                    }`}
+                  >
+                    {ot.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Lot Size */}
+            <div>
+              <div className="flex items-center justify-between mb-1">
+                <label className="block text-[11px] font-semibold text-[#151D2A] dark:text-[#F2F5F9]">
+                  Lot Size
+                </label>
+                {isXauInstrument && xauLotCalcResult.isValid && xauLotCalcResult.recommendedLot > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      preserveInitialRiskRef.current = false;
+                      setIsAutoLotActive(true);
+                      setLotSize(String(xauLotCalcResult.recommendedLot));
+                    }}
+                    className="text-[10px] font-mono-numbers font-semibold text-[#1769E8] dark:text-[#60A5FA] hover:underline cursor-pointer"
+                  >
+                    Rekomendasi: {xauLotCalcResult.recommendedLot} lot
+                  </button>
+                )}
+              </div>
               <input
                 type="number"
                 step="0.01"
+                min="0.01"
+                inputMode="decimal"
+                value={lotSize}
+                onChange={(e) => {
+                  preserveInitialRiskRef.current = false;
+                  setIsAutoLotActive(false);
+                  setLotSize(e.target.value);
+                }}
+                placeholder="0.01"
+                className="w-full rounded-lg bg-white dark:bg-[#080A0E] border border-[#DDE3EA] dark:border-[#252B34] px-3 py-2 text-xs font-mono-numbers tabular-nums font-bold text-[#151D2A] dark:text-[#F2F5F9] focus:border-[#1769E8] focus:outline-none"
+                required
+              />
+            </div>
+          </div>
+
+          {/* Preset Risiko XAUUSD (sinkron dengan Position Sizing) */}
+          {isXauInstrument && (
+            <div className="pt-0.5 space-y-1.5">
+              <div className="flex items-center justify-between text-[10px] text-[#697586] dark:text-[#929BA9]">
+                <span className="font-semibold">
+                  Preset Risiko ({capitalBasisType === 'BALANCE' ? 'Modal Awal' : 'Ekuitas'}: {formatCurrency(activeCapitalBasisValue, settings)})
+                </span>
+                {xauLotCalcResult.isValid && (
+                  <span className="font-mono-numbers">
+                    Risiko {formatCurrency(xauLotCalcResult.riskAmount, settings)} · Raw {xauLotCalcResult.calculatedLot} → {xauLotCalcResult.recommendedLot} lot
+                  </span>
+                )}
+              </div>
+              <div className="flex items-center gap-1.5">
+                {POSITION_SIZING_RISK_PRESETS.map((pct) => (
+                  <button
+                    key={pct}
+                    type="button"
+                    onClick={() => {
+                      preserveInitialRiskRef.current = false;
+                      setSelectedRiskPercent(pct);
+                      setIsAutoLotActive(true);
+                    }}
+                    className={`flex-1 py-1 rounded-lg border text-[11px] font-mono-numbers transition-colors cursor-pointer ${
+                      isAutoLotActive && selectedRiskPercent === pct
+                        ? 'bg-[#1769E8]/10 dark:bg-[#1769E8]/15 text-[#1769E8] dark:text-[#60A5FA] border-[#1769E8]/40 font-bold'
+                        : 'bg-white dark:bg-[#080A0E] text-[#697586] dark:text-[#929BA9] border-[#DDE3EA] dark:border-[#252B34] hover:text-[#151D2A] dark:hover:text-[#F2F5F9]'
+                    }`}
+                  >
+                    {pct}%
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Row 3: Entry, SL, TP (No Asterisks, clean typography) */}
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            {/* Planned Entry */}
+            <div>
+              <label className="block text-[11px] font-semibold text-[#151D2A] dark:text-[#F2F5F9] mb-1">
+                Entry Price
+              </label>
+              <input
+                type="number"
+                step="any"
                 inputMode="decimal"
                 value={entryPrice}
-                onChange={(e) => setEntryPrice(e.target.value)}
-                placeholder="2720.50"
-                className="w-full rounded-lg bg-white dark:bg-[#080A0E] border border-[#DDE3EA] dark:border-[#252B34] px-3 py-2 text-xs text-[#151D2A] dark:text-[#F2F5F9] focus:border-[#1769E8] focus:outline-none font-mono-numbers tabular-nums font-semibold"
+                onChange={(e) => {
+                  preserveInitialRiskRef.current = false;
+                  setEntryPrice(e.target.value);
+                }}
+                placeholder="0.00"
+                className="w-full rounded-lg bg-white dark:bg-[#080A0E] border border-[#DDE3EA] dark:border-[#252B34] px-3 py-2 text-xs font-mono-numbers tabular-nums font-semibold text-[#151D2A] dark:text-[#F2F5F9] focus:border-[#1769E8] focus:outline-none"
                 required
               />
             </div>
 
+            {/* Stop Loss */}
             <div>
-              <label className="block text-[11px] text-rose-600 dark:text-rose-400 mb-1 font-medium">
-                Stop Loss (SL) <span className="text-[10px] text-[#697586] dark:text-[#929BA9] font-normal">(opsional)</span>
-              </label>
+              <div className="flex items-center justify-between mb-1">
+                <label className="block text-[11px] font-semibold text-[#151D2A] dark:text-[#F2F5F9]">
+                  Stop Loss
+                </label>
+                {lotOrderMetrics.isSlValid && lotOrderMetrics.slDistancePips !== null && (
+                  <span className="text-[10px] font-mono-numbers text-rose-600 dark:text-rose-400">
+                    {lotOrderMetrics.slDistancePips} pips
+                  </span>
+                )}
+              </div>
               <input
                 type="number"
-                step="0.01"
+                step="any"
                 inputMode="decimal"
                 value={stopLoss}
-                onChange={(e) => setStopLoss(e.target.value)}
-                placeholder="2715.00"
-                className="w-full rounded-lg bg-white dark:bg-[#080A0E] border border-[#DDE3EA] dark:border-[#252B34] px-3 py-2 text-xs text-rose-600 dark:text-rose-400 focus:border-[#1769E8] focus:outline-none font-mono-numbers tabular-nums"
+                onChange={(e) => {
+                  preserveInitialRiskRef.current = false;
+                  setStopLoss(e.target.value);
+                }}
+                placeholder="0.00"
+                className="w-full rounded-lg bg-white dark:bg-[#080A0E] border border-[#DDE3EA] dark:border-[#252B34] px-3 py-2 text-xs font-mono-numbers tabular-nums text-rose-600 dark:text-rose-400 focus:border-[#1769E8] focus:outline-none"
               />
             </div>
 
+            {/* Take Profit */}
             <div>
-              <label className="block text-[11px] text-emerald-600 dark:text-emerald-400 mb-1 font-medium">
-                Take Profit (TP) <span className="text-[10px] text-[#697586] dark:text-[#929BA9] font-normal">(opsional)</span>
-              </label>
+              <div className="flex items-center justify-between mb-1">
+                <label className="block text-[11px] font-semibold text-[#151D2A] dark:text-[#F2F5F9]">
+                  Take Profit
+                </label>
+                {lotOrderMetrics.isTpValid && lotOrderMetrics.tpDistancePips !== null && (
+                  <span className="text-[10px] font-mono-numbers text-emerald-600 dark:text-emerald-400">
+                    {lotOrderMetrics.tpDistancePips} pips
+                  </span>
+                )}
+              </div>
               <input
                 type="number"
-                step="0.01"
+                step="any"
                 inputMode="decimal"
                 value={takeProfit}
                 onChange={(e) => setTakeProfit(e.target.value)}
-                placeholder="2735.00"
-                className="w-full rounded-lg bg-white dark:bg-[#080A0E] border border-[#DDE3EA] dark:border-[#252B34] px-3 py-2 text-xs text-emerald-600 dark:text-emerald-400 focus:border-[#1769E8] focus:outline-none font-mono-numbers tabular-nums"
+                placeholder="0.00"
+                className="w-full rounded-lg bg-white dark:bg-[#080A0E] border border-[#DDE3EA] dark:border-[#252B34] px-3 py-2 text-xs font-mono-numbers tabular-nums text-emerald-600 dark:text-emerald-400 focus:border-[#1769E8] focus:outline-none"
               />
             </div>
+          </div>
 
-            <div>
-              <label className="block text-[11px] text-[#151D2A] dark:text-[#F2F5F9] mb-1">
-                Exit Price <span className="text-[10px] text-[#697586] dark:text-[#929BA9] font-normal">(opsional)</span>
-              </label>
-              <input
-                type="number"
-                step="0.01"
-                inputMode="decimal"
-                value={exitPrice}
-                onChange={(e) => setExitPrice(e.target.value)}
-                placeholder="2734.00"
-                className="w-full rounded-lg bg-white dark:bg-[#080A0E] border border-[#DDE3EA] dark:border-[#252B34] px-3 py-2 text-xs text-[#151D2A] dark:text-[#F2F5F9] focus:border-[#1769E8] focus:outline-none font-mono-numbers tabular-nums"
-              />
+          {/* SL / TP Direction Error Message */}
+          {(!lotOrderMetrics.isSlValid || !lotOrderMetrics.isTpValid) && (
+            <div className="p-2.5 rounded-lg bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-900/60 text-xs text-rose-600 dark:text-rose-400 flex items-center gap-2">
+              <AlertCircle className="h-4 w-4 shrink-0 stroke-[1.75]" />
+              <span>{lotOrderMetrics.slErrorMessage || lotOrderMetrics.tpErrorMessage}</span>
+            </div>
+          )}
+        </div>
+
+        {/* 4. PROFIT AT TP & FINANCIAL SUMMARY (Section C & D - Compact, clean, no "Calculator" or "Auto" text) */}
+        <div className="p-3.5 rounded-xl bg-[#F5F7FA] dark:bg-[#171D26] border border-[#DDE3EA] dark:border-[#252B34] space-y-3">
+          {/* Profit at TP Compact Box */}
+          <div>
+            <div className="text-[11px] font-bold uppercase tracking-wider text-[#697586] dark:text-[#929BA9] mb-2">
+              Profit at TP
+            </div>
+            <div className="p-3 rounded-xl bg-white dark:bg-[#080A0E] border border-[#DDE3EA] dark:border-[#252B34] flex items-center justify-between flex-wrap gap-2">
+              <div>
+                <div className="text-[10px] text-[#697586] dark:text-[#929BA9]">Target Price</div>
+                <div className="text-sm font-bold font-mono-numbers tabular-nums text-[#151D2A] dark:text-[#F2F5F9]">
+                  {takeProfit.trim() !== '' && !isNaN(parseFloat(takeProfit))
+                    ? parseFloat(takeProfit).toFixed(2)
+                    : '-'}
+                </div>
+              </div>
+
+              <div>
+                <div className="text-[10px] text-[#697586] dark:text-[#929BA9]">Estimated Profit</div>
+                <div className="text-sm font-bold font-mono-numbers tabular-nums text-emerald-600 dark:text-emerald-400">
+                  {lotOrderMetrics.potentialProfit !== null
+                    ? `${lotOrderMetrics.potentialProfit >= 0 ? '+' : ''}${formatCurrency(
+                        lotOrderMetrics.potentialProfit,
+                        settings
+                      )}`
+                    : '-'}
+                </div>
+              </div>
+
+              <div className="text-right">
+                <div className="text-[10px] text-[#697586] dark:text-[#929BA9]">Volume &amp; Pair</div>
+                <div className="text-xs font-mono font-medium text-[#697586] dark:text-[#929BA9]">
+                  {lotSize || '0.01'} lot · {instrument}
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Financial Summary Metric Row (Potential Loss, Potential Profit, Risk:Reward) */}
+          <div className="grid grid-cols-3 gap-2">
+            {/* Potential Loss */}
+            <div className="p-2.5 rounded-lg bg-white dark:bg-[#080A0E] border border-[#DDE3EA] dark:border-[#252B34]">
+              <div className="text-[10px] text-[#697586] dark:text-[#929BA9] mb-0.5">Potential Loss</div>
+              <div className="text-xs font-bold font-mono-numbers tabular-nums text-rose-600 dark:text-rose-400">
+                {lotOrderMetrics.riskAmount !== null
+                  ? `-${formatCurrency(lotOrderMetrics.riskAmount, settings)}`
+                  : '-'}
+              </div>
+            </div>
+
+            {/* Potential Profit */}
+            <div className="p-2.5 rounded-lg bg-white dark:bg-[#080A0E] border border-[#DDE3EA] dark:border-[#252B34]">
+              <div className="text-[10px] text-[#697586] dark:text-[#929BA9] mb-0.5">Potential Profit</div>
+              <div className="text-xs font-bold font-mono-numbers tabular-nums text-emerald-600 dark:text-emerald-400">
+                {lotOrderMetrics.potentialProfit !== null
+                  ? `+${formatCurrency(lotOrderMetrics.potentialProfit, settings)}`
+                  : '-'}
+              </div>
+            </div>
+
+            {/* Risk : Reward */}
+            <div className="p-2.5 rounded-lg bg-white dark:bg-[#080A0E] border border-[#DDE3EA] dark:border-[#252B34]">
+              <div className="text-[10px] text-[#697586] dark:text-[#929BA9] mb-0.5">Risk : Reward</div>
+              <div className="text-xs font-bold font-mono-numbers tabular-nums text-[#1769E8]">
+                {formatPlannedRR(plannedRR)}
+              </div>
             </div>
           </div>
         </div>
 
-        {/* Row 4: Lot Size & Risk Management */}
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-          <div>
-            <div className="flex items-center justify-between mb-1">
-              <label className="text-xs font-semibold text-[#151D2A] dark:text-[#F2F5F9]">
-                Lot Size <span className="text-rose-500">*</span>
-              </label>
-              {lotCalcResult?.isValid && (
-                <button
-                  type="button"
-                  onClick={handleApplyCalculatedLot}
-                  className="text-[10px] text-[#1769E8] hover:underline flex items-center gap-0.5"
-                >
-                  <Calculator className="h-3 w-3 stroke-[1.75]" />
-                  Pakai Lot Rekomendasi ({lotCalcResult.recommendedLot})
-                </button>
-              )}
-            </div>
-            <input
-              type="number"
-              step="0.01"
-              inputMode="decimal"
-              value={lotSize}
-              onChange={(e) => setLotSize(e.target.value)}
-              className="w-full rounded-lg bg-[#F5F7FA] dark:bg-[#080A0E] border border-[#DDE3EA] dark:border-[#252B34] px-3 py-2 text-xs text-[#151D2A] dark:text-[#F2F5F9] focus:border-[#1769E8] focus:outline-none font-mono-numbers tabular-nums font-bold"
-              required
-            />
+        {/* 5. STRATEGI TRADING (Section E - Clean dropdown selector, no icons) */}
+        <div className="p-3.5 rounded-xl bg-[#F5F7FA] dark:bg-[#171D26] border border-[#DDE3EA] dark:border-[#252B34] space-y-2.5">
+          <div className="flex items-center justify-between">
+            <span className="text-[11px] font-bold uppercase tracking-wider text-[#697586] dark:text-[#929BA9]">
+              Strategi Trading
+            </span>
+            {strategy && (
+              <button
+                type="button"
+                onClick={() => setStrategy('')}
+                className="text-[10px] text-[#697586] hover:text-rose-500 hover:underline cursor-pointer"
+              >
+                Reset
+              </button>
+            )}
           </div>
 
-          <div>
-            <label className="block text-xs font-semibold text-[#151D2A] dark:text-[#F2F5F9] mb-1">
-              Risk Amount ({settings.currencySymbol})
-            </label>
-            <input
-              type="number"
-              step="0.01"
-              inputMode="decimal"
-              value={riskAmount}
-              onChange={(e) => {
-                const amt = e.target.value;
-                setRiskAmount(amt);
-                if (currentEquity > 0 && parseFloat(amt) >= 0) {
-                  setRiskPercentage(((parseFloat(amt) / currentEquity) * 100).toFixed(2));
-                }
-              }}
-              className="w-full rounded-lg bg-[#F5F7FA] dark:bg-[#080A0E] border border-[#DDE3EA] dark:border-[#252B34] px-3 py-2 text-xs text-[#151D2A] dark:text-[#F2F5F9] focus:border-[#1769E8] focus:outline-none font-mono-numbers tabular-nums"
-            />
-          </div>
-
-          <div>
-            <label className="block text-xs font-semibold text-[#151D2A] dark:text-[#F2F5F9] mb-1">Risk (%)</label>
-            <input
-              type="number"
-              step="0.1"
-              inputMode="decimal"
-              value={riskPercentage}
-              onChange={(e) => {
-                const pct = e.target.value;
-                setRiskPercentage(pct);
-                if (currentEquity > 0 && parseFloat(pct) >= 0) {
-                  setRiskAmount(((currentEquity * parseFloat(pct)) / 100).toFixed(2));
-                }
-              }}
-              className="w-full rounded-lg bg-[#F5F7FA] dark:bg-[#080A0E] border border-[#DDE3EA] dark:border-[#252B34] px-3 py-2 text-xs text-[#151D2A] dark:text-[#F2F5F9] focus:border-[#1769E8] focus:outline-none font-mono-numbers tabular-nums"
-            />
-          </div>
-        </div>
-
-        {/* Row 5: Hasil Finansial, Komisi, Swap & Net PnL */}
-        <div className="p-4 rounded-xl bg-[#F5F7FA] dark:bg-[#171D26] border border-[#DDE3EA] dark:border-[#252B34] space-y-4">
-          <div>
-            <div className="flex flex-wrap items-center justify-between gap-1 mb-1.5">
-              <label className="text-xs font-semibold text-[#151D2A] dark:text-[#F2F5F9]">
-                Kategori Hasil Transaksi (Otomatis dari Net P/L)
-              </label>
-              <span className="text-[10px] text-[#697586] dark:text-[#929BA9]">
-                Net &gt; $0 = WIN • Net &lt; $0 = LOSS • Net = $0 = BREAKEVEN
+          {/* Trigger button for Strategy Dropdown */}
+          <div className="relative">
+            <button
+              type="button"
+              onClick={() => setIsStrategyPickerOpen(!isStrategyPickerOpen)}
+              className="w-full flex items-center justify-between rounded-lg bg-white dark:bg-[#080A0E] border border-[#DDE3EA] dark:border-[#252B34] px-3 py-2 text-xs font-medium text-left text-[#151D2A] dark:text-[#F2F5F9] hover:border-[#1769E8] transition-colors cursor-pointer"
+            >
+              <span className={strategy ? 'font-semibold' : 'text-[#697586] dark:text-[#929BA9]'}>
+                {strategy || 'Pilih strategi'}
               </span>
-            </div>
-            <div className="grid grid-cols-3 gap-2">
-              <button
-                type="button"
-                onClick={() => handleOutcomeChange('WIN')}
-                className={`py-2 rounded-lg text-xs font-bold transition-colors border ${
-                  outcome === 'WIN'
-                    ? 'bg-white dark:bg-[#11151B] text-emerald-600 dark:text-emerald-400 border-[#1769E8]'
-                    : 'bg-white dark:bg-[#080A0E] text-[#697586] dark:text-[#929BA9] border-[#DDE3EA] dark:border-[#252B34] hover:text-[#151D2A] dark:hover:text-[#F2F5F9]'
+              <ChevronDown
+                className={`h-4 w-4 stroke-[1.75] text-[#697586] transition-transform ${
+                  isStrategyPickerOpen ? 'rotate-180' : ''
                 }`}
-              >
-                WIN (Profit)
-              </button>
-              <button
-                type="button"
-                onClick={() => handleOutcomeChange('LOSS')}
-                className={`py-2 rounded-lg text-xs font-bold transition-colors border ${
-                  outcome === 'LOSS'
-                    ? 'bg-white dark:bg-[#11151B] text-rose-600 dark:text-rose-400 border-[#1769E8]'
-                    : 'bg-white dark:bg-[#080A0E] text-[#697586] dark:text-[#929BA9] border-[#DDE3EA] dark:border-[#252B34] hover:text-[#151D2A] dark:hover:text-[#F2F5F9]'
-                }`}
-              >
-                LOSS (Rugi)
-              </button>
-              <button
-                type="button"
-                onClick={() => handleOutcomeChange('BREAKEVEN')}
-                className={`py-2 rounded-lg text-xs font-bold transition-colors border ${
-                  outcome === 'BREAKEVEN'
-                    ? 'bg-white dark:bg-[#11151B] text-[#1769E8] border-[#1769E8]'
-                    : 'bg-white dark:bg-[#080A0E] text-[#697586] dark:text-[#929BA9] border-[#DDE3EA] dark:border-[#252B34] hover:text-[#151D2A] dark:hover:text-[#F2F5F9]'
-                }`}
-              >
-                BREAKEVEN (BE)
-              </button>
-            </div>
+              />
+            </button>
+
+            {/* Dropdown Popover */}
+            {isStrategyPickerOpen && (
+              <div className="mt-2 p-3 rounded-xl bg-white dark:bg-[#11151B] border border-[#DDE3EA] dark:border-[#252B34] shadow-xl space-y-3 animate-in fade-in zoom-in-95 duration-100">
+                {/* Custom Strategy Input */}
+                <div className="flex items-center gap-2">
+                  <input
+                    type="text"
+                    value={customStrategyInput}
+                    onChange={(e) => setCustomStrategyInput(e.target.value)}
+                    placeholder="Ketik strategi..."
+                    className="flex-1 rounded-lg bg-[#F5F7FA] dark:bg-[#080A0E] border border-[#DDE3EA] dark:border-[#252B34] px-3 py-1.5 text-xs text-[#151D2A] dark:text-[#F2F5F9] focus:border-[#1769E8] focus:outline-none"
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' && customStrategyInput.trim()) {
+                        e.preventDefault();
+                        setStrategy(customStrategyInput.trim());
+                        setCustomStrategyInput('');
+                        setIsStrategyPickerOpen(false);
+                      }
+                    }}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (customStrategyInput.trim()) {
+                        setStrategy(customStrategyInput.trim());
+                        setCustomStrategyInput('');
+                        setIsStrategyPickerOpen(false);
+                      }
+                    }}
+                    className="px-3 py-1.5 rounded-lg bg-[#1769E8] text-white text-xs font-semibold hover:bg-[#1458C4] cursor-pointer"
+                  >
+                    Pilih
+                  </button>
+                </div>
+
+                {/* Preset List */}
+                <div className="space-y-1 max-h-48 overflow-y-auto pr-1">
+                  {COMMON_STRATEGIES.map((strat) => {
+                    const isSelected = strategy === strat;
+                    return (
+                      <button
+                        key={strat}
+                        type="button"
+                        onClick={() => {
+                          setStrategy(strat);
+                          setIsStrategyPickerOpen(false);
+                        }}
+                        className={`w-full flex items-center justify-between text-left px-2.5 py-1.5 rounded-lg text-xs transition-colors cursor-pointer ${
+                          isSelected
+                            ? 'bg-[#1769E8]/10 text-[#1769E8] font-semibold'
+                            : 'text-[#151D2A] dark:text-[#F2F5F9] hover:bg-[#F5F7FA] dark:hover:bg-[#171D26]'
+                        }`}
+                      >
+                        <span>{strat}</span>
+                        {isSelected && <Check className="h-3.5 w-3.5 text-[#1769E8]" />}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* 6. TRADING SESSION (Section F - 3 Simple selectable text cards: Asia, London, New York) */}
+        <div className="p-3.5 rounded-xl bg-[#F5F7FA] dark:bg-[#171D26] border border-[#DDE3EA] dark:border-[#252B34] space-y-2.5">
+          <div className="flex items-center justify-between">
+            <span className="text-[11px] font-bold uppercase tracking-wider text-[#697586] dark:text-[#929BA9]">
+              Trading Session
+            </span>
           </div>
 
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-            <div>
-              <label className="block text-[11px] text-[#697586] dark:text-[#929BA9] mb-1">Gross Profit ($)</label>
-              <input
-                type="number"
-                step="0.01"
-                inputMode="decimal"
-                value={grossProfit}
-                onChange={(e) => handleGrossProfitChange(e.target.value)}
-                placeholder="600.00"
-                className="w-full rounded-lg bg-white dark:bg-[#080A0E] border border-[#DDE3EA] dark:border-[#252B34] px-3 py-2 text-xs text-[#151D2A] dark:text-[#F2F5F9] focus:border-[#1769E8] focus:outline-none font-mono-numbers tabular-nums"
-              />
-            </div>
+          <div className="grid grid-cols-3 gap-2">
+            {PRIMARY_SESSIONS.map((s) => {
+              const isSelected = session === s.key || (session === 'Asian' && s.key === 'Asian');
+              return (
+                <button
+                  key={s.key}
+                  type="button"
+                  onClick={() => setSession(s.key)}
+                  className={`p-2.5 rounded-xl border text-center transition-all cursor-pointer ${
+                    isSelected
+                      ? 'bg-white dark:bg-[#11151B] border-[#1769E8] text-[#1769E8] font-bold shadow-sm'
+                      : 'bg-white dark:bg-[#080A0E] border-[#DDE3EA] dark:border-[#252B34] text-[#697586] dark:text-[#929BA9] hover:text-[#151D2A] dark:hover:text-[#F2F5F9]'
+                  }`}
+                >
+                  <div className="text-xs font-semibold">{s.label}</div>
+                  <div className="text-[10px] opacity-75 mt-0.5">{s.desc}</div>
+                </button>
+              );
+            })}
+          </div>
+        </div>
 
-            <div>
-              <label className="block text-[11px] text-[#697586] dark:text-[#929BA9] mb-1">Komisi / Fee ($)</label>
-              <input
-                type="number"
-                step="0.01"
-                inputMode="decimal"
-                value={commission}
-                onChange={(e) => setCommission(e.target.value)}
-                placeholder="4.50"
-                className="w-full rounded-lg bg-white dark:bg-[#080A0E] border border-[#DDE3EA] dark:border-[#252B34] px-3 py-2 text-xs text-[#151D2A] dark:text-[#F2F5F9] focus:border-[#1769E8] focus:outline-none font-mono-numbers tabular-nums"
-              />
-            </div>
+        {/* 7. DATE AND TIME (Section G - Clean editable local date & time, no asterisks) */}
+        <div className="p-3.5 rounded-xl bg-[#F5F7FA] dark:bg-[#171D26] border border-[#DDE3EA] dark:border-[#252B34] space-y-2.5">
+          <div className="flex items-center justify-between">
+            <span className="text-[11px] font-bold uppercase tracking-wider text-[#697586] dark:text-[#929BA9]">
+              Date and Time
+            </span>
+          </div>
 
+          <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="block text-[11px] text-[#697586] dark:text-[#929BA9] mb-1">Swap ($)</label>
-              <input
-                type="number"
-                step="0.01"
-                inputMode="decimal"
-                value={swap}
-                onChange={(e) => setSwap(e.target.value)}
-                placeholder="-1.20"
-                className="w-full rounded-lg bg-white dark:bg-[#080A0E] border border-[#DDE3EA] dark:border-[#252B34] px-3 py-2 text-xs text-[#151D2A] dark:text-[#F2F5F9] focus:border-[#1769E8] focus:outline-none font-mono-numbers tabular-nums"
-              />
-            </div>
-
-            <div>
-              <label className="block text-[11px] text-[#151D2A] dark:text-[#F2F5F9] font-semibold mb-1">
-                Net Profit Bersih ($) <span className="text-rose-500">*</span>
+              <label className="block text-[11px] font-semibold text-[#151D2A] dark:text-[#F2F5F9] mb-1">
+                Tanggal
               </label>
               <input
-                type="number"
-                step="0.01"
-                inputMode="decimal"
-                value={netProfit}
-                onChange={(e) => handleNetProfitChange(e.target.value)}
-                placeholder="594.30"
-                className={`w-full rounded-lg bg-white dark:bg-[#080A0E] border border-[#DDE3EA] dark:border-[#252B34] px-3 py-2 text-xs font-bold font-mono-numbers tabular-nums focus:border-[#1769E8] focus:outline-none ${
-                  parseFloat(netProfit) > 0
-                    ? 'text-emerald-600 dark:text-emerald-400'
-                    : parseFloat(netProfit) < 0
-                    ? 'text-rose-600 dark:text-rose-400'
-                    : 'text-[#151D2A] dark:text-[#F2F5F9]'
-                }`}
+                type="date"
+                value={tradeDate}
+                onChange={(e) => setTradeDate(e.target.value)}
+                className="w-full rounded-lg bg-white dark:bg-[#080A0E] border border-[#DDE3EA] dark:border-[#252B34] px-3 py-2 text-xs font-mono-numbers tabular-nums text-[#151D2A] dark:text-[#F2F5F9] focus:border-[#1769E8] focus:outline-none"
+                required
+              />
+            </div>
+
+            <div>
+              <label className="block text-[11px] font-semibold text-[#151D2A] dark:text-[#F2F5F9] mb-1">
+                Jam
+              </label>
+              <input
+                type="time"
+                value={tradeTime}
+                onChange={(e) => setTradeTime(e.target.value)}
+                className="w-full rounded-lg bg-white dark:bg-[#080A0E] border border-[#DDE3EA] dark:border-[#252B34] px-3 py-2 text-xs font-mono-numbers tabular-nums text-[#151D2A] dark:text-[#F2F5F9] focus:border-[#1769E8] focus:outline-none"
                 required
               />
             </div>
           </div>
         </div>
 
-        {/* Row 6: Screenshot Chart & Rating Disiplin */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+        {/* SECTION FOR CLOSED TRADES ONLY: EXIT & OUTCOME */}
+        {lifecycleStatus === 'CLOSED' && (
+          <div className="p-3.5 rounded-xl bg-[#F5F7FA] dark:bg-[#171D26] border border-[#DDE3EA] dark:border-[#252B34] space-y-3">
+            <div className="flex items-center justify-between">
+              <span className="text-[11px] font-bold uppercase tracking-wider text-[#697586] dark:text-[#929BA9]">
+                Hasil Penutupan Posisi
+              </span>
+              <div className="flex items-center gap-1.5 text-[10px]">
+                {(['WIN', 'LOSS', 'BREAKEVEN'] as const).map((oc) => (
+                  <button
+                    key={oc}
+                    type="button"
+                    onClick={() => handleOutcomeChange(oc)}
+                    className={`px-2.5 py-1 rounded-md border font-bold cursor-pointer transition-colors ${
+                      outcome === oc
+                        ? 'bg-[#1769E8] border-[#1769E8] text-white'
+                        : 'bg-white dark:bg-[#080A0E] border-[#DDE3EA] dark:border-[#252B34] text-[#697586] dark:text-[#929BA9]'
+                    }`}
+                  >
+                    {oc}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+              <div>
+                <label className="block text-[11px] text-[#697586] dark:text-[#929BA9] mb-1">
+                  Exit Price
+                </label>
+                <input
+                  type="number"
+                  step="any"
+                  inputMode="decimal"
+                  value={exitPrice}
+                  onChange={(e) => handleExitPriceChange(e.target.value)}
+                  placeholder="0.00"
+                  className="w-full rounded-lg bg-white dark:bg-[#080A0E] border border-[#DDE3EA] dark:border-[#252B34] px-3 py-2 text-xs font-mono-numbers tabular-nums text-[#151D2A] dark:text-[#F2F5F9] focus:border-[#1769E8] focus:outline-none"
+                />
+              </div>
+
+              <div>
+                <label className="block text-[11px] text-[#697586] dark:text-[#929BA9] mb-1">
+                  Gross P/L ({settings.currencySymbol})
+                </label>
+                <input
+                  type="number"
+                  step="0.01"
+                  inputMode="decimal"
+                  value={grossProfit}
+                  onChange={(e) => handleGrossProfitChange(e.target.value)}
+                  placeholder="0.00"
+                  className="w-full rounded-lg bg-white dark:bg-[#080A0E] border border-[#DDE3EA] dark:border-[#252B34] px-3 py-2 text-xs font-mono-numbers tabular-nums text-[#151D2A] dark:text-[#F2F5F9] focus:border-[#1769E8] focus:outline-none"
+                />
+              </div>
+
+              <div>
+                <label className="block text-[11px] text-[#697586] dark:text-[#929BA9] mb-1">
+                  Komisi / Fee
+                </label>
+                <input
+                  type="number"
+                  step="0.01"
+                  inputMode="decimal"
+                  value={commission}
+                  onChange={(e) => setCommission(e.target.value)}
+                  placeholder="0.00"
+                  className="w-full rounded-lg bg-white dark:bg-[#080A0E] border border-[#DDE3EA] dark:border-[#252B34] px-3 py-2 text-xs font-mono-numbers tabular-nums text-[#151D2A] dark:text-[#F2F5F9] focus:border-[#1769E8] focus:outline-none"
+                />
+              </div>
+
+              <div>
+                <label className="block text-[11px] font-semibold text-[#151D2A] dark:text-[#F2F5F9] mb-1">
+                  Net P/L ({settings.currencySymbol})
+                </label>
+                <input
+                  type="number"
+                  step="0.01"
+                  inputMode="decimal"
+                  value={netProfit}
+                  onChange={(e) => handleNetProfitChange(e.target.value)}
+                  placeholder="0.00"
+                  className="w-full rounded-lg bg-white dark:bg-[#080A0E] border border-[#DDE3EA] dark:border-[#252B34] px-3 py-2 text-xs font-mono-numbers tabular-nums font-bold text-[#151D2A] dark:text-[#F2F5F9] focus:border-[#1769E8] focus:outline-none"
+                />
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* 8. DOKUMENTASI (Section H - Screenshot & Catatan Transaksi, clean, no decorative icon) */}
+        <div className="p-3.5 rounded-xl bg-[#F5F7FA] dark:bg-[#171D26] border border-[#DDE3EA] dark:border-[#252B34] space-y-3">
+          <div className="flex items-center justify-between">
+            <span className="text-[11px] font-bold uppercase tracking-wider text-[#697586] dark:text-[#929BA9]">
+              Dokumentasi
+            </span>
+            <div className="flex items-center gap-1.5 text-[10px] text-[#697586] dark:text-[#929BA9]">
+              <span>ID:</span>
+              <span className="font-mono font-bold text-[#151D2A] dark:text-[#F2F5F9]">{id}</span>
+              <button
+                type="button"
+                onClick={handleRegenerateId}
+                className="text-[#1769E8] hover:underline inline-flex items-center gap-0.5 cursor-pointer ml-1"
+                title="Acak ID Transaksi"
+              >
+                <RefreshCw className="h-2.5 w-2.5 stroke-[1.75]" />
+              </button>
+            </div>
+          </div>
+
+          {/* Screenshot Upload (Before Trade) */}
           <div>
-            <label className="block text-xs font-semibold text-[#151D2A] dark:text-[#F2F5F9] mb-1 flex items-center justify-between">
-              <span>Screenshot Chart (Lokal / URL)</span>
-              <span className="text-[10px] text-[#697586] dark:text-[#929BA9] font-normal">Kompresi otomatis</span>
+            <label className="block text-[11px] font-semibold text-[#151D2A] dark:text-[#F2F5F9] mb-1">
+              Screenshot Chart
             </label>
             <div className="flex gap-2">
-              <label className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-[#F5F7FA] dark:bg-[#080A0E] border border-[#DDE3EA] dark:border-[#252B34] hover:border-[#1769E8] text-xs text-[#151D2A] dark:text-[#F2F5F9] cursor-pointer transition-colors">
+              <label className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white dark:bg-[#080A0E] border border-[#DDE3EA] dark:border-[#252B34] hover:border-[#1769E8] text-xs cursor-pointer">
                 <Upload className="h-3.5 w-3.5 stroke-[1.75] text-[#1769E8]" />
-                <span>Pilih Foto</span>
+                <span>Tambah Screenshot</span>
                 <input
                   type="file"
                   accept="image/*"
@@ -1053,29 +1825,23 @@ export const TradeForm: React.FC<TradeFormProps> = ({
                 type="text"
                 value={screenshotUrl}
                 onChange={(e) => setScreenshotUrl(e.target.value)}
-                placeholder="Atau tempel URL gambar..."
-                className="flex-1 rounded-lg bg-[#F5F7FA] dark:bg-[#080A0E] border border-[#DDE3EA] dark:border-[#252B34] px-3 py-2 text-xs text-[#151D2A] dark:text-[#F2F5F9] placeholder-[#697586] dark:placeholder-[#929BA9] focus:border-[#1769E8] focus:outline-none"
+                placeholder="Atau tempel URL screenshot..."
+                className="flex-1 rounded-lg bg-white dark:bg-[#080A0E] border border-[#DDE3EA] dark:border-[#252B34] px-3 py-1.5 text-xs text-[#151D2A] dark:text-[#F2F5F9] focus:border-[#1769E8] focus:outline-none"
               />
             </div>
 
             {screenshotUrl && (
-              <div className="mt-2 relative rounded-lg overflow-hidden border border-[#DDE3EA] dark:border-[#252B34] h-36 bg-[#F5F7FA] dark:bg-[#080A0E] flex items-center justify-center group">
+              <div className="mt-2 relative rounded-lg overflow-hidden border border-[#DDE3EA] dark:border-[#252B34] h-28 bg-white dark:bg-[#080A0E] flex items-center justify-center">
                 {isPreviewLoading ? (
-                  <div className="flex items-center gap-2 text-[#1769E8] text-xs">
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                    <span>Memuat pratinjau...</span>
-                  </div>
+                  <Loader2 className="h-4 w-4 animate-spin text-[#1769E8]" />
                 ) : previewDisplayUrl ? (
                   <img
                     src={previewDisplayUrl}
                     alt="Chart Preview"
-                    width={800}
-                    height={450}
-                    decoding="async"
-                    className="w-full h-36 object-cover"
+                    className="w-full h-28 object-cover"
                   />
                 ) : (
-                  <span className="text-xs text-[#697586] dark:text-[#929BA9]">Pratinjau tidak tersedia</span>
+                  <span className="text-[11px] text-[#697586]">Pratinjau tersimpan</span>
                 )}
                 <button
                   type="button"
@@ -1083,119 +1849,89 @@ export const TradeForm: React.FC<TradeFormProps> = ({
                     setScreenshotUrl('');
                     setPreviewDisplayUrl('');
                   }}
-                  className="absolute top-1.5 right-1.5 rounded-full bg-white/90 dark:bg-[#11151B]/90 border border-[#DDE3EA] dark:border-[#252B34] p-1 text-[#151D2A] dark:text-[#F2F5F9] hover:text-rose-500 z-10"
-                  title="Hapus Gambar"
-                  aria-label="Hapus screenshot"
+                  className="absolute top-1.5 right-1.5 rounded-full bg-white/90 dark:bg-[#11151B]/90 border border-[#DDE3EA] dark:border-[#252B34] p-1 cursor-pointer"
                 >
-                  <X className="h-3.5 w-3.5 stroke-[1.75]" />
+                  <X className="h-3 w-3 stroke-[1.75]" />
                 </button>
               </div>
             )}
           </div>
 
+          {/* Catatan Transaksi */}
           <div>
-            <label className="block text-xs font-semibold text-[#151D2A] dark:text-[#F2F5F9] mb-1">
-              Rating Kepatuhan Disiplin (Trading Plan)
+            <label className="block text-[11px] font-semibold text-[#151D2A] dark:text-[#F2F5F9] mb-1">
+              Catatan Transaksi
             </label>
-            <div className="flex items-center gap-2 py-1.5">
-              {[1, 2, 3, 4, 5].map((star) => (
-                <button
-                  key={star}
-                  type="button"
-                  onClick={() => setDisciplineRating(star)}
-                  className={`flex-1 py-1.5 rounded-lg border text-xs font-semibold transition-colors ${
-                    disciplineRating >= star
-                      ? 'bg-[#1769E8]/15 text-[#1769E8] border-[#1769E8]/40'
-                      : 'bg-[#F5F7FA] dark:bg-[#080A0E] text-[#697586] dark:text-[#929BA9] border-[#DDE3EA] dark:border-[#252B34] hover:text-[#151D2A] dark:hover:text-[#F2F5F9]'
-                  }`}
-                >
-                  ★ {star}
-                </button>
-              ))}
+            <textarea
+              rows={2}
+              value={notes}
+              onChange={(e) => setNotes(e.target.value)}
+              placeholder="Catatan analisa teknikal, setup, atau alasan entry..."
+              className="w-full rounded-lg bg-white dark:bg-[#080A0E] border border-[#DDE3EA] dark:border-[#252B34] p-2 text-xs text-[#151D2A] dark:text-[#F2F5F9] focus:border-[#1769E8] focus:outline-none"
+            />
+          </div>
+
+          {lifecycleStatus === 'CLOSED' && (
+            <div>
+              <label className="block text-[11px] font-semibold text-[#151D2A] dark:text-[#F2F5F9] mb-1">
+                Refleksi Pasca-Trade
+              </label>
+              <textarea
+                rows={2}
+                value={postTradeEvaluation}
+                onChange={(e) => setPostTradeEvaluation(e.target.value)}
+                placeholder="Evaluasi eksekusi, psikologi, dan kedisiplinan..."
+                className="w-full rounded-lg bg-white dark:bg-[#080A0E] border border-[#DDE3EA] dark:border-[#252B34] p-2 text-xs text-[#151D2A] dark:text-[#F2F5F9] focus:border-[#1769E8] focus:outline-none"
+              />
             </div>
-            <p className="text-[11px] text-[#697586] dark:text-[#929BA9] mt-1">
-              {disciplineRating === 5
-                ? 'Sangat Disiplin: Eksekusi 100% patuh rencana tanpa emosi/FOMO.'
-                : disciplineRating >= 3
-                ? 'Cukup Disiplin: Ada sedikit deviasi manajemen risiko atau early exit.'
-                : 'Tidak Disiplin: Terjadi overtrading, revenge trade, atau menggeser SL.'}
-            </p>
-          </div>
+          )}
         </div>
 
-        {/* Row 7: Alasan Entry, Evaluasi & Catatan Terstruktur */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <div>
-            <label className="block text-xs font-semibold text-[#151D2A] dark:text-[#F2F5F9] mb-1">
-              Alasan Entry (Konfirmasi Teknikal)
-            </label>
-            <textarea
-              rows={2}
-              value={entryReason}
-              onChange={(e) => setEntryReason(e.target.value)}
-              placeholder="Konfirmasi apa yang memicu entry (misal: Liquidity sweep sesi London, retest FVG M15)..."
-              className="w-full rounded-lg bg-[#F5F7FA] dark:bg-[#080A0E] border border-[#DDE3EA] dark:border-[#252B34] p-2.5 text-xs text-[#151D2A] dark:text-[#F2F5F9] placeholder-[#697586] dark:placeholder-[#929BA9] focus:border-[#1769E8] focus:outline-none"
-            />
-          </div>
+      </div>
 
-          <div>
-            <label className="block text-xs font-semibold text-[#151D2A] dark:text-[#F2F5F9] mb-1">
-              Evaluasi Pasca-Trade &amp; Pelajaran
-            </label>
-            <textarea
-              rows={2}
-              value={postTradeEvaluation}
-              onChange={(e) => setPostTradeEvaluation(e.target.value)}
-              placeholder="Bagaimana psikologi saat floating, apakah exit tepat, apa yang bisa diperbaiki..."
-              className="w-full rounded-lg bg-[#F5F7FA] dark:bg-[#080A0E] border border-[#DDE3EA] dark:border-[#252B34] p-2.5 text-xs text-[#151D2A] dark:text-[#F2F5F9] placeholder-[#697586] dark:placeholder-[#929BA9] focus:border-[#1769E8] focus:outline-none"
-            />
-          </div>
-        </div>
+      {/* 9. SAVE TRANSACTION (Fixed shrink-0 Footer: always visible, never clipped on any viewport height) */}
+      <div className="flex items-center justify-end gap-2.5 px-4 sm:px-5 py-3 border-t border-[#DDE3EA] dark:border-[#252B34] bg-[#F5F7FA] dark:bg-[#171D26] shrink-0">
+        <button
+          type="button"
+          onClick={onCancel}
+          disabled={isSubmitting}
+          className="px-4 py-2 rounded-lg border border-[#DDE3EA] dark:border-[#252B34] bg-white dark:bg-[#11151B] text-xs font-semibold text-[#151D2A] dark:text-[#F2F5F9] hover:border-[#1769E8] transition-colors disabled:opacity-50 cursor-pointer"
+        >
+          Batal
+        </button>
+        <button
+          type="submit"
+          disabled={isSubmitting}
+          aria-busy={isSubmitting}
+          data-testid="save-trade-submit-button"
+          className="inline-flex items-center gap-1.5 px-5 py-2 rounded-lg bg-[#1769E8] hover:bg-[#1458C4] text-white text-xs font-semibold transition-colors disabled:opacity-60 cursor-pointer shadow-sm"
+        >
+          {isSubmitting ? (
+            <>
+              <Loader2 className="h-4 w-4 animate-spin" />
+              <span>Menyimpan...</span>
+            </>
+          ) : (
+            <>
+              <Save className="h-4 w-4 stroke-[1.75]" />
+              <span>Simpan Transaksi</span>
+            </>
+          )}
+        </button>
+      </div>
+    </form>
+  );
 
-        {/* Row 8: Catatan Tambahan */}
-        <div>
-          <label className="block text-xs font-semibold text-[#151D2A] dark:text-[#F2F5F9] mb-1">
-            Catatan Tambahan
-          </label>
-          <textarea
-            rows={2}
-            value={notes}
-            onChange={(e) => setNotes(e.target.value)}
-            placeholder="Catatan umum lainnya..."
-            className="w-full rounded-lg bg-[#F5F7FA] dark:bg-[#080A0E] border border-[#DDE3EA] dark:border-[#252B34] p-2.5 text-xs text-[#151D2A] dark:text-[#F2F5F9] placeholder-[#697586] dark:placeholder-[#929BA9] focus:border-[#1769E8] focus:outline-none"
-          />
-        </div>
+  if (!isPopupModal) {
+    return formCardContent;
+  }
 
-        {/* Form Actions */}
-        <div className="flex items-center justify-end gap-3 pt-4 border-t border-[#DDE3EA] dark:border-[#252B34]">
-          <button
-            type="button"
-            onClick={onCancel}
-            disabled={isSubmitting}
-            className="px-4 py-2 rounded-lg border border-[#DDE3EA] dark:border-[#252B34] bg-[#F5F7FA] dark:bg-[#171D26] text-xs font-semibold text-[#151D2A] dark:text-[#F2F5F9] hover:border-[#1769E8] transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            Batal
-          </button>
-          <button
-            type="submit"
-            disabled={isSubmitting}
-            aria-busy={isSubmitting}
-            className="flex items-center gap-2 px-6 py-2.5 rounded-lg bg-[#1769E8] hover:bg-[#1458C4] text-white text-xs font-semibold transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
-          >
-            {isSubmitting ? (
-              <>
-                <Loader2 className="h-4 w-4 animate-spin" />
-                <span>{initialTrade ? 'Memperbarui...' : 'Menyimpan...'}</span>
-              </>
-            ) : (
-              <>
-                <Save className="h-4 w-4 stroke-[1.75]" />
-                <span>{initialTrade ? 'Perbarui Transaksi' : 'Simpan Transaksi'}</span>
-              </>
-            )}
-          </button>
-        </div>
-      </form>
+  return (
+    <div
+      className="fixed inset-0 z-50 overflow-y-auto overscroll-contain flex flex-col items-center justify-start bg-black/60 dark:bg-black/80 backdrop-blur-sm p-3 sm:p-4 pt-[calc(0.75rem+env(safe-area-inset-top,0px))] pb-[calc(0.75rem+env(safe-area-inset-bottom,0px))] animate-in fade-in duration-150"
+      onClick={() => !isSubmitting && onCancel()}
+    >
+      {formCardContent}
     </div>
   );
 };

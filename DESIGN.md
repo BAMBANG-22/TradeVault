@@ -85,3 +85,20 @@
    - Dark Mode / Light Mode switching is canonically housed in **Settings → Appearance** (`#settings-appearance` in `SettingsView.tsx`), with direct navigation access provided in the left-side navigation (`Sidebar.tsx` and `MobileNav.tsx`) rather than a standalone toggle on the Dashboard top bar.
 4. **Modals & Forms**:
    - Every modal, table, form input, and calculator tab supports both Light Mode and Dark Mode using the semantic surface tokens above, with `Escape` key dismissal and visible `#1769E8` `:focus-visible` outlines.
+5. **Trade Log (`TradeTable.tsx`), Add Trade Popup Form (`TradeForm.tsx`), & Full Page Trade Detail (`TradeDetailModal.tsx`)**:
+   - **Trade Log Layout Hierarchy**:
+     1. Header (`Trade Log` title, Hamburger navigation access, and real Cloud/Offline sync indicator without fabricating status).
+     2. 4-Category Lifecycle Summary Cards (`Planned`, `Open`, `Closed`, `Cancelled`) with interactive status filtering; existing legacy trades without explicit lifecycle metadata default to `CLOSED` without fabricating status from `WIN/LOSS/BREAKEVEN`.
+     3. Compact Search & Filter Toolbar (`Search`, collapsible advanced filters, sort controls, and `+ Add Trade` button).
+     4. Date-Grouped Transaction List (`TODAY`, `YESTERDAY`, and formatted `DD MMM YYYY` headers, newest first) without mutating underlying trade timestamps.
+     5. Transaction Item Row: Left displays `Symbol`, `BUY/SELL` (strictly separated from lifecycle status), `Lot`, and `Time`; Right displays lifecycle status or result (`PLANNED` with action button, `OPEN` with close position button, `CLOSED` with Net P/L on top and `CLOSED` underneath, `CANCELLED` in neutral gray `#697586` / `#929BA9`).
+   - **Add Trade Popup Form**:
+     - Opens as a responsive Popup Modal over the active view when clicking `+ Add Trade` or editing a trade.
+     - Structured into 4 clean sections: (1) Informasi Transaksi (`Symbol`, `BUY/SELL`, `Market/Pending`, `Lot`, and `PLANNED/OPEN/CLOSED` selector), (2) Harga Rencana (`Planned Entry`, `Stop Loss`, `Take Profit` with live Risk, Reward, and Planned RR `1 : X`), (3) Waktu Transaksi (editable `Tanggal` and `Jam`), plus collapsible setup/session/screenshot/notes, and (4) Actions (`Cancel`, `Save Trade`).
+   - **Full Page Trade Detail**:
+     - Accessible as a dedicated Full Page view (`activeTab === 'detail'`) by clicking any transaction row or selecting `Detail` in the Bottom Navigation / Sidebar.
+     - Header displays `Symbol`, `BUY/SELL`, `Lot`, `Status`, and `Realized Profit/Loss` (when `CLOSED`).
+     - Structured into 5 Collapsible Accordions: `1. Trade Plan` (preserving initial plan separately from actual execution), `2. Eksekusi` (actual entry/lot/time and close details when `CLOSED`, with zero fabricated floating P/L), `3. Chart & Screenshot` (`BEFORE TRADE` and `AFTER TRADE` slots with preview, zoom, replace, delete), `4. Evaluasi` (Plan Adherence & Discipline Rating, Plan vs Actual comparison, and inline evaluation editor), and `5. Riwayat Aktivitas` (vertical timeline of genuinely recorded lifecycle events).
+   - **Zero-DDL Persistence (`[TV_META:<base64url>]`)**:
+     - Encodes lifecycle metadata inside `trade.executionNotes` so all 28 canonical fields, IndexedDB shadow records, JSON/ZIP backups, and Supabase `public.trades` rows remain 100% compatible without any database schema or RLS changes.
+

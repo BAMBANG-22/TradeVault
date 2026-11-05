@@ -157,15 +157,26 @@ export function mergeWithExistingSettings(
   ) {
     result.resetTimezone = incomingSettings.resetTimezone.trim();
   }
+  if (
+    incomingSettings.riskCapitalBasis === 'EQUITY' ||
+    incomingSettings.riskCapitalBasis === 'BALANCE'
+  ) {
+    result.riskCapitalBasis = incomingSettings.riskCapitalBasis;
+  }
 
   const numericKeys: Array<
-    Exclude<keyof AppSettings, 'currency' | 'currencySymbol' | 'resetTimezone'>
+    Exclude<
+      keyof AppSettings,
+      'currency' | 'currencySymbol' | 'resetTimezone' | 'riskCapitalBasis'
+    >
   > = [
     'startingBalance',
     'xauusdContractSize',
     'xauusdPointValue',
     'xauusdTickSize',
     'xauusdTickValue',
+    'xauusdPipSize',
+    'xauusdPipValuePer001Lot',
     'xauusdMinLot',
     'xauusdLotStep',
     'defaultLeverage',
@@ -178,6 +189,8 @@ export function mergeWithExistingSettings(
     'maxConsecutiveLossLimit',
     'maxDrawdownLimitPercent',
     'targetMonthlyReturnPercent',
+    'totalDeposits',
+    'totalWithdrawals',
   ];
 
   for (const key of numericKeys) {
@@ -222,6 +235,139 @@ export function saveStoredSettings(
   }
 }
 
+const STORAGE_PATH_UUID_REGEX =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\/[a-zA-Z0-9_.-]+\.(jpg|jpeg|png|webp)$/i;
+
+/**
+ * Validates whether a given string is a valid, isolated Supabase Storage path.
+ * Format: "<ownerUuid>/<filename>.<ext>"
+ * Strictly rejects path traversal (.., \, //, %2f, %5c, null bytes) and invalid UUID owners.
+ */
+export function isStoragePath(path: unknown): boolean {
+  if (!path || typeof path !== 'string') return false;
+  const clean = path.trim();
+  if (
+    clean.startsWith('data:image/') ||
+    clean.startsWith('http://') ||
+    clean.startsWith('https://')
+  ) {
+    return false;
+  }
+  // Strictly reject directory traversal and null byte injections
+  if (
+    clean.includes('..') ||
+    clean.includes('\\') ||
+    clean.includes('\0') ||
+    clean.includes('//') ||
+    /%2f/i.test(clean) ||
+    /%5c/i.test(clean)
+  ) {
+    return false;
+  }
+  return STORAGE_PATH_UUID_REGEX.test(clean);
+}
+
+/**
+ * Fail-Closed sanitizer for screenshot sources during backup restore or data import.
+ * - Guest mode (activeOwnerScope is null/'GUEST'): all Supabase storage paths and Supabase URLs are discarded.
+ * - Authenticated mode: storage paths are retained only if the owner UUID strictly matches activeOwnerScope.
+ * - Base64 images are verified for valid mime headers, magic byte signatures, and size <= 5MB.
+ * - External HTTPS URLs (non-Supabase) are retained if well-formed.
+ */
+export function classifyAndSanitizeScreenshotSource(
+  raw: string | undefined | null,
+  activeOwnerScope?: string | null
+): string | undefined {
+  if (!raw || typeof raw !== 'string') return undefined;
+  const clean = raw.trim();
+  if (!clean) return undefined;
+
+  const isGuest =
+    !activeOwnerScope ||
+    typeof activeOwnerScope !== 'string' ||
+    activeOwnerScope.trim().toUpperCase() === 'GUEST';
+  const cleanOwner = !isGuest && activeOwnerScope ? activeOwnerScope.trim().toLowerCase() : null;
+
+  // 1. Base64 Data URL validation
+  if (clean.startsWith('data:image/')) {
+    // Max 7MB string length (~5MB binary)
+    if (clean.length > 7 * 1024 * 1024) {
+      return undefined;
+    }
+    const match = clean.match(/^data:image\/(png|jpeg|jpg|webp);base64,([A-Za-z0-9+/=]+)$/);
+    if (!match) return undefined;
+
+    const payload = match[2];
+    if (payload.length < 8) return undefined;
+
+    // Magic byte signatures in base64:
+    // PNG: iVBORw0KGgo (89 50 4E 47)
+    // JPEG: /9j/ (FF D8 FF)
+    // WEBP: UklGR (52 49 46 46)
+    const isPng = payload.startsWith('iVBORw0KGgo');
+    const isJpeg = payload.startsWith('/9j/');
+    const isWebp = payload.startsWith('UklGR');
+
+    if (isPng || isJpeg || isWebp) {
+      return clean;
+    }
+    return undefined;
+  }
+
+  // 2. Supabase Storage Path
+  if (isStoragePath(clean)) {
+    if (isGuest || !cleanOwner) {
+      // Fail-closed: Guest has no access to private cloud storage paths
+      return undefined;
+    }
+    const pathOwner = clean.split('/')[0].toLowerCase();
+    if (pathOwner === cleanOwner) {
+      return clean;
+    }
+    // Storage path belongs to a different user scope: discard to prevent cross-account leak
+    return undefined;
+  }
+
+  // 3. URLs
+  if (clean.startsWith('https://') || clean.startsWith('http://')) {
+    try {
+      const parsedUrl = new URL(clean);
+      const isSupabaseDomain = parsedUrl.hostname.endsWith('.supabase.co');
+
+      if (isSupabaseDomain) {
+        if (isGuest || !cleanOwner) {
+          return undefined;
+        }
+        // If pointing to trade-screenshots bucket, verify owner segment
+        const pathname = parsedUrl.pathname;
+        const bucketPrefix = '/storage/v1/object/public/trade-screenshots/';
+        const signedPrefix = '/storage/v1/object/sign/trade-screenshots/';
+        if (pathname.includes(bucketPrefix) || pathname.includes(signedPrefix)) {
+          const subPath = pathname.split('trade-screenshots/')[1] || '';
+          if (isStoragePath(subPath)) {
+            const pathOwner = subPath.split('/')[0].toLowerCase();
+            if (pathOwner === cleanOwner) {
+              return subPath;
+            }
+          }
+          return undefined;
+        }
+        return undefined;
+      }
+
+      // External non-Supabase HTTPS URL
+      if (parsedUrl.protocol === 'https:') {
+        return clean;
+      }
+      return undefined;
+    } catch {
+      return undefined;
+    }
+  }
+
+  return undefined;
+}
+
 export function generateBackupJson(trades: Trade[], settings: AppSettings): string {
   const payload = {
     appName: 'TradeVault Journal',
@@ -235,7 +381,8 @@ export function generateBackupJson(trades: Trade[], settings: AppSettings): stri
 
 export function parseAndRestoreBackup(
   jsonString: string,
-  currentSettings: AppSettings = DEFAULT_SETTINGS
+  currentSettings: AppSettings = DEFAULT_SETTINGS,
+  activeOwnerScope?: string | null
 ): {
   success: boolean;
   message: string;
@@ -252,10 +399,19 @@ export function parseAndRestoreBackup(
       return { success: false, message: 'Data trades tidak ditemukan dalam backup.' };
     }
 
-    // Validate trade items lightly
-    const validTrades: Trade[] = data.trades.filter(
-      (t: any) => t && typeof t.id === 'string' && typeof t.dateTime === 'string'
-    );
+    // Validate and sanitize trade items with fail-closed screenshot filtering
+    const validTrades: Trade[] = data.trades
+      .filter((t: any) => t && typeof t.id === 'string' && typeof t.dateTime === 'string')
+      .map((t: Trade) => {
+        const sanitizedScreenshot = classifyAndSanitizeScreenshotSource(
+          t.screenshotUrl,
+          activeOwnerScope
+        );
+        return {
+          ...t,
+          screenshotUrl: sanitizedScreenshot,
+        };
+      });
 
     const mergedSettings: AppSettings = mergeWithExistingSettings(
       currentSettings,
@@ -272,3 +428,4 @@ export function parseAndRestoreBackup(
     return { success: false, message: `Gagal membaca file JSON: ${err.message}` };
   }
 }
+

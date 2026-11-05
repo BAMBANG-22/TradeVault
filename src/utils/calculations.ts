@@ -247,6 +247,42 @@ export function resolveTradeOutcome(trade: Partial<Trade>): TradeOutcome {
 }
 
 /**
+ * Checks whether a trade has a CLOSED lifecycle status for realized performance metrics.
+ * Legacy trades without [TV_META:...] are CLOSED.
+ * PLANNED, OPEN, and CANCELLED trades are strictly excluded from realized P/L, Win Rate, and Profit Factor.
+ */
+export function isClosedLifecycleTrade(trade: Partial<Trade>): boolean {
+  const execNotes = trade?.executionNotes;
+  if (!execNotes || typeof execNotes !== 'string') return true;
+  const match = execNotes.match(/\[TV_META:([A-Za-z0-9_-]+)\]\s*$/);
+  if (!match || !match[1]) return true;
+  try {
+    let base64 = match[1].replace(/-/g, '+').replace(/_/g, '/');
+    const pad = base64.length % 4;
+    if (pad === 2) base64 += '==';
+    else if (pad === 3) base64 += '=';
+    const binary = atob(base64);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) {
+      bytes[i] = binary.charCodeAt(i);
+    }
+    const jsonStr = new TextDecoder('utf-8').decode(bytes);
+    const parsed = JSON.parse(jsonStr);
+    if (
+      parsed &&
+      (parsed.status === 'PLANNED' ||
+        parsed.status === 'OPEN' ||
+        parsed.status === 'CANCELLED')
+    ) {
+      return false;
+    }
+  } catch {
+    // Fallback to CLOSED on malformed tag
+  }
+  return true;
+}
+
+/**
  * Computes Planned Risk:Reward ratio strictly from Entry, Stop Loss, and Take Profit prices.
  * Formula: abs(Take Profit - Entry) / abs(Entry - Stop Loss)
  * Returns null if any price is missing/invalid, if SL distance is zero, or if SL/TP direction is invalid for position.
@@ -396,6 +432,66 @@ export function formatGrowthPercent(
   return `${rounded >= 0 ? '+' : ''}${rounded.toFixed(decimals)}%`;
 }
 
+export type DashboardPeriodPreset = '1D' | '7D' | '1M' | '3M' | '6M' | '1Y' | 'ALL';
+
+export const DASHBOARD_PERIOD_OPTIONS: ReadonlyArray<{
+  id: DashboardPeriodPreset;
+  label: string;
+}> = [
+  { id: '1D', label: '1 Hari' },
+  { id: '7D', label: '7 Hari' },
+  { id: '1M', label: '1 Bulan' },
+  { id: '3M', label: '3 Bulan' },
+  { id: '6M', label: '6 Bulan' },
+  { id: '1Y', label: '1 Tahun' },
+  { id: 'ALL', label: 'Semua Waktu' },
+];
+
+/**
+ * Resolves local calendar startDate and endDate ('YYYY-MM-DD') for the 7 Dashboard period presets.
+ */
+export function resolveDashboardPeriodDates(
+  period: DashboardPeriodPreset,
+  referenceDate: Date = new Date()
+): { startDate: string; endDate: string } {
+  if (period === 'ALL') {
+    return { startDate: '', endDate: '' };
+  }
+  const endDate = formatLocalDateKey(referenceDate);
+  const y = referenceDate.getFullYear();
+  const m = referenceDate.getMonth();
+  const d = referenceDate.getDate();
+
+  let startObj: Date;
+  switch (period) {
+    case '1D':
+      startObj = new Date(y, m, d - 1);
+      break;
+    case '7D':
+      startObj = new Date(y, m, d - 7);
+      break;
+    case '1M':
+      startObj = new Date(y, m - 1, d);
+      break;
+    case '3M':
+      startObj = new Date(y, m - 3, d);
+      break;
+    case '6M':
+      startObj = new Date(y, m - 6, d);
+      break;
+    case '1Y':
+      startObj = new Date(y - 1, m, d);
+      break;
+    default:
+      return { startDate: '', endDate: '' };
+  }
+
+  return {
+    startDate: formatLocalDateKey(startObj),
+    endDate,
+  };
+}
+
 /**
  * Computes filtered trades for a date period and the true period starting balance
  * (account startingBalance + cumulative net profit of all trades prior to startDate)
@@ -414,7 +510,9 @@ export function computePeriodTradesAndStartingBalance(
   const rawBase = Number(settings?.startingBalance);
   const accountStartingBalance = Number.isFinite(rawBase) ? rawBase : 10000;
 
-  if (!trades || trades.length === 0) {
+  const closedTrades = (trades || []).filter((t) => isClosedLifecycleTrade(t));
+
+  if (closedTrades.length === 0) {
     const bal = Number(accountStartingBalance.toFixed(2));
     return {
       filteredTrades: [],
@@ -423,7 +521,7 @@ export function computePeriodTradesAndStartingBalance(
     };
   }
 
-  const sorted = [...trades].sort((a, b) => {
+  const sorted = [...closedTrades].sort((a, b) => {
     const diff = new Date(a.dateTime).getTime() - new Date(b.dateTime).getTime();
     if (diff !== 0) return diff;
     return (a.id || '').localeCompare(b.id || '');
@@ -442,7 +540,7 @@ export function computePeriodTradesAndStartingBalance(
   let cumulativeBeforePeriod = 0;
 
   sorted.forEach((t) => {
-    const tradeDate = (t.dateTime || '').slice(0, 10);
+    const tradeDate = extractTradeLocalDateKey(t.dateTime);
     if (startDate && tradeDate < startDate) {
       cumulativeBeforePeriod += computeTradeNetProfit(t);
     } else if (endDate && tradeDate > endDate) {
@@ -654,6 +752,45 @@ export function extractTradeLocalDateKey(
 }
 
 /**
+ * Formats a Date or timestamp string into local "YYYY-MM-DDTHH:mm" format
+ * required by <input type="datetime-local" /> without shifting local date-time strings.
+ */
+export function normalizeTradeDateTimeLocal(rawDate: unknown): string {
+  if (rawDate instanceof Date && !isNaN(rawDate.getTime())) {
+    const year = rawDate.getFullYear();
+    const month = String(rawDate.getMonth() + 1).padStart(2, '0');
+    const day = String(rawDate.getDate()).padStart(2, '0');
+    const hours = String(rawDate.getHours()).padStart(2, '0');
+    const minutes = String(rawDate.getMinutes()).padStart(2, '0');
+    return `${year}-${month}-${day}T${hours}:${minutes}`;
+  }
+  if (typeof rawDate === 'string') {
+    const clean = rawDate.trim();
+    const localMatch = clean.match(/^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})/);
+    if (localMatch && !/[Zz]|[+-]\d{2}:?\d{2}$/.test(clean)) {
+      return `${localMatch[1]}-${localMatch[2]}-${localMatch[3]}T${localMatch[4]}:${localMatch[5]}`;
+    }
+    const parsed = new Date(clean);
+    if (!isNaN(parsed.getTime())) {
+      const year = parsed.getFullYear();
+      const month = String(parsed.getMonth() + 1).padStart(2, '0');
+      const day = String(parsed.getDate()).padStart(2, '0');
+      const hours = String(parsed.getHours()).padStart(2, '0');
+      const minutes = String(parsed.getMinutes()).padStart(2, '0');
+      return `${year}-${month}-${day}T${hours}:${minutes}`;
+    }
+  }
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = String(now.getMonth() + 1).padStart(2, '0');
+  const day = String(now.getDate()).padStart(2, '0');
+  const hours = String(now.getHours()).padStart(2, '0');
+  const minutes = String(now.getMinutes()).padStart(2, '0');
+  return `${year}-${month}-${day}T${hours}:${minutes}`;
+}
+
+
+/**
  * Computes dailyLossToday for trades occurring on the local calendar date of referenceDate.
  * Compares local 'YYYY-MM-DD' instead of UTC toISOString().slice(0, 10).
  */
@@ -664,7 +801,9 @@ export function computeDailyLossForLocalDate(
 ): number {
   const todayStr = formatLocalDateKey(referenceDate, timezoneOffsetMinutes);
   const todayTrades = (trades || []).filter(
-    (t) => extractTradeLocalDateKey(t.dateTime || '', timezoneOffsetMinutes) === todayStr
+    (t) =>
+      isClosedLifecycleTrade(t) &&
+      extractTradeLocalDateKey(t.dateTime || '', timezoneOffsetMinutes) === todayStr
   );
   const todayNet = todayTrades.reduce((acc, t) => acc + computeTradeNetProfit(t), 0);
   return todayNet < 0 ? Number(Math.abs(todayNet).toFixed(2)) : 0;
@@ -712,8 +851,10 @@ export function calculatePerformance(
   );
   const hasValidGrowthPercent = startingBalance > 0;
 
-  // If trades array is empty, return clear empty state representation
-  if (!trades || trades.length === 0) {
+  const closedTrades = (trades || []).filter((t) => isClosedLifecycleTrade(t));
+
+  // If closedTrades array is empty, return clear empty state representation
+  if (closedTrades.length === 0) {
     const emptyMetrics: PerformanceMetrics = {
       isEmpty: true,
       totalTrades: 0,
@@ -777,11 +918,11 @@ export function calculatePerformance(
         profitFactorScore: 0,
         expectancyScore: 0,
         rewardRiskScore: 0,
-        returnScore: 50,
-        drawdownControlScore: 100,
-        riskControlScore: 100,
+        returnScore: 0,
+        drawdownControlScore: 0,
+        riskControlScore: 0,
         consistencyScore: 0,
-        disciplineScore: 100,
+        disciplineScore: 0,
         isDataSufficient: false,
         totalTrades: 0,
       },
@@ -790,7 +931,7 @@ export function calculatePerformance(
 
   // Sort trades chronologically to accurately track peak and drawdown series
   // Deterministic secondary sort on ID ensures identical timestamps produce consistent ordering
-  const sortedTrades = [...trades].sort((a, b) => {
+  const sortedTrades = [...closedTrades].sort((a, b) => {
     const diff = new Date(a.dateTime).getTime() - new Date(b.dateTime).getTime();
     if (diff !== 0) return diff;
     return (a.id || '').localeCompare(b.id || '');
@@ -1063,15 +1204,17 @@ export function calculatePerformance(
     });
 
   // Radar 6 Pillars (0 to 100 score)
-  // Requirement: If totalTrades < 3, isDataSufficient = false to avoid artificial 100 scores
+  // Requirement: If totalTrades < 3, isDataSufficient = false to avoid artificial scores
   const isDataSufficient = totalTrades >= 3;
 
   let winRateScore = 0;
   let profitFactorScore = 0;
   let expectancyScore = 0;
   let rewardRiskScore = 0;
-  let returnScore = 50;
-  let drawdownControlScore = 100;
+  let returnScore = 0;
+  let drawdownControlScore = 0;
+  let consistencyScore = 0;
+  let disciplineScore = 0;
 
   if (isDataSufficient) {
     // 1. Win Rate Score (Target: 50% = 65 score, 70%+ = 100 score)
@@ -1137,7 +1280,7 @@ export function calculatePerformance(
       returnScore = 0;
     }
 
-    // 6. Drawdown Control Score (Target: Max DD <= 2% = 100, <= 5% = 85, <= 10% = 70, <= 20% = 40, > 35% = 0)
+    // 6. Risk Control / Drawdown Control Score (Target: Max DD <= 0% = 100, <= 5% = 85, <= 10% = 70, <= 20% = 40, > 35% = 0)
     if (maxDrawdownPercent <= 0) {
       drawdownControlScore = 100;
     } else if (maxDrawdownPercent <= 5.0) {
@@ -1151,16 +1294,17 @@ export function calculatePerformance(
     } else {
       drawdownControlScore = 0;
     }
+
+    // Consistency Score: Ratio of profitable trading days to total active trading days (0 - 100)
+    const profitableDays = dailyPerformance.filter((d) => d.netProfit > 0).length;
+    consistencyScore =
+      dailyPerformance.length > 0
+        ? Math.min(100, Math.round((profitableDays / dailyPerformance.length) * 100))
+        : 0;
+
+    const avgDiscipline = countWithDiscipline > 0 ? totalDisciplineRating / countWithDiscipline : 5;
+    disciplineScore = Math.min(100, Math.round((avgDiscipline / 5) * 100));
   }
-
-  const profitableDays = dailyPerformance.filter((d) => d.netProfit > 0).length;
-  const consistencyScore =
-    dailyPerformance.length > 0
-      ? Math.min(100, Math.round((profitableDays / dailyPerformance.length) * 100))
-      : 50;
-
-  const avgDiscipline = countWithDiscipline > 0 ? totalDisciplineRating / countWithDiscipline : 5;
-  const disciplineScore = Math.min(100, Math.round((avgDiscipline / 5) * 100));
 
   return {
     metrics: {
@@ -1217,4 +1361,193 @@ export function calculatePerformance(
       totalTrades,
     },
   };
+}
+
+/**
+ * Computes normalized Drawdown Curve series and Y-axis ticks from an EquityPoint[] sequence.
+ * - Peak Equity = highest equity reached up to that point
+ * - Drawdown Nominal = max(0, Peak Equity - Current Equity)
+ * - Drawdown Persentase = Peak Equity > 0 ? (Drawdown Nominal / Peak Equity) * 100 : 0
+ * Guarantees zero NaN or Infinity even if starting balance is 0, negative, or dataset is empty.
+ */
+export function computeDrawdownCurveSeries(
+  equityCurve: ReadonlyArray<EquityPoint>,
+  settings?: AppSettings
+): {
+  safeCurve: EquityPoint[];
+  hasExecutedTrades: boolean;
+  hasValidStartingBalance: boolean;
+  maxDrawdownPercent: number;
+  maxDrawdownAmount: number;
+  yMax: number;
+  tickValues: number[];
+} {
+  const rawStart =
+    equityCurve && equityCurve.length > 0 && Number.isFinite(equityCurve[0].equity)
+      ? Number(equityCurve[0].equity)
+      : Number.isFinite(Number(settings?.startingBalance))
+      ? Number(settings?.startingBalance)
+      : 0;
+  const startEquity = Number.isFinite(rawStart) ? Number(rawStart.toFixed(2)) : 0;
+  const hasValidStartingBalance = startEquity > 0;
+
+  if (!equityCurve || equityCurve.length === 0) {
+    const fallbackPoint: EquityPoint = {
+      index: 0,
+      date: new Date().toISOString(),
+      tradeId: 'START',
+      netProfit: 0,
+      equity: startEquity,
+      peak: startEquity,
+      drawdownAmount: 0,
+      drawdownPercent: 0,
+      growthPercent: 0,
+      peakGrowthPercent: 0,
+      hasValidGrowthPercent: hasValidStartingBalance,
+      outcome: 'START',
+    };
+    return {
+      safeCurve: [fallbackPoint],
+      hasExecutedTrades: false,
+      hasValidStartingBalance,
+      maxDrawdownPercent: 0,
+      maxDrawdownAmount: 0,
+      yMax: 5,
+      tickValues: [0, 2.5, 5],
+    };
+  }
+
+  let runningPeak = startEquity;
+  let maxDrawdownAmount = 0;
+  let maxDrawdownPercent = 0;
+
+  const safeCurve: EquityPoint[] = equityCurve.map((pt, idx) => {
+    const currentEquity = Number.isFinite(pt.equity) ? Number(pt.equity.toFixed(2)) : startEquity;
+    if (idx === 0) {
+      runningPeak = currentEquity;
+    } else if (currentEquity > runningPeak) {
+      runningPeak = currentEquity;
+    }
+
+    const rawNominal = Math.max(0, runningPeak - currentEquity);
+    const drawdownAmount = Number.isFinite(rawNominal) ? Number(rawNominal.toFixed(2)) : 0;
+    const rawPct = runningPeak > 0 ? (drawdownAmount / runningPeak) * 100 : 0;
+    const drawdownPercent =
+      Number.isFinite(rawPct) && rawPct >= 0 ? Number(rawPct.toFixed(2)) : 0;
+
+    if (drawdownAmount > maxDrawdownAmount) {
+      maxDrawdownAmount = drawdownAmount;
+    }
+    if (drawdownPercent > maxDrawdownPercent) {
+      maxDrawdownPercent = drawdownPercent;
+    }
+
+    return {
+      ...pt,
+      index: idx,
+      equity: currentEquity,
+      peak: Number(runningPeak.toFixed(2)),
+      drawdownAmount,
+      drawdownPercent,
+    };
+  });
+
+  const hasExecutedTrades = safeCurve.length > 1;
+  const rawMax = Math.max(maxDrawdownPercent, 0);
+  // Compute clean yMax with 15% breathing room (minimum 2% scale when drawdown is 0% so 0% baseline sits cleanly at top)
+  const yMax = rawMax > 0 ? Number(Math.max(1, rawMax * 1.15).toFixed(2)) : 5;
+  const tickValues = [0, Number((yMax * 0.5).toFixed(2)), yMax];
+
+  return {
+    safeCurve,
+    hasExecutedTrades,
+    hasValidStartingBalance: hasValidStartingBalance || runningPeak > 0,
+    maxDrawdownPercent: Number(maxDrawdownPercent.toFixed(2)),
+    maxDrawdownAmount: Number(maxDrawdownAmount.toFixed(2)),
+    yMax,
+    tickValues,
+  };
+}
+
+/**
+ * Adaptive currency formatter for Performance Calendar date cells.
+ * Guarantees single-line output, strict sign retention (+ / -), no ellipses,
+ * tabular alignment, and consistent abbreviation (K for thousands, M for millions)
+ * without mutating underlying financial values.
+ */
+export function formatCalendarAdaptivePnl(
+  amount: number,
+  settings: AppSettings,
+  isPrivacyMode: boolean = false,
+  mode: 'adaptive' | 'compact' | 'full' = 'adaptive'
+): string {
+  if (isPrivacyMode) {
+    if (amount > 0) return '+***';
+    if (amount < 0) return '-***';
+    return '***';
+  }
+
+  const safeAmount = Number.isFinite(amount) ? amount : 0;
+  const rounded = Number(safeAmount.toFixed(2));
+  const symbol = settings?.currencySymbol || '$';
+  const isIdr = settings?.currency === 'IDR' || symbol === 'Rp';
+
+  if (Math.abs(rounded) < 0.01) {
+    return isIdr ? 'Rp0' : `${symbol}0`;
+  }
+
+  const sign = rounded > 0 ? '+' : '-';
+  const abs = Math.abs(rounded);
+
+  if (mode === 'full') {
+    return `${sign}${formatCurrency(abs, settings, false)}`;
+  }
+
+  if (isIdr) {
+    if (abs >= 1_000_000) {
+      const mVal = abs / 1_000_000;
+      const formattedM = mVal >= 10 ? mVal.toFixed(1) : mVal.toFixed(2);
+      const cleanM = parseFloat(formattedM);
+      return `${sign}Rp${cleanM}M`;
+    }
+    if (abs >= 1_000) {
+      const kVal = abs / 1_000;
+      const formattedK = kVal >= 100 ? kVal.toFixed(0) : kVal >= 10 ? kVal.toFixed(1) : kVal.toFixed(2);
+      const cleanK = parseFloat(formattedK);
+      return `${sign}Rp${cleanK}K`;
+    }
+    return `${sign}Rp${Math.round(abs)}`;
+  }
+
+  // USD / Standard Currency
+  if (abs >= 1_000_000) {
+    const mVal = abs / 1_000_000;
+    const formattedM = mVal >= 10 ? mVal.toFixed(1) : mVal.toFixed(2);
+    const cleanM = parseFloat(formattedM);
+    return `${sign}${symbol}${cleanM}M`;
+  }
+
+  if (abs >= 1_000) {
+    const kVal = abs / 1_000;
+    const formattedK = kVal >= 100 ? kVal.toFixed(0) : kVal.toFixed(2);
+    const cleanK = parseFloat(formattedK);
+    return `${sign}${symbol}${cleanK}K`;
+  }
+
+  // abs < 1000
+  if (abs >= 999.5) {
+    return `${sign}${symbol}1K`;
+  }
+
+  if (abs >= 100) {
+    if (mode === 'compact') {
+      return `${sign}${symbol}${Math.round(abs)}`;
+    }
+    const roundedTwo = parseFloat(abs.toFixed(2));
+    return `${sign}${symbol}${roundedTwo}`;
+  }
+
+  // abs < 100
+  const roundedTwo = parseFloat(abs.toFixed(2));
+  return `${sign}${symbol}${roundedTwo}`;
 }
