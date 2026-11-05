@@ -91,11 +91,24 @@ jobs:
           fi
           chmod 600 "$KEYSTORE_PATH"
 
-          # Fail early with a clear message if the store or private-key credentials do not match.
-          if ! keytool -list -keystore "$KEYSTORE_PATH" -storepass "$ANDROID_KEYSTORE_PASSWORD" -alias "$ANDROID_KEY_ALIAS" >/dev/null 2>&1; then
-            echo "ERROR: Keystore password or alias is incorrect. Check ANDROID_KEYSTORE_PASSWORD and ANDROID_KEY_ALIAS Repository Secrets."
+          # Verify the exact uploaded keystore before checking credentials.
+          EXPECTED_KEYSTORE_SHA256="f8add56ab91da0d91ee5736693348950b98099d3a1704f2510e76f56a07656c1"
+          ACTUAL_KEYSTORE_SHA256="$(sha256sum "$KEYSTORE_PATH" | awk '{print $1}')"
+          if [ "$ACTUAL_KEYSTORE_SHA256" != "$EXPECTED_KEYSTORE_SHA256" ]; then
+            echo "ERROR: ANDROID_KEYSTORE_BASE64 does not decode to the approved persistent keystore. Re-copy the complete ANDROID_KEYSTORE_BASE64.txt into its Repository Secret."
             exit 1
           fi
+
+          # Check store password and alias separately so the failure identifies the exact setting.
+          if ! keytool -list -keystore "$KEYSTORE_PATH" -storepass "$ANDROID_KEYSTORE_PASSWORD" >/dev/null 2>&1; then
+            echo "ERROR: ANDROID_KEYSTORE_PASSWORD is incorrect. Re-copy the exact value from GITHUB_SECRETS.txt into Repository Secrets."
+            exit 1
+          fi
+          if ! keytool -list -keystore "$KEYSTORE_PATH" -storepass "$ANDROID_KEYSTORE_PASSWORD" -alias "$ANDROID_KEY_ALIAS" >/dev/null 2>&1; then
+            echo "ERROR: ANDROID_KEY_ALIAS is incorrect. It must exactly match the alias in GITHUB_SECRETS.txt."
+            exit 1
+          fi
+
           CSR_PATH="$RUNNER_TEMP/tradevault-signing-preflight.csr"
           if ! keytool -certreq -keystore "$KEYSTORE_PATH" -storepass "$ANDROID_KEYSTORE_PASSWORD" -alias "$ANDROID_KEY_ALIAS" -keypass "$ANDROID_KEY_PASSWORD" -file "$CSR_PATH" >/dev/null 2>&1; then
             echo "ERROR: ANDROID_KEY_PASSWORD does not unlock the private key. Set it to the exact ANDROID_KEY_PASSWORD value from GITHUB_SECRETS.txt as a Repository Secret (not a Variable)."
