@@ -70,16 +70,39 @@ jobs:
           ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
         run: |
           set -euo pipefail
+          # Register all signing values for log redaction before later steps inherit them.
+          echo "::add-mask::$ANDROID_KEYSTORE_BASE64"
+          echo "::add-mask::$ANDROID_KEYSTORE_PASSWORD"
+          echo "::add-mask::$ANDROID_KEY_ALIAS"
+          echo "::add-mask::$ANDROID_KEY_PASSWORD"
+
           for name in ANDROID_KEYSTORE_BASE64 ANDROID_KEYSTORE_PASSWORD ANDROID_KEY_ALIAS ANDROID_KEY_PASSWORD; do
             if [ -z "${!name:-}" ]; then
               echo "ERROR: Required GitHub Actions secret $name is missing."
               exit 1
             fi
           done
+
           KEYSTORE_PATH="$RUNNER_TEMP/tradevault-persistent-debug.jks"
           printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 --decode > "$KEYSTORE_PATH"
-          test -s "$KEYSTORE_PATH"
+          if [ ! -s "$KEYSTORE_PATH" ]; then
+            echo "ERROR: Decoded Android keystore is empty."
+            exit 1
+          fi
           chmod 600 "$KEYSTORE_PATH"
+
+          # Fail early with a clear message if the store or private-key credentials do not match.
+          if ! keytool -list -keystore "$KEYSTORE_PATH" -storepass "$ANDROID_KEYSTORE_PASSWORD" -alias "$ANDROID_KEY_ALIAS" >/dev/null 2>&1; then
+            echo "ERROR: Keystore password or alias is incorrect. Check ANDROID_KEYSTORE_PASSWORD and ANDROID_KEY_ALIAS Repository Secrets."
+            exit 1
+          fi
+          CSR_PATH="$RUNNER_TEMP/tradevault-signing-preflight.csr"
+          if ! keytool -certreq -keystore "$KEYSTORE_PATH" -storepass "$ANDROID_KEYSTORE_PASSWORD" -alias "$ANDROID_KEY_ALIAS" -keypass "$ANDROID_KEY_PASSWORD" -file "$CSR_PATH" >/dev/null 2>&1; then
+            echo "ERROR: ANDROID_KEY_PASSWORD does not unlock the private key. Set it to the exact ANDROID_KEY_PASSWORD value from GITHUB_SECRETS.txt as a Repository Secret (not a Variable)."
+            exit 1
+          fi
+          rm -f "$CSR_PATH"
+
           echo "ANDROID_KEYSTORE_PATH=$KEYSTORE_PATH" >> "$GITHUB_ENV"
           echo "ANDROID_KEYSTORE_PASSWORD=$ANDROID_KEYSTORE_PASSWORD" >> "$GITHUB_ENV"
           echo "ANDROID_KEY_ALIAS=$ANDROID_KEY_ALIAS" >> "$GITHUB_ENV"
@@ -87,7 +110,7 @@ jobs:
           VERSION_CODE=$((GITHUB_RUN_NUMBER * 100 + GITHUB_RUN_ATTEMPT))
           echo "VERSION_CODE=$VERSION_CODE" >> "$GITHUB_ENV"
           echo "VERSION_NAME=1.0.$GITHUB_RUN_NUMBER" >> "$GITHUB_ENV"
-          echo "Persistent signing keystore prepared."
+          echo "Persistent keystore and private-key credentials verified."
           echo "Android versionCode: $VERSION_CODE"
 
       - name: Fix Gradle wrapper permissions
