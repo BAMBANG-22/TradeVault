@@ -92,7 +92,7 @@ jobs:
           chmod 600 "$KEYSTORE_PATH"
 
           # Verify the exact uploaded keystore before checking credentials.
-          EXPECTED_KEYSTORE_SHA256="f8add56ab91da0d91ee5736693348950b98099d3a1704f2510e76f56a07656c1"
+          EXPECTED_KEYSTORE_SHA256="9bbdcf0ae2735a7438f0848bd4b41308cd92030d7a85a33440603925d67400e8"
           ACTUAL_KEYSTORE_SHA256="$(sha256sum "$KEYSTORE_PATH" | awk '{print $1}')"
           if [ "$ACTUAL_KEYSTORE_SHA256" != "$EXPECTED_KEYSTORE_SHA256" ]; then
             echo "ERROR: ANDROID_KEYSTORE_BASE64 does not decode to the approved persistent keystore. Re-copy the complete ANDROID_KEYSTORE_BASE64.txt into its Repository Secret."
