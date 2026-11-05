@@ -62,9 +62,34 @@ jobs:
           echo "=== Installed Android SDK Platforms & Build-Tools ==="
           sdkmanager --list_installed | grep -E "platforms;android-|build-tools;" || true
 
+      - name: Prepare persistent Android signing
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          for name in ANDROID_KEYSTORE_BASE64 ANDROID_KEYSTORE_PASSWORD ANDROID_KEY_ALIAS ANDROID_KEY_PASSWORD; do
+            if [ -z "${!name:-}" ]; then
+              echo "ERROR: Required GitHub Actions secret $name is missing."
+              exit 1
+            fi
+          done
+          KEYSTORE_PATH="$RUNNER_TEMP/tradevault-persistent-debug.jks"
+          printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 --decode > "$KEYSTORE_PATH"
+          test -s "$KEYSTORE_PATH"
+          chmod 600 "$KEYSTORE_PATH"
+          echo "ANDROID_KEYSTORE_PATH=$KEYSTORE_PATH" >> "$GITHUB_ENV"
+          VERSION_CODE=$((GITHUB_RUN_NUMBER * 100 + GITHUB_RUN_ATTEMPT))
+          echo "VERSION_CODE=$VERSION_CODE" >> "$GITHUB_ENV"
+          echo "VERSION_NAME=1.0.$GITHUB_RUN_NUMBER" >> "$GITHUB_ENV"
+          echo "Persistent signing keystore prepared."
+          echo "Android versionCode: $VERSION_CODE"
+
       - name: Fix Gradle wrapper permissions
         run: chmod +x android/gradlew
-        
+
       - name: Verify toolchain environments
         run: |
           echo "=== Java Version ==="
@@ -90,36 +115,40 @@ jobs:
       - name: Sync Capacitor Android
         run: npx cap sync android
 
-
-
       - name: Build Android Debug APK
         run: |
           cd android
           ./gradlew assembleDebug --no-daemon
 
-      - name: Verify generated APK
+      - name: Verify generated APK and persistent signature
         run: |
+          set -euo pipefail
           APK_PATH="android/app/build/outputs/apk/debug/app-debug.apk"
           if [ ! -f "$APK_PATH" ]; then
             echo "ERROR: APK file not found at $APK_PATH"
             exit 1
           fi
-          
-          APK_SIZE=$(stat -c%s "$APK_PATH" 2>/dev/null || stat -f%z "$APK_PATH" 2>/dev/null)
+
+          APK_SIZE=$(stat -c%s "$APK_PATH")
           if [ "$APK_SIZE" -le 0 ]; then
             echo "ERROR: APK file is empty (0 bytes)"
             exit 1
           fi
-          
-          APK_SIZE_HUMAN=$(du -h "$APK_PATH" | cut -f1)
-          echo "SUCCESS: Debug APK generated successfully!"
+
+          APKSIGNER="$(find "$ANDROID_HOME/build-tools" -type f -name apksigner | sort -V | tail -n 1)"
+          if [ -z "$APKSIGNER" ]; then
+            echo "ERROR: apksigner was not found in Android build-tools."
+            exit 1
+          fi
+          "$APKSIGNER" verify --verbose --print-certs "$APK_PATH"
+          echo "SUCCESS: Debug APK generated and signature verified."
           echo "Path: $APK_PATH"
-          echo "Size: $APK_SIZE bytes ($APK_SIZE_HUMAN)"
+          echo "Size: $APK_SIZE bytes"
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: TradeVault-Journal-Debug-APK
+          name: TradeVault-Next-Persistent-Signed-Debug-APK
           path: android/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
           retention-days: 14
