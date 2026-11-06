@@ -20,15 +20,19 @@ import {
 import {
   UsdIdrRateRecord,
   PRIVACY_MODE_STORAGE_KEY,
+  DASHBOARD_CURRENCY_PREF_KEY,
   getCachedUsdIdrRate,
   fetchLiveUsdIdrRate,
   computeDualCurrencyDisplay,
   calculateCapitalGrowthBreakdown,
+  formatTradeFinancialValue,
+  computeCumulativeProfitInDisplayCurrency,
+  formatDynamicAmount,
 } from '../../utils/currencyRate';
 import { EquityChart } from './EquityChart';
 import { DashboardCalendar } from './DashboardCalendar';
 import { RiskSnapshot } from './RiskSnapshot';
-import { Eye, EyeOff, ChevronDown, Check, ArrowRight, Plus } from 'lucide-react';
+import { Eye, EyeOff, ChevronDown, Check, ArrowRight, Plus, ArrowUpDown } from 'lucide-react';
 
 interface DashboardViewProps {
   trades: Trade[];
@@ -38,6 +42,16 @@ interface DashboardViewProps {
   onViewTrade: (trade: Trade) => void;
   onClearDemoTrades?: () => void;
 }
+
+const PERIOD_SHORT_LABELS: Record<DashboardPeriodPreset, string> = {
+  '1D': '1D',
+  '7D': '1W',
+  '1M': '1M',
+  '3M': '3M',
+  '6M': '6M',
+  '1Y': '1Y',
+  'ALL': 'ALL',
+};
 
 function formatRecentTradeDate(dateTimeStr: string): string {
   if (!dateTimeStr) return '-';
@@ -50,12 +64,12 @@ function formatRecentTradeDate(dateTimeStr: string): string {
         year: 'numeric',
       });
       const timePart = dateTimeStr.includes('T') ? dateTimeStr.split('T')[1]?.slice(0, 5) : '';
-      return timePart ? `${datePart}, ${timePart}` : datePart;
+      return timePart ? `${datePart} · ${timePart}` : datePart;
     }
   } catch {
     // Fallback below
   }
-  return dateTimeStr.replace('T', ' ').slice(0, 16);
+  return dateTimeStr.replace('T', ' · ').slice(0, 18);
 }
 
 function formatUsdNominalPnl(netProfit: number, isPrivacyMode: boolean): string {
@@ -161,6 +175,49 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     [settings, allTimePerformance.metrics.totalNetProfit]
   );
 
+  // User's active primary currency preference ('USD' | 'IDR')
+  const [preferredCurrency, setPreferredCurrency] = useState<'USD' | 'IDR'>(() => {
+    try {
+      const stored = localStorage.getItem(DASHBOARD_CURRENCY_PREF_KEY);
+      if (stored === 'USD' || stored === 'IDR') return stored;
+    } catch {
+      // Ignore storage read errors
+    }
+    return settings.currency === 'IDR' ? 'IDR' : 'USD';
+  });
+
+  useEffect(() => {
+    const onPrefChange = () => {
+      try {
+        const stored = localStorage.getItem(DASHBOARD_CURRENCY_PREF_KEY);
+        if (stored === 'USD' || stored === 'IDR') {
+          setPreferredCurrency(stored);
+        }
+      } catch {
+        // Ignore
+      }
+    };
+    window.addEventListener('tradevault-currency-pref-change', onPrefChange);
+    return () => window.removeEventListener('tradevault-currency-pref-change', onPrefChange);
+  }, []);
+
+  const [isSwapping, setIsSwapping] = useState<boolean>(false);
+
+  const handleSwapCurrency = () => {
+    setIsSwapping(true);
+    const next: 'USD' | 'IDR' = preferredCurrency === 'USD' ? 'IDR' : 'USD';
+    setPreferredCurrency(next);
+    try {
+      localStorage.setItem(DASHBOARD_CURRENCY_PREF_KEY, next);
+      window.dispatchEvent(new Event('tradevault-currency-pref-change'));
+    } catch {
+      // Ignore storage write errors
+    }
+    setTimeout(() => {
+      setIsSwapping(false);
+    }, 240);
+  };
+
   // Dual Currency Presentation (Strictly USD & IDR on Dashboard)
   const dualBalance = useMemo(
     () =>
@@ -168,9 +225,16 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         capitalBreakdown.currentBalance,
         settings.currency,
         rateRecord,
-        isPrivacyMode
+        isPrivacyMode,
+        preferredCurrency
       ),
-    [capitalBreakdown.currentBalance, settings.currency, rateRecord, isPrivacyMode]
+    [
+      capitalBreakdown.currentBalance,
+      settings.currency,
+      rateRecord,
+      isPrivacyMode,
+      preferredCurrency,
+    ]
   );
 
   // Period Dropdown State ('1D' | '7D' | '1M' | '3M' | '6M' | '1Y' | 'ALL')
@@ -253,8 +317,19 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   );
 
   const isPeriodProfitPositive = periodMetrics.totalNetProfit >= 0;
-  const activePeriodLabel =
-    DASHBOARD_PERIOD_OPTIONS.find((opt) => opt.id === selectedPeriod)?.label || 'Semua Waktu';
+
+  const todayFormattedDate = useMemo(() => {
+    try {
+      return new Date().toLocaleDateString('id-ID', {
+        weekday: 'short',
+        day: '2-digit',
+        month: 'short',
+        year: 'numeric',
+      });
+    } catch {
+      return '';
+    }
+  }, []);
 
   const periodDropdownControl = (
     <div ref={periodMenuRef} className="relative">
@@ -264,9 +339,9 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         onClick={() => setIsPeriodMenuOpen((prev) => !prev)}
         aria-haspopup="listbox"
         aria-expanded={isPeriodMenuOpen}
-        className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg bg-[#F5F7FA] dark:bg-[#080A0E] border border-[#DDE3EA] dark:border-[#252B34] hover:border-[#1769E8] text-xs font-semibold text-[#151D2A] dark:text-[#F2F5F9] transition-colors cursor-pointer whitespace-nowrap"
+        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-[#F5F7FA] dark:bg-[#101318] border border-[#DDE3EA] dark:border-[#20252D] hover:border-[#3478DC] text-xs font-semibold text-[#151D2A] dark:text-[#F2F4F7] transition-colors cursor-pointer whitespace-nowrap"
       >
-        <span>{activePeriodLabel}</span>
+        <span>{PERIOD_SHORT_LABELS[selectedPeriod] || selectedPeriod}</span>
         <ChevronDown
           className={`h-3.5 w-3.5 stroke-[2] text-[#697586] dark:text-[#929BA9] transition-transform duration-150 ${
             isPeriodMenuOpen ? 'rotate-180' : ''
@@ -279,7 +354,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           role="listbox"
           aria-label="Pilih Periode Performa"
           data-testid="dashboard-period-dropdown-menu"
-          className="absolute right-0 bottom-full mb-1.5 z-20 w-40 rounded-xl bg-white dark:bg-[#171D26] border border-[#DDE3EA] dark:border-[#252B34] py-1 shadow-lg"
+          className="absolute right-0 top-full mt-1.5 z-30 w-44 rounded-xl bg-white dark:bg-[#101318] border border-[#DDE3EA] dark:border-[#20252D] py-1 shadow-xl"
         >
           {DASHBOARD_PERIOD_OPTIONS.map((opt) => {
             const isSelected = selectedPeriod === opt.id;
@@ -296,12 +371,15 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                 }}
                 className={`w-full px-3 py-2 text-left text-xs flex items-center justify-between transition-colors cursor-pointer ${
                   isSelected
-                    ? 'bg-[#EEF2F6] dark:bg-[#11151B] text-[#1769E8] font-semibold'
-                    : 'text-[#151D2A] dark:text-[#F2F5F9] hover:bg-[#F5F7FA] dark:hover:bg-[#11151B]'
+                    ? 'bg-[#EEF2F6] dark:bg-[#1C2330] text-[#1769E8] dark:text-[#3478DC] font-semibold'
+                    : 'text-[#151D2A] dark:text-[#F2F4F7] hover:bg-[#F5F7FA] dark:hover:bg-[#141820]'
                 }`}
               >
-                <span>{opt.label}</span>
-                {isSelected && <Check className="h-3.5 w-3.5 stroke-[2] text-[#1769E8]" />}
+                <div className="flex items-center gap-2">
+                  <span className="font-semibold">{PERIOD_SHORT_LABELS[opt.id]}</span>
+                  <span className="text-[#697586] dark:text-[#929BA9] text-[11px]">{opt.label}</span>
+                </div>
+                {isSelected && <Check className="h-3.5 w-3.5 stroke-[2] text-[#1769E8] dark:text-[#3478DC]" />}
               </button>
             );
           })}
@@ -311,64 +389,116 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   );
 
   return (
-    <div className="space-y-5">
-      {/* 1. TOTAL BALANCE */}
-      <section
-        aria-label="Total Balance"
-        className="rounded-2xl border border-[#DDE3EA] dark:border-[#252B34] bg-white dark:bg-[#11151B] p-5 sm:p-6 transition-colors duration-150"
-      >
+    <div className="space-y-6">
+      {/* TOP HEADER: DASHBOARD TITLE & CURRENT DATE */}
+      <div className="flex items-center justify-between pb-3 border-b border-[#DDE3EA] dark:border-[#20252D]">
+        <h1 className="text-xs font-bold uppercase tracking-[0.12em] text-[#151D2A] dark:text-[#F2F4F7]">
+          DASHBOARD
+        </h1>
+        <span className="text-[11px] font-medium text-[#697586] dark:text-[#929BA9]">
+          {todayFormattedDate}
+        </span>
+      </div>
+
+      {/* 1. ACCOUNT BALANCE (Direct on background, zero card wrapper) */}
+      <section aria-label="Account Balance" className="py-1">
         <div className="flex items-start justify-between gap-4">
-          <div className="space-y-1.5 min-w-0">
+          <div className="space-y-1.5 min-w-0 flex-1">
             <span className="block text-[11px] font-semibold uppercase tracking-[0.08em] text-[#697586] dark:text-[#929BA9]">
-              TOTAL BALANCE
+              ACCOUNT BALANCE
             </span>
 
-            {/* Primary Balance Value */}
-            <div
-              data-testid="dashboard-primary-balance"
-              className="text-3xl sm:text-4xl font-bold tracking-tight font-mono-numbers tabular-nums text-[#151D2A] dark:text-[#F2F5F9] truncate"
-            >
-              {dualBalance.primaryFormatted}
-            </div>
+            {/* Balances layout with vertical stack and swap button on the right */}
+            <div className="flex items-center justify-between gap-4 pt-1">
+              <div className="space-y-1 min-w-0 flex-1">
+                {/* Primary Currency Label */}
+                <div className="flex items-center gap-1.5">
+                  <span className="text-[10px] font-bold tracking-wider uppercase text-[#697586] dark:text-[#929BA9]">
+                    {dualBalance.primaryCurrency}
+                  </span>
+                </div>
 
-            {/* Secondary Converted Balance (Strictly USD or IDR) */}
-            <div
-              data-testid="dashboard-secondary-balance"
-              className="text-xs sm:text-sm font-medium font-mono-numbers tabular-nums text-[#697586] dark:text-[#929BA9]"
-            >
-              {dualBalance.secondaryFormatted}
+                {/* Primary Balance Value (Large) */}
+                <div
+                  data-testid="dashboard-primary-balance"
+                  className={`text-3xl sm:text-4xl font-bold tracking-tight font-mono-numbers tabular-nums text-[#151D2A] dark:text-[#F2F4F7] truncate transition-all duration-300 ${
+                    isSwapping ? 'opacity-30 scale-[0.98]' : 'opacity-100 scale-100'
+                  }`}
+                >
+                  {dualBalance.primaryFormatted}
+                </div>
+
+                {/* Short blue accent line below primary balance */}
+                <div className="w-10 h-0.5 bg-[#3478DC] rounded-full my-2.5" />
+
+                {/* Secondary Currency Label */}
+                <div className="flex items-center gap-1.5">
+                  <span className="text-[10px] font-semibold tracking-wider uppercase text-[#697586] dark:text-[#929BA9]">
+                    {dualBalance.secondaryCurrency}
+                  </span>
+                </div>
+
+                {/* Secondary Converted Balance (Smaller) */}
+                <div
+                  data-testid="dashboard-secondary-balance"
+                  className={`text-xs sm:text-sm font-medium font-mono-numbers tabular-nums text-[#697586] dark:text-[#929BA9] transition-all duration-300 ${
+                    isSwapping ? 'opacity-30 scale-[0.98]' : 'opacity-100 scale-100'
+                  }`}
+                >
+                  {dualBalance.secondaryFormatted}
+                </div>
+              </div>
+
+              {/* Action Buttons Column: Privacy toggle at top, Swap button placed right between the two balances */}
+              <div className="flex flex-col items-center justify-between gap-4 self-stretch shrink-0 py-0.5">
+                {/* Circular Privacy Toggle button */}
+                <button
+                  type="button"
+                  onClick={handleTogglePrivacy}
+                  data-testid="dashboard-privacy-toggle"
+                  className="inline-flex items-center justify-center p-2 rounded-full bg-[#F5F7FA] dark:bg-[#101318] border border-[#DDE3EA] dark:border-[#20252D] text-[#697586] dark:text-[#929BA9] hover:text-[#151D2A] dark:hover:text-[#F2F4F7] hover:border-black/20 dark:hover:border-white/20 transition-colors cursor-pointer shrink-0"
+                  title={isPrivacyMode ? 'Tampilkan Nominal Saldo' : 'Sembunyikan Nominal Saldo'}
+                  aria-label={isPrivacyMode ? 'Tampilkan Nominal Saldo' : 'Sembunyikan Nominal Saldo'}
+                  aria-pressed={isPrivacyMode}
+                >
+                  {isPrivacyMode ? (
+                    <EyeOff className="h-4 w-4 stroke-[1.75]" />
+                  ) : (
+                    <Eye className="h-4 w-4 stroke-[1.75]" />
+                  )}
+                </button>
+
+                {/* Currency Swap Button (placed right between the two balances) */}
+                <button
+                  type="button"
+                  onClick={handleSwapCurrency}
+                  data-testid="dashboard-currency-swap-btn"
+                  className="inline-flex items-center justify-center p-2 rounded-full bg-[#F5F7FA] dark:bg-[#101318] border border-[#DDE3EA] dark:border-[#20252D] text-[#697586] dark:text-[#929BA9] hover:text-[#151D2A] dark:hover:text-[#F2F4F7] hover:border-black/20 dark:hover:border-white/20 transition-all duration-300 cursor-pointer shrink-0 group select-none"
+                  title={`Tukar saldo utama ke ${dualBalance.secondaryCurrency}`}
+                  aria-label={`Tukar saldo utama ke ${dualBalance.secondaryCurrency}`}
+                >
+                  <ArrowUpDown
+                    className={`h-4 w-4 stroke-[2] transition-transform duration-300 ${
+                      isSwapping ? 'rotate-180 scale-110 text-[#151D2A] dark:text-white' : ''
+                    } group-hover:text-[#151D2A] dark:group-hover:text-[#F2F4F7]`}
+                  />
+                </button>
+              </div>
             </div>
           </div>
-
-          {/* Direct unboxed Hide Balance icon button (no decorative container or background) */}
-          <button
-            type="button"
-            onClick={handleTogglePrivacy}
-            data-testid="dashboard-privacy-toggle"
-            className="inline-flex items-center justify-center p-1 text-[#697586] dark:text-[#929BA9] hover:text-[#151D2A] dark:hover:text-[#F2F5F9] transition-colors cursor-pointer shrink-0"
-            title={isPrivacyMode ? 'Tampilkan Nominal Saldo' : 'Sembunyikan Nominal Saldo'}
-            aria-label={isPrivacyMode ? 'Tampilkan Nominal Saldo' : 'Sembunyikan Nominal Saldo'}
-            aria-pressed={isPrivacyMode}
-          >
-            {isPrivacyMode ? (
-              <EyeOff className="h-5 w-5 stroke-[1.75]" />
-            ) : (
-              <Eye className="h-5 w-5 stroke-[1.75]" />
-            )}
-          </button>
         </div>
       </section>
 
-      {/* 2. ACCOUNT PERFORMANCE (Unified Metrics + Equity Curve + Controls) */}
-      <section
-        aria-label="Account Performance"
-        className="rounded-2xl border border-[#DDE3EA] dark:border-[#252B34] bg-white dark:bg-[#11151B] p-5 sm:p-6 space-y-5 transition-colors duration-150"
-      >
+      {/* Thin divider */}
+      <div className="border-b border-[#DDE3EA] dark:border-[#20252D]" />
+
+      {/* 2. ACCOUNT PERFORMANCE (Direct on background, zero card wrapper) */}
+      <section aria-label="Account Performance" className="space-y-4 py-1">
         <h2 className="text-[11px] font-semibold uppercase tracking-[0.08em] text-[#697586] dark:text-[#929BA9]">
           ACCOUNT PERFORMANCE
         </h2>
 
-        {/* Unified 2x2 Metrics Grid (Integrated, not 4 separate cards) */}
+        {/* Unified 2x2 Metrics Grid directly on background */}
         <div
           data-testid="dashboard-account-metrics-grid"
           className="grid grid-cols-2 gap-x-6 gap-y-4 font-mono-numbers tabular-nums"
@@ -382,12 +512,27 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
               data-testid="dashboard-account-net-profit"
               className={`block text-xl sm:text-2xl font-bold mt-0.5 ${
                 isPeriodProfitPositive
-                  ? 'text-[#059669] dark:text-[#34D399]'
-                  : 'text-[#E11D48] dark:text-[#FB7185]'
+                  ? 'text-[#059669] dark:text-[#00A878]'
+                  : 'text-[#E11D48] dark:text-[#E05260]'
               }`}
             >
               {isPrivacyMode
                 ? '******'
+                : preferredCurrency === 'IDR'
+                ? (() => {
+                    const idrVal = computeCumulativeProfitInDisplayCurrency(
+                      periodTrades,
+                      'IDR',
+                      rateRecord
+                    );
+                    const sign = idrVal > 0 ? '+' : idrVal < 0 ? '-' : '';
+                    const formatted = new Intl.NumberFormat('id-ID', {
+                      style: 'currency',
+                      currency: 'IDR',
+                      maximumFractionDigits: 0,
+                    }).format(Math.abs(idrVal));
+                    return `${sign}${formatted}`;
+                  })()
                 : `${isPeriodProfitPositive ? '+' : ''}${formatCurrency(
                     periodMetrics.totalNetProfit,
                     settings,
@@ -405,8 +550,8 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
               data-testid="dashboard-account-growth"
               className={`block text-xl sm:text-2xl font-bold mt-0.5 ${
                 periodMetrics.totalGainPercent >= 0
-                  ? 'text-[#059669] dark:text-[#34D399]'
-                  : 'text-[#E11D48] dark:text-[#FB7185]'
+                  ? 'text-[#059669] dark:text-[#00A878]'
+                  : 'text-[#E11D48] dark:text-[#E05260]'
               }`}
             >
               {formatGrowthPercent(
@@ -424,7 +569,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             </span>
             <span
               data-testid="dashboard-account-win-rate"
-              className="block text-lg sm:text-xl font-bold text-[#151D2A] dark:text-[#F2F5F9] mt-0.5"
+              className="block text-lg sm:text-xl font-bold text-[#151D2A] dark:text-[#F2F4F7] mt-0.5"
             >
               {periodMetrics.winRate}%
             </span>
@@ -437,65 +582,78 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             </span>
             <span
               data-testid="dashboard-account-total-trades"
-              className="block text-lg sm:text-xl font-bold text-[#151D2A] dark:text-[#F2F5F9] mt-0.5"
+              className="block text-lg sm:text-xl font-bold text-[#151D2A] dark:text-[#F2F4F7] mt-0.5"
             >
               {periodMetrics.totalTrades}
             </span>
           </div>
         </div>
-
-        {/* Integrated Equity Curve Subsection */}
-        <div className="pt-4 border-t border-[#DDE3EA] dark:border-[#252B34] space-y-3">
-          <span className="block text-[11px] font-semibold uppercase tracking-[0.08em] text-[#697586] dark:text-[#929BA9]">
-            EQUITY CURVE
-          </span>
-
-          <EquityChart
-            equityCurve={periodEquityCurve}
-            settings={periodSettings}
-            startingBalance={periodStartingBalance}
-            height={220}
-            isPrivacyMode={isPrivacyMode}
-            embedded={true}
-            periodControl={periodDropdownControl}
-          />
-        </div>
       </section>
 
-      {/* 3 & 4. PERFORMANCE CALENDAR & RISK SNAPSHOT (Responsive Grid) */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 items-stretch">
-        <div className="lg:col-span-7 xl:col-span-7">
-          <DashboardCalendar
-            trades={trades}
-            settings={settings}
-            isPrivacyMode={isPrivacyMode}
-            onViewTrade={onViewTrade}
-          />
-        </div>
-        <div className="lg:col-span-5 xl:col-span-5">
-          <RiskSnapshot
-            trades={trades}
-            settings={settings}
-            currentEquity={capitalBreakdown.currentBalance}
-            onNavigate={onNavigate}
-            isPrivacyMode={isPrivacyMode}
-          />
-        </div>
-      </div>
+      {/* Thin divider */}
+      <div className="border-b border-[#DDE3EA] dark:border-[#20252D]" />
 
-      {/* 5. RECENT TRADES (Maximum 3 Latest Trades) */}
-      <section
-        aria-label="Recent Trades"
-        className="rounded-2xl border border-[#DDE3EA] dark:border-[#252B34] bg-white dark:bg-[#11151B] p-5 sm:p-6 space-y-3 transition-colors duration-150"
-      >
-        <div className="flex items-center justify-between pb-2.5 border-b border-[#DDE3EA] dark:border-[#252B34]">
+      {/* 3. EQUITY CURVE (Direct on background, zero card wrapper) */}
+      <section aria-label="Equity Curve" className="space-y-3 py-1">
+        <h2 className="text-[11px] font-semibold uppercase tracking-[0.08em] text-[#697586] dark:text-[#929BA9]">
+          EQUITY CURVE
+        </h2>
+
+        <EquityChart
+          equityCurve={periodEquityCurve}
+          settings={periodSettings}
+          startingBalance={periodStartingBalance}
+          height={220}
+          isPrivacyMode={isPrivacyMode}
+          embedded={true}
+          periodControl={periodDropdownControl}
+        />
+      </section>
+
+      {/* Thin divider */}
+      <div className="border-b border-[#DDE3EA] dark:border-[#20252D]" />
+
+      {/* 4. PERFORMANCE CALENDAR */}
+      <section aria-label="Performance Calendar" className="py-1">
+        <DashboardCalendar
+          trades={trades}
+          settings={settings}
+          isPrivacyMode={isPrivacyMode}
+          onViewTrade={onViewTrade}
+          preferredCurrency={preferredCurrency}
+          rateRecord={rateRecord}
+        />
+      </section>
+
+      {/* Thin divider */}
+      <div className="border-b border-[#DDE3EA] dark:border-[#20252D]" />
+
+      {/* 5. RISK SNAPSHOT */}
+      <section aria-label="Risk Snapshot" className="py-1">
+        <RiskSnapshot
+          trades={trades}
+          settings={settings}
+          currentEquity={capitalBreakdown.currentBalance}
+          onNavigate={onNavigate}
+          isPrivacyMode={isPrivacyMode}
+          preferredCurrency={preferredCurrency}
+          rateRecord={rateRecord}
+        />
+      </section>
+
+      {/* Thin divider */}
+      <div className="border-b border-[#DDE3EA] dark:border-[#20252D]" />
+
+      {/* 6. RECENT TRADES (Seamless Black, zero card wrapper, zero blue accent) */}
+      <section aria-label="Recent Trades" className="space-y-2 py-1">
+        <div className="flex items-center justify-between pb-2.5 border-b border-[#DDE3EA] dark:border-[#20252D]">
           <h2 className="text-[11px] font-semibold uppercase tracking-[0.08em] text-[#697586] dark:text-[#929BA9]">
             RECENT TRADES
           </h2>
           <button
             type="button"
             onClick={() => onNavigate('trades')}
-            className="inline-flex items-center gap-1 text-xs font-semibold text-[#1769E8] hover:text-[#1458C4] transition-colors cursor-pointer whitespace-nowrap"
+            className="inline-flex items-center gap-1.5 text-xs font-medium text-[#697586] dark:text-[#929BA9] hover:text-[#151D2A] dark:hover:text-[#F2F4F7] transition-colors cursor-pointer whitespace-nowrap"
           >
             <span>Lihat Semua</span>
             <ArrowRight className="h-3.5 w-3.5 stroke-[1.75]" />
@@ -503,14 +661,14 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         </div>
 
         {recentThreeTrades.length === 0 ? (
-          <div className="py-7 text-center text-xs text-[#697586] dark:text-[#929BA9]">
+          <div className="py-8 text-center text-xs text-[#697586] dark:text-[#929BA9]">
             Belum ada transaksi yang dicatat. Gunakan tombol &ldquo;Tambah Entry&rdquo; di bawah
             untuk mulai mencatat.
           </div>
         ) : (
           <div
             data-testid="dashboard-recent-trades-list"
-            className="divide-y divide-[#DDE3EA] dark:divide-[#252B34]"
+            className="divide-y divide-[#DDE3EA] dark:divide-[#20252D]"
           >
             {recentThreeTrades.map((t) => {
               const netProfit = computeTradeNetProfit(t);
@@ -524,20 +682,20 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                   key={t.id}
                   type="button"
                   onClick={() => onViewTrade(t)}
-                  className="w-full py-3 px-1.5 flex items-center justify-between gap-3 hover:bg-[#F5F7FA] dark:hover:bg-[#171D26] rounded-lg transition-colors text-left cursor-pointer font-mono-numbers tabular-nums"
+                  className="w-full py-3.5 px-1.5 flex items-center justify-between gap-4 hover:bg-[#F5F7FA] dark:hover:bg-[#101318] rounded-xl transition-colors text-left cursor-pointer font-sans tabular-nums group"
                 >
-                  {/* Left: Symbol, BUY/SELL (soft semantic text), Lot Size, Date */}
-                  <div className="min-w-0 space-y-0.5">
-                    <div className="flex items-center gap-2 text-xs sm:text-sm">
-                      <span className="font-bold text-[#151D2A] dark:text-[#F2F5F9] truncate">
+                  {/* Left: Instrument, BUY/SELL, Lot Size on Line 1; Date on Line 2 */}
+                  <div className="min-w-0 space-y-1">
+                    <div className="flex items-center gap-2 text-xs sm:text-sm font-sans">
+                      <span className="font-bold text-[#151D2A] dark:text-[#F2F4F7] group-hover:text-black dark:group-hover:text-white transition-colors truncate">
                         {t.instrument}
                       </span>
                       <span
                         data-testid={`recent-trade-side-${t.id}`}
                         className={`text-xs font-bold uppercase ${
                           isBuy
-                            ? 'text-[#059669] dark:text-[#34D399]'
-                            : 'text-[#E11D48] dark:text-[#FB7185]'
+                            ? 'text-[#059669] dark:text-[#00A878]'
+                            : 'text-[#E11D48] dark:text-[#E05260]'
                         }`}
                       >
                         {t.position}
@@ -549,32 +707,42 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                         {Number(t.lotSize || 0).toFixed(2)} Lot
                       </span>
                     </div>
-                    <div className="flex items-center gap-1.5 text-[11px] font-sans text-[#697586] dark:text-[#929BA9]">
-                      <span className="font-mono-numbers">
-                        {formatRecentTradeDate(t.dateTime)}
-                      </span>
+
+                    <div className="text-[11px] font-sans text-[#697586] dark:text-[#929BA9]">
+                      {formatRecentTradeDate(t.dateTime)}
                       {outcome === 'BREAKEVEN' && (
                         <>
-                          <span aria-hidden="true">·</span>
+                          <span className="mx-1" aria-hidden="true">·</span>
                           <span>BE</span>
                         </>
                       )}
                     </div>
                   </div>
 
-                  {/* Right: Realized Profit/Loss in USD */}
+                  {/* Right: Nominal Net P/L */}
                   <div className="text-right shrink-0">
                     <span
                       data-testid={`recent-trade-pnl-${t.id}`}
-                      className={`text-xs sm:text-sm font-bold ${
+                      className={`text-sm sm:text-base font-bold font-sans tabular-nums ${
                         isWin
-                          ? 'text-[#059669] dark:text-[#34D399]'
+                          ? 'text-[#059669] dark:text-[#00A878]'
                           : isLoss
-                          ? 'text-[#E11D48] dark:text-[#FB7185]'
+                          ? 'text-[#E11D48] dark:text-[#E05260]'
                           : 'text-[#697586] dark:text-[#929BA9]'
                       }`}
                     >
-                      {formatUsdNominalPnl(netProfit, isPrivacyMode)}
+                      {isPrivacyMode
+                        ? '******'
+                        : preferredCurrency === 'IDR'
+                        ? formatTradeFinancialValue(
+                            t,
+                            'netProfit',
+                            'IDR',
+                            rateRecord,
+                            false,
+                            true
+                          )
+                        : formatUsdNominalPnl(netProfit, false)}
                     </span>
                   </div>
                 </button>
@@ -584,15 +752,18 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         )}
       </section>
 
-      {/* 4. SINGLE PRIMARY "TAMBAH ENTRY" BUTTON AT BOTTOM OF DASHBOARD */}
-      <div className="pt-2 pb-1">
+      {/* Thin divider */}
+      <div className="border-b border-[#DDE3EA] dark:border-[#20252D]" />
+
+      {/* 7. SINGLE PRIMARY "TAMBAH ENTRY" BUTTON AT BOTTOM OF DASHBOARD (Seamless Black) */}
+      <div className="pt-3 pb-6 flex justify-center">
         <button
           type="button"
           onClick={onAddTrade}
           data-testid="dashboard-add-entry-button"
-          className="w-full sm:w-auto sm:min-w-[220px] mx-auto flex items-center justify-center gap-2 px-6 py-3 rounded-xl bg-[#1769E8] hover:bg-[#1458C4] text-white text-xs sm:text-sm font-semibold shadow-sm transition-colors cursor-pointer"
+          className="w-full sm:w-auto sm:min-w-[200px] flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl bg-[#F5F7FA] dark:bg-[#101318] hover:bg-[#EEF2F6] dark:hover:bg-[#161A22] border border-[#DDE3EA] dark:border-[#20252D] hover:border-[#CBD5E1] dark:hover:border-[#2D343F] text-[#151D2A] dark:text-[#F2F4F7] text-xs sm:text-sm font-semibold transition-all duration-150 cursor-pointer shadow-xs"
         >
-          <Plus className="h-4 w-4 stroke-[2.25]" />
+          <Plus className="h-4 w-4 stroke-[2] text-[#697586] dark:text-[#929BA9]" />
           <span>Tambah Entry</span>
         </button>
       </div>

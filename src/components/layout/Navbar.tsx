@@ -4,7 +4,7 @@
  */
 
 import React from 'react';
-import { Menu, X } from 'lucide-react';
+import { Menu, X, Bell, User } from 'lucide-react';
 import { AppSettings } from '../../types/settings';
 import { BrandLogo } from './BrandLogo';
 
@@ -26,20 +26,22 @@ interface NavbarProps {
  * Persistent App Header
  *
  * - Left: Hamburger menu button, official TradeVault symbol, and TRADEVAULT brand wordmark.
+ * - Right: Circular notification icon button & circular profile icon button.
  * - Always persistent at top of viewport: remains static at top while content scrolls underneath.
- * - Hamburger menu is always accessible.
- * - Logo and TRADEVAULT wordmark never fade out or shrink.
  * - Respects Android / iOS safe area top.
  */
 export const Navbar: React.FC<NavbarProps> = ({
   onNavigate,
   onOpenMobileMenu,
   isMobileMenuOpen,
+  currentUser,
+  onOpenAuth,
+  onOpenAccount,
 }) => {
   return (
     <header
       data-testid="app-header"
-      className="sticky top-0 z-30 w-full isolate h-[calc(3.5rem+env(safe-area-inset-top,0px))] pt-[env(safe-area-inset-top,0px)] border-b border-[#DDE3EA] dark:border-[#252B34] bg-white dark:bg-[#11151B] backdrop-blur-md transition-colors duration-150 before:content-[''] before:absolute before:bottom-full before:left-0 before:right-0 before:h-20 before:bg-white dark:before:bg-[#11151B] before:pointer-events-none"
+      className="sticky top-0 z-30 w-full isolate h-[calc(3.5rem+env(safe-area-inset-top,0px))] pt-[env(safe-area-inset-top,0px)] border-b border-[#DDE3EA] dark:border-[#20252D] bg-white dark:bg-[#050607] backdrop-blur-md transition-colors duration-150 before:content-[''] before:absolute before:bottom-full before:left-0 before:right-0 before:h-20 before:bg-white dark:before:bg-[#050607] before:pointer-events-none"
     >
       <div className="w-full h-14 flex items-center justify-between px-4 sm:px-6">
         {/* Left: Hamburger Menu Button & Official TradeVault Brand Lockup */}
@@ -48,7 +50,7 @@ export const Navbar: React.FC<NavbarProps> = ({
             type="button"
             onClick={onOpenMobileMenu}
             data-testid="header-hamburger-button"
-            className="inline-flex h-9 w-9 items-center justify-center rounded-lg text-[#151D2A] dark:text-[#F2F5F9] hover:bg-[#F5F7FA] dark:hover:bg-[#171D26] transition-colors cursor-pointer"
+            className="inline-flex h-9 w-9 items-center justify-center rounded-full text-[#151D2A] dark:text-[#F2F4F7] hover:bg-[#F5F7FA] dark:hover:bg-[#101318] transition-colors cursor-pointer"
             aria-label={isMobileMenuOpen ? 'Tutup Menu Navigasi' : 'Buka Menu Navigasi'}
             aria-expanded={isMobileMenuOpen}
           >
@@ -85,8 +87,29 @@ export const Navbar: React.FC<NavbarProps> = ({
           </button>
         </div>
 
-        {/* Right: Intentionally clean (Storage, Cloud, Backup & Theme live in Hamburger Menu) */}
-        <div className="w-9" aria-hidden="true" />
+        {/* Right: Circular notification button & circular profile button */}
+        <div className="flex items-center gap-1.5 sm:gap-2">
+          <button
+            type="button"
+            data-testid="header-notification-button"
+            className="inline-flex h-8 w-8 sm:h-9 sm:w-9 items-center justify-center rounded-full text-[#697586] dark:text-[#929BA9] hover:text-[#151D2A] dark:hover:text-[#F2F4F7] hover:bg-[#F5F7FA] dark:hover:bg-[#101318] transition-colors cursor-pointer"
+            aria-label="Notifikasi"
+            title="Notifikasi"
+          >
+            <Bell className="h-4 w-4 stroke-[1.75]" />
+          </button>
+
+          <button
+            type="button"
+            onClick={currentUser ? onOpenAccount : onOpenAuth}
+            data-testid="header-account-button"
+            className="inline-flex h-8 w-8 sm:h-9 sm:w-9 items-center justify-center rounded-full bg-[#F5F7FA] dark:bg-[#101318] border border-[#DDE3EA] dark:border-[#20252D] text-[#697586] dark:text-[#929BA9] hover:text-[#151D2A] dark:hover:text-[#F2F4F7] hover:border-[#3478DC]/50 transition-colors cursor-pointer"
+            aria-label={currentUser ? 'Akun Pengguna' : 'Masuk ke Akun'}
+            title={currentUser ? (currentUser.email || 'Akun Pengguna') : 'Masuk ke Akun'}
+          >
+            <User className="h-4 w-4 stroke-[1.75]" />
+          </button>
+        </div>
       </div>
     </header>
   );

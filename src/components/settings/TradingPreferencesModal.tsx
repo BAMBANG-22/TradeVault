@@ -180,14 +180,18 @@ export const TradingPreferencesModal: React.FC<TradingPreferencesModalProps> = (
                   Standar Jarak 1 Pip XAUUSD (Gold)
                 </label>
                 <select
-                  value={formData.xauusdPipSize || 1.0}
+                  value={formData.xauusdPipSize === 0.1 ? 0.1 : 1.0}
                   onChange={(e) =>
                     setFormData({ ...formData, xauusdPipSize: Number(e.target.value) })
                   }
                   className="w-full rounded-lg bg-[#F5F7FA] dark:bg-[#080A0E] border border-[#DDE3EA] dark:border-[#252B34] px-3 py-2 text-[#151D2A] dark:text-[#F2F5F9] focus:border-[#1458C4] focus:outline-none font-mono-numbers"
                 >
-                  <option value={1.0}>1 Pip = $1.00 Harga (Contoh: 4000 → 3950 = 50 pips, 0.05 lot = $25)</option>
-                  <option value={0.1}>1 Pip = $0.10 Harga (Contoh: 2720 → 2715 = 50 pips, 0.05 lot = $25)</option>
+                  <option value={0.1}>
+                    Mode A — 1 Pip = $0.10 Harga (Contoh: 4000 → 3995 = 50 pips, 4000 → 3950 = 500 pips)
+                  </option>
+                  <option value={1.0}>
+                    Mode B — 1 Pip = $1.00 Harga (Contoh: 4000 → 3995 = 5 pips, 4000 → 3950 = 50 pips)
+                  </option>
                 </select>
               </div>
 

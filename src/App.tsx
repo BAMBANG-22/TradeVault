@@ -4,6 +4,7 @@
  */
 
 import React, { useState, useEffect, useLayoutEffect, useRef, useCallback } from 'react';
+import { Check, AlertCircle, X } from 'lucide-react';
 import { Trade } from './types/trade';
 import { AppSettings } from './types/settings';
 import {
@@ -91,7 +92,31 @@ export default function App() {
   const [tradeForDelete, setTradeForDelete] = useState<Trade | null>(null);
   const [screenshotModal, setScreenshotModal] = useState<{ url: string; title: string } | null>(null);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState<boolean>(false);
-  const [notification, setNotification] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
+  const [notification, setNotification] = useState<{
+    id: number;
+    message: string;
+    type: 'success' | 'error';
+  } | null>(null);
+  const [isToastVisible, setIsToastVisible] = useState<boolean>(false);
+  const [toastSwipeOffset, setToastSwipeOffset] = useState<{ x: number; y: number }>({
+    x: 0,
+    y: 0,
+  });
+  const [isToastDragging, setIsToastDragging] = useState<boolean>(false);
+  const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const toastExitTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const toastIdCounterRef = useRef<number>(0);
+  const toastGestureRef = useRef<{
+    active: boolean;
+    startX: number;
+    startY: number;
+    startTime: number;
+  }>({
+    active: false,
+    startX: 0,
+    startY: 0,
+    startTime: 0,
+  });
 
   // Prototype & Backup Modals
   const [isLocalInfoModalOpen, setIsLocalInfoModalOpen] = useState<boolean>(false);
@@ -292,11 +317,103 @@ export default function App() {
     };
   }, [currentUser?.id]);
 
-  const showToast = (message: string, type: 'success' | 'error' = 'success') => {
-    setNotification({ message, type });
-    setTimeout(() => {
+  const clearToastTimers = useCallback(() => {
+    if (toastTimerRef.current !== null) {
+      clearTimeout(toastTimerRef.current);
+      toastTimerRef.current = null;
+    }
+    if (toastExitTimerRef.current !== null) {
+      clearTimeout(toastExitTimerRef.current);
+      toastExitTimerRef.current = null;
+    }
+  }, []);
+
+  const dismissToast = useCallback(() => {
+    if (toastTimerRef.current !== null) {
+      clearTimeout(toastTimerRef.current);
+      toastTimerRef.current = null;
+    }
+    setIsToastDragging(false);
+    setIsToastVisible(false);
+    if (toastExitTimerRef.current !== null) {
+      clearTimeout(toastExitTimerRef.current);
+    }
+    toastExitTimerRef.current = setTimeout(() => {
       setNotification(null);
-    }, 3800);
+      setToastSwipeOffset({ x: 0, y: 0 });
+      toastExitTimerRef.current = null;
+    }, 180);
+  }, []);
+
+  const showToast = useCallback(
+    (message: string, type: 'success' | 'error' = 'success') => {
+      clearToastTimers();
+      const nextId = ++toastIdCounterRef.current;
+      toastGestureRef.current.active = false;
+      setIsToastDragging(false);
+      setToastSwipeOffset({ x: 0, y: 0 });
+      setNotification({ id: nextId, message, type });
+      setIsToastVisible(true);
+
+      toastTimerRef.current = setTimeout(() => {
+        if (toastIdCounterRef.current === nextId) {
+          dismissToast();
+        }
+      }, 3800);
+    },
+    [clearToastTimers, dismissToast]
+  );
+
+  useEffect(() => {
+    return () => {
+      clearToastTimers();
+    };
+  }, [clearToastTimers]);
+
+  const handleToastGestureStart = (clientX: number, clientY: number) => {
+    toastGestureRef.current = {
+      active: true,
+      startX: clientX,
+      startY: clientY,
+      startTime: Date.now(),
+    };
+    setIsToastDragging(true);
+  };
+
+  const handleToastGestureMove = (clientX: number, clientY: number) => {
+    if (!toastGestureRef.current.active) return;
+    const rawDeltaX = clientX - toastGestureRef.current.startX;
+    const rawDeltaY = clientY - toastGestureRef.current.startY;
+    // Allow full upward movement and horizontal movement; dampen downward pull
+    const clampedY = rawDeltaY < 0 ? rawDeltaY : rawDeltaY * 0.15;
+    setToastSwipeOffset({ x: rawDeltaX, y: clampedY });
+  };
+
+  const handleToastGestureEnd = (clientX: number, clientY: number) => {
+    if (!toastGestureRef.current.active) return;
+    const deltaX = clientX - toastGestureRef.current.startX;
+    const deltaY = clientY - toastGestureRef.current.startY;
+    const elapsedMs = Math.max(1, Date.now() - toastGestureRef.current.startTime);
+    const velocityY = deltaY / elapsedMs; // px per ms (negative = upward)
+    const velocityX = Math.abs(deltaX) / elapsedMs;
+
+    toastGestureRef.current.active = false;
+    setIsToastDragging(false);
+
+    const shouldDismissUpward = deltaY <= -20 || (deltaY <= -10 && velocityY <= -0.22);
+    const shouldDismissHorizontal = Math.abs(deltaX) >= 60 || (Math.abs(deltaX) >= 30 && velocityX >= 0.35);
+
+    if (shouldDismissUpward || shouldDismissHorizontal) {
+      dismissToast();
+    } else {
+      setToastSwipeOffset({ x: 0, y: 0 });
+    }
+  };
+
+  const handleToastGestureCancel = () => {
+    toastGestureRef.current.active = false;
+    setIsToastDragging(false);
+    setToastSwipeOffset({ x: 0, y: 0 });
   };
 
   // Performance calculation engine (authoritative on trades & settings)
@@ -1124,17 +1241,112 @@ export default function App() {
   };
 
   return (
-    <div className="min-h-screen w-full bg-[#F5F7FA] text-[#151D2A] dark:bg-[#080A0E] dark:text-[#F2F5F9] flex flex-col font-sans transition-colors duration-150">
-      {/* Toast Notification */}
+    <div className="min-h-screen w-full bg-[#F5F7FA] text-[#151D2A] dark:bg-[#050607] dark:text-[#F2F4F7] flex flex-col font-sans transition-colors duration-150">
+      {/* Non-blocking Floating Toast Notification with Swipe-to-Dismiss & Manual Close */}
       {notification && (
         <div
-          className={`fixed top-[calc(1rem+env(safe-area-inset-top,0px))] left-4 right-4 sm:left-auto sm:right-4 sm:max-w-md z-50 rounded-xl border bg-white dark:bg-[#11151B] border-[#DDE3EA] dark:border-[#252B34] px-4 py-3 shadow-lg text-xs font-semibold animate-in slide-in-from-top duration-150 ${
-            notification.type === 'success'
-              ? 'text-emerald-600 dark:text-emerald-400'
-              : 'text-rose-600 dark:text-rose-400'
-          }`}
+          data-testid="toast-notification-wrapper"
+          className="fixed top-[calc(0.75rem+env(safe-area-inset-top,0px))] left-3 right-3 sm:left-auto sm:right-5 z-[60] flex justify-center sm:justify-end pointer-events-none"
         >
-          {notification.message}
+          <div
+            key={notification.id}
+            role={notification.type === 'error' ? 'alert' : 'status'}
+            aria-live={notification.type === 'error' ? 'assertive' : 'polite'}
+            aria-atomic="true"
+            data-testid="toast-notification-card"
+            onTouchStart={(e) => {
+              if (e.touches.length === 1) {
+                handleToastGestureStart(e.touches[0].clientX, e.touches[0].clientY);
+              }
+            }}
+            onTouchMove={(e) => {
+              if (e.touches.length === 1) {
+                handleToastGestureMove(e.touches[0].clientX, e.touches[0].clientY);
+              }
+            }}
+            onTouchEnd={(e) => {
+              const t = e.changedTouches[0];
+              if (t) {
+                handleToastGestureEnd(t.clientX, t.clientY);
+              } else {
+                handleToastGestureCancel();
+              }
+            }}
+            onTouchCancel={handleToastGestureCancel}
+            onPointerDown={(e) => {
+              if (e.pointerType === 'touch') return;
+              if ((e.target as HTMLElement)?.closest('button')) return;
+              handleToastGestureStart(e.clientX, e.clientY);
+            }}
+            onPointerMove={(e) => {
+              if (e.pointerType === 'touch') return;
+              handleToastGestureMove(e.clientX, e.clientY);
+            }}
+            onPointerUp={(e) => {
+              if (e.pointerType === 'touch') return;
+              handleToastGestureEnd(e.clientX, e.clientY);
+            }}
+            onPointerCancel={(e) => {
+              if (e.pointerType === 'touch') return;
+              handleToastGestureCancel();
+            }}
+            style={
+              toastSwipeOffset.x !== 0 || toastSwipeOffset.y !== 0
+                ? {
+                    transform: `translate3d(${toastSwipeOffset.x}px, ${toastSwipeOffset.y}px, 0)`,
+                  }
+                : undefined
+            }
+            className={`w-full max-w-[360px] rounded-2xl border bg-[#FFFFFF] border-[#E2E8F0] dark:border-[#CBD5E1]/80 px-3.5 py-3 shadow-[0_10px_28px_-6px_rgba(15,23,42,0.14)] dark:shadow-[0_14px_34px_-6px_rgba(0,0,0,0.55)] select-none touch-none motion-reduce:transition-none ${
+              isToastDragging ? 'transition-none' : 'transition-all duration-180 ease-[cubic-bezier(0.22,1,0.36,1)]'
+            } ${
+              isToastVisible
+                ? 'opacity-100 translate-y-0 pointer-events-auto'
+                : 'opacity-0 -translate-y-4 pointer-events-none'
+            }`}
+          >
+            <div className="flex items-start gap-2.5">
+              {/* Soft Controlled Status Indicator Icon */}
+              <div
+                data-testid="toast-status-icon"
+                className={`mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full border ${
+                  notification.type === 'success'
+                    ? 'bg-[#F0FDF4] text-[#15803D] border-[#DCFCE7]'
+                    : 'bg-[#FEF2F2] text-[#B91C1C] border-[#FEE2E2]'
+                }`}
+              >
+                {notification.type === 'success' ? (
+                  <Check className="h-3 w-3 stroke-[2.25]" />
+                ) : (
+                  <AlertCircle className="h-3.5 w-3.5 stroke-[2]" />
+                )}
+              </div>
+
+              {/* Clean Dark Charcoal Title & Readable Secondary Message */}
+              <div className="min-w-0 flex-1 pr-1">
+                <span className="block text-[12.5px] font-bold leading-snug text-[#11151B]">
+                  {notification.type === 'success' ? 'Berhasil disimpan' : 'Perhatian'}
+                </span>
+                <p
+                  data-testid="toast-message-text"
+                  className="mt-0.5 text-[11.5px] font-medium leading-relaxed text-[#4B5565] break-words"
+                >
+                  {notification.message}
+                </p>
+              </div>
+
+              {/* Accessible Manual Close Button */}
+              <button
+                type="button"
+                onClick={dismissToast}
+                aria-label="Tutup notifikasi"
+                data-testid="toast-close-button"
+                className="shrink-0 -mr-1 -mt-0.5 inline-flex h-6 w-6 items-center justify-center rounded-lg text-[#64748B] hover:text-[#11151B] hover:bg-[#F1F5F9] transition-colors cursor-pointer"
+              >
+                <X className="h-3.5 w-3.5 stroke-[2]" />
+              </button>
+            </div>
+          </div>
         </div>
       )}
 
@@ -1147,6 +1359,10 @@ export default function App() {
               setEditingTrade(null);
             }
             handleNavigateTab(tab);
+          }}
+          onAddTrade={() => {
+            setEditingTrade(null);
+            setIsAddTradeModalOpen(true);
           }}
           tradesCount={trades.length}
           currentEquity={currentEquity}

@@ -1,7 +1,10 @@
+import { useState, useEffect, useCallback } from 'react';
 import { AppSettings } from '../types/settings';
+import { Trade, HistoricalExchangeRateSnapshot } from '../types/trade';
 
 export const USD_IDR_CACHE_KEY = 'tradevault_usd_idr_rate_v1';
 export const PRIVACY_MODE_STORAGE_KEY = 'tradevault_privacy_mode';
+export const DASHBOARD_CURRENCY_PREF_KEY = 'tradevault_dashboard_currency_pref';
 
 export interface UsdIdrRateRecord {
   /** 1 USD in IDR (e.g., 16250) */
@@ -168,14 +171,18 @@ export function formatExactCurrency(amount: number, currency: 'USD' | 'IDR' | 'E
       currency: 'IDR',
       minimumFractionDigits: 0,
       maximumFractionDigits: 0,
-    }).format(Math.round(safeVal));
+    })
+      .format(Math.round(safeVal))
+      .replace(/\u00a0/g, ' ');
   }
   return new Intl.NumberFormat('en-US', {
     style: 'currency',
     currency,
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
-  }).format(safeVal);
+  })
+    .format(safeVal)
+    .replace(/\u00a0/g, ' ');
 }
 
 /**
@@ -189,26 +196,47 @@ export function computeDualCurrencyDisplay(
   amountInBaseCurrency: number,
   baseCurrency: AppSettings['currency'],
   rateRecord: UsdIdrRateRecord | null,
-  isPrivacyMode: boolean = false
+  isPrivacyMode: boolean = false,
+  preferredPrimaryCurrency?: 'USD' | 'IDR'
 ): DualBalancePresentation {
   const safeBaseAmount = Number.isFinite(amountInBaseCurrency) ? amountInBaseCurrency : 0;
   const hasValidRate = Boolean(rateRecord && isValidRate(rateRecord.rate));
   const rate = hasValidRate && rateRecord ? rateRecord.rate : null;
 
-  const isIdrPrimary = baseCurrency === 'IDR';
+  // If a swap preference is set, honour it; otherwise fallback to baseCurrency setting
+  const effectivePrimary: 'USD' | 'IDR' =
+    preferredPrimaryCurrency || (baseCurrency === 'IDR' ? 'IDR' : 'USD');
+  const isIdrPrimary = effectivePrimary === 'IDR';
   const primaryCurrency: 'USD' | 'IDR' = isIdrPrimary ? 'IDR' : 'USD';
   const secondaryCurrency: 'USD' | 'IDR' = isIdrPrimary ? 'USD' : 'IDR';
 
-  let primaryAmount: number = safeBaseAmount;
+  // Base account currency is invariant (USD original balance)
+  const baseIsUsd = baseCurrency !== 'IDR';
+
+  let primaryAmount: number | null = null;
   let secondaryAmount: number | null = null;
 
-  if (isIdrPrimary) {
-    primaryAmount = Math.round(safeBaseAmount);
-    secondaryAmount = rate ? roundToTwo(safeBaseAmount / rate) : null;
+  if (baseIsUsd) {
+    const originalUsd = roundToTwo(safeBaseAmount);
+    const convertedIdr = rate ? Math.round(originalUsd * rate) : null;
+    if (isIdrPrimary) {
+      primaryAmount = convertedIdr;
+      secondaryAmount = originalUsd;
+    } else {
+      primaryAmount = originalUsd;
+      secondaryAmount = convertedIdr;
+    }
   } else {
-    // Base is USD (or EUR displayed in USD/IDR pair without adding a 3rd row)
-    primaryAmount = roundToTwo(safeBaseAmount);
-    secondaryAmount = rate ? Math.round(safeBaseAmount * rate) : null;
+    // Original balance is IDR
+    const originalIdr = Math.round(safeBaseAmount);
+    const convertedUsd = rate ? roundToTwo(originalIdr / rate) : null;
+    if (isIdrPrimary) {
+      primaryAmount = originalIdr;
+      secondaryAmount = convertedUsd;
+    } else {
+      primaryAmount = convertedUsd;
+      secondaryAmount = originalIdr;
+    }
   }
 
   if (isPrivacyMode) {
@@ -226,7 +254,10 @@ export function computeDualCurrencyDisplay(
     };
   }
 
-  const primaryFormatted = formatExactCurrency(primaryAmount, primaryCurrency);
+  const primaryFormatted =
+    primaryAmount !== null
+      ? formatExactCurrency(primaryAmount, primaryCurrency)
+      : `Kurs ${primaryCurrency} belum tersedia`;
   const secondaryFormatted =
     secondaryAmount !== null
       ? `≈ ${formatExactCurrency(secondaryAmount, secondaryCurrency)}`
@@ -243,6 +274,73 @@ export function computeDualCurrencyDisplay(
     rateStatus: rateRecord?.status ?? 'UNAVAILABLE',
     rateValue: rate,
     updatedAt: rateRecord?.updatedAt || null,
+  };
+}
+
+/**
+ * Creates a snapshot of the current USD/IDR exchange rate to lock on trade close.
+ */
+export function getCurrentUsdIdrSnapshot(
+  rateRecord: UsdIdrRateRecord | null
+): HistoricalExchangeRateSnapshot {
+  const hasRate = Boolean(rateRecord && isValidRate(rateRecord.rate));
+  const cached = getCachedUsdIdrRate();
+  const rate = hasRate
+    ? rateRecord!.rate
+    : cached && isValidRate(cached.rate)
+    ? cached.rate
+    : 16000;
+  const status: HistoricalExchangeRateSnapshot['status'] =
+    rateRecord?.status === 'LIVE' ? 'LIVE' : 'CACHED_OFFLINE';
+  const source = rateRecord?.provider || cached?.provider || 'ExchangeRate-API';
+
+  return {
+    rate: roundToTwo(rate),
+    baseCurrency: 'USD',
+    quoteCurrency: 'IDR',
+    timestamp: new Date().toISOString(),
+    source,
+    status,
+  };
+}
+
+/**
+ * Retrieves the historical IDR net profit for a trade.
+ * For closed trades with closeExchangeRate snapshot: locks in historical value.
+ * For unverified legacy trades: preserves raw USD and marks status.
+ */
+export function getHistoricalTradeProfitIdr(
+  trade: Trade,
+  fallbackLiveRate?: number
+): {
+  idrAmount: number | null;
+  rateUsed: number;
+  isHistoricalSnapshot: boolean;
+  snapshotStatus: HistoricalExchangeRateSnapshot['status'];
+} {
+  const netUsd = Number(trade.netProfit) || 0;
+  if (trade.closeExchangeRate && isValidRate(trade.closeExchangeRate.rate)) {
+    return {
+      idrAmount: Math.round(netUsd * trade.closeExchangeRate.rate),
+      rateUsed: trade.closeExchangeRate.rate,
+      isHistoricalSnapshot: true,
+      snapshotStatus: trade.closeExchangeRate.status,
+    };
+  }
+
+  const cached = getCachedUsdIdrRate();
+  const rate =
+    fallbackLiveRate && isValidRate(fallbackLiveRate)
+      ? fallbackLiveRate
+      : cached && isValidRate(cached.rate)
+      ? cached.rate
+      : 16000;
+
+  return {
+    idrAmount: Math.round(netUsd * rate),
+    rateUsed: rate,
+    isHistoricalSnapshot: false,
+    snapshotStatus: 'UNVERIFIED_LEGACY',
   };
 }
 
@@ -294,3 +392,308 @@ export function calculateCapitalGrowthBreakdown(
     equityChangePercent,
   };
 }
+
+/**
+ * Reads the user's active global currency preference ('USD' | 'IDR').
+ * Persisted in localStorage and synchronized across all views.
+ */
+export function getGlobalCurrencyPreference(): 'USD' | 'IDR' {
+  try {
+    if (typeof localStorage !== 'undefined') {
+      const stored = localStorage.getItem(DASHBOARD_CURRENCY_PREF_KEY);
+      if (stored === 'USD' || stored === 'IDR') return stored;
+    }
+  } catch {
+    // fallback
+  }
+  return 'USD';
+}
+
+/**
+ * Persists the user's active global currency preference ('USD' | 'IDR')
+ * and dispatches a window event so all mounted views update reactively.
+ */
+export function setGlobalCurrencyPreference(pref: 'USD' | 'IDR'): void {
+  try {
+    if (typeof localStorage !== 'undefined') {
+      localStorage.setItem(DASHBOARD_CURRENCY_PREF_KEY, pref);
+    }
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new Event('tradevault-currency-pref-change'));
+    }
+  } catch {
+    // ignore
+  }
+}
+
+/**
+ * Returns the effective live or cached USD/IDR exchange rate.
+ * Guarantees a safe fallback rate (e.g. 18000) if no network rate exists yet.
+ */
+export function getEffectiveUsdIdrRate(rateRecord?: UsdIdrRateRecord | null): number {
+  if (rateRecord && isValidRate(rateRecord.rate)) {
+    return rateRecord.rate;
+  }
+  const cached = getCachedUsdIdrRate();
+  if (cached && isValidRate(cached.rate)) {
+    return cached.rate;
+  }
+  return 18000;
+}
+
+/**
+ * Converts dynamic / floating USD amount to the target currency (USD or IDR).
+ * Used for: Account Balance, Planned Risk, Open Trade Floating P/L, Daily Loss Limit, Max Drawdown.
+ */
+export function convertDynamicUsdAmount(
+  amountUsd: number,
+  targetCurrency: 'USD' | 'IDR',
+  rateRecord?: UsdIdrRateRecord | null
+): number {
+  const safeUsd = Number.isFinite(amountUsd) ? amountUsd : 0;
+  if (targetCurrency === 'USD') {
+    return roundToTwo(safeUsd);
+  }
+  const rate = getEffectiveUsdIdrRate(rateRecord);
+  return Math.round(safeUsd * rate);
+}
+
+/**
+ * Formats dynamic / floating USD amount into currency string ($1,000.00 or Rp18.000.000).
+ * Handles privacy masking.
+ */
+export function formatDynamicAmount(
+  amountUsd: number,
+  targetCurrency: 'USD' | 'IDR',
+  rateRecord?: UsdIdrRateRecord | null,
+  isPrivacyMode: boolean = false,
+  withPlusSign: boolean = false
+): string {
+  if (isPrivacyMode) {
+    return targetCurrency === 'IDR' ? 'Rp••••••' : '$••••••';
+  }
+  const safe = Number.isFinite(amountUsd) ? amountUsd : 0;
+  if (targetCurrency === 'USD') {
+    const rounded = Number(safe.toFixed(2));
+    if (Math.abs(rounded) < 0.001) return '$0.00';
+    const formatted = new Intl.NumberFormat('en-US', {
+      style: 'currency',
+      currency: 'USD',
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    }).format(Math.abs(rounded));
+    const prefix = rounded > 0 ? (withPlusSign ? '+' : '') : '-';
+    return `${prefix}${formatted}`;
+  }
+
+  // IDR
+  const rate = getEffectiveUsdIdrRate(rateRecord);
+  const idrVal = Math.round(safe * rate);
+  if (Math.abs(idrVal) === 0) return 'Rp 0';
+  const formatted = new Intl.NumberFormat('id-ID', {
+    style: 'currency',
+    currency: 'IDR',
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 0,
+  })
+    .format(Math.abs(idrVal))
+    .replace(/\u00a0/g, ' ');
+  const prefix = idrVal > 0 ? (withPlusSign ? '+' : '') : '-';
+  return `${prefix}${formatted}`;
+}
+
+/**
+ * Converts a closed trade metric (netProfit, grossProfit, commission, swap)
+ * strictly preserving the Historical Exchange Rate snapshot locked when the trade was closed.
+ * Never recalculates closed trades using today's live rate!
+ */
+export function convertHistoricalTradeMetric(
+  trade: Trade,
+  metricKey: 'netProfit' | 'grossProfit' | 'commission' | 'swap',
+  targetCurrency: 'USD' | 'IDR',
+  fallbackRateRecord?: UsdIdrRateRecord | null
+): {
+  amount: number;
+  rateUsed: number;
+  isHistoricalLocked: boolean;
+  snapshotStatus: HistoricalExchangeRateSnapshot['status'];
+} {
+  const rawUsd = Number(trade[metricKey]) || 0;
+  if (targetCurrency === 'USD') {
+    return {
+      amount: roundToTwo(rawUsd),
+      rateUsed: 1,
+      isHistoricalLocked: true,
+      snapshotStatus: 'LIVE',
+    };
+  }
+
+  // Target currency is IDR
+  // 1. Check if closed trade has verified snapshot
+  if (trade.closeExchangeRate && isValidRate(trade.closeExchangeRate.rate)) {
+    return {
+      amount: Math.round(rawUsd * trade.closeExchangeRate.rate),
+      rateUsed: trade.closeExchangeRate.rate,
+      isHistoricalLocked: true,
+      snapshotStatus: trade.closeExchangeRate.status,
+    };
+  }
+
+  // 2. Unverified legacy trade fallback
+  const fallbackRate = getEffectiveUsdIdrRate(fallbackRateRecord);
+  return {
+    amount: Math.round(rawUsd * fallbackRate),
+    rateUsed: fallbackRate,
+    isHistoricalLocked: false,
+    snapshotStatus: 'UNVERIFIED_LEGACY',
+  };
+}
+
+/**
+ * Formats a trade financial metric (Net P/L, Gross P/L, Commission, Swap, Risk Amount)
+ * applying historical lock for closed trades, and dynamic conversion for planned/open trades.
+ */
+export function formatTradeFinancialValue(
+  trade: Trade,
+  metricKey: 'netProfit' | 'grossProfit' | 'commission' | 'swap' | 'riskAmount',
+  targetCurrency: 'USD' | 'IDR',
+  rateRecord?: UsdIdrRateRecord | null,
+  isPrivacyMode: boolean = false,
+  withPlusSign: boolean = false
+): string {
+  if (isPrivacyMode) {
+    return targetCurrency === 'IDR' ? 'Rp••••••' : '$••••••';
+  }
+
+  // Planned / Open riskAmount is always dynamic (unrealized)
+  if (metricKey === 'riskAmount') {
+    return formatDynamicAmount(
+      Number(trade.riskAmount) || 0,
+      targetCurrency,
+      rateRecord,
+      false,
+      false
+    );
+  }
+
+  if (targetCurrency === 'USD') {
+    const rawVal = Number(trade[metricKey]) || 0;
+    const rounded = Number(rawVal.toFixed(2));
+    if (Math.abs(rounded) < 0.001) return '$0.00';
+    const formatted = new Intl.NumberFormat('en-US', {
+      style: 'currency',
+      currency: 'USD',
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    })
+      .format(Math.abs(rounded))
+      .replace(/\u00a0/g, ' ');
+    const prefix = rounded > 0 ? (withPlusSign ? '+' : '') : '-';
+    return `${prefix}${formatted}`;
+  }
+
+  // IDR: apply historical lock for closed trades
+  const converted = convertHistoricalTradeMetric(trade, metricKey, 'IDR', rateRecord);
+  if (Math.abs(converted.amount) === 0) return 'Rp 0';
+  const formatted = new Intl.NumberFormat('id-ID', {
+    style: 'currency',
+    currency: 'IDR',
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 0,
+  })
+    .format(Math.abs(converted.amount))
+    .replace(/\u00a0/g, ' ');
+  const prefix = converted.amount > 0 ? (withPlusSign ? '+' : '') : '-';
+  return `${prefix}${formatted}`;
+}
+
+/**
+ * Calculates cumulative realized profit/loss across closed trades in display currency.
+ * When IDR is active, sums the individually locked historical IDR amounts.
+ */
+export function computeCumulativeProfitInDisplayCurrency(
+  trades: Trade[],
+  targetCurrency: 'USD' | 'IDR',
+  rateRecord?: UsdIdrRateRecord | null
+): number {
+  if (targetCurrency === 'USD') {
+    const totalUsd = trades.reduce((acc, t) => acc + (Number(t.netProfit) || 0), 0);
+    return roundToTwo(totalUsd);
+  }
+
+  // IDR: Sum each closed trade's historical locked IDR amount
+  return trades.reduce((acc, t) => {
+    const hist = convertHistoricalTradeMetric(t, 'netProfit', 'IDR', rateRecord);
+    return acc + hist.amount;
+  }, 0);
+}
+
+/**
+ * Universal React hook for Global Currency Display across TradeVault.
+ * Automatically synchronizes when preferred currency changes anywhere in the app.
+ */
+export function useGlobalCurrency() {
+  const [preferredCurrency, setPreferredCurrencyState] = useState<'USD' | 'IDR'>(() =>
+    getGlobalCurrencyPreference()
+  );
+  const [rateRecord, setRateRecord] = useState<UsdIdrRateRecord | null>(() =>
+    getCachedUsdIdrRate()
+  );
+
+  useEffect(() => {
+    let isMounted = true;
+    fetchLiveUsdIdrRate().then((rec) => {
+      if (isMounted) setRateRecord(rec);
+    });
+
+    const onPrefChange = () => {
+      setPreferredCurrencyState(getGlobalCurrencyPreference());
+    };
+    window.addEventListener('tradevault-currency-pref-change', onPrefChange);
+    return () => {
+      isMounted = false;
+      window.removeEventListener('tradevault-currency-pref-change', onPrefChange);
+    };
+  }, []);
+
+  const setPreferredCurrency = useCallback((pref: 'USD' | 'IDR') => {
+    setPreferredCurrencyState(pref);
+    setGlobalCurrencyPreference(pref);
+  }, []);
+
+  const swapCurrency = useCallback(() => {
+    const next = preferredCurrency === 'USD' ? 'IDR' : 'USD';
+    setPreferredCurrency(next);
+  }, [preferredCurrency, setPreferredCurrency]);
+
+  return {
+    preferredCurrency,
+    setPreferredCurrency,
+    swapCurrency,
+    rateRecord,
+    effectiveRate: getEffectiveUsdIdrRate(rateRecord),
+    formatDynamic: useCallback(
+      (amountUsd: number, isPrivacyMode: boolean = false, withPlusSign: boolean = false) =>
+        formatDynamicAmount(amountUsd, preferredCurrency, rateRecord, isPrivacyMode, withPlusSign),
+      [preferredCurrency, rateRecord]
+    ),
+    formatTradeFinancial: useCallback(
+      (
+        trade: Trade,
+        metricKey: 'netProfit' | 'grossProfit' | 'commission' | 'swap' | 'riskAmount',
+        isPrivacyMode: boolean = false,
+        withPlusSign: boolean = false
+      ) =>
+        formatTradeFinancialValue(
+          trade,
+          metricKey,
+          preferredCurrency,
+          rateRecord,
+          isPrivacyMode,
+          withPlusSign
+        ),
+      [preferredCurrency, rateRecord]
+    ),
+  };
+}
+

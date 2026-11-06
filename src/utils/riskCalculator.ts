@@ -180,13 +180,22 @@ function countStepDecimals(step: number): number {
  * - Entry 4000, SL 3995 -> 5 pips
  * - Entry 4000, TP 4100 -> 100 pips
  */
-export function convertXauusdPriceToPips(priceA: number, priceB: number): number {
+export function convertXauusdPriceToPips(
+  priceA: number,
+  priceB: number,
+  pipSize: number = XAUUSD_PIP_SIZE
+): number {
   if (!Number.isFinite(priceA) || !Number.isFinite(priceB)) return 0;
+  const activePipSize =
+    typeof pipSize === 'number' && Number.isFinite(pipSize) && pipSize > 0
+      ? pipSize
+      : XAUUSD_PIP_SIZE;
   const aScaled = parseDecimalToScaledBigInt(priceA, 'NEAREST');
   const bScaled = parseDecimalToScaledBigInt(priceB, 'NEAREST');
   const diffScaled = aScaled > bScaled ? aScaled - bScaled : bScaled - aScaled;
-  const priceDiffExact = Number(diffScaled) / Number(BIGINT_SCALE_8);
-  return Number((priceDiffExact / XAUUSD_PIP_SIZE).toFixed(2));
+  const pipSizeScaled = parseDecimalToScaledBigInt(activePipSize, 'NEAREST');
+  const pipsScaled = (diffScaled * BIGINT_SCALE_8 + pipSizeScaled / 2n) / pipSizeScaled;
+  return scaledBigIntToNumber(pipsScaled, 2);
 }
 
 export interface UnifiedXauusdCalculatorParams {
@@ -247,7 +256,7 @@ export function buildUnifiedXauusdLotInput(
  *
  * Strictly separates three distinct quantities:
  * A. Jarak harga: abs(Entry - SL)
- * B. Jarak pip: jarak harga / pipSize (1.00 for XAUUSD)
+ * B. Jarak pip: jarak harga / pipSize (Mode B = 1.00, Mode A = 0.10 for XAUUSD)
  * C. Nilai uang: jarak pip × pip value sesuai lot ($10.00/pip per 1.00 lot; $0.10/pip per 0.01 lot pada 100 oz)
  */
 export function calculateXauusdLot(
@@ -258,7 +267,13 @@ export function calculateXauusdLot(
   const isXauusd = !input.symbol || symbolRaw === 'XAUUSD' || symbolRaw.startsWith('XAUUSD');
   const instrumentSpec = !isXauusd ? getInstrumentPipSpec(symbolRaw, settings) : undefined;
   const effectiveSymbol = isXauusd ? 'XAUUSD' : instrumentSpec?.symbol || symbolRaw;
-  const effectivePipSize = isXauusd ? XAUUSD_PIP_SIZE : instrumentSpec!.pipSize;
+  const effectivePipSize = isXauusd
+    ? typeof settings?.xauusdPipSize === 'number' &&
+      Number.isFinite(settings.xauusdPipSize) &&
+      settings.xauusdPipSize > 0
+      ? settings.xauusdPipSize
+      : XAUUSD_PIP_SIZE
+    : instrumentSpec!.pipSize;
   const priceDigits = isXauusd ? 2 : instrumentSpec!.digits;
 
   const rawContractSize =

@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { Trade } from '../../types/trade';
 import { AppSettings } from '../../types/settings';
 import {
@@ -14,15 +14,18 @@ import {
   formatGrowthPercent,
   computePeriodTradesAndStartingBalance,
   extractTradeLocalDateKey,
+  EquityPoint,
 } from '../../utils/calculations';
+import {
+  useGlobalCurrency,
+  computeCumulativeProfitInDisplayCurrency,
+} from '../../utils/currencyRate';
 import { EquityChart } from '../dashboard/EquityChart';
 import { DrawdownChart } from '../dashboard/DrawdownChart';
 import { RadarChart } from '../dashboard/RadarChart';
 import { PerformanceCalendar } from '../dashboard/PerformanceCalendar';
 import {
   BarChart,
-  Calendar,
-  Filter,
   RotateCcw,
   Eye,
   EyeOff,
@@ -30,7 +33,7 @@ import {
   TrendingDown,
   ShieldAlert,
   X,
-  Check,
+  ChevronDown,
 } from 'lucide-react';
 
 interface AnalyticsViewProps {
@@ -40,13 +43,119 @@ interface AnalyticsViewProps {
 }
 
 type PeriodPreset = 'ALL' | 'TODAY' | 'THIS_MONTH' | 'LAST_MONTH' | '7D' | '30D' | 'YTD' | 'CUSTOM';
+type ChartRangeOption = '1D' | '1W' | '1M' | '3M' | '6M' | '1Y' | 'ALL';
+type BreakdownCategory = 'day' | 'session' | 'instrument';
+
+const CHART_RANGE_OPTIONS: { id: ChartRangeOption; label: string }[] = [
+  { id: '1D', label: '1D' },
+  { id: '1W', label: '1W' },
+  { id: '1M', label: '1M' },
+  { id: '3M', label: '3M' },
+  { id: '6M', label: '6M' },
+  { id: '1Y', label: '1Y' },
+  { id: 'ALL', label: 'All Time' },
+];
+
+/**
+ * Filters an equityCurve by a relative chart timeframe ('1D', '1W', '1M', '3M', '6M', '1Y', 'ALL')
+ * anchored to the latest trade date in the curve so historical journals work accurately.
+ */
+const filterEquityCurveByRange = (
+  curve: EquityPoint[],
+  range: ChartRangeOption
+): EquityPoint[] => {
+  if (!curve || curve.length <= 1 || range === 'ALL') return curve;
+
+  const tradePoints = curve.filter((pt) => pt.index > 0);
+  if (tradePoints.length === 0) return curve;
+
+  const lastPoint = tradePoints[tradePoints.length - 1];
+  const anchorKey = extractTradeLocalDateKey(lastPoint.date);
+  if (!anchorKey) return curve;
+
+  const anchorDate = new Date(anchorKey + 'T23:59:59');
+  if (Number.isNaN(anchorDate.getTime())) return curve;
+
+  const cutoff = new Date(anchorDate);
+  if (range === '1D') cutoff.setDate(cutoff.getDate() - 1);
+  else if (range === '1W') cutoff.setDate(cutoff.getDate() - 7);
+  else if (range === '1M') cutoff.setMonth(cutoff.getMonth() - 1);
+  else if (range === '3M') cutoff.setMonth(cutoff.getMonth() - 3);
+  else if (range === '6M') cutoff.setMonth(cutoff.getMonth() - 6);
+  else if (range === '1Y') cutoff.setFullYear(cutoff.getFullYear() - 1);
+
+  const cutoffKey = `${cutoff.getFullYear()}-${String(cutoff.getMonth() + 1).padStart(2, '0')}-${String(
+    cutoff.getDate()
+  ).padStart(2, '0')}`;
+
+  const matchingIndices: number[] = [];
+  curve.forEach((pt, idx) => {
+    if (pt.index === 0) return;
+    const dKey = extractTradeLocalDateKey(pt.date);
+    if (dKey && dKey >= cutoffKey) {
+      matchingIndices.push(idx);
+    }
+  });
+
+  if (matchingIndices.length === 0) {
+    // Fallback to the baseline point right before the last trade
+    return curve.slice(Math.max(0, curve.length - 2));
+  }
+
+  const firstIdx = matchingIndices[0];
+  const baselineIdx = Math.max(0, firstIdx - 1);
+  return curve.slice(baselineIdx);
+};
 
 export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ trades, settings, onViewTrade }) => {
-  // Period filter state
+  const { preferredCurrency, rateRecord, formatDynamic } = useGlobalCurrency();
+  const fmtMoney = (valUsd: number, privacy: boolean = isPrivacyMode) =>
+    preferredCurrency === 'IDR' ? formatDynamic(valUsd, privacy) : formatCurrency(valUsd, settings, privacy);
+
+  // Global Analytics Period filter state
   const [selectedPeriod, setSelectedPeriod] = useState<PeriodPreset>('ALL');
   const [startDate, setStartDate] = useState<string>('');
   const [endDate, setEndDate] = useState<string>('');
   const [showPeriodDropdown, setShowPeriodDropdown] = useState<boolean>(false);
+
+  // Section 02: Equity Curve independent pill dropdown states
+  const [equityMode, setEquityMode] = useState<'equity' | 'growth'>('equity');
+  const [equityRange, setEquityRange] = useState<ChartRangeOption>('ALL');
+  const [openEquityDropdown, setOpenEquityDropdown] = useState<'mode' | 'range' | null>(null);
+
+  // Section 02: Drawdown Curve independent pill dropdown states
+  const [drawdownMode, setDrawdownMode] = useState<'percent' | 'nominal'>('percent');
+  const [drawdownRange, setDrawdownRange] = useState<ChartRangeOption>('ALL');
+  const [openDrawdownDropdown, setOpenDrawdownDropdown] = useState<'mode' | 'range' | null>(null);
+
+  // Section 05: Performance Breakdown unified category selector
+  const [breakdownCategory, setBreakdownCategory] = useState<BreakdownCategory>('day');
+  const [showBreakdownDropdown, setShowBreakdownDropdown] = useState<boolean>(false);
+
+  const periodMenuRef = useRef<HTMLDivElement | null>(null);
+  const equityControlsRef = useRef<HTMLDivElement | null>(null);
+  const drawdownControlsRef = useRef<HTMLDivElement | null>(null);
+  const breakdownMenuRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    const handleOutsideClick = (e: MouseEvent) => {
+      const target = e.target as Node;
+      if (periodMenuRef.current && !periodMenuRef.current.contains(target)) {
+        setShowPeriodDropdown(false);
+      }
+      if (equityControlsRef.current && !equityControlsRef.current.contains(target)) {
+        setOpenEquityDropdown(null);
+      }
+      if (drawdownControlsRef.current && !drawdownControlsRef.current.contains(target)) {
+        setOpenDrawdownDropdown(null);
+      }
+      if (breakdownMenuRef.current && !breakdownMenuRef.current.contains(target)) {
+        setShowBreakdownDropdown(false);
+      }
+    };
+    document.addEventListener('mousedown', handleOutsideClick);
+    return () => document.removeEventListener('mousedown', handleOutsideClick);
+  }, []);
 
   // Privacy Mode state persisted in localStorage
   const [isPrivacyMode, setIsPrivacyMode] = useState<boolean>(() => {
@@ -172,8 +281,80 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ trades, settings, 
   const isNetProfitPositive = metrics.totalNetProfit >= 0.01;
   const isNetProfitNegative = metrics.totalNetProfit <= -0.01;
   const isJournalCompletelyEmpty = !trades || trades.length === 0;
+  const hasClosedTradesInPeriod = metrics.totalTrades > 0;
 
-  // 6. Day of Week Performance (Senin - Jumat)
+  // Section 02A: Filtered Equity Curve & Dynamic Summary
+  const rangedEquityCurve = useMemo(() => {
+    return filterEquityCurveByRange(equityCurve, equityRange);
+  }, [equityCurve, equityRange]);
+
+  const equityRangeSummary = useMemo(() => {
+    const label = CHART_RANGE_OPTIONS.find((o) => o.id === equityRange)?.label || 'All Time';
+    if (!rangedEquityCurve || rangedEquityCurve.length <= 1) {
+      return {
+        label,
+        tradesCount: 0,
+        netDelta: 0,
+        growthDelta: 0,
+      };
+    }
+    const firstPt = rangedEquityCurve[0];
+    const lastPt = rangedEquityCurve[rangedEquityCurve.length - 1];
+    const tradesCount = Math.max(0, rangedEquityCurve.length - 1);
+    const netDelta = Number((lastPt.equity - firstPt.equity).toFixed(2));
+    const baseEq = firstPt.equity > 0 ? firstPt.equity : periodStartingBalance;
+    const growthDelta = baseEq > 0 ? Number(((netDelta / baseEq) * 100).toFixed(2)) : 0;
+    return {
+      label,
+      tradesCount,
+      netDelta,
+      growthDelta,
+    };
+  }, [rangedEquityCurve, equityRange, periodStartingBalance]);
+
+  // Section 02B: Filtered Drawdown Curve & Dynamic Summary (Current DD, Max DD, Recovery %)
+  const rangedDrawdownCurve = useMemo(() => {
+    return filterEquityCurveByRange(equityCurve, drawdownRange);
+  }, [equityCurve, drawdownRange]);
+
+  const drawdownSummary = useMemo(() => {
+    const label = CHART_RANGE_OPTIONS.find((o) => o.id === drawdownRange)?.label || 'All Time';
+    if (!rangedDrawdownCurve || rangedDrawdownCurve.length <= 1) {
+      return {
+        label,
+        currentDdPct: 0,
+        currentDdAmt: 0,
+        maxDdPct: 0,
+        maxDdAmt: 0,
+        recoveryPct: 100,
+      };
+    }
+    const lastPt = rangedDrawdownCurve[rangedDrawdownCurve.length - 1];
+    const currentDdPct = Number((lastPt.drawdownPercent || 0).toFixed(2));
+    const currentDdAmt = Number((lastPt.drawdownAmount || 0).toFixed(2));
+    const maxDdPct = Number(
+      Math.max(...rangedDrawdownCurve.map((d) => d.drawdownPercent || 0), 0).toFixed(2)
+    );
+    const maxDdAmt = Number(
+      Math.max(...rangedDrawdownCurve.map((d) => d.drawdownAmount || 0), 0).toFixed(2)
+    );
+    // Recovery %: 100% if back at peak (currentDD == 0); else (1 - currentDD / maxDD) * 100
+    const recoveryPct =
+      maxDdPct <= 0.0001
+        ? 100
+        : Math.max(0, Math.min(100, Math.round((1 - currentDdPct / maxDdPct) * 100)));
+
+    return {
+      label,
+      currentDdPct,
+      currentDdAmt,
+      maxDdPct,
+      maxDdAmt,
+      recoveryPct,
+    };
+  }, [rangedDrawdownCurve, drawdownRange]);
+
+  // Section 05: Day of Week Performance (Senin - Jumat)
   const dayOfWeekStats = useMemo(() => {
     const dayNames = ['Minggu', 'Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat', 'Sabtu'];
     const map: Record<
@@ -209,7 +390,7 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ trades, settings, 
     });
   }, [filteredTrades]);
 
-  // 7. Session Performance (Asian, London, New York)
+  // Section 05: Session Performance (Asian, London, New York)
   const sessionStats = useMemo(() => {
     const sessions = [
       { id: 'Asian', label: 'Asia', desc: 'Tokyo & Sydney' },
@@ -266,7 +447,7 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ trades, settings, 
     });
   }, [filteredTrades]);
 
-  // 8. Symbol Performance
+  // Section 05: Symbol / Instrument Performance
   const symbolStats = useMemo(() => {
     const map: Record<
       string,
@@ -302,7 +483,7 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ trades, settings, 
       .sort((a, b) => b.total - a.total);
   }, [filteredTrades]);
 
-  // 6 Pillars Indicator List for Section 2
+  // Section 03: 6 Pillars Indicator List for Performance Profile
   const pillarList = useMemo(() => {
     const isSufficient = radarIndicators.isDataSufficient;
     return [
@@ -336,9 +517,9 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ trades, settings, 
         score: isSufficient ? radarIndicators.expectancyScore : 0,
         isAvailable: isSufficient,
         displayVal: isSufficient
-          ? formatCurrency(metrics.expectancy, settings, isPrivacyMode)
+          ? fmtMoney(metrics.expectancy, isPrivacyMode)
           : '-',
-        target: 'Target: Positif > $0',
+        target: preferredCurrency === 'IDR' ? 'Target: > Rp0' : 'Target: > $0',
       },
       {
         name: 'Risk Control',
@@ -359,162 +540,169 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ trades, settings, 
         target: 'Target: ≥ 60% Hari Win',
       },
     ];
-  }, [radarIndicators, metrics, settings, isPrivacyMode]);
+  }, [radarIndicators, metrics, settings, isPrivacyMode, preferredCurrency, fmtMoney]);
+
+  const breakdownLabels: Record<BreakdownCategory, string> = {
+    day: 'Hari & Bulanan',
+    session: 'Sesi Trading (Asia / London / NY)',
+    instrument: `Instrumen (${symbolStats.length})`,
+  };
 
   return (
-    <div className="space-y-6 font-sans">
-      {/* Complete Empty State Banner */}
+    <div className="space-y-10 pb-8 font-['Arial',Helvetica,sans-serif]">
+      {/* Complete Empty State when Journal has 0 trades */}
       {isJournalCompletelyEmpty ? (
-        <div className="p-8 sm:p-12 rounded-2xl border border-[#DDE3EA] dark:border-[#252B34] bg-white dark:bg-[#11151B] flex flex-col items-center justify-center text-center space-y-3">
-          <div className="p-4 rounded-2xl bg-[#EEF2F6] dark:bg-[#171D26] border border-[#DDE3EA] dark:border-[#252B34] text-[#697586] dark:text-[#929BA9]">
-            <BarChart className="h-8 w-8 stroke-[1.75]" />
+        <div className="py-16 px-4 flex flex-col items-center justify-center text-center space-y-3 border-b border-[#DDE3EA] dark:border-white/[0.06]">
+          <div className="p-3.5 rounded-2xl bg-black/[0.03] dark:bg-white/[0.04] border border-[#DDE3EA] dark:border-white/[0.08] text-[#697586] dark:text-[#8E98A8]">
+            <BarChart className="h-7 w-7 stroke-[1.75]" />
           </div>
           <h3 className="text-base sm:text-lg font-bold text-[#151D2A] dark:text-[#F2F5F9]">
-            Data Transaksi Jurnal Masih Kosong
+            Belum Ada Data Transaksi untuk Dianalisis
           </h3>
-          <p className="text-xs text-[#697586] dark:text-[#929BA9] max-w-md leading-relaxed">
-            Tidak ada transaksi tersimpan untuk dihitung. Tambahkan posisi trading Anda melalui tombol{' '}
-            <strong className="text-[#1769E8] font-semibold">(+) Tambah Transaksi</strong> di navigasi bawah untuk mengeksplorasi seluruh metrik analitik profesional.
+          <p className="text-xs text-[#697586] dark:text-[#8E98A8] max-w-md leading-relaxed">
+            Jurnal trading Anda masih kosong. Tambahkan transaksi melalui tombol{' '}
+            <strong className="text-[#3B82F6] font-semibold">(+) Tambah Transaksi</strong> di navigasi bawah untuk membuka statistik performa, kurva ekuitas, dan profil risiko.
           </p>
         </div>
       ) : (
         <>
           {/* =========================================================================
-              SECTION 1: PERFORMANCE OVERVIEW (UNIFIED CLEAN HERO PANEL)
+              SECTION 01 — PERFORMANCE OVERVIEW (SEAMLESS HERO & 6 METRICS)
              ========================================================================= */}
-          <section className="rounded-2xl border border-[#DDE3EA] dark:border-[#252B34] bg-white dark:bg-[#11151B] p-5 sm:p-6 transition-colors duration-150 space-y-5">
-            {/* Top Toolbar: Active Period Indicator & Compact Filter Dropdown */}
-            <div className="flex items-center justify-between gap-3 pb-4 border-b border-[#DDE3EA] dark:border-[#252B34] relative">
-              <div className="flex items-center gap-2">
-                <span className="px-2.5 py-1 rounded-lg text-xs font-medium bg-[#F5F7FA] dark:bg-[#080A0E] border border-[#DDE3EA] dark:border-[#252B34] text-[#697586] dark:text-[#929BA9]">
-                  Periode: <strong className="text-[#151D2A] dark:text-[#F2F5F9] ml-1">{getPeriodLabel()}</strong>
+          <section className="space-y-6 pb-8 border-b border-[#DDE3EA] dark:border-white/[0.06]">
+            {/* Top Header & Global Filter Controls */}
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2.5 sm:gap-3">
+              <div>
+                <span className="block text-[10px] font-bold uppercase tracking-[0.14em] text-[#697586] dark:text-[#6E7785]">
+                  01 / PERFORMANCE OVERVIEW
                 </span>
+                <h2 className="text-base sm:text-lg font-bold text-[#151D2A] dark:text-[#F2F5F9] mt-0.5">
+                  Ringkasan Performa Utama
+                </h2>
+              </div>
+
+              {/* Global Period Pill Dropdown + Reset + Privacy Toggle */}
+              <div className="relative flex flex-wrap items-center gap-2 self-start sm:self-auto max-w-full" ref={periodMenuRef}>
                 {(selectedPeriod !== 'ALL' || startDate || endDate) && (
                   <button
                     type="button"
                     onClick={handleResetFilters}
-                    className="p-1 rounded-lg text-[#697586] dark:text-[#929BA9] hover:text-[#151D2A] dark:hover:text-[#F2F5F9] hover:bg-[#F5F7FA] dark:hover:bg-[#171D26] transition-colors cursor-pointer"
+                    className="p-1.5 rounded-full text-[#697586] dark:text-[#8E98A8] hover:text-[#151D2A] dark:hover:text-[#F2F5F9] bg-black/[0.03] dark:bg-white/[0.04] border border-[#DDE3EA] dark:border-white/[0.08] transition-colors cursor-pointer shrink-0"
                     title="Reset Filter Tanggal"
                     aria-label="Reset Filter Tanggal"
                   >
                     <RotateCcw className="h-3.5 w-3.5 stroke-[1.75]" />
                   </button>
                 )}
-              </div>
 
-              {/* Action Buttons: Compact Icon-Only Filter Trigger + Privacy Toggle */}
-              <div className="flex items-center gap-2">
-                {/* Filter Trigger Button (Icon Only, styled consistently with Trade Log) */}
-                <div className="relative">
+                {/* Period Selector Pill Dropdown */}
+                <div className="max-w-full min-w-0">
                   <button
                     type="button"
-                    onClick={() => setShowPeriodDropdown(!showPeriodDropdown)}
-                    title="Filter Periode Analisis"
+                    onClick={() => setShowPeriodDropdown((prev) => !prev)}
                     aria-label="Filter Periode Analisis"
-                    className={`flex items-center justify-center h-9 w-9 rounded-lg border text-xs font-medium transition-colors cursor-pointer shrink-0 ${
+                    className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium border transition-colors cursor-pointer select-none max-w-full ${
                       showPeriodDropdown || selectedPeriod !== 'ALL' || Boolean(startDate || endDate)
-                        ? 'bg-[#EEF2F6] dark:bg-[#171D26] text-[#1769E8] border-[#1769E8]'
-                        : 'bg-[#F5F7FA] dark:bg-[#080A0E] text-[#151D2A] dark:text-[#F2F5F9] border-[#DDE3EA] dark:border-[#252B34] hover:border-[#1769E8]/50'
+                        ? 'bg-black/[0.05] dark:bg-white/[0.07] text-[#151D2A] dark:text-[#F2F5F9] border-[#3B82F6]/60'
+                        : 'bg-black/[0.03] dark:bg-white/[0.04] text-[#151D2A] dark:text-[#F2F5F9] border-[#DDE3EA] dark:border-white/[0.08] hover:border-[#3B82F6]/40'
                     }`}
                   >
-                    <Filter className="h-4 w-4 stroke-[1.75]" />
+                    <span className="text-[#697586] dark:text-[#8E98A8] shrink-0">Periode:</span>
+                    <strong className="font-bold truncate max-w-[165px] sm:max-w-none">{getPeriodLabel()}</strong>
+                    <ChevronDown className="h-3.5 w-3.5 text-[#697586] dark:text-[#8E98A8] shrink-0" />
                   </button>
 
-                  {/* Period Filter Dropdown Popover */}
                   {showPeriodDropdown && (
-                    <div className="absolute right-0 top-11 z-30 w-72 sm:w-80 rounded-xl border border-[#DDE3EA] dark:border-[#252B34] bg-white dark:bg-[#11151B] p-3.5 shadow-xl space-y-3 text-xs animate-in fade-in duration-150">
-                      <div className="flex items-center justify-between pb-2 border-b border-[#DDE3EA] dark:border-[#252B34]">
-                        <span className="font-semibold text-[#151D2A] dark:text-[#F2F5F9]">
-                          Pilih Periode Analisis
+                    <div className="absolute left-0 sm:left-auto sm:right-0 top-10 z-30 w-[min(288px,calc(100vw-2rem))] sm:w-80 rounded-2xl border border-[#DDE3EA] dark:border-white/10 bg-white dark:bg-[#0E1217] p-3.5 shadow-2xl space-y-3 text-xs animate-in fade-in duration-150">
+                      <div className="flex items-center justify-between pb-2 border-b border-[#DDE3EA] dark:border-white/[0.07]">
+                        <span className="font-bold text-[#151D2A] dark:text-[#F2F5F9]">
+                          Filter Periode Analytics
                         </span>
                         <button
                           type="button"
                           onClick={() => setShowPeriodDropdown(false)}
-                          className="p-1 rounded text-[#697586] dark:text-[#929BA9] hover:text-[#151D2A] dark:hover:text-[#F2F5F9] cursor-pointer"
+                          className="p-1 rounded-full text-[#697586] dark:text-[#8E98A8] hover:text-[#151D2A] dark:hover:text-[#F2F5F9] cursor-pointer"
                         >
                           <X className="h-3.5 w-3.5" />
                         </button>
                       </div>
 
-                      {/* Quick Chips */}
-                      <div>
-                        <span className="block text-[11px] text-[#697586] dark:text-[#929BA9] mb-1.5 font-medium">
-                          Pilihan Cepat
-                        </span>
-                        <div className="grid grid-cols-2 gap-1.5 text-[11px]">
-                          {[
-                            { id: 'ALL', label: 'Semua Waktu' },
-                            { id: 'TODAY', label: 'Hari Ini' },
-                            { id: '7D', label: '7 Hari Terakhir' },
-                            { id: '30D', label: '30 Hari Terakhir' },
-                            { id: 'THIS_MONTH', label: 'Bulan Ini' },
-                            { id: 'LAST_MONTH', label: 'Bulan Lalu' },
-                            { id: 'YTD', label: 'Tahun Ini' },
-                          ].map((p) => (
-                            <button
-                              key={p.id}
-                              type="button"
-                              onClick={() => {
-                                handlePeriodChange(p.id as PeriodPreset);
-                                setShowPeriodDropdown(false);
-                              }}
-                              className={`px-2.5 py-1.5 rounded-lg border text-left font-medium transition-colors cursor-pointer ${
-                                selectedPeriod === p.id && !startDate && !endDate
-                                  ? 'bg-[#1769E8] text-white border-[#1769E8] font-semibold'
-                                  : 'bg-[#F5F7FA] dark:bg-[#080A0E] text-[#697586] dark:text-[#929BA9] border-[#DDE3EA] dark:border-[#252B34] hover:text-[#151D2A] dark:hover:text-[#F2F5F9]'
-                              }`}
-                            >
-                              {p.label}
-                            </button>
-                          ))}
-                        </div>
+                      <div className="grid grid-cols-2 gap-1.5 text-[11px]">
+                        {[
+                          { id: 'ALL', label: 'Semua Waktu' },
+                          { id: 'TODAY', label: 'Hari Ini' },
+                          { id: '7D', label: '7 Hari Terakhir' },
+                          { id: '30D', label: '30 Hari Terakhir' },
+                          { id: 'THIS_MONTH', label: 'Bulan Ini' },
+                          { id: 'LAST_MONTH', label: 'Bulan Lalu' },
+                          { id: 'YTD', label: 'Tahun Ini' },
+                        ].map((p) => (
+                          <button
+                            key={p.id}
+                            type="button"
+                            onClick={() => {
+                              handlePeriodChange(p.id as PeriodPreset);
+                              setShowPeriodDropdown(false);
+                            }}
+                            className={`px-2.5 py-1.5 rounded-lg text-left transition-colors cursor-pointer ${
+                              selectedPeriod === p.id && !startDate && !endDate
+                                ? 'bg-[#3B82F6] text-white font-bold'
+                                : 'bg-black/[0.03] dark:bg-white/[0.04] text-[#697586] dark:text-[#8E98A8] hover:text-[#151D2A] dark:hover:text-[#F2F5F9]'
+                            }`}
+                          >
+                            {p.label}
+                          </button>
+                        ))}
                       </div>
 
                       {/* Custom Date Range Inputs */}
-                      <div className="pt-2 border-t border-[#DDE3EA] dark:border-[#252B34] space-y-2">
-                        <span className="block text-[11px] text-[#697586] dark:text-[#929BA9] font-medium">
+                      <div className="pt-2 border-t border-[#DDE3EA] dark:border-white/[0.07] space-y-2">
+                        <span className="block text-[11px] text-[#697586] dark:text-[#8E98A8] font-medium">
                           Rentang Tanggal Kustom
                         </span>
                         <div className="grid grid-cols-2 gap-2 text-[11px]">
                           <div>
-                            <label className="block text-[10px] text-[#697586] dark:text-[#929BA9] mb-0.5">Dari</label>
+                            <label className="block text-[10px] text-[#697586] dark:text-[#7D8796] mb-0.5">
+                              Dari
+                            </label>
                             <input
                               type="date"
                               value={startDate}
                               onChange={(e) => handleCustomDateChange(e.target.value, endDate)}
-                              className="w-full rounded-lg bg-[#F5F7FA] dark:bg-[#080A0E] border border-[#DDE3EA] dark:border-[#252B34] px-2 py-1 text-[#151D2A] dark:text-[#F2F5F9] focus:outline-none focus:border-[#1769E8] font-mono-numbers tabular-nums"
+                              className="w-full rounded-lg bg-black/[0.03] dark:bg-white/[0.04] border border-[#DDE3EA] dark:border-white/[0.08] px-2 py-1 text-[#151D2A] dark:text-[#F2F5F9] focus:outline-none focus:border-[#3B82F6] tabular-nums"
                             />
                           </div>
                           <div>
-                            <label className="block text-[10px] text-[#697586] dark:text-[#929BA9] mb-0.5">Sampai</label>
+                            <label className="block text-[10px] text-[#697586] dark:text-[#7D8796] mb-0.5">
+                              Sampai
+                            </label>
                             <input
                               type="date"
                               value={endDate}
                               onChange={(e) => handleCustomDateChange(startDate, e.target.value)}
-                              className="w-full rounded-lg bg-[#F5F7FA] dark:bg-[#080A0E] border border-[#DDE3EA] dark:border-[#252B34] px-2 py-1 text-[#151D2A] dark:text-[#F2F5F9] focus:outline-none focus:border-[#1769E8] font-mono-numbers tabular-nums"
+                              className="w-full rounded-lg bg-black/[0.03] dark:bg-white/[0.04] border border-[#DDE3EA] dark:border-white/[0.08] px-2 py-1 text-[#151D2A] dark:text-[#F2F5F9] focus:outline-none focus:border-[#3B82F6] tabular-nums"
                             />
                           </div>
                         </div>
                       </div>
 
-                      {/* Footer Actions */}
-                      <div className="flex items-center justify-between pt-2 border-t border-[#DDE3EA] dark:border-[#252B34]">
+                      <div className="flex items-center justify-between pt-2 border-t border-[#DDE3EA] dark:border-white/[0.07]">
                         <button
                           type="button"
                           onClick={() => {
                             handleResetFilters();
                             setShowPeriodDropdown(false);
                           }}
-                          className="px-2.5 py-1 text-[11px] rounded-lg text-[#697586] dark:text-[#929BA9] hover:text-[#151D2A] dark:hover:text-[#F2F5F9] cursor-pointer"
+                          className="px-2.5 py-1 text-[11px] text-[#697586] dark:text-[#8E98A8] hover:text-[#151D2A] dark:hover:text-[#F2F5F9] cursor-pointer"
                         >
                           Reset
                         </button>
                         <button
                           type="button"
                           onClick={() => setShowPeriodDropdown(false)}
-                          className="px-3 py-1 text-[11px] font-semibold rounded-lg bg-[#1769E8] text-white hover:bg-[#1769E8]/90 transition-colors cursor-pointer"
+                          className="px-3 py-1 text-[11px] font-bold rounded-full bg-[#3B82F6] text-white hover:bg-[#2563EB] transition-colors cursor-pointer"
                         >
-                          Tutup
+                          Selesai
                         </button>
                       </div>
                     </div>
@@ -525,158 +713,564 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ trades, settings, 
                 <button
                   type="button"
                   onClick={togglePrivacyMode}
-                  className={`flex items-center justify-center h-9 w-9 rounded-lg border text-xs font-medium transition-colors cursor-pointer shrink-0 ${
+                  className={`flex items-center justify-center h-8 w-8 rounded-full border transition-colors cursor-pointer shrink-0 ${
                     isPrivacyMode
-                      ? 'bg-[#EEF2F6] dark:bg-[#171D26] text-amber-600 dark:text-amber-400 border-[#DDE3EA] dark:border-[#252B34]'
-                      : 'bg-[#F5F7FA] dark:bg-[#080A0E] border-[#DDE3EA] dark:border-[#252B34] text-[#697586] dark:text-[#929BA9] hover:text-[#151D2A] dark:hover:text-[#F2F5F9]'
+                      ? 'bg-black/[0.05] dark:bg-white/[0.07] text-amber-500 border-amber-500/40'
+                      : 'bg-black/[0.03] dark:bg-white/[0.04] border-[#DDE3EA] dark:border-white/[0.08] text-[#697586] dark:text-[#8E98A8] hover:text-[#151D2A] dark:hover:text-[#F2F5F9]'
                   }`}
                   title="Sembunyikan nominal saldo agar aman dibagikan"
                   aria-label="Toggle Mode Privasi"
                 >
                   {isPrivacyMode ? (
-                    <EyeOff className="h-4 w-4 stroke-[1.75] text-amber-600 dark:text-amber-400" />
+                    <EyeOff className="h-3.5 w-3.5 stroke-[1.75]" />
                   ) : (
-                    <Eye className="h-4 w-4 stroke-[1.75]" />
+                    <Eye className="h-3.5 w-3.5 stroke-[1.75]" />
                   )}
                 </button>
               </div>
             </div>
 
-            {/* Hero Main Figure: Net Profit Anchor */}
-            <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-3">
-              <div>
-                <div className="flex items-center gap-2 mb-1">
-                  <span className="text-[11px] font-semibold uppercase tracking-[0.08em] text-[#697586] dark:text-[#929BA9]">
+            {/* Honest Empty Period State when filter yields 0 closed trades */}
+            {!hasClosedTradesInPeriod ? (
+              <div className="py-8 px-4 rounded-2xl bg-black/[0.02] dark:bg-white/[0.02] border border-[#DDE3EA] dark:border-white/[0.06] text-center space-y-1.5">
+                <p className="text-xs sm:text-sm font-bold text-[#151D2A] dark:text-[#F2F5F9]">
+                  Belum Ada Transaksi Tertutup pada Periode Ini ({getPeriodLabel()})
+                </p>
+                <p className="text-[11px] text-[#697586] dark:text-[#7D8796]">
+                  Pilih periode lain atau reset filter tanggal untuk melihat kembali analisis performa historis Anda.
+                </p>
+              </div>
+            ) : (
+              <>
+                {/* Dominant Figure: Total Net Profit / Loss + Companion Growth */}
+                <div className="space-y-1.5">
+                  <span className="block text-[11px] font-semibold uppercase tracking-[0.08em] text-[#697586] dark:text-[#7D8796]">
                     Total Net Profit / Loss
                   </span>
-                  <span className="px-2 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wider bg-[#EEF2F6] dark:bg-[#171D26] text-[#1769E8] border border-[#1769E8]/30">
-                    Day Trading
-                  </span>
-                </div>
-                <div
-                  className={`mt-1 text-3xl sm:text-4xl font-bold font-mono-numbers tabular-nums tracking-tight ${
-                    isNetProfitPositive
-                      ? 'text-[#059669] dark:text-[#34D399]'
-                      : isNetProfitNegative
-                      ? 'text-[#E11D48] dark:text-[#FB7185]'
-                      : 'text-[#151D2A] dark:text-[#F2F5F9]'
-                  }`}
-                >
-                  {isNetProfitPositive ? '+' : ''}
-                  {formatCurrency(metrics.totalNetProfit, settings, isPrivacyMode)}
-                </div>
-              </div>
+                  <div
+                    className={`text-3xl sm:text-4xl font-bold tabular-nums tracking-tight ${
+                      isNetProfitPositive
+                        ? 'text-[#00A878]'
+                        : isNetProfitNegative
+                        ? 'text-[#E05260]'
+                        : 'text-[#151D2A] dark:text-[#F2F5F9]'
+                    }`}
+                  >
+                    {isPrivacyMode
+                      ? '******'
+                      : preferredCurrency === 'IDR'
+                      ? (() => {
+                          const idrVal = computeCumulativeProfitInDisplayCurrency(
+                            filteredTrades,
+                            'IDR',
+                            rateRecord
+                          );
+                          const sign = idrVal > 0 ? '+' : idrVal < 0 ? '-' : '';
+                          const formatted = new Intl.NumberFormat('id-ID', {
+                            style: 'currency',
+                            currency: 'IDR',
+                            maximumFractionDigits: 0,
+                          }).format(Math.abs(idrVal));
+                          return `${sign}${formatted}`;
+                        })()
+                      : `${isNetProfitPositive ? '+' : ''}${formatCurrency(
+                          metrics.totalNetProfit,
+                          settings,
+                          false
+                        )}`}
+                  </div>
 
-              <div className="flex flex-wrap items-center gap-2 text-xs font-mono-numbers tabular-nums text-[#697586] dark:text-[#929BA9]">
-                <span className="inline-flex items-center gap-1 font-semibold text-[#151D2A] dark:text-[#F2F5F9]">
-                  {metrics.totalGainPercent >= 0 ? (
-                    <TrendingUp className="h-4 w-4 text-[#059669] dark:text-[#34D399]" />
-                  ) : (
-                    <TrendingDown className="h-4 w-4 text-[#E11D48] dark:text-[#FB7185]" />
-                  )}
-                  {formatGrowthPercent(metrics.totalGainPercent, metrics.hasValidGrowthPercent, 2)}
-                </span>
-                <span>•</span>
-                <span>Modal Awal: {formatCurrency(periodStartingBalance, settings, isPrivacyMode)}</span>
+                  {/* Growth right below Net Profit as companion info */}
+                  <div className="flex flex-wrap items-center gap-2 text-xs tabular-nums text-[#697586] dark:text-[#8E98A8]">
+                    <span
+                      className={`inline-flex items-center gap-1 font-bold ${
+                        metrics.totalGainPercent > 0
+                          ? 'text-[#00A878]'
+                          : metrics.totalGainPercent < 0
+                          ? 'text-[#E05260]'
+                          : 'text-[#151D2A] dark:text-[#F2F5F9]'
+                      }`}
+                    >
+                      {metrics.totalGainPercent >= 0 ? (
+                        <TrendingUp className="h-3.5 w-3.5" />
+                      ) : (
+                        <TrendingDown className="h-3.5 w-3.5" />
+                      )}
+                      Growth {formatGrowthPercent(metrics.totalGainPercent, metrics.hasValidGrowthPercent, 2)}
+                    </span>
+                    <span className="text-[#DDE3EA] dark:text-white/15">·</span>
+                    <span>Modal Awal Periode: {fmtMoney(periodStartingBalance, isPrivacyMode)}</span>
+                  </div>
+                </div>
+
+                {/* 6 Core Metrics in 2-Column Mobile / 6-Column Desktop Grid (Cardless) */}
+                <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-y-5 gap-x-4 pt-5 border-t border-[#DDE3EA] dark:border-white/[0.06] tabular-nums">
+                  <div>
+                    <span className="block text-[10px] font-semibold uppercase tracking-wider text-[#697586] dark:text-[#7D8796]">
+                      Win Rate
+                    </span>
+                    <span className="mt-1 block text-base sm:text-lg font-bold text-[#151D2A] dark:text-[#F2F5F9]">
+                      {metrics.winRate}%
+                    </span>
+                    <span className="text-[11px] text-[#697586] dark:text-[#6E7785]">
+                      {metrics.winningTrades}W / {metrics.losingTrades}L
+                    </span>
+                  </div>
+
+                  <div>
+                    <span className="block text-[10px] font-semibold uppercase tracking-wider text-[#697586] dark:text-[#7D8796]">
+                      Profit Factor
+                    </span>
+                    <span
+                      className={`mt-1 block text-base sm:text-lg font-bold ${
+                        metrics.profitFactor >= 1.5 || metrics.isProfitFactorInfinite
+                          ? 'text-[#00A878]'
+                          : 'text-[#151D2A] dark:text-[#F2F5F9]'
+                      }`}
+                    >
+                      {formatProfitFactor(metrics.profitFactor, metrics.isProfitFactorInfinite)}
+                    </span>
+                    <span className="text-[11px] text-[#697586] dark:text-[#6E7785]">
+                      Gross Profit / Loss
+                    </span>
+                  </div>
+
+                  <div>
+                    <span className="block text-[10px] font-semibold uppercase tracking-wider text-[#697586] dark:text-[#7D8796]">
+                      Average RR
+                    </span>
+                    <span className="mt-1 block text-base sm:text-lg font-bold text-[#151D2A] dark:text-[#F2F5F9]">
+                      {formatRMultiple(metrics.averageRiskReward, metrics.hasValidRiskReward)}
+                    </span>
+                    <span className="text-[11px] text-[#697586] dark:text-[#6E7785]">
+                      Realized R-Multiple
+                    </span>
+                  </div>
+
+                  <div>
+                    <span className="block text-[10px] font-semibold uppercase tracking-wider text-[#697586] dark:text-[#7D8796]">
+                      Expectancy
+                    </span>
+                    <span
+                      className={`mt-1 block text-base sm:text-lg font-bold ${
+                        metrics.expectancy > 0
+                          ? 'text-[#00A878]'
+                          : metrics.expectancy < 0
+                          ? 'text-[#E05260]'
+                          : 'text-[#151D2A] dark:text-[#F2F5F9]'
+                      }`}
+                    >
+                      {fmtMoney(metrics.expectancy, isPrivacyMode)}
+                    </span>
+                    <span className="text-[11px] text-[#697586] dark:text-[#6E7785]">
+                      Harapan / Trade
+                    </span>
+                  </div>
+
+                  <div>
+                    <span className="block text-[10px] font-semibold uppercase tracking-wider text-[#697586] dark:text-[#7D8796]">
+                      Total Trades
+                    </span>
+                    <span className="mt-1 block text-base sm:text-lg font-bold text-[#151D2A] dark:text-[#F2F5F9]">
+                      {metrics.totalTrades}
+                    </span>
+                    <span className="text-[11px] text-[#697586] dark:text-[#6E7785]">
+                      {metrics.breakevenTrades} Breakeven
+                    </span>
+                  </div>
+
+                  <div>
+                    <span className="block text-[10px] font-semibold uppercase tracking-wider text-[#697586] dark:text-[#7D8796]">
+                      Maximum Drawdown
+                    </span>
+                    <span
+                      className={`mt-1 block text-base sm:text-lg font-bold ${
+                        metrics.maxDrawdownPercent > 0
+                          ? 'text-[#E05260]'
+                          : 'text-[#151D2A] dark:text-[#F2F5F9]'
+                      }`}
+                    >
+                      {metrics.maxDrawdownPercent > 0
+                        ? `-${metrics.maxDrawdownPercent.toFixed(2)}%`
+                        : '0.00%'}
+                    </span>
+                    <span className="text-[11px] text-[#697586] dark:text-[#6E7785]">
+                      {metrics.maxDrawdownAmount > 0
+                        ? `-${fmtMoney(metrics.maxDrawdownAmount, isPrivacyMode)}`
+                        : fmtMoney(0, isPrivacyMode)}
+                    </span>
+                  </div>
+                </div>
+              </>
+            )}
+
+            {/* Critical Drawdown Alert Banner if applicable */}
+            {metrics.isAccountInCriticalDrawdown && (
+              <div className="p-3.5 rounded-xl bg-[#E05260]/10 border border-[#E05260]/30 text-xs flex items-center gap-2.5">
+                <ShieldAlert className="h-4 w-4 stroke-[1.75] text-[#E05260] shrink-0" />
+                <div className="text-[#151D2A] dark:text-[#F2F5F9]">
+                  <strong className="font-bold text-[#E05260]">Peringatan Risiko Kritis:</strong>{' '}
+                  Penurunan modal telah menyentuh batas risiko akun (Drawdown ≥ 100%). Evaluasi ukuran lot dan manajemen risiko.
+                </div>
               </div>
+            )}
+          </section>
+
+          {/* =========================================================================
+              SECTION 02 — CAPITAL PERFORMANCE (EQUITY CURVE + DRAWDOWN CURVE)
+             ========================================================================= */}
+          <section className="space-y-8 pb-8 border-b border-[#DDE3EA] dark:border-white/[0.06]">
+            <div>
+              <span className="block text-[10px] font-bold uppercase tracking-[0.14em] text-[#697586] dark:text-[#6E7785]">
+                02 / CAPITAL PERFORMANCE
+              </span>
+              <h2 className="text-base sm:text-lg font-bold text-[#151D2A] dark:text-[#F2F5F9] mt-0.5">
+                Pertumbuhan Ekuitas &amp; Risiko Penurunan Modal
+              </h2>
             </div>
 
-            {/* Clean Key Pillar Strip (Without Boxed Cards / Zero Box Soup) */}
-            <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 pt-4 border-t border-[#DDE3EA] dark:border-[#252B34]">
-              <div>
-                <span className="block text-[10px] font-semibold uppercase tracking-wider text-[#697586] dark:text-[#929BA9]">
-                  Win Rate
-                </span>
-                <span className="mt-1 block text-lg font-bold font-mono-numbers tabular-nums text-[#151D2A] dark:text-[#F2F5F9]">
-                  {metrics.winRate}%
-                </span>
-                <span className="text-[10px] text-[#697586] dark:text-[#929BA9]">
-                  {metrics.winningTrades}W / {metrics.losingTrades}L
-                </span>
+            {/* SUB-SECTION 2A: EQUITY CURVE */}
+            <div className="space-y-3">
+              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2.5 sm:gap-3">
+                <div>
+                  <h3 className="text-sm font-bold text-[#151D2A] dark:text-[#F2F5F9]">
+                    Equity Curve
+                  </h3>
+                  {/* Dynamic Period Summary Line */}
+                  <p className="text-xs text-[#697586] dark:text-[#8E98A8] tabular-nums mt-0.5">
+                    <span className="font-semibold text-[#151D2A] dark:text-[#D5DCE6]">
+                      {equityRangeSummary.label}
+                    </span>
+                    {' · '}
+                    <span>{equityRangeSummary.tradesCount} Trades</span>
+                    {' · '}
+                    <span
+                      className={`font-bold ${
+                        equityRangeSummary.netDelta > 0
+                          ? 'text-[#00A878]'
+                          : equityRangeSummary.netDelta < 0
+                          ? 'text-[#E05260]'
+                          : 'text-[#151D2A] dark:text-[#F2F5F9]'
+                      }`}
+                    >
+                      {equityMode === 'growth'
+                        ? `${equityRangeSummary.growthDelta > 0 ? '+' : ''}${equityRangeSummary.growthDelta.toFixed(2)}%`
+                        : `${equityRangeSummary.netDelta > 0 ? '+' : ''}${fmtMoney(
+                            equityRangeSummary.netDelta,
+                            isPrivacyMode
+                          )}`}
+                    </span>
+                  </p>
+                </div>
+
+                {/* Two Compact Pill Dropdowns: 1. Mode (Nominal/Percent), 2. Period (1D..All Time) */}
+                <div className="flex flex-wrap items-center gap-2 self-start sm:self-auto" ref={equityControlsRef}>
+                  {/* Pill Dropdown 1: Mode */}
+                  <div className="relative">
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setOpenEquityDropdown((prev) => (prev === 'mode' ? null : 'mode'))
+                      }
+                      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium bg-black/[0.03] dark:bg-white/[0.04] border border-[#DDE3EA] dark:border-white/[0.08] text-[#151D2A] dark:text-[#F2F5F9] hover:border-[#3B82F6]/50 transition-colors cursor-pointer select-none whitespace-nowrap"
+                    >
+                      <span>{equityMode === 'equity' ? 'Nominal' : 'Percent'}</span>
+                      <ChevronDown className="h-3.5 w-3.5 text-[#697586] dark:text-[#8E98A8]" />
+                    </button>
+
+                    {openEquityDropdown === 'mode' && (
+                      <div className="absolute left-0 top-9 z-30 w-36 rounded-xl border border-[#DDE3EA] dark:border-white/10 bg-white dark:bg-[#0E1217] p-1 shadow-xl text-xs">
+                        {[
+                          { id: 'equity', label: 'Nominal' },
+                          { id: 'growth', label: 'Percent (%)' },
+                        ].map((opt) => (
+                          <button
+                            key={opt.id}
+                            type="button"
+                            onClick={() => {
+                              setEquityMode(opt.id as 'equity' | 'growth');
+                              setOpenEquityDropdown(null);
+                            }}
+                            className={`w-full text-left px-3 py-1.5 rounded-lg transition-colors cursor-pointer flex items-center justify-between ${
+                              equityMode === opt.id
+                                ? 'bg-black/[0.05] dark:bg-white/[0.07] text-[#151D2A] dark:text-[#F2F5F9] font-bold'
+                                : 'text-[#697586] dark:text-[#8E98A8] hover:text-[#151D2A] dark:hover:text-[#F2F5F9]'
+                            }`}
+                          >
+                            <span>{opt.label}</span>
+                            {equityMode === opt.id && (
+                              <span className="h-1.5 w-1.5 rounded-full bg-[#3B82F6]" />
+                            )}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Pill Dropdown 2: Period (Single Pill Dropdown, NEVER a horizontal button row) */}
+                  <div className="relative">
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setOpenEquityDropdown((prev) => (prev === 'range' ? null : 'range'))
+                      }
+                      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium bg-black/[0.03] dark:bg-white/[0.04] border border-[#DDE3EA] dark:border-white/[0.08] text-[#151D2A] dark:text-[#F2F5F9] hover:border-[#3B82F6]/50 transition-colors cursor-pointer select-none tabular-nums"
+                    >
+                      <span>{equityRangeSummary.label}</span>
+                      <ChevronDown className="h-3.5 w-3.5 text-[#697586] dark:text-[#8E98A8]" />
+                    </button>
+
+                    {openEquityDropdown === 'range' && (
+                      <div className="absolute right-0 top-9 z-30 w-36 rounded-xl border border-[#DDE3EA] dark:border-white/10 bg-white dark:bg-[#0E1217] p-1 shadow-xl text-xs tabular-nums">
+                        {CHART_RANGE_OPTIONS.map((opt) => (
+                          <button
+                            key={opt.id}
+                            type="button"
+                            onClick={() => {
+                              setEquityRange(opt.id);
+                              setOpenEquityDropdown(null);
+                            }}
+                            className={`w-full text-left px-3 py-1.5 rounded-lg transition-colors cursor-pointer flex items-center justify-between ${
+                              equityRange === opt.id
+                                ? 'bg-black/[0.05] dark:bg-white/[0.07] text-[#151D2A] dark:text-[#F2F5F9] font-bold'
+                                : 'text-[#697586] dark:text-[#8E98A8] hover:text-[#151D2A] dark:hover:text-[#F2F5F9]'
+                            }`}
+                          >
+                            <span>{opt.label}</span>
+                            {equityRange === opt.id && (
+                              <span className="h-1.5 w-1.5 rounded-full bg-[#3B82F6]" />
+                            )}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </div>
               </div>
 
-              <div>
-                <span className="block text-[10px] font-semibold uppercase tracking-wider text-[#697586] dark:text-[#929BA9]">
-                  Total Trades
-                </span>
-                <span className="mt-1 block text-lg font-bold font-mono-numbers tabular-nums text-[#151D2A] dark:text-[#F2F5F9]">
-                  {metrics.totalTrades}
-                </span>
-                <span className="text-[10px] text-[#697586] dark:text-[#929BA9]">
-                  {metrics.breakevenTrades} Breakeven
-                </span>
+              <EquityChart
+                equityCurve={rangedEquityCurve}
+                settings={periodSettings}
+                startingBalance={
+                  rangedEquityCurve.length > 0 ? rangedEquityCurve[0].equity : periodStartingBalance
+                }
+                height={290}
+                isPrivacyMode={isPrivacyMode}
+                embedded={true}
+                externalViewMode={equityMode}
+                hideInternalControls={true}
+              />
+            </div>
+
+            {/* Subtle Divider between Equity Curve and Drawdown Curve */}
+            <div className="border-t border-[#DDE3EA] dark:border-white/[0.06] pt-6 space-y-4">
+              {/* SUB-SECTION 2B: DRAWDOWN CURVE */}
+              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2.5 sm:gap-3">
+                <div>
+                  <h3 className="text-sm font-bold text-[#151D2A] dark:text-[#F2F5F9]">
+                    Drawdown Curve
+                  </h3>
+                  {/* Dynamic Period Summary Line for Drawdown */}
+                  <p className="text-xs text-[#697586] dark:text-[#8E98A8] tabular-nums mt-0.5">
+                    <span className="font-semibold text-[#151D2A] dark:text-[#D5DCE6]">
+                      {drawdownSummary.label}
+                    </span>
+                    {' · '}
+                    <span>
+                      Max DD{' '}
+                      <strong className="text-[#E05260]">
+                        {drawdownMode === 'percent'
+                          ? drawdownSummary.maxDdPct > 0
+                            ? `-${drawdownSummary.maxDdPct.toFixed(2)}%`
+                            : '0.00%'
+                          : drawdownSummary.maxDdAmt > 0
+                          ? `-${fmtMoney(drawdownSummary.maxDdAmt, isPrivacyMode)}`
+                          : fmtMoney(0, isPrivacyMode)}
+                      </strong>
+                    </span>
+                    {' · '}
+                    <span>
+                      Recovery{' '}
+                      <strong className="text-[#151D2A] dark:text-[#F2F5F9]">
+                        {drawdownSummary.recoveryPct}%
+                      </strong>
+                    </span>
+                  </p>
+                </div>
+
+                {/* Two Compact Pill Dropdowns for Drawdown: 1. Mode (Percent/Nominal), 2. Period */}
+                <div className="flex flex-wrap items-center gap-2 self-start sm:self-auto" ref={drawdownControlsRef}>
+                  {/* Pill Dropdown 1: Mode */}
+                  <div className="relative">
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setOpenDrawdownDropdown((prev) => (prev === 'mode' ? null : 'mode'))
+                      }
+                      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium bg-black/[0.03] dark:bg-white/[0.04] border border-[#DDE3EA] dark:border-white/[0.08] text-[#151D2A] dark:text-[#F2F5F9] hover:border-[#3B82F6]/50 transition-colors cursor-pointer select-none whitespace-nowrap"
+                    >
+                      <span>{drawdownMode === 'percent' ? 'Percent' : 'Nominal'}</span>
+                      <ChevronDown className="h-3.5 w-3.5 text-[#697586] dark:text-[#8E98A8]" />
+                    </button>
+
+                    {openDrawdownDropdown === 'mode' && (
+                      <div className="absolute left-0 top-9 z-30 w-36 rounded-xl border border-[#DDE3EA] dark:border-white/10 bg-white dark:bg-[#0E1217] p-1 shadow-xl text-xs">
+                        {[
+                          { id: 'percent', label: 'Percent (%)' },
+                          { id: 'nominal', label: 'Nominal' },
+                        ].map((opt) => (
+                          <button
+                            key={opt.id}
+                            type="button"
+                            onClick={() => {
+                              setDrawdownMode(opt.id as 'percent' | 'nominal');
+                              setOpenDrawdownDropdown(null);
+                            }}
+                            className={`w-full text-left px-3 py-1.5 rounded-lg transition-colors cursor-pointer flex items-center justify-between ${
+                              drawdownMode === opt.id
+                                ? 'bg-black/[0.05] dark:bg-white/[0.07] text-[#151D2A] dark:text-[#F2F5F9] font-bold'
+                                : 'text-[#697586] dark:text-[#8E98A8] hover:text-[#151D2A] dark:hover:text-[#F2F5F9]'
+                            }`}
+                          >
+                            <span>{opt.label}</span>
+                            {drawdownMode === opt.id && (
+                              <span className="h-1.5 w-1.5 rounded-full bg-[#3B82F6]" />
+                            )}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Pill Dropdown 2: Period */}
+                  <div className="relative">
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setOpenDrawdownDropdown((prev) => (prev === 'range' ? null : 'range'))
+                      }
+                      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium bg-black/[0.03] dark:bg-white/[0.04] border border-[#DDE3EA] dark:border-white/[0.08] text-[#151D2A] dark:text-[#F2F5F9] hover:border-[#3B82F6]/50 transition-colors cursor-pointer select-none tabular-nums whitespace-nowrap"
+                    >
+                      <span>{drawdownSummary.label}</span>
+                      <ChevronDown className="h-3.5 w-3.5 text-[#697586] dark:text-[#8E98A8]" />
+                    </button>
+
+                    {openDrawdownDropdown === 'range' && (
+                      <div className="absolute right-0 top-9 z-30 w-36 rounded-xl border border-[#DDE3EA] dark:border-white/10 bg-white dark:bg-[#0E1217] p-1 shadow-xl text-xs tabular-nums">
+                        {CHART_RANGE_OPTIONS.map((opt) => (
+                          <button
+                            key={opt.id}
+                            type="button"
+                            onClick={() => {
+                              setDrawdownRange(opt.id);
+                              setOpenDrawdownDropdown(null);
+                            }}
+                            className={`w-full text-left px-3 py-1.5 rounded-lg transition-colors cursor-pointer flex items-center justify-between ${
+                              drawdownRange === opt.id
+                                ? 'bg-black/[0.05] dark:bg-white/[0.07] text-[#151D2A] dark:text-[#F2F5F9] font-bold'
+                                : 'text-[#697586] dark:text-[#8E98A8] hover:text-[#151D2A] dark:hover:text-[#F2F5F9]'
+                            }`}
+                          >
+                            <span>{opt.label}</span>
+                            {drawdownRange === opt.id && (
+                              <span className="h-1.5 w-1.5 rounded-full bg-[#3B82F6]" />
+                            )}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </div>
               </div>
 
-              <div>
-                <span className="block text-[10px] font-semibold uppercase tracking-wider text-[#697586] dark:text-[#929BA9]">
-                  Profit Factor
-                </span>
-                <span
-                  className={`mt-1 block text-lg font-bold font-mono-numbers tabular-nums ${
-                    metrics.profitFactor >= 1.5 || metrics.isProfitFactorInfinite
-                      ? 'text-[#059669] dark:text-[#34D399]'
-                      : 'text-[#151D2A] dark:text-[#F2F5F9]'
-                  }`}
-                >
-                  {formatProfitFactor(metrics.profitFactor, metrics.isProfitFactorInfinite)}
-                </span>
-                <span className="text-[10px] text-[#697586] dark:text-[#929BA9]">
-                  Rasio Gross P/L
-                </span>
+              {/* 3 Required Drawdown Indicators: Current Drawdown, Maximum Drawdown, Recovery */}
+              <div className="grid grid-cols-3 gap-2 sm:gap-4 py-2.5 border-y border-[#DDE3EA] dark:border-white/[0.06] text-xs tabular-nums">
+                <div className="min-w-0">
+                  <span className="block text-[10px] uppercase tracking-wider text-[#697586] dark:text-[#7D8796]">
+                    Current Drawdown
+                  </span>
+                  <strong
+                    className={`mt-0.5 block text-sm sm:text-base font-bold ${
+                      drawdownSummary.currentDdPct > 0
+                        ? 'text-[#E05260]'
+                        : 'text-[#00A878]'
+                    }`}
+                  >
+                    {drawdownMode === 'percent'
+                      ? drawdownSummary.currentDdPct > 0
+                        ? `-${drawdownSummary.currentDdPct.toFixed(2)}%`
+                        : '0.00%'
+                      : drawdownSummary.currentDdAmt > 0
+                      ? `-${fmtMoney(drawdownSummary.currentDdAmt, isPrivacyMode)}`
+                      : fmtMoney(0, isPrivacyMode)}
+                  </strong>
+                </div>
+
+                <div>
+                  <span className="block text-[10px] uppercase tracking-wider text-[#697586] dark:text-[#7D8796]">
+                    Maximum Drawdown
+                  </span>
+                  <strong
+                    className={`mt-0.5 block text-sm sm:text-base font-bold ${
+                      drawdownSummary.maxDdPct > 0
+                        ? 'text-[#E05260]'
+                        : 'text-[#151D2A] dark:text-[#F2F5F9]'
+                    }`}
+                  >
+                    {drawdownMode === 'percent'
+                      ? drawdownSummary.maxDdPct > 0
+                        ? `-${drawdownSummary.maxDdPct.toFixed(2)}%`
+                        : '0.00%'
+                      : drawdownSummary.maxDdAmt > 0
+                      ? `-${fmtMoney(drawdownSummary.maxDdAmt, isPrivacyMode)}`
+                      : fmtMoney(0, isPrivacyMode)}
+                  </strong>
+                </div>
+
+                <div>
+                  <span className="block text-[10px] uppercase tracking-wider text-[#697586] dark:text-[#7D8796]">
+                    Recovery
+                  </span>
+                  <strong
+                    className={`mt-0.5 block text-sm sm:text-base font-bold ${
+                      drawdownSummary.recoveryPct >= 100
+                        ? 'text-[#00A878]'
+                        : 'text-[#151D2A] dark:text-[#F2F5F9]'
+                    }`}
+                  >
+                    {drawdownSummary.recoveryPct}%
+                  </strong>
+                </div>
               </div>
 
-              <div>
-                <span className="block text-[10px] font-semibold uppercase tracking-wider text-[#697586] dark:text-[#929BA9]">
-                  Average RR
-                </span>
-                <span className="mt-1 block text-lg font-bold font-mono-numbers tabular-nums text-[#151D2A] dark:text-[#F2F5F9]">
-                  {formatRMultiple(metrics.averageRiskReward, metrics.hasValidRiskReward)}
-                </span>
-                <span className="text-[10px] text-[#697586] dark:text-[#929BA9]">
-                  Realized Multiple
-                </span>
-              </div>
-
-              <div>
-                <span className="block text-[10px] font-semibold uppercase tracking-wider text-[#697586] dark:text-[#929BA9]">
-                  Expectancy
-                </span>
-                <span className="mt-1 block text-lg font-bold font-mono-numbers tabular-nums text-[#151D2A] dark:text-[#F2F5F9]">
-                  {formatCurrency(metrics.expectancy, settings, isPrivacyMode)}
-                </span>
-                <span className="text-[10px] text-[#697586] dark:text-[#929BA9]">
-                  Nilai Harapan / Trade
-                </span>
-              </div>
+              <DrawdownChart
+                equityCurve={rangedDrawdownCurve}
+                settings={periodSettings}
+                height={185}
+                isPrivacyMode={isPrivacyMode}
+                viewMode={drawdownMode}
+              />
             </div>
           </section>
 
-          {/* Critical Drawdown Alert Banner if applicable */}
-          {metrics.isAccountInCriticalDrawdown && (
-            <div className="p-3.5 rounded-xl bg-white dark:bg-[#11151B] border border-rose-200 dark:border-rose-900/50 text-xs flex items-center justify-between gap-3 animate-in fade-in duration-150">
-              <div className="flex items-center gap-2.5">
-                <ShieldAlert className="h-5 w-5 stroke-[1.75] text-[#E11D48] dark:text-[#FB7185] shrink-0" />
-                <div className="text-[#697586] dark:text-[#929BA9]">
-                  <strong className="font-semibold text-[#E11D48] dark:text-[#FB7185]">
-                    Peringatan Risiko Kritis:
-                  </strong>{' '}
-                  Penurunan modal telah menyentuh batas risiko akun (Drawdown ≥ 100%). Evaluasi lot dan manajemen risiko.
-                </div>
-              </div>
-            </div>
-          )}
-
           {/* =========================================================================
-              SECTION 2: PERFORMANCE PROFILE — 6 PILLARS
+              SECTION 03 — PERFORMANCE PROFILE (6 PILLARS RADAR & SCORE)
              ========================================================================= */}
-          <section className="rounded-2xl border border-[#DDE3EA] dark:border-[#252B34] bg-white dark:bg-[#11151B] p-5 sm:p-6 transition-colors duration-150 space-y-4">
-            <div className="flex items-center justify-between pb-3 border-b border-[#DDE3EA] dark:border-[#252B34]">
-              <h3 className="text-sm sm:text-base font-bold text-[#151D2A] dark:text-[#F2F5F9]">
-                Performance Profile
-              </h3>
+          <section className="space-y-5 pb-8 border-b border-[#DDE3EA] dark:border-white/[0.06]">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <span className="block text-[10px] font-bold uppercase tracking-[0.14em] text-[#697586] dark:text-[#6E7785]">
+                  03 / PERFORMANCE PROFILE
+                </span>
+                <h2 className="text-base sm:text-lg font-bold text-[#151D2A] dark:text-[#F2F5F9] mt-0.5">
+                  Performance Profile
+                </h2>
+              </div>
 
-              <div className="px-2.5 py-1 rounded-lg bg-[#F5F7FA] dark:bg-[#171D26] border border-[#DDE3EA] dark:border-[#252B34] text-[#151D2A] dark:text-[#F2F5F9] text-xs font-mono-numbers tabular-nums font-bold">
-                <span>
+              {/* Overall Performance Score Pill */}
+              <div className="flex items-center gap-2">
+                <span className="text-xs text-[#697586] dark:text-[#7D8796]">Overall Score:</span>
+                <span className="px-3 py-1 rounded-full bg-black/[0.04] dark:bg-white/[0.05] border border-[#DDE3EA] dark:border-white/[0.08] text-[#151D2A] dark:text-[#F2F5F9] text-xs tabular-nums font-bold">
                   {radarIndicators.isDataSufficient
                     ? `${Math.round(
                         (radarIndicators.winRateScore +
@@ -692,51 +1286,51 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ trades, settings, 
               </div>
             </div>
 
-            <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-center">
-              {/* Left / Top: Radar Chart */}
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-center">
+              {/* Left / Top: Compact Seamless Radar Chart */}
               <div className="lg:col-span-5 flex justify-center">
-                <div className="w-full">
+                <div className="w-full max-w-[300px]">
                   <RadarChart indicators={radarIndicators} size={280} />
                 </div>
               </div>
 
-              {/* Right / Bottom: Clean 6-Pillar Indicator List */}
-              <div className="lg:col-span-7 space-y-2.5">
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+              {/* Right / Bottom: Clean 6-Pillar List without Boxed Mini-Cards */}
+              <div className="lg:col-span-7">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-8 gap-y-4">
                   {pillarList.map((p, idx) => (
                     <div
                       key={idx}
-                      className="p-3 rounded-xl bg-[#F5F7FA] dark:bg-[#171D26] border border-[#DDE3EA] dark:border-[#252B34] space-y-1.5"
+                      className="py-2.5 border-b border-[#DDE3EA] dark:border-white/[0.06] space-y-1.5"
                     >
                       <div className="flex items-center justify-between text-xs">
                         <span className="font-semibold text-[#151D2A] dark:text-[#F2F5F9]">
                           {p.name}
                         </span>
-                        <span className="font-mono-numbers tabular-nums font-bold text-[#151D2A] dark:text-[#F2F5F9]">
+                        <span className="tabular-nums font-bold text-[#151D2A] dark:text-[#F2F5F9]">
                           {p.displayVal}
                         </span>
                       </div>
 
-                      {/* Mini Progress Bar */}
-                      <div className="h-1.5 w-full bg-[#DDE3EA] dark:bg-[#252B34] rounded-full overflow-hidden">
+                      {/* Slim Progress Bar */}
+                      <div className="h-1 w-full bg-[#DDE3EA] dark:bg-white/[0.07] rounded-full overflow-hidden">
                         <div
                           className={`h-full rounded-full transition-all duration-300 ${
                             !p.isAvailable
                               ? 'bg-transparent'
                               : p.score >= 70
-                              ? 'bg-[#059669] dark:bg-[#34D399]'
+                              ? 'bg-[#00A878]'
                               : p.score >= 50
-                              ? 'bg-[#1769E8]'
+                              ? 'bg-[#3B82F6]'
                               : 'bg-amber-500'
                           }`}
                           style={{ width: p.isAvailable ? `${Math.max(4, p.score)}%` : '0%' }}
                         />
                       </div>
 
-                      <div className="flex items-center justify-between text-[10px] text-[#697586] dark:text-[#929BA9]">
+                      <div className="flex items-center justify-between text-[10px] text-[#697586] dark:text-[#7D8796]">
                         <span>{p.target}</span>
-                        <span className="font-mono-numbers tabular-nums font-semibold">
-                          {p.isAvailable ? `Skor: ${p.score}/100` : 'Data Belum Cukup'}
+                        <span className="tabular-nums font-semibold">
+                          {p.isAvailable ? `Skor ${p.score}/100` : 'Data Belum Cukup'}
                         </span>
                       </div>
                     </div>
@@ -747,9 +1341,18 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ trades, settings, 
           </section>
 
           {/* =========================================================================
-              SECTION 3: PERFORMANCE CALENDAR
+              SECTION 04 — PERFORMANCE CALENDAR
              ========================================================================= */}
-          <section className="space-y-2">
+          <section className="space-y-4 pb-8 border-b border-[#DDE3EA] dark:border-white/[0.06]">
+            <div>
+              <span className="block text-[10px] font-bold uppercase tracking-[0.14em] text-[#697586] dark:text-[#6E7785]">
+                04 / PERFORMANCE CALENDAR
+              </span>
+              <h2 className="text-base sm:text-lg font-bold text-[#151D2A] dark:text-[#F2F5F9] mt-0.5">
+                Kalender Performa &amp; Aktivitas Harian
+              </h2>
+            </div>
+
             <PerformanceCalendar
               dailyPerformance={dailyPerformance}
               monthlyPerformance={monthlyPerformance}
@@ -761,383 +1364,390 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ trades, settings, 
           </section>
 
           {/* =========================================================================
-              SECTION 4: EQUITY CURVE
+              SECTION 05 — PERFORMANCE BREAKDOWN (HARI, SESI, INSTRUMEN)
              ========================================================================= */}
-          <section className="rounded-2xl border border-[#DDE3EA] dark:border-[#252B34] bg-white dark:bg-[#11151B] p-5 sm:p-6 transition-colors duration-150 space-y-4">
-            <div className="flex items-center justify-between pb-3 border-b border-[#DDE3EA] dark:border-[#252B34]">
+          <section className="space-y-5 pb-8 border-b border-[#DDE3EA] dark:border-white/[0.06]">
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2.5 sm:gap-3">
               <div>
-                <h3 className="text-sm sm:text-base font-bold text-[#151D2A] dark:text-[#F2F5F9]">
-                  Kurva Ekuitas (Equity Curve)
-                </h3>
-                <p className="text-xs text-[#697586] dark:text-[#929BA9]">
-                  Pertumbuhan kumulatif modal dan garis High Watermark historis
-                </p>
-              </div>
-            </div>
-
-            <EquityChart
-              equityCurve={equityCurve}
-              settings={periodSettings}
-              startingBalance={periodStartingBalance}
-              height={320}
-              isPrivacyMode={isPrivacyMode}
-            />
-          </section>
-
-          {/* =========================================================================
-              SECTION 5: DRAWDOWN ANALYSIS
-             ========================================================================= */}
-          <section className="rounded-2xl border border-[#DDE3EA] dark:border-[#252B34] bg-white dark:bg-[#11151B] p-5 sm:p-6 transition-colors duration-150 space-y-4">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-3 border-b border-[#DDE3EA] dark:border-[#252B34]">
-              <div>
-                <h3 className="text-sm sm:text-base font-bold text-[#151D2A] dark:text-[#F2F5F9]">
-                  Analisis Drawdown (Risiko Modal)
-                </h3>
-                <p className="text-xs text-[#697586] dark:text-[#929BA9]">
-                  Evaluasi penurunan saldo dari puncak tertinggi akun
-                </p>
-              </div>
-
-              <div className="flex items-center gap-3 text-xs font-mono-numbers tabular-nums">
-                <div>
-                  <span className="text-[#697586] dark:text-[#929BA9]">Max DD (%): </span>
-                  <span className="font-bold text-[#E11D48] dark:text-[#FB7185]">
-                    {metrics.maxDrawdownPercent > 0
-                      ? `-${metrics.maxDrawdownPercent.toFixed(2)}%`
-                      : '0.00%'}
-                  </span>
-                </div>
-                <span>•</span>
-                <div>
-                  <span className="text-[#697586] dark:text-[#929BA9]">Nominal DD: </span>
-                  <span className="font-bold text-[#E11D48] dark:text-[#FB7185]">
-                    {metrics.maxDrawdownAmount > 0
-                      ? `-${formatCurrency(metrics.maxDrawdownAmount, settings, isPrivacyMode)}`
-                      : formatCurrency(0, settings, isPrivacyMode)}
-                  </span>
-                </div>
-              </div>
-            </div>
-
-            <DrawdownChart
-              equityCurve={equityCurve}
-              settings={periodSettings}
-              height={200}
-              isPrivacyMode={isPrivacyMode}
-            />
-          </section>
-
-          {/* =========================================================================
-              SECTION 6: DAILY & MONTHLY PERFORMANCE
-             ========================================================================= */}
-          <section className="rounded-2xl border border-[#DDE3EA] dark:border-[#252B34] bg-white dark:bg-[#11151B] p-5 sm:p-6 transition-colors duration-150 space-y-4">
-            <div className="pb-3 border-b border-[#DDE3EA] dark:border-[#252B34]">
-              <h3 className="text-sm sm:text-base font-bold text-[#151D2A] dark:text-[#F2F5F9]">
-                Performa Harian &amp; Bulanan
-              </h3>
-              <p className="text-xs text-[#697586] dark:text-[#929BA9]">
-                Pola profitabilitas berdasarkan hari dalam seminggu dan rekapitulasi bulanan
-              </p>
-            </div>
-
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-              {/* Day of Week Breakdown */}
-              <div className="space-y-3">
-                <span className="text-xs font-bold text-[#151D2A] dark:text-[#F2F5F9] uppercase tracking-wider block">
-                  Hari dalam Seminggu (Senin – Jumat)
+                <span className="block text-[10px] font-bold uppercase tracking-[0.14em] text-[#697586] dark:text-[#6E7785]">
+                  05 / PERFORMANCE BREAKDOWN
                 </span>
-                <div className="space-y-2">
-                  {dayOfWeekStats.map((item) => (
-                    <div
-                      key={item.dayName}
-                      className="p-3 rounded-xl bg-[#F5F7FA] dark:bg-[#171D26] border border-[#DDE3EA] dark:border-[#252B34] flex items-center justify-between gap-3 text-xs"
-                    >
-                      <div className="min-w-0">
-                        <span className="font-semibold text-[#151D2A] dark:text-[#F2F5F9] block">
-                          {item.dayName}
-                        </span>
-                        <span className="text-[11px] text-[#697586] dark:text-[#929BA9] font-mono-numbers tabular-nums">
-                          {item.total} Trade ({item.winRate}% Win)
-                        </span>
-                      </div>
-
-                      <div className="text-right shrink-0">
-                        <span
-                          className={`font-mono-numbers tabular-nums font-bold text-xs sm:text-sm ${
-                            item.netProfit > 0.01
-                              ? 'text-[#059669] dark:text-[#34D399]'
-                              : item.netProfit < -0.01
-                              ? 'text-[#E11D48] dark:text-[#FB7185]'
-                              : 'text-[#697586] dark:text-[#929BA9]'
-                          }`}
-                        >
-                          {item.netProfit > 0 ? '+' : ''}
-                          {formatCurrency(item.netProfit, settings, isPrivacyMode)}
-                        </span>
-                      </div>
-                    </div>
-                  ))}
-                </div>
+                <h2 className="text-base sm:text-lg font-bold text-[#151D2A] dark:text-[#F2F5F9] mt-0.5">
+                  Rincian Performa Berdasarkan Dimensi
+                </h2>
               </div>
 
-              {/* Monthly Performance Table */}
-              <div className="space-y-3">
-                <span className="text-xs font-bold text-[#151D2A] dark:text-[#F2F5F9] uppercase tracking-wider block">
-                  Rekapitulasi Bulanan
-                </span>
-                {monthlyPerformance.length === 0 ? (
-                  <div className="p-4 rounded-xl bg-[#F5F7FA] dark:bg-[#171D26] text-center text-xs text-[#697586] dark:text-[#929BA9]">
-                    Belum ada data bulanan.
+              {/* Compact Pill Dropdown to switch between Hari, Sesi, and Instrumen */}
+              <div className="relative self-start sm:self-auto max-w-full" ref={breakdownMenuRef}>
+                <button
+                  type="button"
+                  onClick={() => setShowBreakdownDropdown((prev) => !prev)}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium bg-black/[0.03] dark:bg-white/[0.04] border border-[#DDE3EA] dark:border-white/[0.08] text-[#151D2A] dark:text-[#F2F5F9] hover:border-[#3B82F6]/50 transition-colors cursor-pointer select-none max-w-full"
+                >
+                  <span className="text-[#697586] dark:text-[#8E98A8] shrink-0">Dimensi:</span>
+                  <strong className="font-bold truncate">{breakdownLabels[breakdownCategory]}</strong>
+                  <ChevronDown className="h-3.5 w-3.5 text-[#697586] dark:text-[#8E98A8] shrink-0" />
+                </button>
+
+                {showBreakdownDropdown && (
+                  <div className="absolute left-0 sm:left-auto sm:right-0 top-9 z-30 w-56 max-w-[calc(100vw-2rem)] rounded-xl border border-[#DDE3EA] dark:border-white/10 bg-white dark:bg-[#0E1217] p-1 shadow-xl text-xs">
+                    {(['day', 'session', 'instrument'] as const).map((cat) => (
+                      <button
+                        key={cat}
+                        type="button"
+                        onClick={() => {
+                          setBreakdownCategory(cat);
+                          setShowBreakdownDropdown(false);
+                        }}
+                        className={`w-full text-left px-3 py-2 rounded-lg transition-colors cursor-pointer flex items-center justify-between ${
+                          breakdownCategory === cat
+                            ? 'bg-black/[0.05] dark:bg-white/[0.07] text-[#151D2A] dark:text-[#F2F5F9] font-bold'
+                            : 'text-[#697586] dark:text-[#8E98A8] hover:text-[#151D2A] dark:hover:text-[#F2F5F9]'
+                        }`}
+                      >
+                        <span>{breakdownLabels[cat]}</span>
+                        {breakdownCategory === cat && (
+                          <span className="h-1.5 w-1.5 rounded-full bg-[#3B82F6]" />
+                        )}
+                      </button>
+                    ))}
                   </div>
-                ) : (
-                  <div className="space-y-2 max-h-64 overflow-y-auto pr-1">
-                    {monthlyPerformance.map((m) => (
+                )}
+              </div>
+            </div>
+
+            {/* DIMENSION 1: HARI DALAM SEMINGGU & REKAP BULANAN */}
+            {breakdownCategory === 'day' && (
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+                {/* Senin - Jumat */}
+                <div className="space-y-2">
+                  <span className="text-[11px] font-bold uppercase tracking-wider text-[#697586] dark:text-[#7D8796] block">
+                    Hari dalam Seminggu (Senin – Jumat)
+                  </span>
+                  <div className="divide-y divide-[#DDE3EA] dark:divide-white/[0.06] border-y border-[#DDE3EA] dark:border-white/[0.06]">
+                    {dayOfWeekStats.map((item) => (
                       <div
-                        key={m.monthKey}
-                        className="p-3 rounded-xl bg-[#F5F7FA] dark:bg-[#171D26] border border-[#DDE3EA] dark:border-[#252B34] flex items-center justify-between gap-3 text-xs"
+                        key={item.dayName}
+                        className="py-3 px-1 flex items-center justify-between gap-3 text-xs tabular-nums"
                       >
                         <div>
-                          <span className="font-semibold text-[#151D2A] dark:text-[#F2F5F9] block font-mono-numbers tabular-nums">
-                            {m.label}
+                          <span className="font-bold text-[#151D2A] dark:text-[#F2F5F9] block">
+                            {item.dayName}
                           </span>
-                          <span className="text-[11px] text-[#697586] dark:text-[#929BA9] font-mono-numbers tabular-nums">
-                            {m.tradesCount} Trade ({m.winRate}% Win)
+                          <span className="text-[11px] text-[#697586] dark:text-[#7D8796]">
+                            {item.total} Trade · Win Rate {item.winRate}%
                           </span>
                         </div>
 
                         <div className="text-right shrink-0">
                           <span
-                            className={`font-mono-numbers tabular-nums font-bold text-xs sm:text-sm ${
-                              m.netProfit > 0.01
-                                ? 'text-[#059669] dark:text-[#34D399]'
-                                : m.netProfit < -0.01
-                                ? 'text-[#E11D48] dark:text-[#FB7185]'
-                                : 'text-[#697586] dark:text-[#929BA9]'
+                            className={`font-bold text-xs sm:text-sm ${
+                              item.netProfit > 0.01
+                                ? 'text-[#00A878]'
+                                : item.netProfit < -0.01
+                                ? 'text-[#E05260]'
+                                : 'text-[#697586] dark:text-[#7D8796]'
                             }`}
                           >
-                            {m.netProfit > 0 ? '+' : ''}
-                            {formatCurrency(m.netProfit, settings, isPrivacyMode)}
+                            {item.netProfit > 0 ? '+' : ''}
+                            {fmtMoney(item.netProfit, isPrivacyMode)}
                           </span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Rekapitulasi Bulanan */}
+                <div className="space-y-2">
+                  <span className="text-[11px] font-bold uppercase tracking-wider text-[#697586] dark:text-[#7D8796] block">
+                    Rekapitulasi Bulanan
+                  </span>
+                  {monthlyPerformance.length === 0 ? (
+                    <div className="py-8 text-center text-xs text-[#697586] dark:text-[#7D8796] border-y border-[#DDE3EA] dark:border-white/[0.06]">
+                      Belum ada data bulanan.
+                    </div>
+                  ) : (
+                    <div className="divide-y divide-[#DDE3EA] dark:divide-white/[0.06] border-y border-[#DDE3EA] dark:border-white/[0.06] max-h-72 overflow-y-auto">
+                      {monthlyPerformance.map((m) => (
+                        <div
+                          key={m.monthKey}
+                          className="py-3 px-1 flex items-center justify-between gap-3 text-xs tabular-nums"
+                        >
+                          <div>
+                            <span className="font-bold text-[#151D2A] dark:text-[#F2F5F9] block">
+                              {m.label}
+                            </span>
+                            <span className="text-[11px] text-[#697586] dark:text-[#7D8796]">
+                              {m.tradesCount} Trade · Win Rate {m.winRate}%
+                            </span>
+                          </div>
+
+                          <div className="text-right shrink-0">
+                            <span
+                              className={`font-bold text-xs sm:text-sm ${
+                                m.netProfit > 0.01
+                                  ? 'text-[#00A878]'
+                                  : m.netProfit < -0.01
+                                  ? 'text-[#E05260]'
+                                  : 'text-[#697586] dark:text-[#7D8796]'
+                              }`}
+                            >
+                              {m.netProfit > 0 ? '+' : ''}
+                              {fmtMoney(m.netProfit, isPrivacyMode)}
+                            </span>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* DIMENSION 2: SESI TRADING (ASIA, LONDON, NEW YORK) */}
+            {breakdownCategory === 'session' && (
+              <div className="divide-y divide-[#DDE3EA] dark:divide-white/[0.06] border-y border-[#DDE3EA] dark:border-white/[0.06]">
+                {sessionStats.map((sess) => (
+                  <div
+                    key={sess.id}
+                    className="py-3.5 px-1 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs tabular-nums"
+                  >
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <span className="font-bold text-sm text-[#151D2A] dark:text-[#F2F5F9]">
+                          {sess.label}
+                        </span>
+                        <span className="text-[11px] text-[#697586] dark:text-[#7D8796]">
+                          ({sess.desc})
+                        </span>
+                      </div>
+                      <span className="text-[11px] text-[#697586] dark:text-[#7D8796] mt-0.5 block">
+                        {sess.total} Trade ({sess.winCount}W · {sess.lossCount}L)
+                      </span>
+                    </div>
+
+                    <div className="flex items-center justify-between sm:justify-end gap-6">
+                      <div>
+                        <span className="text-[10px] uppercase tracking-wider text-[#697586] dark:text-[#7D8796] block">
+                          Win Rate
+                        </span>
+                        <span className="font-semibold text-[#151D2A] dark:text-[#F2F5F9]">
+                          {sess.winRate}%
+                        </span>
+                      </div>
+
+                      <div>
+                        <span className="text-[10px] uppercase tracking-wider text-[#697586] dark:text-[#7D8796] block">
+                          Profit Factor
+                        </span>
+                        <span className="font-semibold text-[#151D2A] dark:text-[#F2F5F9]">
+                          {sess.profitFactor === Infinity ? '∞' : sess.profitFactor.toFixed(2)}
+                        </span>
+                      </div>
+
+                      <div className="text-right min-w-[96px]">
+                        <span className="text-[10px] uppercase tracking-wider text-[#697586] dark:text-[#7D8796] block">
+                          Net P/L
+                        </span>
+                        <span
+                          className={`font-bold text-xs sm:text-sm ${
+                            sess.netProfit > 0.01
+                              ? 'text-[#00A878]'
+                              : sess.netProfit < -0.01
+                              ? 'text-[#E05260]'
+                              : 'text-[#697586] dark:text-[#7D8796]'
+                          }`}
+                        >
+                          {sess.netProfit > 0 ? '+' : ''}
+                          {fmtMoney(sess.netProfit, isPrivacyMode)}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* DIMENSION 3: INSTRUMEN / SIMBOL */}
+            {breakdownCategory === 'instrument' && (
+              <div>
+                {symbolStats.length === 0 ? (
+                  <p className="py-8 text-center text-xs text-[#697586] dark:text-[#7D8796]">
+                    Belum ada data instrumen pada periode ini.
+                  </p>
+                ) : (
+                  <div className="divide-y divide-[#DDE3EA] dark:divide-white/[0.06] border-y border-[#DDE3EA] dark:border-white/[0.06]">
+                    {symbolStats.map((item) => (
+                      <div
+                        key={item.symbol}
+                        className="py-3.5 px-1 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs tabular-nums"
+                      >
+                        <div>
+                          <span className="font-bold text-sm text-[#151D2A] dark:text-[#F2F5F9] block">
+                            {item.symbol}
+                          </span>
+                          <span className="text-[11px] text-[#697586] dark:text-[#7D8796]">
+                            {item.total} Trade ({item.winCount}W · {item.lossCount}L)
+                          </span>
+                        </div>
+
+                        <div className="flex items-center justify-between sm:justify-end gap-6">
+                          <div>
+                            <span className="text-[10px] uppercase tracking-wider text-[#697586] dark:text-[#7D8796] block">
+                              Win Rate
+                            </span>
+                            <span className="font-semibold text-[#151D2A] dark:text-[#F2F5F9]">
+                              {item.winRate}%
+                            </span>
+                          </div>
+
+                          <div>
+                            <span className="text-[10px] uppercase tracking-wider text-[#697586] dark:text-[#7D8796] block">
+                              Rata-rata / Trade
+                            </span>
+                            <span className="font-semibold text-[#151D2A] dark:text-[#F2F5F9]">
+                              {fmtMoney(item.avgProfit, isPrivacyMode)}
+                            </span>
+                          </div>
+
+                          <div className="text-right min-w-[96px]">
+                            <span className="text-[10px] uppercase tracking-wider text-[#697586] dark:text-[#7D8796] block">
+                              Net P/L
+                            </span>
+                            <span
+                              className={`font-bold text-xs sm:text-sm ${
+                                item.netProfit > 0.01
+                                  ? 'text-[#00A878]'
+                                  : item.netProfit < -0.01
+                                  ? 'text-[#E05260]'
+                                  : 'text-[#697586] dark:text-[#7D8796]'
+                              }`}
+                            >
+                              {item.netProfit > 0 ? '+' : ''}
+                              {fmtMoney(item.netProfit, isPrivacyMode)}
+                            </span>
+                          </div>
                         </div>
                       </div>
                     ))}
                   </div>
                 )}
               </div>
-            </div>
+            )}
           </section>
 
           {/* =========================================================================
-              SECTION 7: SESSION ANALYSIS (ASIA, LONDON, NEW YORK)
+              SECTION 06 — TRADING BEHAVIOR (STREAKS, AVERAGES & DISTRIBUTION)
              ========================================================================= */}
-          <section className="rounded-2xl border border-[#DDE3EA] dark:border-[#252B34] bg-white dark:bg-[#11151B] p-5 sm:p-6 transition-colors duration-150 space-y-4">
-            <div className="pb-3 border-b border-[#DDE3EA] dark:border-[#252B34]">
-              <h3 className="text-sm sm:text-base font-bold text-[#151D2A] dark:text-[#F2F5F9]">
-                Analisis Sesi Trading (Session Performance)
-              </h3>
-              <p className="text-xs text-[#697586] dark:text-[#929BA9]">
-                Perbandingan hasil eksekusi antara sesi Asia, London, dan New York
-              </p>
+          <section className="space-y-5">
+            <div>
+              <span className="block text-[10px] font-bold uppercase tracking-[0.14em] text-[#697586] dark:text-[#6E7785]">
+                06 / TRADING BEHAVIOR
+              </span>
+              <h2 className="text-base sm:text-lg font-bold text-[#151D2A] dark:text-[#F2F5F9] mt-0.5">
+                Perilaku Eksekusi, Streak &amp; Distribusi Hasil
+              </h2>
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3.5">
-              {sessionStats.map((sess) => (
-                <div
-                  key={sess.id}
-                  className="p-4 rounded-xl bg-[#F5F7FA] dark:bg-[#171D26] border border-[#DDE3EA] dark:border-[#252B34] space-y-3"
-                >
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <span className="font-bold text-xs sm:text-sm text-[#151D2A] dark:text-[#F2F5F9] block">
-                        {sess.label}
-                      </span>
-                      <span className="text-[10px] text-[#697586] dark:text-[#929BA9]">
-                        {sess.desc}
-                      </span>
-                    </div>
-                    <span className="px-2 py-0.5 rounded text-[10px] font-mono-numbers tabular-nums font-semibold bg-white dark:bg-[#11151B] border border-[#DDE3EA] dark:border-[#252B34] text-[#151D2A] dark:text-[#F2F5F9]">
-                      {sess.total} Trade
-                    </span>
-                  </div>
-
-                  <div className="space-y-1">
-                    <span className="text-[10px] uppercase font-semibold text-[#697586] dark:text-[#929BA9]">
-                      Net Profit / Loss
-                    </span>
-                    <div
-                      className={`text-base sm:text-lg font-bold font-mono-numbers tabular-nums ${
-                        sess.netProfit > 0.01
-                          ? 'text-[#059669] dark:text-[#34D399]'
-                          : sess.netProfit < -0.01
-                          ? 'text-[#E11D48] dark:text-[#FB7185]'
-                          : 'text-[#697586] dark:text-[#929BA9]'
-                      }`}
-                    >
-                      {sess.netProfit > 0 ? '+' : ''}
-                      {formatCurrency(sess.netProfit, settings, isPrivacyMode)}
-                    </div>
-                  </div>
-
-                  <div className="grid grid-cols-2 gap-2 pt-2 border-t border-[#DDE3EA] dark:border-[#252B34] text-xs font-mono-numbers tabular-nums">
-                    <div>
-                      <span className="text-[10px] text-[#697586] dark:text-[#929BA9] block">Win Rate</span>
-                      <span className="font-semibold text-[#151D2A] dark:text-[#F2F5F9]">{sess.winRate}%</span>
-                    </div>
-                    <div>
-                      <span className="text-[10px] text-[#697586] dark:text-[#929BA9] block">Profit Factor</span>
-                      <span className="font-semibold text-[#151D2A] dark:text-[#F2F5F9]">
-                        {sess.profitFactor === Infinity ? '∞' : sess.profitFactor.toFixed(2)}
-                      </span>
-                    </div>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </section>
-
-          {/* =========================================================================
-              SECTION 8: SYMBOL PERFORMANCE
-             ========================================================================= */}
-          <section className="rounded-2xl border border-[#DDE3EA] dark:border-[#252B34] bg-white dark:bg-[#11151B] p-5 sm:p-6 transition-colors duration-150 space-y-4">
-            <div className="pb-3 border-b border-[#DDE3EA] dark:border-[#252B34]">
-              <h3 className="text-sm sm:text-base font-bold text-[#151D2A] dark:text-[#F2F5F9]">
-                Performa Simbol / Instrumen (Symbol Breakdown)
-              </h3>
-              <p className="text-xs text-[#697586] dark:text-[#929BA9]">
-                Statistik hasil trading berdasarkan instrumen yang digunakan
-              </p>
-            </div>
-
-            <div className="space-y-2">
-              {symbolStats.map((item) => (
-                <div
-                  key={item.symbol}
-                  className="p-3.5 rounded-xl bg-[#F5F7FA] dark:bg-[#171D26] border border-[#DDE3EA] dark:border-[#252B34] flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs"
-                >
-                  <div className="flex items-center gap-3">
-                    <span className="px-2.5 py-1 rounded-lg font-bold bg-white dark:bg-[#11151B] border border-[#DDE3EA] dark:border-[#252B34] text-[#151D2A] dark:text-[#F2F5F9] text-xs font-mono-numbers">
-                      {item.symbol}
-                    </span>
-                    <span className="text-[#697586] dark:text-[#929BA9] font-mono-numbers tabular-nums">
-                      {item.total} Trade ({item.winCount}W / {item.lossCount}L)
-                    </span>
-                  </div>
-
-                  <div className="flex items-center gap-4 sm:gap-6 font-mono-numbers tabular-nums">
-                    <div>
-                      <span className="text-[10px] text-[#697586] dark:text-[#929BA9] block">Win Rate</span>
-                      <span className="font-semibold text-[#151D2A] dark:text-[#F2F5F9]">{item.winRate}%</span>
-                    </div>
-
-                    <div>
-                      <span className="text-[10px] text-[#697586] dark:text-[#929BA9] block">Rata-rata</span>
-                      <span className="font-semibold text-[#151D2A] dark:text-[#F2F5F9]">
-                        {formatCurrency(item.avgProfit, settings, isPrivacyMode)}
-                      </span>
-                    </div>
-
-                    <div className="text-right min-w-[90px]">
-                      <span className="text-[10px] text-[#697586] dark:text-[#929BA9] block">Net P/L</span>
-                      <span
-                        className={`font-bold text-xs sm:text-sm ${
-                          item.netProfit > 0.01
-                            ? 'text-[#059669] dark:text-[#34D399]'
-                            : item.netProfit < -0.01
-                            ? 'text-[#E11D48] dark:text-[#FB7185]'
-                            : 'text-[#697586] dark:text-[#929BA9]'
-                        }`}
-                      >
-                        {item.netProfit > 0 ? '+' : ''}
-                        {formatCurrency(item.netProfit, settings, isPrivacyMode)}
-                      </span>
-                    </div>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </section>
-
-          {/* =========================================================================
-              SECTION 9: ADDITIONAL STATISTICS (STREAKS & DISTRIBUTION)
-             ========================================================================= */}
-          <section className="rounded-2xl border border-[#DDE3EA] dark:border-[#252B34] bg-white dark:bg-[#11151B] p-5 sm:p-6 transition-colors duration-150 space-y-5">
-            <div className="pb-3 border-b border-[#DDE3EA] dark:border-[#252B34]">
-              <h3 className="text-sm sm:text-base font-bold text-[#151D2A] dark:text-[#F2F5F9]">
-                Statistik Tambahan (Streaks &amp; Distribusi)
-              </h3>
-              <p className="text-xs text-[#697586] dark:text-[#929BA9]">
-                Rincian runtutan menang/kalah, distribusi hasil, dan rata-rata rasio posisi
-              </p>
-            </div>
-
-            {/* Streak & Ratio Row */}
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3.5">
-              <div className="p-4 rounded-xl bg-[#F5F7FA] dark:bg-[#171D26] border border-[#DDE3EA] dark:border-[#252B34] space-y-1">
-                <div className="text-xs text-[#697586] dark:text-[#929BA9]">
-                  Win Streak Tertinggi
-                </div>
-                <div className="text-xl font-bold font-mono-numbers tabular-nums text-[#151D2A] dark:text-[#F2F5F9]">
-                  {metrics.consecutiveWinsMax} <span className="text-xs font-normal text-[#697586]">Trade Beruntun</span>
-                </div>
-                <span className="text-[11px] text-[#697586] dark:text-[#929BA9] block">
-                  Streak Saat Ini: {metrics.currentStreak.count} {metrics.currentStreak.type === 'WIN' ? 'Win' : metrics.currentStreak.type === 'LOSS' ? 'Loss' : '-'}
+            {/* 5 Behavioral Metrics in Cardless Grid */}
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-y-5 gap-x-4 py-4 border-y border-[#DDE3EA] dark:border-white/[0.06] tabular-nums">
+              <div>
+                <span className="block text-[10px] font-semibold uppercase tracking-wider text-[#697586] dark:text-[#7D8796]">
+                  Win Streak
+                </span>
+                <span className="mt-1 block text-base sm:text-lg font-bold text-[#00A878]">
+                  {metrics.consecutiveWinsMax} Trade
+                </span>
+                <span className="text-[11px] text-[#697586] dark:text-[#6E7785]">
+                  Saat ini: {metrics.currentStreak.count}{' '}
+                  {metrics.currentStreak.type === 'WIN'
+                    ? 'Win'
+                    : metrics.currentStreak.type === 'LOSS'
+                    ? 'Loss'
+                    : '-'}
                 </span>
               </div>
 
-              <div className="p-4 rounded-xl bg-[#F5F7FA] dark:bg-[#171D26] border border-[#DDE3EA] dark:border-[#252B34] space-y-1">
-                <div className="text-xs text-[#697586] dark:text-[#929BA9]">
-                  Loss Streak Tertinggi
-                </div>
-                <div className="text-xl font-bold font-mono-numbers tabular-nums text-[#151D2A] dark:text-[#F2F5F9]">
-                  {metrics.consecutiveLossesMax} <span className="text-xs font-normal text-[#697586]">Trade Beruntun</span>
-                </div>
-                <span className="text-[11px] text-[#697586] dark:text-[#929BA9] block">
-                  Batas toleransi psikologis sistem
+              <div>
+                <span className="block text-[10px] font-semibold uppercase tracking-wider text-[#697586] dark:text-[#7D8796]">
+                  Loss Streak
+                </span>
+                <span className="mt-1 block text-base sm:text-lg font-bold text-[#E05260]">
+                  {metrics.consecutiveLossesMax} Trade
+                </span>
+                <span className="text-[11px] text-[#697586] dark:text-[#6E7785]">
+                  Maksimal beruntun
                 </span>
               </div>
 
-              <div className="p-4 rounded-xl bg-[#F5F7FA] dark:bg-[#171D26] border border-[#DDE3EA] dark:border-[#252B34] space-y-1">
-                <div className="text-xs text-[#697586] dark:text-[#929BA9]">
-                  Rasio Rata-rata Win / Loss
-                </div>
-                <div className="text-xl font-bold font-mono-numbers tabular-nums text-[#151D2A] dark:text-[#F2F5F9]">
+              <div>
+                <span className="block text-[10px] font-semibold uppercase tracking-wider text-[#697586] dark:text-[#7D8796]">
+                  Average Win
+                </span>
+                <span className="mt-1 block text-base sm:text-lg font-bold text-[#00A878]">
+                  {metrics.averageWin > 0 ? `+${fmtMoney(metrics.averageWin, isPrivacyMode)}` : fmtMoney(0, isPrivacyMode)}
+                </span>
+                <span className="text-[11px] text-[#697586] dark:text-[#6E7785]">
+                  Rata-rata profit / win
+                </span>
+              </div>
+
+              <div>
+                <span className="block text-[10px] font-semibold uppercase tracking-wider text-[#697586] dark:text-[#7D8796]">
+                  Average Loss
+                </span>
+                <span className="mt-1 block text-base sm:text-lg font-bold text-[#E05260]">
+                  {metrics.averageLoss > 0 ? `-${fmtMoney(metrics.averageLoss, isPrivacyMode)}` : fmtMoney(0, isPrivacyMode)}
+                </span>
+                <span className="text-[11px] text-[#697586] dark:text-[#6E7785]">
+                  Rata-rata rugi / loss
+                </span>
+              </div>
+
+              <div>
+                <span className="block text-[10px] font-semibold uppercase tracking-wider text-[#697586] dark:text-[#7D8796]">
+                  Win / Loss Ratio
+                </span>
+                <span className="mt-1 block text-base sm:text-lg font-bold text-[#151D2A] dark:text-[#F2F5F9]">
                   {metrics.averageLoss > 0
                     ? `${(metrics.averageWin / metrics.averageLoss).toFixed(2)}x`
-                    : '1.00x'}
-                </div>
-                <span className="text-[11px] text-[#697586] dark:text-[#929BA9] block">
-                  Avg Win: {formatCurrency(metrics.averageWin, settings, isPrivacyMode)} / Avg Loss: {formatCurrency(metrics.averageLoss, settings, isPrivacyMode)}
+                    : metrics.averageWin > 0
+                    ? '∞'
+                    : '0.00x'}
+                </span>
+                <span className="text-[11px] text-[#697586] dark:text-[#6E7785]">
+                  Payoff Ratio
                 </span>
               </div>
             </div>
 
-            {/* Trade Distribution Bar */}
-            <div className="space-y-2 pt-2">
-              <div className="flex items-center justify-between text-xs text-[#697586] dark:text-[#929BA9]">
+            {/* Win / Loss / Breakeven Distribution Bar */}
+            <div className="space-y-2 pt-1 tabular-nums">
+              <div className="flex items-center justify-between text-xs text-[#697586] dark:text-[#8E98A8]">
                 <span className="font-semibold text-[#151D2A] dark:text-[#F2F5F9]">
-                  Distribusi Hasil Transaksi ({metrics.totalTrades} Trade)
+                  Distribusi Win / Loss / Breakeven ({metrics.totalTrades} Trade)
                 </span>
-                <span className="font-mono-numbers tabular-nums">
-                  {metrics.winningTrades} Win • {metrics.losingTrades} Loss • {metrics.breakevenTrades} BE
+                <span>
+                  {metrics.winningTrades}W · {metrics.losingTrades}L · {metrics.breakevenTrades}BE
                 </span>
               </div>
 
-              {/* Segmented Horizontal Bar */}
-              <div className="h-3 w-full bg-[#DDE3EA] dark:bg-[#252B34] rounded-full overflow-hidden flex">
+              <div className="h-2 w-full bg-[#DDE3EA] dark:bg-white/[0.07] rounded-full overflow-hidden flex">
                 {metrics.totalTrades > 0 && (
                   <>
                     <div
-                      className="h-full bg-[#059669] dark:bg-[#34D399] transition-all"
+                      className="h-full bg-[#00A878] transition-all"
                       style={{ width: `${(metrics.winningTrades / metrics.totalTrades) * 100}%` }}
                       title={`Winning: ${metrics.winningTrades} (${metrics.winRate}%)`}
                     />
                     <div
-                      className="h-full bg-[#E11D48] dark:bg-[#FB7185] transition-all"
+                      className="h-full bg-[#E05260] transition-all"
                       style={{ width: `${(metrics.losingTrades / metrics.totalTrades) * 100}%` }}
                       title={`Losing: ${metrics.losingTrades} (${metrics.lossRate}%)`}
                     />
                     <div
-                      className="h-full bg-[#929BA9] transition-all"
+                      className="h-full bg-[#7D8796] transition-all"
                       style={{ width: `${(metrics.breakevenTrades / metrics.totalTrades) * 100}%` }}
                       title={`Breakeven: ${metrics.breakevenTrades} (${metrics.breakevenRate}%)`}
                     />
@@ -1145,17 +1755,17 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ trades, settings, 
                 )}
               </div>
 
-              <div className="flex items-center gap-4 text-[11px] text-[#697586] dark:text-[#929BA9] pt-1">
+              <div className="flex flex-wrap items-center gap-4 text-[11px] text-[#697586] dark:text-[#7D8796] pt-0.5">
                 <span className="flex items-center gap-1.5">
-                  <span className="h-2 w-2 rounded-full bg-[#059669] dark:bg-[#34D399]" />
+                  <span className="h-2 w-2 rounded-full bg-[#00A878]" />
                   Win ({metrics.winRate}%)
                 </span>
                 <span className="flex items-center gap-1.5">
-                  <span className="h-2 w-2 rounded-full bg-[#E11D48] dark:bg-[#FB7185]" />
+                  <span className="h-2 w-2 rounded-full bg-[#E05260]" />
                   Loss ({metrics.lossRate}%)
                 </span>
                 <span className="flex items-center gap-1.5">
-                  <span className="h-2 w-2 rounded-full bg-[#929BA9]" />
+                  <span className="h-2 w-2 rounded-full bg-[#7D8796]" />
                   Breakeven ({metrics.breakevenRate}%)
                 </span>
               </div>

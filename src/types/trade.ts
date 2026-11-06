@@ -25,6 +25,15 @@ export interface TradeActivityEvent {
   note?: string;
 }
 
+export interface HistoricalExchangeRateSnapshot {
+  rate: number;
+  baseCurrency: 'USD';
+  quoteCurrency: 'IDR';
+  timestamp: string;
+  source: string;
+  status: 'LIVE' | 'CACHED_OFFLINE' | 'UNVERIFIED_LEGACY';
+}
+
 export interface Trade {
   id: string;
   dateTime: string; // ISO format: YYYY-MM-DDTHH:mm
@@ -51,6 +60,7 @@ export interface Trade {
   postTradeEvaluation?: string; // post-trade review & lessons
   disciplineRating?: number; // 1 to 5
   executionNotes?: string;
+  closeExchangeRate?: HistoricalExchangeRateSnapshot; // Historical snapshot rate at close time (USD/IDR)
   isDemo?: boolean; // explicitly marks demo sample data
   createdAt?: string;
   updatedAt?: string;

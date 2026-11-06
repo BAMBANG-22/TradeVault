@@ -1729,7 +1729,7 @@ export function runXauusdLotStandardizationTests(): TestSuiteSummary {
   assertStd(
     'C.6 Position Sizing: Estimated Loss at SL = $25 (BUKAN $250)',
     'C. Position Sizing',
-    calcC.estimatedLossAtSL === 25 && calcC.estimatedLossAtSL !== 250,
+    calcC.estimatedLossAtSL === 25,
     true
   );
 
@@ -8179,7 +8179,7 @@ export function runRiskSimulatorsAuditTests(): TestSuiteSummary {
       {
         id: 'rm-1',
         dateTime: '2026-10-01T10:00:00Z',
-        pair: 'XAUUSD',
+        instrument: 'XAUUSD',
         position: 'BUY',
         entryPrice: 4000,
         stopLoss: 3950,
@@ -8195,13 +8195,12 @@ export function runRiskSimulatorsAuditTests(): TestSuiteSummary {
         outcome: 'WIN',
         strategy: 'Breakout',
         session: 'LONDON',
-        emotion: 'CALM',
         notes: '',
       },
       {
         id: 'rm-2',
         dateTime: '2026-10-02T10:00:00Z',
-        pair: 'XAUUSD',
+        instrument: 'XAUUSD',
         position: 'BUY',
         entryPrice: 4000,
         stopLoss: 3950,
@@ -8217,13 +8216,12 @@ export function runRiskSimulatorsAuditTests(): TestSuiteSummary {
         outcome: 'LOSS',
         strategy: 'Breakout',
         session: 'LONDON',
-        emotion: 'CALM',
         notes: '',
       },
       {
         id: 'rm-3',
         dateTime: '2026-10-03T10:00:00Z',
-        pair: 'XAUUSD',
+        instrument: 'XAUUSD',
         position: 'SELL',
         entryPrice: 4000,
         stopLoss: 4050,
@@ -8239,7 +8237,6 @@ export function runRiskSimulatorsAuditTests(): TestSuiteSummary {
         outcome: 'WIN',
         strategy: 'Pullback',
         session: 'NEW_YORK',
-        emotion: 'CALM',
         notes: '',
       },
     ],

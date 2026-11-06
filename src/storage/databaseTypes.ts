@@ -1,4 +1,4 @@
-import { Trade, TradeOutcome, TradePosition } from '../types/trade';
+import { Trade, TradeOutcome, TradePosition, HistoricalExchangeRateSnapshot } from '../types/trade';
 import { AppSettings, CurrencyCode } from '../types/settings';
 
 /**
@@ -299,6 +299,7 @@ export interface TradeNotesMetaPayload {
   tzOffsetMinutes?: number;
   syncRevision?: number;
   lastMutationId?: string;
+  closeExchangeRate?: HistoricalExchangeRateSnapshot;
 }
 
 export interface DecodedTradeNotesResult {

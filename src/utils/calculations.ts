@@ -820,13 +820,17 @@ export function resolveActiveCalendarMonth(
   availableMonths: string[],
   fallbackDate: Date = new Date()
 ): string {
+  const currentRuntimeMonth = formatLocalDateKey(fallbackDate).slice(0, 7);
+  if (!selectedMonth || !selectedMonth.trim()) {
+    return currentRuntimeMonth;
+  }
   if (Array.isArray(availableMonths) && availableMonths.length > 0) {
-    if (selectedMonth && availableMonths.includes(selectedMonth)) {
+    if (availableMonths.includes(selectedMonth)) {
       return selectedMonth;
     }
     return availableMonths[availableMonths.length - 1];
   }
-  return formatLocalDateKey(fallbackDate).slice(0, 7);
+  return currentRuntimeMonth;
 }
 
 /**

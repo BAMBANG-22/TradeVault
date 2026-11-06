@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
 import {
   DailyPerformance,
   MonthlyPerformance,
@@ -16,22 +16,16 @@ import {
   resolveTradeOutcome,
   formatCalendarAdaptivePnl,
 } from '../../utils/calculations';
+import { useGlobalCurrency } from '../../utils/currencyRate';
 import { AppSettings } from '../../types/settings';
 import { Trade } from '../../types/trade';
 import {
-  TrendingUp,
-  TrendingDown,
   ChevronLeft,
   ChevronRight,
-  LayoutGrid,
-  List,
-  BarChart2,
-  Minus,
+  ChevronDown,
   X,
   Eye,
   Clock,
-  ArrowUpRight,
-  ArrowDownRight,
 } from 'lucide-react';
 
 /**
@@ -70,10 +64,27 @@ export const PerformanceCalendar: React.FC<PerformanceCalendarProps> = ({
   trades = [],
   onViewTrade,
 }) => {
-  const [activeTab, setActiveTab] = useState<'daily' | 'calendar' | 'monthly'>('calendar');
-  const [selectedDate, setSelectedDate] = useState<string | null>(null);
+  const { preferredCurrency, formatDynamic, formatTradeFinancial } = useGlobalCurrency();
+  const fmtMoney = (val: number, privacy = isPrivacyMode) =>
+    preferredCurrency === 'IDR' ? formatDynamic(val, privacy) : formatCurrency(val, settings, privacy);
 
-  // Close daily trades modal on Escape key
+  const [activeTab, setActiveTab] = useState<'daily' | 'calendar' | 'monthly'>('calendar');
+  const [showModeMenu, setShowModeMenu] = useState(false);
+  const [selectedDate, setSelectedDate] = useState<string | null>(null);
+  const modeMenuRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (!showModeMenu) return;
+    const handleOutside = (e: MouseEvent) => {
+      if (modeMenuRef.current && !modeMenuRef.current.contains(e.target as Node)) {
+        setShowModeMenu(false);
+      }
+    };
+    document.addEventListener('mousedown', handleOutside);
+    return () => document.removeEventListener('mousedown', handleOutside);
+  }, [showModeMenu]);
+
+  // Close daily trades detail on Escape key
   useEffect(() => {
     if (!selectedDate) return;
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -102,41 +113,55 @@ export const PerformanceCalendar: React.FC<PerformanceCalendarProps> = ({
     };
   }, [dailyPerformance]);
 
-  // Calendar Grid Month Selector State
-  const availableMonths = useMemo(() => {
-    if (dailyPerformance.length === 0) {
-      return [formatLocalDateKey(new Date()).slice(0, 7)];
-    }
-    const monthsSet = new Set<string>();
-    dailyPerformance.forEach((d) => monthsSet.add(d.date.slice(0, 7)));
-    return Array.from(monthsSet).sort();
-  }, [dailyPerformance]);
+  // Always default to the current runtime local month (e.g. '2026-11') when opened or refreshed,
+  // even if there are no trades in the current month or the last trade was in an earlier month.
+  const currentRuntimeMonthKey = useMemo(() => {
+    return formatLocalDateKey(new Date()).slice(0, 7);
+  }, []);
 
   const [selectedMonth, setSelectedMonth] = useState<string>(() => {
-    return resolveActiveCalendarMonth('', availableMonths);
+    return formatLocalDateKey(new Date()).slice(0, 7);
   });
 
-  useEffect(() => {
-    const nextMonth = resolveActiveCalendarMonth(selectedMonth, availableMonths);
-    if (nextMonth !== selectedMonth) {
-      setSelectedMonth(nextMonth);
+  // Calendar Grid Month Selector State: includes current runtime month, past 12 months, next 3 months,
+  // any months with trade data, and the user's manually navigated selectedMonth.
+  const availableMonths = useMemo(() => {
+    const monthsSet = new Set<string>();
+    monthsSet.add(currentRuntimeMonthKey);
+    if (selectedMonth && /^\d{4}-\d{2}$/.test(selectedMonth)) {
+      monthsSet.add(selectedMonth);
     }
-  }, [availableMonths, selectedMonth]);
+    const now = new Date();
+    for (let i = -12; i <= 3; i++) {
+      const d = new Date(now.getFullYear(), now.getMonth() + i, 1);
+      monthsSet.add(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`);
+    }
+    dailyPerformance.forEach((d) => {
+      if (d.date && d.date.length >= 7) {
+        monthsSet.add(d.date.slice(0, 7));
+      }
+    });
+    return Array.from(monthsSet).sort();
+  }, [dailyPerformance, currentRuntimeMonthKey, selectedMonth]);
 
   const activeMonth = resolveActiveCalendarMonth(selectedMonth, availableMonths);
 
+  const shiftMonthKey = (monthKey: string, deltaMonths: number): string => {
+    const [yStr, mStr] = monthKey.split('-');
+    const y = parseInt(yStr, 10) || new Date().getFullYear();
+    const m = parseInt(mStr, 10) || new Date().getMonth() + 1;
+    const shifted = new Date(y, m - 1 + deltaMonths, 1);
+    return `${shifted.getFullYear()}-${String(shifted.getMonth() + 1).padStart(2, '0')}`;
+  };
+
   const handlePrevMonth = () => {
-    const idx = availableMonths.indexOf(activeMonth);
-    if (idx > 0) {
-      setSelectedMonth(availableMonths[idx - 1]);
-    }
+    setSelectedMonth(shiftMonthKey(activeMonth, -1));
+    setSelectedDate(null);
   };
 
   const handleNextMonth = () => {
-    const idx = availableMonths.indexOf(activeMonth);
-    if (idx >= 0 && idx < availableMonths.length - 1) {
-      setSelectedMonth(availableMonths[idx + 1]);
-    }
+    setSelectedMonth(shiftMonthKey(activeMonth, 1));
+    setSelectedDate(null);
   };
 
   // Build calendar matrix for activeMonth
@@ -149,8 +174,7 @@ export const PerformanceCalendar: React.FC<PerformanceCalendarProps> = ({
     const lastDay = new Date(year, month + 1, 0);
     const totalDaysInMonth = lastDay.getDate();
 
-    // In JS getDay(): 0 is Sunday, 1 is Monday ... 6 is Saturday.
-    // Convert so Monday = 0, Sunday = 6
+    // Monday = 0, Sunday = 6
     const firstDayIndex = (firstDay.getDay() + 6) % 7;
 
     const cells: {
@@ -159,12 +183,10 @@ export const PerformanceCalendar: React.FC<PerformanceCalendarProps> = ({
       perf: DailyPerformance | null;
     }[] = [];
 
-    // Preceding empty padding
     for (let i = 0; i < firstDayIndex; i++) {
       cells.push({ dayNum: null, dateStr: `empty-pre-${i}`, perf: null });
     }
 
-    // Days in month
     for (let day = 1; day <= totalDaysInMonth; day++) {
       const dayStr = String(day).padStart(2, '0');
       const dateKey = `${yearStr}-${monthStr}-${dayStr}`;
@@ -180,7 +202,6 @@ export const PerformanceCalendar: React.FC<PerformanceCalendarProps> = ({
     100
   );
 
-  // Selected date details for modal
   const selectedDayPerf = useMemo(() => {
     if (!selectedDate) return null;
     return dailyPerformance.find((d) => d.date === selectedDate) || null;
@@ -191,110 +212,100 @@ export const PerformanceCalendar: React.FC<PerformanceCalendarProps> = ({
     return getTradesForCalendarDate(trades, selectedDate);
   }, [selectedDate, trades]);
 
+  const modeLabels: Record<'calendar' | 'daily' | 'monthly', string> = {
+    calendar: 'Grid Calendar',
+    daily: `Daily List (${dailyPerformance.length})`,
+    monthly: `Monthly (${monthlyPerformance.length})`,
+  };
+
+  const handleDateClick = (dateStr: string) => {
+    setSelectedDate((prev) => (prev === dateStr ? null : dateStr));
+  };
+
   return (
-    <div className="rounded-xl border border-[#DDE3EA] dark:border-[#252B34] bg-white dark:bg-[#11151B] p-4 sm:p-5 space-y-4">
-      {/* Header & Tabs */}
-      <div className="flex flex-wrap items-center justify-between gap-3 pb-3 border-b border-[#DDE3EA] dark:border-[#252B34]">
-        <div>
-          <h3 className="text-sm font-semibold text-[#151D2A] dark:text-[#F2F5F9]">
-            {activeTab === 'calendar'
-              ? 'Kalender Visual Performa Trading'
-              : activeTab === 'daily'
-              ? 'Daftar Hasil Harian'
-              : 'Ringkasan Bulanan'}
-          </h3>
-          <p className="text-xs text-[#697586] dark:text-[#929BA9]">
-            Distribusi hasil transaksi aktual berdasarkan tanggal penutupan (klik tanggal untuk rincian trade)
-          </p>
+    <div className="space-y-4 font-['Arial',Helvetica,sans-serif]">
+      {/* Top Subheader & Compact Pill Mode Control */}
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2.5 sm:gap-3">
+        {/* Daily Summary Strip (Cardless, Hairline-separated) */}
+        <div className="flex flex-wrap items-center gap-x-3 sm:gap-x-4 gap-y-1.5 text-xs tabular-nums">
+          <div className="flex items-center gap-1.5">
+            <span className="text-[#697586] dark:text-[#7D8796]">Hari Aktif</span>
+            <strong className="text-[#151D2A] dark:text-[#F2F5F9] font-bold">{dailySummary.totalDays}</strong>
+          </div>
+          <span className="text-[#DDE3EA] dark:text-white/10">·</span>
+          <div className="flex items-center gap-1.5">
+            <span className="text-[#697586] dark:text-[#7D8796]">Profit</span>
+            <strong className="text-[#00A878] font-bold">{dailySummary.profitDays}</strong>
+          </div>
+          <span className="text-[#DDE3EA] dark:text-white/10">·</span>
+          <div className="flex items-center gap-1.5">
+            <span className="text-[#697586] dark:text-[#7D8796]">Loss</span>
+            <strong className="text-[#E05260] font-bold">{dailySummary.lossDays}</strong>
+          </div>
+          <span className="text-[#DDE3EA] dark:text-white/10">·</span>
+          <div className="flex items-center gap-1.5">
+            <span className="text-[#697586] dark:text-[#7D8796]">Win Rate Hari</span>
+            <strong className="text-[#151D2A] dark:text-[#F2F5F9] font-bold">{dailySummary.dayWinRate}%</strong>
+          </div>
         </div>
 
-        <div className="flex rounded-lg bg-[#F5F7FA] dark:bg-[#080A0E] p-1 border border-[#DDE3EA] dark:border-[#252B34] text-xs select-none">
+        {/* Compact Pill Dropdown for Calendar View Mode */}
+        <div className="relative self-start sm:self-auto" ref={modeMenuRef}>
           <button
             type="button"
-            onClick={() => setActiveTab('calendar')}
-            className={`flex items-center gap-1.5 px-3 py-1 rounded-md font-medium transition-colors cursor-pointer ${
-              activeTab === 'calendar'
-                ? 'bg-[#1769E8] text-white'
-                : 'text-[#697586] dark:text-[#929BA9] hover:text-[#151D2A] dark:hover:text-[#F2F5F9]'
-            }`}
+            onClick={() => setShowModeMenu((prev) => !prev)}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium bg-black/[0.03] dark:bg-white/[0.04] border border-[#DDE3EA] dark:border-white/[0.08] text-[#151D2A] dark:text-[#F2F5F9] hover:border-[#3B82F6]/50 transition-colors cursor-pointer select-none whitespace-nowrap"
           >
-            <LayoutGrid className="h-3.5 w-3.5 stroke-[1.75]" />
-            <span>Grid Kalender</span>
+            <span>{modeLabels[activeTab]}</span>
+            <ChevronDown className="h-3.5 w-3.5 text-[#697586] dark:text-[#8E98A8]" />
           </button>
-          <button
-            type="button"
-            onClick={() => setActiveTab('daily')}
-            className={`flex items-center gap-1.5 px-3 py-1 rounded-md font-medium transition-colors cursor-pointer ${
-              activeTab === 'daily'
-                ? 'bg-[#1769E8] text-white'
-                : 'text-[#697586] dark:text-[#929BA9] hover:text-[#151D2A] dark:hover:text-[#F2F5F9]'
-            }`}
-          >
-            <List className="h-3.5 w-3.5 stroke-[1.75]" />
-            <span>Daftar Harian ({dailyPerformance.length})</span>
-          </button>
-          <button
-            type="button"
-            onClick={() => setActiveTab('monthly')}
-            className={`flex items-center gap-1.5 px-3 py-1 rounded-md font-medium transition-colors cursor-pointer ${
-              activeTab === 'monthly'
-                ? 'bg-[#1769E8] text-white'
-                : 'text-[#697586] dark:text-[#929BA9] hover:text-[#151D2A] dark:hover:text-[#F2F5F9]'
-            }`}
-          >
-            <BarChart2 className="h-3.5 w-3.5 stroke-[1.75]" />
-            <span>Bulanan ({monthlyPerformance.length})</span>
-          </button>
+
+          {showModeMenu && (
+            <div className="absolute left-0 sm:left-auto sm:right-0 top-9 z-30 w-44 max-w-[calc(100vw-2rem)] rounded-xl border border-[#DDE3EA] dark:border-white/10 bg-white dark:bg-[#0E1217] p-1 shadow-xl text-xs">
+              {(['calendar', 'daily', 'monthly'] as const).map((tabKey) => (
+                <button
+                  key={tabKey}
+                  type="button"
+                  onClick={() => {
+                    setActiveTab(tabKey);
+                    setShowModeMenu(false);
+                  }}
+                  className={`w-full text-left px-3 py-2 rounded-lg transition-colors cursor-pointer flex items-center justify-between ${
+                    activeTab === tabKey
+                      ? 'bg-black/[0.05] dark:bg-white/[0.07] text-[#151D2A] dark:text-[#F2F5F9] font-bold'
+                      : 'text-[#697586] dark:text-[#8E98A8] hover:text-[#151D2A] dark:hover:text-[#F2F5F9]'
+                  }`}
+                >
+                  <span>{modeLabels[tabKey]}</span>
+                  {activeTab === tabKey && <span className="h-1.5 w-1.5 rounded-full bg-[#3B82F6]" />}
+                </button>
+              ))}
+            </div>
+          )}
         </div>
       </div>
 
-      {/* Daily Performance Quick Stats Banner */}
-      <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 text-xs font-mono-numbers tabular-nums">
-        <div className="p-2.5 rounded-lg bg-[#F5F7FA] dark:bg-[#171D26] border border-[#DDE3EA] dark:border-[#252B34] flex items-center justify-between">
-          <span className="text-[#697586] dark:text-[#929BA9] font-sans text-[11px]">Hari Trading:</span>
-          <strong className="text-[#151D2A] dark:text-[#F2F5F9]">{dailySummary.totalDays} Hari</strong>
-        </div>
-        <div className="p-2.5 rounded-lg bg-[#F5F7FA] dark:bg-[#171D26] border border-[#DDE3EA] dark:border-[#252B34] flex items-center justify-between text-emerald-700 dark:text-emerald-400">
-          <span className="text-[#697586] dark:text-[#929BA9] font-sans text-[11px]">Hari Profit:</span>
-          <strong>{dailySummary.profitDays} Hari</strong>
-        </div>
-        <div className="p-2.5 rounded-lg bg-[#F5F7FA] dark:bg-[#171D26] border border-[#DDE3EA] dark:border-[#252B34] flex items-center justify-between text-rose-700 dark:text-rose-400">
-          <span className="text-[#697586] dark:text-[#929BA9] font-sans text-[11px]">Hari Loss:</span>
-          <strong>{dailySummary.lossDays} Hari</strong>
-        </div>
-        <div className="p-2.5 rounded-lg bg-[#F5F7FA] dark:bg-[#171D26] border border-[#DDE3EA] dark:border-[#252B34] flex items-center justify-between text-[#151D2A] dark:text-[#F2F5F9]">
-          <span className="text-[#697586] dark:text-[#929BA9] font-sans text-[11px]">Hari BE:</span>
-          <strong>{dailySummary.breakevenDays} Hari</strong>
-        </div>
-        <div className="p-2.5 rounded-lg bg-[#F5F7FA] dark:bg-[#171D26] border border-[#DDE3EA] dark:border-[#252B34] flex items-center justify-between text-[#151D2A] dark:text-[#F2F5F9]">
-          <span className="text-[#697586] dark:text-[#929BA9] font-sans text-[11px]">Win Rate Hari:</span>
-          <strong>{dailySummary.dayWinRate}%</strong>
-        </div>
-      </div>
-
-      {/* TAB 1: CALENDAR HEATMAP GRID VIEW */}
+      {/* TAB 1: SEAMLESS CALENDAR GRID VIEW */}
       {activeTab === 'calendar' && (
         <div className="space-y-3">
           {/* Month Navigator Toolbar */}
-          <div className="flex items-center justify-between p-2 rounded-lg bg-[#F5F7FA] dark:bg-[#171D26] border border-[#DDE3EA] dark:border-[#252B34] text-xs">
+          <div className="flex items-center justify-between py-2 border-y border-[#DDE3EA] dark:border-white/[0.06] text-xs">
             <button
               type="button"
               onClick={handlePrevMonth}
-              disabled={availableMonths.indexOf(activeMonth) <= 0}
-              className="p-1 rounded text-[#697586] dark:text-[#929BA9] hover:text-[#151D2A] dark:hover:text-[#F2F5F9] disabled:opacity-30 cursor-pointer"
+              className="p-1.5 rounded-full text-[#697586] dark:text-[#8E98A8] hover:text-[#151D2A] dark:hover:text-[#F2F5F9] hover:bg-black/[0.04] dark:hover:bg-white/[0.04] cursor-pointer transition-colors"
               title="Bulan sebelumnya"
               aria-label="Bulan sebelumnya"
             >
               <ChevronLeft className="h-4 w-4 stroke-[1.75]" />
             </button>
-            <div className="font-semibold text-[#151D2A] dark:text-[#F2F5F9] font-mono-numbers tabular-nums">
+            <div className="font-bold text-xs sm:text-sm text-[#151D2A] dark:text-[#F2F5F9] tabular-nums tracking-wide">
               <span>{activeMonth}</span>
             </div>
             <button
               type="button"
               onClick={handleNextMonth}
-              disabled={availableMonths.indexOf(activeMonth) >= availableMonths.length - 1}
-              className="p-1 rounded text-[#697586] dark:text-[#929BA9] hover:text-[#151D2A] dark:hover:text-[#F2F5F9] disabled:opacity-30 cursor-pointer"
+              className="p-1.5 rounded-full text-[#697586] dark:text-[#8E98A8] hover:text-[#151D2A] dark:hover:text-[#F2F5F9] hover:bg-black/[0.04] dark:hover:bg-white/[0.04] cursor-pointer transition-colors"
               title="Bulan berikutnya"
               aria-label="Bulan berikutnya"
             >
@@ -302,169 +313,167 @@ export const PerformanceCalendar: React.FC<PerformanceCalendarProps> = ({
             </button>
           </div>
 
-          {/* Responsive Scroll Wrapper so 7-column cells never clip P/L values on narrow viewports */}
-          <div className="overflow-x-auto pb-1">
-            <div className="min-w-[560px] sm:min-w-0 space-y-1.5">
-              {/* Days of Week Header */}
-              <div className="grid grid-cols-7 gap-1.5 text-center text-[11px] font-semibold text-[#697586] dark:text-[#929BA9]">
-                {['Sen', 'Sel', 'Rab', 'Kam', 'Jum', 'Sab', 'Min'].map((d, i) => (
-                  <div key={i} className="py-1.5 rounded bg-[#F5F7FA] dark:bg-[#171D26]">
-                    {d}
-                  </div>
-                ))}
-              </div>
+          {/* Breathable Seamless 7-Column Calendar Grid */}
+          <div className="w-full">
+            {/* Days of Week Header */}
+            <div className="grid grid-cols-7 gap-1 text-center text-[10px] sm:text-[11px] font-semibold uppercase tracking-wider text-[#697586] dark:text-[#6E7785] pb-1.5">
+              {['Sen', 'Sel', 'Rab', 'Kam', 'Jum', 'Sab', 'Min'].map((d, i) => (
+                <div key={i} className="py-1">
+                  {d}
+                </div>
+              ))}
+            </div>
 
-              {/* Calendar Day Cells */}
-              <div className="grid grid-cols-7 gap-1.5 select-none">
-                {calendarCells.map((cell, idx) => {
-                  if (cell.dayNum === null) {
-                    return (
-                      <div
-                        key={`empty-${idx}`}
-                        className="min-h-[84px] sm:min-h-[90px] rounded-xl bg-[#F5F7FA]/50 dark:bg-[#080A0E]/50 border border-transparent opacity-40"
-                      />
-                    );
-                  }
-
-                  const hasTrade = cell.perf !== null;
-                  const isProfit = hasTrade && cell.perf!.netProfit > 0;
-                  const isLoss = hasTrade && cell.perf!.netProfit < 0;
-                  const isSelected = selectedDate === cell.dateStr;
-                  const formattedCellPl = hasTrade
-                    ? `${isProfit ? '+' : ''}${formatCurrency(cell.perf!.netProfit, settings, isPrivacyMode)}`
-                    : '';
-
+            {/* Calendar Day Cells (No heavy boxes, clean hairline/hover) */}
+            <div className="grid grid-cols-7 gap-1 select-none">
+              {calendarCells.map((cell, idx) => {
+                if (cell.dayNum === null) {
                   return (
-                    <button
-                      key={cell.dateStr}
-                      type="button"
-                      onClick={() => setSelectedDate(cell.dateStr)}
-                      aria-label={
-                        hasTrade
-                          ? `Tanggal ${cell.dateStr}, ${cell.perf!.tradesCount} transaksi, Net P/L ${formattedCellPl}, Win Rate ${cell.perf!.winRate}%`
-                          : `Tanggal ${cell.dateStr}, tanpa transaksi`
-                      }
-                      className={`min-h-[84px] sm:min-h-[90px] p-2 sm:p-2.5 rounded-xl border flex flex-col justify-between items-center text-center transition-all cursor-pointer relative bg-[#F5F7FA] dark:bg-[#080A0E] ${
+                    <div
+                      key={`empty-${idx}`}
+                      className="min-h-[64px] sm:min-h-[76px]"
+                    />
+                  );
+                }
+
+                const hasTrade = cell.perf !== null;
+                const isProfit = hasTrade && cell.perf!.netProfit > 0;
+                const isLoss = hasTrade && cell.perf!.netProfit < 0;
+                const isSelected = selectedDate === cell.dateStr;
+                const formattedCellPl = hasTrade
+                  ? `${isProfit ? '+' : ''}${fmtMoney(cell.perf!.netProfit)}`
+                  : '';
+
+                return (
+                  <button
+                    key={cell.dateStr}
+                    type="button"
+                    onClick={() => handleDateClick(cell.dateStr)}
+                    aria-label={
+                      hasTrade
+                        ? `Tanggal ${cell.dateStr}, ${cell.perf!.tradesCount} transaksi, Net P/L ${formattedCellPl}, Win Rate ${cell.perf!.winRate}%`
+                        : `Tanggal ${cell.dateStr}, tanpa transaksi`
+                    }
+                    className={`min-h-[64px] sm:min-h-[76px] py-2 px-1 rounded-xl flex flex-col justify-between items-center text-center transition-all cursor-pointer relative ${
+                      isSelected
+                        ? 'bg-black/[0.06] dark:bg-white/[0.07] ring-1 ring-[#3B82F6]/60'
+                        : hasTrade
+                        ? 'hover:bg-black/[0.03] dark:hover:bg-white/[0.03]'
+                        : 'opacity-55 hover:opacity-90 hover:bg-black/[0.02] dark:hover:bg-white/[0.02]'
+                    }`}
+                  >
+                    {/* 1. Angka Tanggal */}
+                    <span
+                      className={`text-[11px] sm:text-xs leading-none tabular-nums ${
                         isSelected
-                          ? 'ring-2 ring-[#1769E8] border-[#1769E8] shadow-sm z-10'
-                          : 'border-[#DDE3EA] dark:border-[#252B34] hover:border-[#697586] dark:hover:border-[#484F58]'
+                          ? 'font-bold text-[#151D2A] dark:text-[#F2F5F9]'
+                          : hasTrade
+                          ? 'font-semibold text-[#151D2A] dark:text-[#D5DCE6]'
+                          : 'font-normal text-[#697586] dark:text-[#6E7785]'
                       }`}
                     >
-                      {/* 1. Angka Tanggal */}
-                      <span className="text-[11px] sm:text-xs leading-none font-semibold text-[#697586] dark:text-[#929BA9]">
-                        {cell.dayNum}
-                      </span>
+                      {cell.dayNum}
+                    </span>
 
-                      {/* 2. Nominal Net Profit / Loss */}
-                      {hasTrade ? (
-                        <div className="w-full my-auto flex flex-col items-center justify-center px-0.5">
-                          <span
-                            className={`block text-[10px] sm:text-[11px] md:text-xs font-bold leading-tight font-mono-numbers tabular-nums whitespace-nowrap overflow-hidden text-ellipsis ${
-                              isProfit
-                                ? 'text-[#059669] dark:text-[#34D399]'
-                                : isLoss
-                                ? 'text-[#E11D48] dark:text-[#FB7185]'
-                                : 'text-[#697586] dark:text-[#929BA9]'
-                            }`}
-                          >
-                            {formatCalendarAdaptivePnl(cell.perf!.netProfit, settings, isPrivacyMode, 'adaptive')}
-                          </span>
-                        </div>
-                      ) : (
-                        <div className="flex-1" />
-                      )}
-
-                      {/* 3. Jumlah Closed Trades */}
-                      {hasTrade ? (
-                        <span className="text-[9px] sm:text-[10px] font-medium leading-none text-[#697586] dark:text-[#929BA9] font-mono-numbers tabular-nums">
-                          {cell.perf!.tradesCount}T
+                    {/* 2. Nominal Net Profit / Loss */}
+                    {hasTrade ? (
+                      <div className="w-full my-auto flex flex-col items-center justify-center px-0.5">
+                        <span
+                          className={`block text-[10px] sm:text-[11px] font-bold leading-tight tabular-nums whitespace-nowrap overflow-hidden text-ellipsis max-w-full ${
+                            isProfit
+                              ? 'text-[#00A878]'
+                              : isLoss
+                              ? 'text-[#E05260]'
+                              : 'text-[#697586] dark:text-[#8E98A8]'
+                          }`}
+                        >
+                          {preferredCurrency === 'IDR'
+                            ? formatCalendarAdaptivePnl(cell.perf!.netProfit, settings, isPrivacyMode, 'compact')
+                            : formatCalendarAdaptivePnl(cell.perf!.netProfit, settings, isPrivacyMode, 'adaptive')}
                         </span>
-                      ) : (
-                        <span className="h-2.5" />
-                      )}
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-          </div>
+                      </div>
+                    ) : (
+                      <div className="flex-1" />
+                    )}
 
-          {/* Heatmap Legend */}
-          <div className="pt-2 flex flex-wrap items-center justify-between gap-2 text-[11px] text-[#697586] dark:text-[#929BA9] border-t border-[#DDE3EA] dark:border-[#252B34]">
-            <div className="flex flex-wrap items-center gap-3">
-              <div className="flex items-center gap-1.5">
-                <span className="font-semibold text-[#059669] dark:text-[#34D399]">+PnL</span>
-                <span>Profit</span>
-              </div>
-              <div className="flex items-center gap-1.5">
-                <span className="font-semibold text-[#E11D48] dark:text-[#FB7185]">-PnL</span>
-                <span>Loss</span>
-              </div>
-              <div className="flex items-center gap-1.5">
-                <span className="font-semibold text-[#697586] dark:text-[#929BA9]">0</span>
-                <span>Breakeven</span>
-              </div>
-              <div className="flex items-center gap-1.5">
-                <span className="h-2.5 w-2.5 rounded-sm bg-[#DDE3EA] dark:bg-[#252B34]" />
-                <span>Tanpa Transaksi (Bukan Rugi)</span>
-              </div>
+                    {/* 3. Jumlah Closed Trades (Secondary Info) */}
+                    {hasTrade ? (
+                      <span className="text-[9px] sm:text-[10px] font-normal leading-none text-[#697586] dark:text-[#6E7785] tabular-nums">
+                        {cell.perf!.tradesCount}T
+                      </span>
+                    ) : (
+                      <span className="h-2.5" />
+                    )}
+
+                    {/* Subtle bottom active bar on selected date */}
+                    {isSelected && (
+                      <span className="absolute bottom-1 h-0.5 w-4 rounded-full bg-[#3B82F6]" />
+                    )}
+                  </button>
+                );
+              })}
             </div>
-            <span className="text-[10px] text-[#697586] dark:text-[#929BA9]">
-              Klik tanggal mana pun untuk melihat daftar transaksi hari tersebut
-            </span>
           </div>
         </div>
       )}
 
-      {/* TAB 2: DETAILED DAILY LIST VIEW */}
+      {/* TAB 2: DETAILED DAILY LIST VIEW (HAIRLINE DIVIDED ROWS) */}
       {activeTab === 'daily' && (
-        <div className="space-y-3">
+        <div>
           {dailyPerformance.length === 0 ? (
-            <p className="py-8 text-center text-xs text-[#697586] dark:text-[#929BA9]">Belum ada catatan trade harian.</p>
+            <p className="py-8 text-center text-xs text-[#697586] dark:text-[#7D8796]">
+              Belum ada catatan trade harian pada periode ini.
+            </p>
           ) : (
-            <div className="max-h-[340px] overflow-y-auto space-y-2 pr-1">
+            <div className="max-h-[360px] overflow-y-auto divide-y divide-[#DDE3EA] dark:divide-white/[0.06] border-y border-[#DDE3EA] dark:border-white/[0.06]">
               {dailyPerformance.slice().reverse().map((day) => {
-                const isProfit = day.netProfit >= 0;
+                const isProfit = day.netProfit > 0;
+                const isLoss = day.netProfit < 0;
                 const barWidth = Math.min(100, (Math.abs(day.netProfit) / maxDailyProfit) * 100);
+                const isSelected = selectedDate === day.date;
 
                 return (
                   <button
                     key={day.date}
                     type="button"
-                    onClick={() => setSelectedDate(day.date)}
-                    className="w-full text-left flex flex-col sm:flex-row sm:items-center justify-between p-2.5 rounded-lg bg-[#F5F7FA] dark:bg-[#171D26] border border-[#DDE3EA] dark:border-[#252B34] hover:border-[#1769E8] transition-colors gap-2 cursor-pointer focus-visible:outline-2 focus-visible:outline-[#1769E8]"
+                    onClick={() => handleDateClick(day.date)}
+                    className={`w-full text-left flex items-center justify-between py-3 px-2 transition-colors gap-3 cursor-pointer ${
+                      isSelected
+                        ? 'bg-black/[0.04] dark:bg-white/[0.05]'
+                        : 'hover:bg-black/[0.02] dark:hover:bg-white/[0.02]'
+                    }`}
                   >
-                    <div className="flex items-center gap-3">
-                      <div
-                        className={`p-1.5 rounded-md bg-white dark:bg-[#11151B] border border-[#DDE3EA] dark:border-[#252B34] ${
-                          isProfit
-                            ? 'text-emerald-600 dark:text-emerald-400'
-                            : 'text-rose-600 dark:text-rose-400'
-                        }`}
-                      >
-                        {isProfit ? <TrendingUp className="h-4 w-4 stroke-[1.75]" /> : <TrendingDown className="h-4 w-4 stroke-[1.75]" />}
+                    <div className="min-w-0">
+                      <div className="tabular-nums text-xs font-bold text-[#151D2A] dark:text-[#F2F5F9]">
+                        {day.date}
                       </div>
-                      <div>
-                        <div className="font-mono-numbers tabular-nums text-xs font-semibold text-[#151D2A] dark:text-[#F2F5F9]">
-                          {day.date}
-                        </div>
-                        <div className="text-[11px] text-[#697586] dark:text-[#929BA9]">
-                          {day.tradesCount} Trade ({day.winningTrades}W - {day.losingTrades}L - {day.breakevenTrades}BE) • Win Rate: {day.winRate}%
-                        </div>
+                      <div className="text-[11px] text-[#697586] dark:text-[#7D8796] tabular-nums mt-0.5">
+                        {day.tradesCount} Trade ({day.winningTrades}W · {day.losingTrades}L · {day.breakevenTrades}BE) · Win Rate {day.winRate}%
                       </div>
                     </div>
 
-                    <div className="flex items-center justify-between sm:justify-end gap-3 w-full sm:w-auto">
-                      <div className="hidden md:block w-24 h-2 bg-[#DDE3EA] dark:bg-[#252B34] rounded-full overflow-hidden">
+                    <div className="flex items-center gap-3 shrink-0">
+                      <div className="hidden sm:block w-20 h-1.5 bg-[#DDE3EA] dark:bg-white/[0.07] rounded-full overflow-hidden">
                         <div
-                          className={`h-full rounded-full ${isProfit ? 'bg-emerald-500' : 'bg-rose-500'}`}
+                          className={`h-full rounded-full ${
+                            isProfit ? 'bg-[#00A878]' : isLoss ? 'bg-[#E05260]' : 'bg-[#7D8796]'
+                          }`}
                           style={{ width: `${barWidth}%` }}
                         />
                       </div>
 
-                      <div className="font-mono-numbers tabular-nums text-sm font-bold text-right">
-                        <span className={isProfit ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'}>
-                          {isProfit ? '+' : ''}{formatCurrency(day.netProfit, settings, isPrivacyMode)}
+                      <div className="tabular-nums text-xs sm:text-sm font-bold text-right">
+                        <span
+                          className={
+                            isProfit
+                              ? 'text-[#00A878]'
+                              : isLoss
+                              ? 'text-[#E05260]'
+                              : 'text-[#697586] dark:text-[#8E98A8]'
+                          }
+                        >
+                          {isProfit ? '+' : ''}
+                          {fmtMoney(day.netProfit)}
                         </span>
                       </div>
                     </div>
@@ -476,41 +485,44 @@ export const PerformanceCalendar: React.FC<PerformanceCalendarProps> = ({
         </div>
       )}
 
-      {/* TAB 3: MONTHLY PERFORMANCE SUMMARY */}
+      {/* TAB 3: MONTHLY PERFORMANCE SUMMARY (HAIRLINE DIVIDED LIST) */}
       {activeTab === 'monthly' && (
-        <div className="space-y-3">
+        <div>
           {monthlyPerformance.length === 0 ? (
-            <p className="py-8 text-center text-xs text-[#697586] dark:text-[#929BA9]">Belum ada data bulanan.</p>
+            <p className="py-8 text-center text-xs text-[#697586] dark:text-[#7D8796]">
+              Belum ada data bulanan pada periode ini.
+            </p>
           ) : (
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+            <div className="divide-y divide-[#DDE3EA] dark:divide-white/[0.06] border-y border-[#DDE3EA] dark:border-white/[0.06]">
               {monthlyPerformance.slice().reverse().map((m) => {
-                const isProfit = m.netProfit >= 0;
+                const isProfit = m.netProfit > 0;
+                const isLoss = m.netProfit < 0;
                 return (
                   <div
                     key={m.monthKey}
-                    className="p-3.5 rounded-lg bg-[#F5F7FA] dark:bg-[#171D26] border border-[#DDE3EA] dark:border-[#252B34] transition-colors"
+                    className="py-3 px-2 flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs tabular-nums"
                   >
-                    <div className="flex items-center justify-between pb-2 border-b border-[#DDE3EA] dark:border-[#252B34]">
-                      <span className="font-semibold text-[#151D2A] dark:text-[#F2F5F9] text-xs">{m.label}</span>
-                      <span className="text-[11px] text-[#697586] dark:text-[#929BA9]">{m.tradesCount} Trade Selesai</span>
+                    <div>
+                      <span className="font-bold text-[#151D2A] dark:text-[#F2F5F9] block">
+                        {m.label}
+                      </span>
+                      <span className="text-[11px] text-[#697586] dark:text-[#7D8796]">
+                        {m.tradesCount} Trade · Win Rate {m.winRate}%
+                      </span>
                     </div>
 
-                    <div className="mt-2.5 space-y-1.5 font-mono-numbers tabular-nums text-xs">
-                      <div className="flex justify-between">
-                        <span className="text-[#697586] dark:text-[#929BA9]">Net Profit:</span>
-                        <span className={`font-bold ${isProfit ? 'text-emerald-700 dark:text-emerald-400' : 'text-rose-700 dark:text-rose-400'}`}>
-                          {isProfit ? '+' : ''}{formatCurrency(m.netProfit, settings, isPrivacyMode)}
-                        </span>
-                      </div>
-                      <div className="flex justify-between">
-                        <span className="text-[#697586] dark:text-[#929BA9]">Return:</span>
+                    <div className="flex items-center gap-4 sm:gap-6">
+                      <div className="text-left sm:text-right">
+                        <span className="text-[10px] text-[#697586] dark:text-[#7D8796] block">Return</span>
                         <span
                           className={`font-semibold ${
                             settings.startingBalance <= 0
-                              ? 'text-[#697586] dark:text-[#929BA9]'
+                              ? 'text-[#697586] dark:text-[#7D8796]'
                               : isProfit
-                              ? 'text-emerald-700 dark:text-emerald-400'
-                              : 'text-rose-700 dark:text-rose-400'
+                              ? 'text-[#00A878]'
+                              : isLoss
+                              ? 'text-[#E05260]'
+                              : 'text-[#151D2A] dark:text-[#F2F5F9]'
                           }`}
                         >
                           {settings.startingBalance <= 0
@@ -518,9 +530,21 @@ export const PerformanceCalendar: React.FC<PerformanceCalendarProps> = ({
                             : `${isProfit ? '+' : ''}${m.gainPercent}%`}
                         </span>
                       </div>
-                      <div className="flex justify-between">
-                        <span className="text-[#697586] dark:text-[#929BA9]">Win Rate:</span>
-                        <span className="text-[#151D2A] dark:text-[#F2F5F9] font-semibold">{m.winRate}%</span>
+
+                      <div className="text-right min-w-[96px]">
+                        <span className="text-[10px] text-[#697586] dark:text-[#7D8796] block">Net P/L</span>
+                        <span
+                          className={`font-bold text-xs sm:text-sm ${
+                            isProfit
+                              ? 'text-[#00A878]'
+                              : isLoss
+                              ? 'text-[#E05260]'
+                              : 'text-[#151D2A] dark:text-[#F2F5F9]'
+                          }`}
+                        >
+                          {isProfit ? '+' : ''}
+                          {fmtMoney(m.netProfit)}
+                        </span>
                       </div>
                     </div>
                   </div>
@@ -531,219 +555,157 @@ export const PerformanceCalendar: React.FC<PerformanceCalendarProps> = ({
         </div>
       )}
 
-      {/* DAILY TRADE DETAILS MODAL (READ-ONLY) */}
+      {/* INLINE BLACK SMOKED GLASS DAILY DETAIL PANEL (APPEARS WHEN A DATE IS CLICKED) */}
       {selectedDate !== null && (
         <div
-          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs"
-          onClick={() => setSelectedDate(null)}
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="calendar-date-modal-title"
+          className="rounded-2xl border border-[#DDE3EA] dark:border-white/[0.08] bg-white/95 dark:bg-[#0D1015]/90 backdrop-blur-md p-4 space-y-3.5 transition-all duration-200 animate-in fade-in slide-in-from-top-2"
+          role="region"
+          aria-label={`Rincian tanggal ${selectedDate}`}
         >
-          <div
-            className="w-full max-w-2xl max-h-[85vh] flex flex-col rounded-xl bg-white dark:bg-[#11151B] border border-[#DDE3EA] dark:border-[#252B34] overflow-hidden"
-            onClick={(e) => e.stopPropagation()}
-          >
-            {/* Modal Header */}
-            <div className="flex items-center justify-between px-4 py-3.5 border-b border-[#DDE3EA] dark:border-[#252B34]">
-              <div>
-                <h4
-                  id="calendar-date-modal-title"
-                  className="text-sm font-bold text-[#151D2A] dark:text-[#F2F5F9] font-mono-numbers tabular-nums"
-                >
-                  Rincian Transaksi — {selectedDate}
-                </h4>
-                <p className="text-[11px] text-[#697586] dark:text-[#929BA9]">
-                  {selectedDateTrades.length > 0
-                    ? `${selectedDateTrades.length} transaksi tercatat pada tanggal ini`
-                    : 'Tidak ada transaksi tercatat pada tanggal ini'}
-                </p>
-              </div>
-
-              <button
-                type="button"
-                onClick={() => setSelectedDate(null)}
-                className="p-1.5 rounded-lg text-[#697586] dark:text-[#929BA9] hover:text-[#151D2A] dark:hover:text-[#F2F5F9] hover:bg-[#F5F7FA] dark:hover:bg-[#171D26] transition-colors cursor-pointer"
-                aria-label="Tutup rincian tanggal"
-              >
-                <X className="h-4 w-4 stroke-[1.75]" />
-              </button>
+          {/* Detail Header */}
+          <div className="flex items-center justify-between pb-2.5 border-b border-[#DDE3EA] dark:border-white/[0.06]">
+            <div>
+              <h4 className="text-xs sm:text-sm font-bold text-[#151D2A] dark:text-[#F2F5F9] tabular-nums">
+                Detail Performa Harian — {selectedDate}
+              </h4>
+              <p className="text-[11px] text-[#697586] dark:text-[#7D8796]">
+                {selectedDateTrades.length > 0
+                  ? `${selectedDateTrades.length} transaksi tercatat`
+                  : 'Tidak ada transaksi pada tanggal ini'}
+              </p>
             </div>
 
-            {/* Daily Summary Strip (when trades exist) */}
-            {selectedDayPerf && (
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 px-4 py-3 bg-[#F5F7FA] dark:bg-[#171D26] border-b border-[#DDE3EA] dark:border-[#252B34] text-xs font-mono-numbers tabular-nums">
-                <div>
-                  <span className="block text-[10px] font-sans text-[#697586] dark:text-[#929BA9]">
-                    Net P/L Harian
-                  </span>
-                  <strong
-                    className={`text-sm font-bold ${
-                      selectedDayPerf.netProfit > 0
-                        ? 'text-emerald-600 dark:text-emerald-400'
-                        : selectedDayPerf.netProfit < 0
-                        ? 'text-rose-600 dark:text-rose-400'
-                        : 'text-[#151D2A] dark:text-[#F2F5F9]'
-                    }`}
-                  >
-                    {selectedDayPerf.netProfit > 0 ? '+' : ''}
-                    {formatCurrency(selectedDayPerf.netProfit, settings, isPrivacyMode)}
-                  </strong>
-                </div>
-                <div>
-                  <span className="block text-[10px] font-sans text-[#697586] dark:text-[#929BA9]">
-                    Jumlah Transaksi
-                  </span>
-                  <strong className="text-sm font-bold text-[#151D2A] dark:text-[#F2F5F9]">
-                    {selectedDayPerf.tradesCount} Trade
-                  </strong>
-                </div>
-                <div>
-                  <span className="block text-[10px] font-sans text-[#697586] dark:text-[#929BA9]">
-                    Distribusi Hasil
-                  </span>
-                  <strong className="text-sm font-bold text-[#151D2A] dark:text-[#F2F5F9]">
-                    {selectedDayPerf.winningTrades}W / {selectedDayPerf.losingTrades}L / {selectedDayPerf.breakevenTrades}BE
-                  </strong>
-                </div>
-                <div>
-                  <span className="block text-[10px] font-sans text-[#697586] dark:text-[#929BA9]">
-                    Win Rate Harian
-                  </span>
-                  <strong className="text-sm font-bold text-[#151D2A] dark:text-[#F2F5F9]">
-                    {selectedDayPerf.winRate}%
-                  </strong>
-                </div>
-              </div>
-            )}
+            <button
+              type="button"
+              onClick={() => setSelectedDate(null)}
+              className="p-1.5 rounded-full text-[#697586] dark:text-[#8E98A8] hover:text-[#151D2A] dark:hover:text-[#F2F5F9] hover:bg-black/[0.04] dark:hover:bg-white/[0.06] transition-colors cursor-pointer"
+              aria-label="Tutup rincian tanggal"
+            >
+              <X className="h-4 w-4 stroke-[1.75]" />
+            </button>
+          </div>
 
-            {/* Modal Body: Trade List or Empty State */}
-            <div className="p-4 overflow-y-auto space-y-2.5 flex-1">
-              {selectedDateTrades.length === 0 ? (
-                <div className="py-10 text-center space-y-2">
-                  <p className="text-xs font-semibold text-[#151D2A] dark:text-[#F2F5F9]">
-                    Tidak ada aktivitas trading pada {selectedDate}
-                  </p>
-                  <p className="text-[11px] text-[#697586] dark:text-[#929BA9]">
-                    Hari tanpa transaksi tidak memengaruhi perhitungan win rate maupun drawdown akun.
-                  </p>
-                </div>
-              ) : (
-                selectedDateTrades.map((trade) => {
-                  const netPl = computeTradeNetProfit(trade);
-                  const outcome = resolveTradeOutcome(trade);
-                  const rMultiple = computeRealizedRMultiple(trade);
-                  const timePart = (trade.dateTime || '').slice(11, 16) || '--:--';
-                  const isBuy = trade.position === 'BUY';
-
-                  return (
-                    <div
-                      key={trade.id}
-                      className="p-3 rounded-lg bg-[#F5F7FA] dark:bg-[#171D26] border border-[#DDE3EA] dark:border-[#252B34] flex flex-col sm:flex-row sm:items-center justify-between gap-3"
-                    >
-                      <div className="space-y-1 min-w-0">
-                        <div className="flex flex-wrap items-center gap-2 text-xs">
-                          <span className="font-mono-numbers tabular-nums font-bold text-[#151D2A] dark:text-[#F2F5F9]">
-                            {trade.instrument || 'XAUUSD'}
-                          </span>
-                          <span
-                            className={`inline-flex items-center gap-0.5 font-mono-numbers tabular-nums text-[11px] font-bold ${
-                              isBuy
-                                ? 'text-emerald-600 dark:text-emerald-400'
-                                : 'text-rose-600 dark:text-rose-400'
-                            }`}
-                          >
-                            {isBuy ? (
-                              <ArrowUpRight className="h-3 w-3 stroke-[2]" />
-                            ) : (
-                              <ArrowDownRight className="h-3 w-3 stroke-[2]" />
-                            )}
-                            {trade.position}
-                          </span>
-                          <span className="font-mono-numbers tabular-nums text-[11px] text-[#697586] dark:text-[#929BA9]">
-                            {trade.lotSize} Lot
-                          </span>
-                          <span className="inline-flex items-center gap-1 text-[11px] text-[#697586] dark:text-[#929BA9] font-mono-numbers tabular-nums">
-                            <Clock className="h-3 w-3 stroke-[1.75]" />
-                            {timePart}
-                          </span>
-                          <span className="text-[10px] font-mono-numbers tabular-nums px-1.5 py-0.5 rounded bg-white dark:bg-[#11151B] border border-[#DDE3EA] dark:border-[#252B34] text-[#697586] dark:text-[#929BA9]">
-                            {trade.id}
-                          </span>
-                        </div>
-
-                        <div className="flex flex-wrap items-center gap-2 text-[11px] text-[#697586] dark:text-[#929BA9]">
-                          {trade.session && <span>Sesi: {trade.session}</span>}
-                          {trade.strategy && (
-                            <>
-                              <span>•</span>
-                              <span>Strategi: {trade.strategy}</span>
-                            </>
-                          )}
-                          <span>•</span>
-                          <span className="font-mono-numbers tabular-nums">
-                            Realized R:{' '}
-                            <strong className="text-[#151D2A] dark:text-[#F2F5F9]">
-                              {rMultiple !== null ? formatRMultiple(rMultiple, true) : 'N/A'}
-                            </strong>
-                          </span>
-                        </div>
-                      </div>
-
-                      <div className="flex items-center justify-between sm:justify-end gap-3 shrink-0 pt-2 sm:pt-0 border-t sm:border-t-0 border-[#DDE3EA] dark:border-[#252B34]">
-                        <div className="text-left sm:text-right font-mono-numbers tabular-nums">
-                          <div
-                            className={`text-sm font-bold ${
-                              netPl > 0
-                                ? 'text-emerald-600 dark:text-emerald-400'
-                                : netPl < 0
-                                ? 'text-rose-600 dark:text-rose-400'
-                                : 'text-[#151D2A] dark:text-[#F2F5F9]'
-                            }`}
-                          >
-                            {netPl > 0 ? '+' : ''}
-                            {formatCurrency(netPl, settings, isPrivacyMode)}
-                          </div>
-                          <div className="text-[10px] text-[#697586] dark:text-[#929BA9]">
-                            Status: {outcome}
-                          </div>
-                        </div>
-
-                        {onViewTrade && (
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setSelectedDate(null);
-                              onViewTrade(trade);
-                            }}
-                            className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-white dark:bg-[#11151B] border border-[#DDE3EA] dark:border-[#252B34] hover:border-[#1769E8] text-xs font-medium text-[#151D2A] dark:text-[#F2F5F9] transition-colors cursor-pointer"
-                          >
-                            <Eye className="h-3.5 w-3.5 stroke-[1.75] text-[#1769E8]" />
-                            <span>Lihat Detail</span>
-                          </button>
-                        )}
-                      </div>
-                    </div>
-                  );
-                })
-              )}
+          {/* 4 Required Daily Metrics: Tanggal, Net Profit/Loss, Jumlah Transaksi, Win Rate */}
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 pb-3 border-b border-[#DDE3EA] dark:border-white/[0.06] text-xs tabular-nums">
+            <div>
+              <span className="block text-[10px] uppercase tracking-wider text-[#697586] dark:text-[#7D8796]">
+                Tanggal
+              </span>
+              <strong className="mt-0.5 block text-xs sm:text-sm font-bold text-[#151D2A] dark:text-[#F2F5F9]">
+                {selectedDate}
+              </strong>
             </div>
-
-            {/* Modal Footer */}
-            <div className="px-4 py-3 border-t border-[#DDE3EA] dark:border-[#252B34] bg-[#F5F7FA] dark:bg-[#171D26] flex items-center justify-between text-[11px] text-[#697586] dark:text-[#929BA9]">
-              <span>Mode baca saja (Read-only)</span>
-              <button
-                type="button"
-                onClick={() => setSelectedDate(null)}
-                className="px-3 py-1.5 rounded-lg bg-white dark:bg-[#11151B] border border-[#DDE3EA] dark:border-[#252B34] hover:border-[#1769E8] text-[#151D2A] dark:text-[#F2F5F9] font-medium text-xs transition-colors cursor-pointer"
+            <div>
+              <span className="block text-[10px] uppercase tracking-wider text-[#697586] dark:text-[#7D8796]">
+                Net Profit / Loss
+              </span>
+              <strong
+                className={`mt-0.5 block text-xs sm:text-sm font-bold ${
+                  selectedDayPerf && selectedDayPerf.netProfit > 0
+                    ? 'text-[#00A878]'
+                    : selectedDayPerf && selectedDayPerf.netProfit < 0
+                    ? 'text-[#E05260]'
+                    : 'text-[#151D2A] dark:text-[#F2F5F9]'
+                }`}
               >
-                Tutup
-              </button>
+                {selectedDayPerf
+                  ? `${selectedDayPerf.netProfit > 0 ? '+' : ''}${fmtMoney(selectedDayPerf.netProfit)}`
+                  : fmtMoney(0)}
+              </strong>
+            </div>
+            <div>
+              <span className="block text-[10px] uppercase tracking-wider text-[#697586] dark:text-[#7D8796]">
+                Jumlah Transaksi
+              </span>
+              <strong className="mt-0.5 block text-xs sm:text-sm font-bold text-[#151D2A] dark:text-[#F2F5F9]">
+                {selectedDayPerf ? `${selectedDayPerf.tradesCount} Trade` : `${selectedDateTrades.length} Trade`}
+              </strong>
+            </div>
+            <div>
+              <span className="block text-[10px] uppercase tracking-wider text-[#697586] dark:text-[#7D8796]">
+                Win Rate Hari Ini
+              </span>
+              <strong className="mt-0.5 block text-xs sm:text-sm font-bold text-[#151D2A] dark:text-[#F2F5F9]">
+                {selectedDayPerf ? `${selectedDayPerf.winRate}%` : '0%'}
+              </strong>
             </div>
           </div>
+
+          {/* Concise Trade List for Selected Date */}
+          {selectedDateTrades.length === 0 ? (
+            <p className="py-3 text-center text-xs text-[#697586] dark:text-[#7D8796]">
+              Hari tanpa transaksi tidak memengaruhi perhitungan win rate maupun drawdown.
+            </p>
+          ) : (
+            <div className="divide-y divide-[#DDE3EA] dark:divide-white/[0.06] max-h-60 overflow-y-auto">
+              {selectedDateTrades.map((trade) => {
+                const netPl = computeTradeNetProfit(trade);
+                const outcome = resolveTradeOutcome(trade);
+                const rMultiple = computeRealizedRMultiple(trade);
+                const timePart = (trade.dateTime || '').slice(11, 16) || '--:--';
+                const isBuy = trade.position === 'BUY';
+
+                return (
+                  <div
+                    key={trade.id}
+                    onClick={() => onViewTrade && onViewTrade(trade)}
+                    className={`py-2.5 px-1 flex items-center justify-between gap-3 text-xs tabular-nums transition-colors ${
+                      onViewTrade
+                        ? 'cursor-pointer hover:bg-black/[0.02] dark:hover:bg-white/[0.03]'
+                        : ''
+                    }`}
+                  >
+                    <div className="min-w-0 space-y-0.5">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="font-bold text-[#151D2A] dark:text-[#F2F5F9]">
+                          {trade.instrument || 'XAUUSD'}
+                        </span>
+                        <span
+                          className={`text-[11px] font-bold ${
+                            isBuy ? 'text-[#00A878]' : 'text-[#E05260]'
+                          }`}
+                        >
+                          {trade.position}
+                        </span>
+                        <span className="text-[11px] text-[#697586] dark:text-[#8E98A8]">
+                          {trade.lotSize} Lot
+                        </span>
+                        <span className="inline-flex items-center gap-1 text-[11px] text-[#697586] dark:text-[#7D8796]">
+                          <Clock className="h-3 w-3 stroke-[1.75]" />
+                          {timePart}
+                        </span>
+                      </div>
+                      <div className="text-[11px] text-[#697586] dark:text-[#7D8796]">
+                        {trade.session ? `${trade.session} · ` : ''}
+                        Realized R: {rMultiple !== null ? formatRMultiple(rMultiple, true) : 'N/A'} · {outcome}
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-2.5 shrink-0">
+                      <div
+                        className={`text-xs sm:text-sm font-bold text-right ${
+                          netPl > 0
+                            ? 'text-[#00A878]'
+                            : netPl < 0
+                            ? 'text-[#E05260]'
+                            : 'text-[#151D2A] dark:text-[#F2F5F9]'
+                        }`}
+                      >
+                        {preferredCurrency === 'IDR'
+                          ? formatTradeFinancial(trade, 'netProfit', isPrivacyMode, true)
+                          : `${netPl > 0 ? '+' : ''}${formatCurrency(netPl, settings, isPrivacyMode)}`}
+                      </div>
+                      {onViewTrade && (
+                        <Eye className="h-3.5 w-3.5 text-[#697586] dark:text-[#8E98A8]" />
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
         </div>
       )}
     </div>
   );
 };
-

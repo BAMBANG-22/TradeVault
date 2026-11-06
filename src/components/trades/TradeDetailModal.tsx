@@ -29,6 +29,11 @@ import {
   TradeLifecycleMeta,
 } from '../../utils/tradeLifecycle';
 import {
+  getCachedUsdIdrRate,
+  getCurrentUsdIdrSnapshot,
+  useGlobalCurrency,
+} from '../../utils/currencyRate';
+import {
   ArrowLeft,
   Edit2,
   Trash2,
@@ -77,6 +82,7 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
   onViewScreenshot,
   onSaveTradeUpdate,
 }) => {
+  const { preferredCurrency, formatDynamic, formatTradeFinancial } = useGlobalCurrency();
   // 5 Collapsible Accordion States
   const [openSections, setOpenSections] = useState<{
     plan: boolean;
@@ -150,11 +156,15 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
         type: 'POSITION_CLOSED',
         timestamp: trade.updatedAt || trade.dateTime,
         label: 'Position Closed',
-        newValue: `Outcome: ${trade.outcome} • Net P/L: ${formatCurrency(trade.netProfit, settings)}`,
+        newValue: `Outcome: ${trade.outcome} • Net P/L: ${
+          preferredCurrency === 'IDR'
+            ? formatTradeFinancial(trade, 'netProfit', false, true)
+            : formatCurrency(trade.netProfit, settings)
+        }`,
       });
     }
     return fallbackEvents;
-  }, [resolved, trade, settings]);
+  }, [resolved, trade, settings, preferredCurrency, formatTradeFinancial]);
 
   useEffect(() => {
     if (!trade || !resolved) return;
@@ -573,6 +583,7 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
               : new Date().toISOString(),
           overrideNetProfit:
             overrideNet !== undefined && !isNaN(overrideNet) ? overrideNet : undefined,
+          closeExchangeRate: getCurrentUsdIdrSnapshot(getCachedUsdIdrRate()),
           settings,
         });
       }
@@ -714,8 +725,9 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
                       : 'text-[#151D2A] dark:text-[#F2F5F9]'
                   }`}
                 >
-                  {isProfit ? '+' : ''}
-                  {formatCurrency(trade.netProfit, settings)}
+                  {preferredCurrency === 'IDR'
+                    ? formatTradeFinancial(trade, 'netProfit', false, true)
+                    : `${isProfit ? '+' : ''}${formatCurrency(trade.netProfit, settings)}`}
                 </div>
                 {realizedR !== null && (
                   <span className="text-xs font-mono-numbers tabular-nums text-[#697586] dark:text-[#929BA9]">
@@ -1123,18 +1135,24 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
 
             <div className="p-3 rounded-lg bg-[#F5F7FA] dark:bg-[#171D26] border border-[#DDE3EA] dark:border-[#252B34]">
               <span className="block text-[10px] uppercase text-[#697586] dark:text-[#929BA9] font-sans">
-                Risk / Reward ($)
+                Risk / Reward ({preferredCurrency === 'IDR' ? 'Rp' : '$'})
               </span>
               <span className="mt-0.5 block font-semibold text-xs">
                 <span className="text-rose-600 dark:text-rose-400">
                   {planLotMetrics.riskAmount !== null
-                    ? formatCurrency(planLotMetrics.riskAmount, settings)
+                    ? preferredCurrency === 'IDR'
+                      ? formatDynamic(planLotMetrics.riskAmount)
+                      : formatCurrency(planLotMetrics.riskAmount, settings)
+                    : preferredCurrency === 'IDR'
+                    ? formatDynamic(trade.riskAmount)
                     : formatCurrency(trade.riskAmount, settings)}
                 </span>
                 {' / '}
                 <span className="text-emerald-600 dark:text-emerald-400">
                   {planLotMetrics.potentialProfit !== null
-                    ? formatCurrency(planLotMetrics.potentialProfit, settings)
+                    ? preferredCurrency === 'IDR'
+                      ? formatDynamic(planLotMetrics.potentialProfit)
+                      : formatCurrency(planLotMetrics.potentialProfit, settings)
                     : '-'}
                 </span>
               </span>
@@ -1297,8 +1315,9 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
                             : ''
                         }`}
                       >
-                        {isProfit ? '+' : ''}
-                        {formatCurrency(trade.netProfit, settings)}
+                        {preferredCurrency === 'IDR'
+                          ? formatTradeFinancial(trade, 'netProfit', false, true)
+                          : `${isProfit ? '+' : ''}${formatCurrency(trade.netProfit, settings)}`}
                       </span>
                     </div>
                   </>

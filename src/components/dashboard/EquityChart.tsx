@@ -11,6 +11,7 @@ import {
   computeEquityChartSeries,
   computeEquityChartAxis,
 } from '../../utils/calculations';
+import { useGlobalCurrency } from '../../utils/currencyRate';
 import { AppSettings } from '../../types/settings';
 import { TrendingUp, Layers } from 'lucide-react';
 
@@ -22,6 +23,8 @@ interface EquityChartProps {
   isPrivacyMode?: boolean;
   embedded?: boolean;
   periodControl?: React.ReactNode;
+  externalViewMode?: 'equity' | 'growth';
+  hideInternalControls?: boolean;
 }
 
 /**
@@ -221,22 +224,29 @@ export function buildSmoothSvgPath(points: ReadonlyArray<{ x: number; y: number 
 function formatCompactAxisCurrency(
   val: number,
   settings: AppSettings,
-  isPrivacyMode: boolean
+  isPrivacyMode: boolean,
+  preferredCurrency: 'USD' | 'IDR' = 'USD',
+  effectiveRate = 16250
 ): string {
   if (isPrivacyMode) {
     return '******';
   }
-  const symbol = settings?.currency === 'IDR' ? 'Rp' : settings?.currency === 'EUR' ? '€' : '$';
-  const abs = Math.abs(val);
-  const sign = val < 0 ? '-' : '';
-  if (settings?.currency === 'IDR') {
+  const isIdr = preferredCurrency === 'IDR' || settings?.currency === 'IDR';
+  const convertedVal =
+    preferredCurrency === 'IDR' && settings?.currency !== 'IDR'
+      ? Math.round(val * effectiveRate)
+      : val;
+  const symbol = isIdr ? 'Rp' : settings?.currency === 'EUR' ? '€' : '$';
+  const abs = Math.abs(convertedVal);
+  const sign = convertedVal < 0 ? '-' : '';
+  if (isIdr) {
     if (abs >= 1_000_000_000) {
       return `${sign}${symbol}${(abs / 1_000_000_000).toFixed(1)}M`;
     }
     if (abs >= 1_000_000) {
       return `${sign}${symbol}${(abs / 1_000_000).toFixed(1)}jt`;
     }
-    return formatCurrency(val, settings, false);
+    return `${sign}Rp ${Math.round(abs).toLocaleString('id-ID')}`;
   }
   if (abs >= 1_000_000) {
     return `${sign}${symbol}${(abs / 1_000_000).toFixed(2)}M`;
@@ -255,10 +265,15 @@ export const EquityChart: React.FC<EquityChartProps> = ({
   isPrivacyMode = false,
   embedded = false,
   periodControl,
+  externalViewMode,
+  hideInternalControls = false,
 }) => {
+  const { preferredCurrency, effectiveRate, formatDynamic } = useGlobalCurrency();
   const [hoveredPoint, setHoveredPoint] = useState<EquityPoint | null>(null);
   const [tooltipPlacement, setTooltipPlacement] = useState<DynamicTooltipPlacement | null>(null);
-  const [viewMode, setViewMode] = useState<'equity' | 'growth'>('equity');
+  const [internalViewMode, setInternalViewMode] = useState<'equity' | 'growth'>('equity');
+  const viewMode = externalViewMode ?? internalViewMode;
+  const setViewMode = setInternalViewMode;
   const [showPeakLine, setShowPeakLine] = useState(false);
   const svgRef = useRef<SVGSVGElement | null>(null);
   const tooltipRef = useRef<HTMLDivElement | null>(null);
@@ -360,7 +375,7 @@ export const EquityChart: React.FC<EquityChartProps> = ({
       yPos,
       label:
         viewMode === 'equity'
-          ? formatCompactAxisCurrency(val, settings, isPrivacyMode)
+          ? formatCompactAxisCurrency(val, settings, isPrivacyMode, preferredCurrency, effectiveRate)
           : hasValidGrowth
           ? `${val >= 0 ? '+' : ''}${val.toFixed(1)}%`
           : 'N/A',
@@ -519,8 +534,15 @@ export const EquityChart: React.FC<EquityChartProps> = ({
   const modeSelector = (
     <div
       data-testid="equity-mode-toggle"
-      className="inline-flex items-center rounded-lg bg-[#F5F7FA] dark:bg-[#080A0E] p-1 border border-[#DDE3EA] dark:border-[#252B34] text-xs"
+      className="relative inline-flex items-center rounded-full bg-[#F5F7FA] dark:bg-[#101318] p-1 border border-[#DDE3EA] dark:border-[#20252D] text-xs select-none"
     >
+      {/* Smooth animated sliding pill indicator */}
+      <span
+        className={`absolute top-1 bottom-1 w-[calc(50%-4px)] rounded-full bg-white dark:bg-[#1F2633] transition-all duration-200 ease-out shadow-xs pointer-events-none ${
+          viewMode === 'equity' ? 'left-1' : 'left-[calc(50%)]'
+        }`}
+        aria-hidden="true"
+      />
       <button
         type="button"
         data-testid="equity-mode-saldo"
@@ -528,10 +550,10 @@ export const EquityChart: React.FC<EquityChartProps> = ({
           clearInteraction();
           setViewMode('equity');
         }}
-        className={`px-3 py-1 rounded-md font-semibold transition-colors motion-reduce:transition-none cursor-pointer whitespace-nowrap ${
+        className={`relative z-10 px-3.5 py-1 rounded-full font-semibold transition-colors duration-150 cursor-pointer whitespace-nowrap ${
           viewMode === 'equity'
-            ? 'bg-white dark:bg-[#171D26] text-[#151D2A] dark:text-[#F2F5F9] shadow-xs'
-            : 'text-[#697586] dark:text-[#929BA9] hover:text-[#151D2A] dark:hover:text-[#F2F5F9]'
+            ? 'text-[#151D2A] dark:text-[#F2F4F7]'
+            : 'text-[#697586] dark:text-[#929BA9] hover:text-[#151D2A] dark:hover:text-[#F2F4F7]'
         }`}
       >
         Saldo
@@ -543,10 +565,10 @@ export const EquityChart: React.FC<EquityChartProps> = ({
           clearInteraction();
           setViewMode('growth');
         }}
-        className={`px-3 py-1 rounded-md font-semibold transition-colors motion-reduce:transition-none cursor-pointer whitespace-nowrap ${
+        className={`relative z-10 px-3.5 py-1 rounded-full font-semibold transition-colors duration-150 cursor-pointer whitespace-nowrap ${
           viewMode === 'growth'
-            ? 'bg-white dark:bg-[#171D26] text-[#151D2A] dark:text-[#F2F5F9] shadow-xs'
-            : 'text-[#697586] dark:text-[#929BA9] hover:text-[#151D2A] dark:hover:text-[#F2F5F9]'
+            ? 'text-[#151D2A] dark:text-[#F2F4F7]'
+            : 'text-[#697586] dark:text-[#929BA9] hover:text-[#151D2A] dark:hover:text-[#F2F4F7]'
         }`}
       >
         Persen
@@ -556,9 +578,15 @@ export const EquityChart: React.FC<EquityChartProps> = ({
 
   const chartBody = (
     <>
+      {embedded && !hideInternalControls && (
+        <div className="flex flex-wrap items-center justify-between gap-3 pb-3">
+          {modeSelector}
+          {periodControl}
+        </div>
+      )}
       <div className="relative w-full overflow-hidden select-none">
         {viewMode === 'growth' && !hasValidGrowth && (
-          <div className="mb-2.5 rounded-lg bg-[#F5F7FA] dark:bg-[#171D26] border border-[#DDE3EA] dark:border-[#252B34] px-3 py-2 text-[11px] text-amber-600 dark:text-amber-400 flex items-center justify-between gap-2">
+          <div className="mb-2.5 rounded-xl bg-[#F5F7FA] dark:bg-[#101318] border border-[#DDE3EA] dark:border-[#20252D] px-3 py-2 text-[11px] text-amber-600 dark:text-amber-400 flex items-center justify-between gap-2">
             <span>
               Persentase pertumbuhan (<strong>N/A</strong>) tidak dapat dihitung karena saldo awal
               periode bernilai nol atau negatif.
@@ -569,7 +597,7 @@ export const EquityChart: React.FC<EquityChartProps> = ({
                 clearInteraction();
                 setViewMode('equity');
               }}
-              className="px-2 py-1 rounded bg-white dark:bg-[#11151B] border border-[#DDE3EA] dark:border-[#252B34] text-[#151D2A] dark:text-[#F2F5F9] font-semibold shrink-0 cursor-pointer"
+              className="px-2.5 py-1 rounded-lg bg-white dark:bg-[#0B0D10] border border-[#DDE3EA] dark:border-[#20252D] text-[#151D2A] dark:text-[#F2F4F7] font-semibold shrink-0 cursor-pointer"
             >
               Saldo
             </button>
@@ -595,8 +623,8 @@ export const EquityChart: React.FC<EquityChartProps> = ({
         >
           <defs>
             <linearGradient id="tvEquityAreaGradient" x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0%" stopColor="#1769E8" stopOpacity="0.12" />
-              <stop offset="100%" stopColor="#1769E8" stopOpacity="0.0" />
+              <stop offset="0%" stopColor="#3478DC" stopOpacity="0.08" />
+              <stop offset="100%" stopColor="#3478DC" stopOpacity="0.0" />
             </linearGradient>
           </defs>
 
@@ -609,7 +637,7 @@ export const EquityChart: React.FC<EquityChartProps> = ({
                 x2={width - padding.right}
                 y2={tick.yPos}
                 stroke="currentColor"
-                className="text-[#DDE3EA]/80 dark:text-[#252B34]"
+                className="text-[#DDE3EA]/80 dark:text-[#20252D]"
                 strokeDasharray="3 3"
                 strokeWidth="1"
               />
@@ -635,21 +663,21 @@ export const EquityChart: React.FC<EquityChartProps> = ({
               stroke="#697586"
               strokeWidth="1.25"
               strokeDasharray="4 4"
-              opacity="0.55"
+              opacity="0.45"
             />
           )}
 
-          {/* Smooth Equity Curve Line */}
+          {/* Smooth Equity Curve Line with Obsidian Blue Accent */}
           <path
             d={pathD}
             fill="none"
-            stroke="#1769E8"
+            stroke="#3478DC"
             strokeWidth="2"
             strokeLinecap="round"
             strokeLinejoin="round"
           />
 
-          {/* Active Hovered / Touched Point & Crosshair (ONLY rendered during active interaction) */}
+          {/* Active Hovered / Touched Point & Crosshair */}
           {hoveredPoint && hasExecutedTrades && (
             <g data-testid="equity-chart-active-marker">
               <line
@@ -658,19 +686,19 @@ export const EquityChart: React.FC<EquityChartProps> = ({
                 y1={padding.top}
                 x2={getX(hoveredPoint.index)}
                 y2={padding.top + innerHeight}
-                stroke="#1769E8"
+                stroke="#3478DC"
                 strokeWidth="1"
                 strokeDasharray="2 2"
-                opacity="0.65"
+                opacity="0.7"
               />
               <circle
                 data-testid="equity-chart-point-marker"
                 cx={getX(hoveredPoint.index)}
                 cy={getY(values[hoveredPoint.index] ?? values[0])}
                 r="4.5"
-                fill="#1769E8"
+                fill="#3478DC"
                 stroke="currentColor"
-                className="text-white dark:text-[#11151B]"
+                className="text-white dark:text-[#0B0D10]"
                 strokeWidth="2"
               />
             </g>
@@ -700,7 +728,7 @@ export const EquityChart: React.FC<EquityChartProps> = ({
         {/* Empty Period Notice Overlay */}
         {!hasExecutedTrades && (
           <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-            <span className="px-3 py-1 rounded-lg bg-white/90 dark:bg-[#11151B]/90 border border-[#DDE3EA] dark:border-[#252B34] text-[11px] text-[#697586] dark:text-[#929BA9]">
+            <span className="px-3.5 py-1.5 rounded-full bg-white/90 dark:bg-[#101318]/90 border border-[#DDE3EA] dark:border-[#20252D] text-[11px] text-[#697586] dark:text-[#929BA9] shadow-xs">
               Belum ada transaksi pada periode ini
             </span>
           </div>
@@ -722,22 +750,21 @@ export const EquityChart: React.FC<EquityChartProps> = ({
                   ).toFixed(2)
                 );
 
+            const fmtMoney = (val: number) =>
+              preferredCurrency === 'IDR' ? formatDynamic(val, false) : formatCurrency(val, settings, false);
+
             const displayValue =
               viewMode === 'growth'
                 ? formatGrowthPercent(hoveredGrowthPct, hasValidGrowth, 2)
                 : isPrivacyMode
                 ? '******'
-                : formatCurrency(hoveredPoint.equity, settings, false);
+                : fmtMoney(hoveredPoint.equity);
 
             const displayPnl =
               hoveredPoint.index > 0
                 ? isPrivacyMode
-                  ? '******'
-                  : `${hoveredPoint.netProfit >= 0 ? '+' : ''}${formatCurrency(
-                      hoveredPoint.netProfit,
-                      settings,
-                      false
-                    )}`
+                ? '******'
+                : `${hoveredPoint.netProfit >= 0 ? '+' : ''}${fmtMoney(hoveredPoint.netProfit)}`
                 : null;
 
             return (
@@ -746,7 +773,7 @@ export const EquityChart: React.FC<EquityChartProps> = ({
                 data-testid="equity-chart-tooltip"
                 data-tooltip-side={tooltipPlacement?.side ?? 'right'}
                 style={{ left: `${tooltipPlacement?.leftPx ?? 8}px` }}
-                className="absolute top-2 z-10 rounded-lg bg-white/95 dark:bg-[#171D26]/95 border border-[#DDE3EA] dark:border-[#252B34] px-2.5 py-1.5 shadow-sm text-xs pointer-events-none font-mono-numbers tabular-nums whitespace-nowrap"
+                className="absolute top-2 z-10 rounded-xl bg-white/95 dark:bg-[#101318]/95 border border-[#DDE3EA] dark:border-[#20252D] px-3 py-1.5 shadow-lg text-xs pointer-events-none font-mono-numbers tabular-nums whitespace-nowrap"
               >
                 <div className="flex items-center justify-between gap-4 text-[10px] text-[#697586] dark:text-[#929BA9] font-sans mb-0.5">
                   <span>
@@ -755,15 +782,15 @@ export const EquityChart: React.FC<EquityChartProps> = ({
                   <span className="font-mono-numbers">{hoveredPoint.date.slice(0, 10)}</span>
                 </div>
                 <div className="flex items-baseline justify-between gap-3">
-                  <span className="font-bold text-[#151D2A] dark:text-[#F2F5F9]">
+                  <span className="font-bold text-[#151D2A] dark:text-[#F2F4F7]">
                     {displayValue}
                   </span>
                   {viewMode === 'equity' && displayPnl && (
                     <span
                       className={`text-[11px] font-semibold ${
                         hoveredPoint.netProfit >= 0
-                          ? 'text-[#059669] dark:text-[#34D399]'
-                          : 'text-[#E11D48] dark:text-[#FB7185]'
+                          ? 'text-[#059669] dark:text-[#00A878]'
+                          : 'text-[#E11D48] dark:text-[#E05260]'
                       }`}
                     >
                       {displayPnl}
@@ -773,7 +800,7 @@ export const EquityChart: React.FC<EquityChartProps> = ({
                     <span className="text-[11px] text-[#697586] dark:text-[#929BA9]">
                       {isPrivacyMode
                         ? '******'
-                        : formatCurrency(hoveredPoint.equity, settings, false)}
+                        : fmtMoney(hoveredPoint.equity)}
                     </span>
                   )}
                 </div>
@@ -782,13 +809,6 @@ export const EquityChart: React.FC<EquityChartProps> = ({
           })()}
       </div>
 
-      {/* Embedded Bottom Controls: [Saldo | Persen] and [Periode ▼] */}
-      {embedded && (
-        <div className="flex flex-wrap items-center justify-between gap-3 pt-2">
-          {modeSelector}
-          {periodControl}
-        </div>
-      )}
     </>
   );
 
@@ -797,19 +817,23 @@ export const EquityChart: React.FC<EquityChartProps> = ({
   }
 
   return (
-    <div className="relative rounded-xl border border-[#DDE3EA] dark:border-[#252B34] bg-white dark:bg-[#11151B] p-4 sm:p-5">
-      <div className="flex flex-wrap items-center justify-between gap-3 pb-3 mb-2 border-b border-[#DDE3EA] dark:border-[#252B34]">
+    <div className="relative rounded-2xl border border-[#DDE3EA] dark:border-[#20252D] bg-white dark:bg-[#0B0D10] p-4 sm:p-5">
+      <div className="flex flex-wrap items-center justify-between gap-3 pb-3 mb-2 border-b border-[#DDE3EA] dark:border-[#20252D]">
         <div className="flex items-center gap-2.5">
           <TrendingUp className="h-4 w-4 stroke-[1.75] text-[#697586] dark:text-[#929BA9]" />
           <div>
-            <h3 className="text-sm font-semibold text-[#151D2A] dark:text-[#F2F5F9]">
+            <h3 className="text-sm font-semibold text-[#151D2A] dark:text-[#F2F4F7]">
               {viewMode === 'equity'
                 ? 'Equity Curve (Saldo Kumulatif)'
                 : 'Growth Curve (Pertumbuhan %)'}
             </h3>
             <p className="text-xs text-[#697586] dark:text-[#929BA9] font-mono-numbers tabular-nums">
               {Math.max(0, safeCurve.length - 1)} trade • Modal awal:{' '}
-              {isPrivacyMode ? '******' : formatCurrency(chartStartingBalance, settings, false)}
+              {isPrivacyMode
+                ? '******'
+                : preferredCurrency === 'IDR'
+                ? formatDynamic(chartStartingBalance, false)
+                : formatCurrency(chartStartingBalance, settings, false)}
             </p>
           </div>
         </div>
@@ -819,10 +843,10 @@ export const EquityChart: React.FC<EquityChartProps> = ({
           <button
             type="button"
             onClick={() => setShowPeakLine(!showPeakLine)}
-            className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border text-xs font-medium transition-colors cursor-pointer ${
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full border text-xs font-medium transition-colors cursor-pointer ${
               showPeakLine
-                ? 'bg-[#EEF2F6] dark:bg-[#171D26] text-[#1769E8] border-[#DDE3EA] dark:border-[#252B34]'
-                : 'bg-[#F5F7FA] dark:bg-[#080A0E] text-[#697586] dark:text-[#929BA9] border-[#DDE3EA] dark:border-[#252B34] hover:text-[#151D2A] dark:hover:text-[#F2F5F9]'
+                ? 'bg-[#EEF2F6] dark:bg-[#101318] text-[#1769E8] dark:text-[#3478DC] border-[#DDE3EA] dark:border-[#20252D]'
+                : 'bg-[#F5F7FA] dark:bg-[#101318] text-[#697586] dark:text-[#929BA9] border-[#DDE3EA] dark:border-[#20252D] hover:text-[#151D2A] dark:hover:text-[#F2F4F7]'
             }`}
             title="Tampilkan / sembunyikan garis High Watermark (Puncak Saldo)"
           >

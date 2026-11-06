@@ -5,6 +5,7 @@ import {
   TradeCloseType,
   TradeActivityEvent,
   TradeActivityEventType,
+  HistoricalExchangeRateSnapshot,
 } from '../types/trade';
 import { AppSettings } from '../types/settings';
 import { encodeUtf8ToBase64Url, decodeBase64UrlToUtf8 } from '../storage/utf8Base64Url';
@@ -31,6 +32,7 @@ export interface TradeLifecycleMeta {
   entryTime?: string;
   exitTime?: string;
   closeType?: TradeCloseType;
+  closeExchangeRate?: HistoricalExchangeRateSnapshot;
   beforeScreenshotUrl?: string;
   afterScreenshotUrl?: string;
   cancellationReason?: string;
@@ -52,6 +54,7 @@ export interface ResolvedTradeLifecycle {
   entryTime?: string;
   exitTime?: string;
   closeType?: TradeCloseType;
+  closeExchangeRate?: HistoricalExchangeRateSnapshot;
   beforeScreenshotUrl?: string;
   afterScreenshotUrl?: string;
   cancellationReason?: string;
@@ -152,6 +155,9 @@ export function encodeLifecycleMetaIntoExecutionNotes(
   }
   if (meta.closeType === 'TP' || meta.closeType === 'SL' || meta.closeType === 'Manual') {
     cleanMeta.closeType = meta.closeType;
+  }
+  if (meta.closeExchangeRate && typeof meta.closeExchangeRate.rate === 'number') {
+    cleanMeta.closeExchangeRate = meta.closeExchangeRate;
   }
   if (typeof meta.beforeScreenshotUrl === 'string' && meta.beforeScreenshotUrl.trim()) {
     cleanMeta.beforeScreenshotUrl = meta.beforeScreenshotUrl.trim();
@@ -298,6 +304,7 @@ export function resolveTradeLifecycle(trade: Trade): ResolvedTradeLifecycle {
     entryTime,
     exitTime,
     closeType,
+    closeExchangeRate: meta.closeExchangeRate || trade.closeExchangeRate || undefined,
     beforeScreenshotUrl,
     afterScreenshotUrl,
     cancellationReason: meta.cancellationReason,
@@ -484,6 +491,7 @@ export function transitionOpenTradeToClosed(
     commission?: number;
     swap?: number;
     overrideNetProfit?: number;
+    closeExchangeRate?: HistoricalExchangeRateSnapshot;
     settings: AppSettings;
   }
 ): Trade {
@@ -559,6 +567,7 @@ export function transitionOpenTradeToClosed(
     entryTime: current.entryTime || trade.dateTime,
     exitTime: effectiveExitTime,
     closeType: params.closeType,
+    closeExchangeRate: params.closeExchangeRate || current.closeExchangeRate || trade.closeExchangeRate,
     beforeScreenshotUrl: current.beforeScreenshotUrl,
     afterScreenshotUrl: current.afterScreenshotUrl,
     activityLog: nextLog,
@@ -573,6 +582,7 @@ export function transitionOpenTradeToClosed(
     netProfit: finalNet,
     outcome: finalOutcome,
     rMultiple: computedR !== null ? computedR : undefined,
+    closeExchangeRate: params.closeExchangeRate || current.closeExchangeRate || trade.closeExchangeRate,
     executionNotes: encodeLifecycleMetaIntoExecutionNotes(trade.executionNotes, nextMeta),
     updatedAt: nowIso,
   };

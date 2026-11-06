@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useRef, useEffect } from 'react';
 import { Trade } from '../../types/trade';
 import { AppSettings } from '../../types/settings';
 import {
@@ -7,26 +7,38 @@ import {
   formatCurrency,
   extractTradeLocalDateKey,
   isClosedLifecycleTrade,
-  formatCalendarAdaptivePnl,
 } from '../../utils/calculations';
-import { ChevronLeft, ChevronRight, X, ArrowUpRight } from 'lucide-react';
+import {
+  UsdIdrRateRecord,
+  useGlobalCurrency,
+  formatTradeFinancialValue,
+  computeCumulativeProfitInDisplayCurrency,
+} from '../../utils/currencyRate';
+import { ChevronDown, X, ArrowUpRight, Check } from 'lucide-react';
 
 interface DashboardCalendarProps {
   trades: Trade[];
   settings: AppSettings;
   isPrivacyMode?: boolean;
   onViewTrade?: (trade: Trade) => void;
+  preferredCurrency?: 'USD' | 'IDR';
+  rateRecord?: UsdIdrRateRecord | null;
 }
 
-const DAYS_OF_WEEK = ['Sen', 'Sel', 'Rab', 'Kam', 'Jum', 'Sab', 'Min'];
+const DAYS_OF_WEEK = ['MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT', 'SUN'];
 
 export const DashboardCalendar: React.FC<DashboardCalendarProps> = ({
   trades,
   settings,
   isPrivacyMode = false,
   onViewTrade,
+  preferredCurrency,
+  rateRecord,
 }) => {
-  // Strictly filter only closed trades with realized outcome (exclude PLANNED, OPEN, CANCELLED)
+  const globalCur = useGlobalCurrency();
+  const activeCurrency = preferredCurrency || globalCur.preferredCurrency;
+  const activeRateRecord = rateRecord || globalCur.rateRecord;
+  // Strictly filter only closed trades with realized outcome
   const closedTrades = useMemo(() => {
     return (trades || []).filter((t) => {
       if (!isClosedLifecycleTrade(t)) return false;
@@ -35,25 +47,38 @@ export const DashboardCalendar: React.FC<DashboardCalendarProps> = ({
     });
   }, [trades]);
 
-  // Determine initial active month from latest closed trade or current local month
+  // Always initialize active month to the current runtime local month & year (e.g. November 2026)
+  // regardless of whether there are trades in the current month or the last trade was in an earlier month.
   const initialMonthKey = useMemo(() => {
-    if (closedTrades.length > 0) {
-      const sortedDates = [...closedTrades]
-        .map((t) => extractTradeLocalDateKey(t.dateTime))
-        .filter(Boolean)
-        .sort();
-      if (sortedDates.length > 0) {
-        return sortedDates[sortedDates.length - 1].slice(0, 7);
-      }
-    }
     const now = new Date();
     const y = now.getFullYear();
     const m = String(now.getMonth() + 1).padStart(2, '0');
     return `${y}-${m}`;
-  }, [closedTrades]);
+  }, []);
 
   const [activeMonth, setActiveMonth] = useState<string>(initialMonthKey);
   const [selectedDate, setSelectedDate] = useState<string | null>(null);
+  const [isMonthDropdownOpen, setIsMonthDropdownOpen] = useState(false);
+  const monthDropdownRef = useRef<HTMLDivElement | null>(null);
+
+  // Close month dropdown on outside click or Escape
+  useEffect(() => {
+    if (!isMonthDropdownOpen) return;
+    const handleClickOutside = (e: MouseEvent) => {
+      if (monthDropdownRef.current && !monthDropdownRef.current.contains(e.target as Node)) {
+        setIsMonthDropdownOpen(false);
+      }
+    };
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setIsMonthDropdownOpen(false);
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    window.addEventListener('keydown', handleKeyDown);
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [isMonthDropdownOpen]);
 
   // Today local date key (YYYY-MM-DD)
   const todayDateKey = useMemo(() => {
@@ -69,26 +94,36 @@ export const DashboardCalendar: React.FC<DashboardCalendarProps> = ({
     };
   }, [activeMonth]);
 
-  const monthLabel = useMemo(() => {
+  // Month label in Indonesian capitalized (e.g., "November 2026")
+  const monthDisplayLabel = useMemo(() => {
     const d = new Date(year, month - 1, 1);
-    return d.toLocaleDateString('id-ID', { month: 'long', year: 'numeric' });
+    const raw = d.toLocaleDateString('id-ID', { month: 'long', year: 'numeric' });
+    return raw.charAt(0).toUpperCase() + raw.slice(1);
   }, [year, month]);
 
-  const handlePrevMonth = () => {
-    const prevDate = new Date(year, month - 2, 1);
-    const y = prevDate.getFullYear();
-    const m = String(prevDate.getMonth() + 1).padStart(2, '0');
-    setActiveMonth(`${y}-${m}`);
-    setSelectedDate(null);
-  };
+  // Available months list derived from trading data + surrounding months
+  const availableMonths = useMemo(() => {
+    const monthSet = new Set<string>();
+    closedTrades.forEach((t) => {
+      const key = extractTradeLocalDateKey(t.dateTime);
+      if (key) {
+        monthSet.add(key.slice(0, 7));
+      }
+    });
 
-  const handleNextMonth = () => {
-    const nextDate = new Date(year, month, 1);
-    const y = nextDate.getFullYear();
-    const m = String(nextDate.getMonth() + 1).padStart(2, '0');
-    setActiveMonth(`${y}-${m}`);
-    setSelectedDate(null);
-  };
+    const now = new Date();
+    const curKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+    monthSet.add(curKey);
+    if (activeMonth) {
+      monthSet.add(activeMonth);
+    }
+    // Include past 12 months for seamless browsing
+    for (let i = 1; i <= 12; i++) {
+      const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+      monthSet.add(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`);
+    }
+    return Array.from(monthSet).sort().reverse();
+  }, [closedTrades, activeMonth]);
 
   // Group closed trades by local date key 'YYYY-MM-DD'
   const tradesByDateMap = useMemo(() => {
@@ -104,82 +139,123 @@ export const DashboardCalendar: React.FC<DashboardCalendarProps> = ({
     return map;
   }, [closedTrades]);
 
-  // Build calendar matrix for activeMonth
+  // Generate 7-column calendar grid cells and summary statistics
   const { cells, summary } = useMemo(() => {
-    const firstDay = new Date(year, month - 1, 1);
-    const lastDay = new Date(year, month, 0);
-    const totalDays = lastDay.getDate();
+    const daysInMonth = new Date(year, month, 0).getDate();
+    const firstDayIndexRaw = new Date(year, month - 1, 1).getDay(); // 0 = Sun, 1 = Mon...
+    // Convert to Monday = 0 ... Sunday = 6
+    const firstDayIndex = (firstDayIndexRaw + 6) % 7;
 
-    // Monday-based index: 0 = Mon, 6 = Sun
-    const firstDayIndex = (firstDay.getDay() + 6) % 7;
-
-    const cellList: {
-      dayNum: number | null;
+    const cellList: Array<{
+      dayNum: number;
       dateKey: string;
+      isCurrentMonth: boolean;
       netProfit: number;
       tradesCount: number;
       status: 'PROFIT' | 'LOSS' | 'BREAKEVEN' | 'NO_TRADE';
-    }[] = [];
+    }> = [];
 
-    // Preceding empty cells
-    for (let i = 0; i < firstDayIndex; i++) {
-      cellList.push({
-        dayNum: null,
-        dateKey: `pre-${i}`,
-        netProfit: 0,
-        tradesCount: 0,
-        status: 'NO_TRADE',
-      });
+    // 1. Leading dates from previous month
+    if (firstDayIndex > 0) {
+      const prevYear = month === 1 ? year - 1 : year;
+      const prevMonth = month === 1 ? 12 : month - 1;
+      const daysInPrevMonth = new Date(prevYear, prevMonth, 0).getDate();
+      const prevMonthStr = String(prevMonth).padStart(2, '0');
+
+      for (let i = firstDayIndex - 1; i >= 0; i--) {
+        const day = daysInPrevMonth - i;
+        const dateKey = `${prevYear}-${prevMonthStr}-${String(day).padStart(2, '0')}`;
+        const dayTrades = tradesByDateMap.get(dateKey) || [];
+        let status: 'PROFIT' | 'LOSS' | 'BREAKEVEN' | 'NO_TRADE' = 'NO_TRADE';
+        let netProfit = 0;
+
+        if (dayTrades.length > 0) {
+          netProfit = dayTrades.reduce((sum, t) => sum + computeTradeNetProfit(t), 0);
+          status = netProfit > 0 ? 'PROFIT' : netProfit < 0 ? 'LOSS' : 'BREAKEVEN';
+        }
+
+        cellList.push({
+          dayNum: day,
+          dateKey,
+          isCurrentMonth: false,
+          netProfit,
+          tradesCount: dayTrades.length,
+          status,
+        });
+      }
     }
 
+    // 2. Current month dates
     let profitDays = 0;
     let lossDays = 0;
     let noTradeDays = 0;
+    const curMonthStr = String(month).padStart(2, '0');
 
-    for (let day = 1; day <= totalDays; day++) {
-      const dayStr = String(day).padStart(2, '0');
-      const dateKey = `${year}-${String(month).padStart(2, '0')}-${dayStr}`;
+    for (let day = 1; day <= daysInMonth; day++) {
+      const dateKey = `${year}-${curMonthStr}-${String(day).padStart(2, '0')}`;
       const dayTrades = tradesByDateMap.get(dateKey) || [];
 
       if (dayTrades.length > 0) {
         const netProfit = dayTrades.reduce((sum, t) => sum + computeTradeNetProfit(t), 0);
-        const roundedNet = Number(netProfit.toFixed(2));
-        if (roundedNet > 0) {
+        let status: 'PROFIT' | 'LOSS' | 'BREAKEVEN' | 'NO_TRADE' = 'NO_TRADE';
+
+        if (netProfit > 0) {
           profitDays++;
-          cellList.push({
-            dayNum: day,
-            dateKey,
-            netProfit: roundedNet,
-            tradesCount: dayTrades.length,
-            status: 'PROFIT',
-          });
-        } else if (roundedNet < 0) {
+          status = 'PROFIT';
+        } else if (netProfit < 0) {
           lossDays++;
-          cellList.push({
-            dayNum: day,
-            dateKey,
-            netProfit: roundedNet,
-            tradesCount: dayTrades.length,
-            status: 'LOSS',
-          });
+          status = 'LOSS';
         } else {
-          // Breakeven day
-          cellList.push({
-            dayNum: day,
-            dateKey,
-            netProfit: 0,
-            tradesCount: dayTrades.length,
-            status: 'BREAKEVEN',
-          });
+          status = 'BREAKEVEN';
+          noTradeDays++;
         }
+
+        cellList.push({
+          dayNum: day,
+          dateKey,
+          isCurrentMonth: true,
+          netProfit,
+          tradesCount: dayTrades.length,
+          status,
+        });
       } else {
         noTradeDays++;
         cellList.push({
           dayNum: day,
           dateKey,
+          isCurrentMonth: true,
           netProfit: 0,
           tradesCount: 0,
           status: 'NO_TRADE',
+        });
+      }
+    }
+
+    // 3. Following dates from next month to complete the row
+    const remainder = (7 - (cellList.length % 7)) % 7;
+    if (remainder > 0) {
+      const nextYear = month === 12 ? year + 1 : year;
+      const nextMonth = month === 12 ? 1 : month + 1;
+      const nextMonthStr = String(nextMonth).padStart(2, '0');
+
+      for (let day = 1; day <= remainder; day++) {
+        const dateKey = `${nextYear}-${nextMonthStr}-${String(day).padStart(2, '0')}`;
+        const dayTrades = tradesByDateMap.get(dateKey) || [];
+        let status: 'PROFIT' | 'LOSS' | 'BREAKEVEN' | 'NO_TRADE' = 'NO_TRADE';
+        let netProfit = 0;
+
+        if (dayTrades.length > 0) {
+          netProfit = dayTrades.reduce((sum, t) => sum + computeTradeNetProfit(t), 0);
+          status = netProfit > 0 ? 'PROFIT' : netProfit < 0 ? 'LOSS' : 'BREAKEVEN';
+        }
+
+        cellList.push({
+          dayNum: day,
+          dateKey,
+          isCurrentMonth: false,
+          netProfit,
+          tradesCount: dayTrades.length,
+          status,
         });
       }
     }
@@ -190,12 +266,11 @@ export const DashboardCalendar: React.FC<DashboardCalendarProps> = ({
         profitDays,
         lossDays,
         noTradeDays,
-        totalActiveDays: profitDays + lossDays,
       },
     };
   }, [year, month, tradesByDateMap]);
 
-  // Selected date trades
+  // Selected date trades and statistics
   const selectedTrades = useMemo(() => {
     if (!selectedDate) return [];
     return tradesByDateMap.get(selectedDate) || [];
@@ -205,11 +280,13 @@ export const DashboardCalendar: React.FC<DashboardCalendarProps> = ({
     return selectedTrades.reduce((sum, t) => sum + computeTradeNetProfit(t), 0);
   }, [selectedTrades]);
 
-  const selectedDateLabel = useMemo(() => {
+  const selectedDateFormatted = useMemo(() => {
     if (!selectedDate) return '';
     try {
-      const d = new Date(selectedDate + 'T00:00:00');
-      return d.toLocaleDateString('id-ID', {
+      const [y, m, d] = selectedDate.split('-');
+      const dateObj = new Date(parseInt(y, 10), parseInt(m, 10) - 1, parseInt(d, 10));
+      return dateObj.toLocaleDateString('id-ID', {
+        weekday: 'long',
         day: 'numeric',
         month: 'long',
         year: 'numeric',
@@ -220,258 +297,339 @@ export const DashboardCalendar: React.FC<DashboardCalendarProps> = ({
   }, [selectedDate]);
 
   return (
-    <section
+    <div
       aria-label="Performance Calendar"
-      className="rounded-2xl border border-[#DDE3EA] dark:border-[#252B34] bg-white dark:bg-[#11151B] p-4 sm:p-5 md:p-6 space-y-4 transition-colors duration-150"
+      className="space-y-4 font-sans select-none"
     >
-      {/* Section Header: Text Only Title + Month Navigation */}
-      <div className="flex items-center justify-between pb-3 border-b border-[#DDE3EA] dark:border-[#252B34]">
+      {/* 4.A Header: Title + Dropdown Bulan (Wireframe: [ November 2026 ⌄ ]) */}
+      <div className="flex items-center justify-between gap-3">
         <h2 className="text-[11px] font-semibold uppercase tracking-[0.08em] text-[#697586] dark:text-[#929BA9]">
           PERFORMANCE CALENDAR
         </h2>
 
-        {/* Minimal Month Navigator */}
-        <div className="flex items-center gap-1.5 font-sans">
+        {/* Minimal Month Dropdown (strictly dropdown only, no arrow buttons) */}
+        <div ref={monthDropdownRef} className="relative">
           <button
             type="button"
-            onClick={handlePrevMonth}
-            className="p-1.5 rounded-lg text-[#697586] dark:text-[#929BA9] hover:text-[#151D2A] dark:hover:text-[#F2F5F9] hover:bg-[#F5F7FA] dark:hover:bg-[#171D26] transition-colors cursor-pointer"
-            title="Bulan Sebelumnya"
-            aria-label="Bulan Sebelumnya"
+            data-testid="calendar-month-dropdown-button"
+            onClick={() => setIsMonthDropdownOpen((prev) => !prev)}
+            aria-haspopup="listbox"
+            aria-expanded={isMonthDropdownOpen}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-[#F5F7FA] dark:bg-[#101318] border border-[#DDE3EA] dark:border-[#20252D] hover:border-[#3478DC] text-xs font-semibold text-[#151D2A] dark:text-[#F2F4F7] transition-colors cursor-pointer whitespace-nowrap"
           >
-            <ChevronLeft className="h-4 w-4 stroke-[2]" />
-          </button>
-          <span className="text-xs font-semibold capitalize text-[#151D2A] dark:text-[#F2F5F9] min-w-[110px] text-center">
-            {monthLabel}
-          </span>
-          <button
-            type="button"
-            onClick={handleNextMonth}
-            className="p-1.5 rounded-lg text-[#697586] dark:text-[#929BA9] hover:text-[#151D2A] dark:hover:text-[#F2F5F9] hover:bg-[#F5F7FA] dark:hover:bg-[#171D26] transition-colors cursor-pointer"
-            title="Bulan Berikutnya"
-            aria-label="Bulan Berikutnya"
-          >
-            <ChevronRight className="h-4 w-4 stroke-[2]" />
-          </button>
-        </div>
-      </div>
-
-      {/* Summary Stats Row (Profit Days, Loss Days, No Trade) */}
-      <div className="grid grid-cols-3 gap-2 text-xs font-mono-numbers tabular-nums">
-        <div className="p-2.5 rounded-xl bg-[#F5F7FA] dark:bg-[#171D26] border border-[#DDE3EA] dark:border-[#252B34]">
-          <div className="text-[10px] font-sans text-[#697586] dark:text-[#929BA9]">Profit Days</div>
-          <div className="text-sm font-bold text-[#059669] dark:text-[#34D399] mt-0.5">
-            {summary.profitDays} Hari
-          </div>
-        </div>
-
-        <div className="p-2.5 rounded-xl bg-[#F5F7FA] dark:bg-[#171D26] border border-[#DDE3EA] dark:border-[#252B34]">
-          <div className="text-[10px] font-sans text-[#697586] dark:text-[#929BA9]">Loss Days</div>
-          <div className="text-sm font-bold text-[#E11D48] dark:text-[#FB7185] mt-0.5">
-            {summary.lossDays} Hari
-          </div>
-        </div>
-
-        <div className="p-2.5 rounded-xl bg-[#F5F7FA] dark:bg-[#171D26] border border-[#DDE3EA] dark:border-[#252B34]">
-          <div className="text-[10px] font-sans text-[#697586] dark:text-[#929BA9]">No Trade</div>
-          <div className="text-sm font-bold text-[#697586] dark:text-[#929BA9] mt-0.5">
-            {summary.noTradeDays} Hari
-          </div>
-        </div>
-      </div>
-
-      {/* Calendar Grid Header (Days of week) */}
-      <div className="grid grid-cols-7 gap-1 text-center text-[11px] font-semibold text-[#697586] dark:text-[#929BA9]">
-        {DAYS_OF_WEEK.map((dayName) => (
-          <div key={dayName} className="py-1">
-            {dayName}
-          </div>
-        ))}
-      </div>
-
-      {/* Calendar Matrix Cells (Enlarged with consistent vertical height, NO background green/red framing) */}
-      <div className="grid grid-cols-7 gap-1 sm:gap-1.5 font-mono-numbers tabular-nums">
-        {cells.map((cell) => {
-          if (cell.dayNum === null) {
-            return (
-              <div
-                key={cell.dateKey}
-                className="w-full min-h-[68px] sm:min-h-[76px] md:min-h-[82px] rounded-xl border border-transparent"
-              />
-            );
-          }
-
-          const isSelected = selectedDate === cell.dateKey;
-          const isToday = todayDateKey === cell.dateKey;
-          const isProfit = cell.status === 'PROFIT';
-          const isLoss = cell.status === 'LOSS';
-
-          return (
-            <button
-              key={cell.dateKey}
-              type="button"
-              onClick={() => setSelectedDate(isSelected ? null : cell.dateKey)}
-              className={`w-full min-h-[68px] sm:min-h-[76px] md:min-h-[82px] rounded-xl border p-1 sm:p-1.5 flex flex-col justify-between items-center text-center transition-all cursor-pointer relative bg-[#F5F7FA] dark:bg-[#080A0E] ${
-                isSelected
-                  ? 'ring-2 ring-[#1769E8] border-[#1769E8] shadow-sm z-10'
-                  : isToday
-                  ? 'border-[#58A6FF] dark:border-[#1769E8] hover:border-[#697586]'
-                  : 'border-[#DDE3EA] dark:border-[#252B34] hover:border-[#697586] dark:hover:border-[#484F58]'
+            <span>{monthDisplayLabel}</span>
+            <ChevronDown
+              className={`h-3.5 w-3.5 stroke-[2] text-[#697586] dark:text-[#929BA9] transition-transform duration-150 ${
+                isMonthDropdownOpen ? 'rotate-180' : ''
               }`}
-              title={`${cell.dateKey}${cell.tradesCount > 0 ? `: ${cell.tradesCount} Closed Trades` : ''}`}
+            />
+          </button>
+
+          {/* Month Dropdown Menu */}
+          {isMonthDropdownOpen && (
+            <div
+              role="listbox"
+              aria-label="Pilih Bulan Kalender"
+              data-testid="calendar-month-dropdown-menu"
+              className="absolute right-0 top-full mt-1.5 z-30 w-48 max-h-64 overflow-y-auto rounded-xl bg-white dark:bg-[#101318] border border-[#DDE3EA] dark:border-[#20252D] py-1 shadow-xl"
             >
-              {/* 1. Angka Tanggal (Top, secondary color, highlight if today) */}
-              <span
-                className={`text-[11px] sm:text-xs leading-none font-semibold ${
-                  isToday
-                    ? 'text-[#1769E8] dark:text-[#58A6FF] font-bold'
-                    : 'text-[#697586] dark:text-[#929BA9]'
-                }`}
-              >
-                {cell.dayNum}
-              </span>
-
-              {/* 2. Nominal Net Profit/Loss (Middle, strictly one line, soft colors, zero background box) */}
-              {cell.tradesCount > 0 ? (
-                <div className="w-full my-auto flex flex-col items-center justify-center px-0.5">
-                  <span
-                    className={`block text-[10px] sm:text-[11px] md:text-xs font-bold leading-tight font-mono-numbers tabular-nums whitespace-nowrap overflow-hidden text-ellipsis ${
-                      isProfit
-                        ? 'text-[#059669] dark:text-[#34D399]'
-                        : isLoss
-                        ? 'text-[#E11D48] dark:text-[#FB7185]'
-                        : 'text-[#697586] dark:text-[#929BA9]'
-                    }`}
-                  >
-                    {/* Compact format on narrow mobile; adaptive format on sm/desktop */}
-                    <span className="sm:hidden">
-                      {formatCalendarAdaptivePnl(cell.netProfit, settings, isPrivacyMode, 'compact')}
-                    </span>
-                    <span className="hidden sm:inline">
-                      {formatCalendarAdaptivePnl(cell.netProfit, settings, isPrivacyMode, 'adaptive')}
-                    </span>
-                  </span>
-                </div>
-              ) : (
-                <div className="flex-1" />
-              )}
-
-              {/* 3. Jumlah Closed Trades (Bottom, e.g. 2T, neutral/gray text) */}
-              {cell.tradesCount > 0 ? (
-                <span className="text-[9px] sm:text-[10px] font-medium leading-none text-[#697586] dark:text-[#929BA9] font-mono-numbers tabular-nums">
-                  {cell.tradesCount}T
-                </span>
-              ) : (
-                <span className="h-2.5" />
-              )}
-            </button>
-          );
-        })}
-      </div>
-
-      {/* Selected Date Detail Panel (Clean, non-modal, accurate data, full nominals) */}
-      {selectedDate && (
-        <div className="mt-4 p-4 rounded-xl bg-[#F5F7FA] dark:bg-[#171D26] border border-[#DDE3EA] dark:border-[#252B34] space-y-3 animate-in fade-in duration-150">
-          {/* Header Section: Date, Net P&L full value, Closed Trades count */}
-          <div className="flex items-start justify-between gap-3 pb-3 border-b border-[#DDE3EA] dark:border-[#252B34]">
-            <div className="space-y-0.5">
-              <div className="text-sm font-bold text-[#151D2A] dark:text-[#F2F5F9]">
-                {selectedDateLabel}
-              </div>
-              <div className="text-xs font-medium text-[#697586] dark:text-[#929BA9]">
-                {selectedTrades.length}{' '}
-                {selectedTrades.length === 1 ? 'Closed Trade' : 'Closed Trades'}
-              </div>
-            </div>
-
-            <div className="flex items-center gap-3">
-              {selectedTrades.length > 0 && (
-                <span
-                  className={`text-base font-bold font-mono-numbers tabular-nums ${
-                    selectedDateNetProfit > 0
-                      ? 'text-[#059669] dark:text-[#34D399]'
-                      : selectedDateNetProfit < 0
-                      ? 'text-[#E11D48] dark:text-[#FB7185]'
-                      : 'text-[#697586] dark:text-[#929BA9]'
-                  }`}
-                >
-                  {formatCalendarAdaptivePnl(selectedDateNetProfit, settings, isPrivacyMode, 'full')}
-                </span>
-              )}
-              <button
-                type="button"
-                onClick={() => setSelectedDate(null)}
-                className="p-1 rounded-md text-[#697586] hover:text-[#151D2A] dark:hover:text-[#F2F5F9] transition-colors cursor-pointer"
-                title="Tutup Rincian"
-                aria-label="Tutup Rincian"
-              >
-                <X className="h-4 w-4 stroke-[2]" />
-              </button>
-            </div>
-          </div>
-
-          {/* Trades List */}
-          {selectedTrades.length === 0 ? (
-            <div className="text-xs text-[#697586] dark:text-[#929BA9] py-1">
-              Tidak ada transaksi Closed yang tercatat pada tanggal ini.
-            </div>
-          ) : (
-            <div className="space-y-2 max-h-56 overflow-y-auto pr-1">
-              {selectedTrades.map((t, idx) => {
-                const pnl = computeTradeNetProfit(t);
-                const isBuy = t.position === 'BUY';
-                const isWin = pnl > 0;
-                const isLoss = pnl < 0;
+              {availableMonths.map((mKey) => {
+                const [yS, mS] = mKey.split('-');
+                const yN = parseInt(yS, 10);
+                const mN = parseInt(mS, 10);
+                const d = new Date(yN, mN - 1, 1);
+                const rawLabel = d.toLocaleDateString('id-ID', { month: 'long', year: 'numeric' });
+                const label = rawLabel.charAt(0).toUpperCase() + rawLabel.slice(1);
+                const isSelected = activeMonth === mKey;
 
                 return (
                   <button
-                    key={t.id}
+                    key={mKey}
                     type="button"
-                    onClick={() => onViewTrade?.(t)}
-                    className="w-full p-2.5 rounded-lg bg-white dark:bg-[#080A0E] border border-[#DDE3EA] dark:border-[#252B34] hover:border-[#1769E8] transition-colors flex items-center justify-between text-left cursor-pointer text-xs font-mono-numbers tabular-nums"
+                    role="option"
+                    aria-selected={isSelected}
+                    onClick={() => {
+                      setActiveMonth(mKey);
+                      setSelectedDate(null);
+                      setIsMonthDropdownOpen(false);
+                    }}
+                    className={`w-full px-3 py-2 text-left text-xs flex items-center justify-between transition-colors cursor-pointer ${
+                      isSelected
+                        ? 'bg-[#EEF2F6] dark:bg-[#1C2330] text-[#1769E8] dark:text-[#3478DC] font-semibold'
+                        : 'text-[#151D2A] dark:text-[#F2F4F7] hover:bg-[#F5F7FA] dark:hover:bg-[#141820]'
+                    }`}
                   >
-                    <div className="flex items-center gap-2 sm:gap-3">
-                      <span className="font-semibold text-[#697586] dark:text-[#929BA9]">
-                        Trade {idx + 1}
-                      </span>
-                      <span className="font-bold text-[#151D2A] dark:text-[#F2F5F9]">
-                        {t.instrument}
-                      </span>
-                      <span
-                        className={`text-[10px] font-bold ${
-                          isBuy
-                            ? 'text-[#059669] dark:text-[#34D399]'
-                            : 'text-[#E11D48] dark:text-[#FB7185]'
-                        }`}
-                      >
-                        {t.position}
-                      </span>
-                      <span className="text-[#697586] dark:text-[#929BA9] hidden sm:inline">
-                        {Number(t.lotSize || 0).toFixed(2)} Lot
-                      </span>
-                    </div>
-
-                    <div className="flex items-center gap-2">
-                      <span
-                        className={`font-bold ${
-                          isWin
-                            ? 'text-[#059669] dark:text-[#34D399]'
-                            : isLoss
-                            ? 'text-[#E11D48] dark:text-[#FB7185]'
-                            : 'text-[#697586] dark:text-[#929BA9]'
-                        }`}
-                      >
-                        {formatCalendarAdaptivePnl(pnl, settings, isPrivacyMode, 'full')}
-                      </span>
-                      <ArrowUpRight className="h-3.5 w-3.5 text-[#697586]" />
-                    </div>
+                    <span>{label}</span>
+                    {isSelected && (
+                      <Check className="h-3.5 w-3.5 stroke-[2] text-[#1769E8] dark:text-[#3478DC]" />
+                    )}
                   </button>
                 );
               })}
             </div>
           )}
         </div>
+      </div>
+
+      {/* 4.B Ringkasan Statistik: Single 3-column row without panel cards (Wireframe) */}
+      <div className="grid grid-cols-3 gap-2 py-1 text-center font-mono-numbers tabular-nums">
+        <div>
+          <div className="text-[10px] sm:text-[11px] font-sans font-semibold uppercase tracking-wider text-[#697586] dark:text-[#929BA9]">
+            PROFIT DAYS
+          </div>
+          <div className="text-xl sm:text-2xl font-bold text-[#059669] dark:text-[#00A878] mt-0.5">
+            {summary.profitDays}
+          </div>
+        </div>
+
+        <div>
+          <div className="text-[10px] sm:text-[11px] font-sans font-semibold uppercase tracking-wider text-[#697586] dark:text-[#929BA9]">
+            LOSS DAYS
+          </div>
+          <div className="text-xl sm:text-2xl font-bold text-[#E11D48] dark:text-[#E05260] mt-0.5">
+            {summary.lossDays}
+          </div>
+        </div>
+
+        <div>
+          <div className="text-[10px] sm:text-[11px] font-sans font-semibold uppercase tracking-wider text-[#697586] dark:text-[#929BA9]">
+            NO TRADE
+          </div>
+          <div className="text-xl sm:text-2xl font-bold text-[#151D2A] dark:text-[#F2F4F7] mt-0.5">
+            {summary.noTradeDays}
+          </div>
+        </div>
+      </div>
+
+      {/* 4.C Days of Week Header with Thin Divider */}
+      <div>
+        <div className="grid grid-cols-7 gap-1 text-center text-[10px] sm:text-[11px] font-semibold text-[#697586] dark:text-[#929BA9] py-1.5">
+          {DAYS_OF_WEEK.map((dayName) => (
+            <div key={dayName}>{dayName}</div>
+          ))}
+        </div>
+        <div className="border-b border-[#DDE3EA] dark:border-[#20252D] my-1" />
+      </div>
+
+      {/* 4.C Calendar Grid: Breathable, NO card background per date, NO cell border */}
+      <div className="grid grid-cols-7 gap-y-3 sm:gap-y-4 font-mono-numbers tabular-nums">
+        {cells.map((cell, idx) => {
+          const isSelected = selectedDate === cell.dateKey;
+          const isToday = todayDateKey === cell.dateKey;
+          const isProfit = cell.status === 'PROFIT';
+          const isLoss = cell.status === 'LOSS';
+          const isBreakeven = cell.status === 'BREAKEVEN';
+
+          return (
+            <button
+              key={`${cell.dateKey}-${idx}`}
+              type="button"
+              onClick={() => setSelectedDate(isSelected ? null : cell.dateKey)}
+              className="group flex flex-col items-center justify-center py-1 transition-colors cursor-pointer relative"
+              title={`${cell.dateKey}${cell.tradesCount > 0 ? `: ${cell.tradesCount} Closed Trades` : ''}`}
+            >
+              {/* Day Number */}
+              <span
+                className={`text-xs sm:text-sm leading-tight transition-colors ${
+                  isSelected
+                    ? 'text-[#1769E8] dark:text-[#3478DC] font-bold'
+                    : isToday
+                    ? 'text-[#1769E8] dark:text-[#3478DC] font-bold'
+                    : cell.isCurrentMonth
+                    ? 'text-[#151D2A] dark:text-[#F2F4F7] font-medium group-hover:text-[#1769E8] dark:group-hover:text-[#3478DC]'
+                    : 'text-[#697586]/40 dark:text-[#929BA9]/35 font-normal'
+                }`}
+              >
+                {cell.dayNum}
+              </span>
+
+              {/* Dot Indicator: Profit = green dot, Loss = red dot, Breakeven = neutral dot, No trade = no dot */}
+              <div className="h-3 flex items-center justify-center mt-0.5">
+                {isProfit ? (
+                  <span className="w-1.5 h-1.5 rounded-full bg-[#059669] dark:bg-[#00A878]" />
+                ) : isLoss ? (
+                  <span className="w-1.5 h-1.5 rounded-full bg-[#E11D48] dark:bg-[#E05260]" />
+                ) : isBreakeven ? (
+                  <span className="w-1.5 h-1.5 rounded-full bg-[#697586] dark:bg-[#929BA9]" />
+                ) : (
+                  <span className="w-1.5 h-1.5 opacity-0" />
+                )}
+              </div>
+
+              {/* Selected Date Minimal Indicator Line */}
+              {isSelected && (
+                <span className="absolute bottom-0 w-3 h-0.5 rounded-full bg-[#1769E8] dark:bg-[#3478DC]" />
+              )}
+            </button>
+          );
+        })}
+      </div>
+
+      {/* 4.D SMOKED GLASS DAILY PERFORMANCE CARD (Only when date is selected) */}
+      {selectedDate && (
+        <div
+          data-testid="daily-performance-smoked-card"
+          role="region"
+          aria-label="Detail Performa Harian"
+          className="tv-smoked-glass-card mt-5 p-4 sm:p-5 rounded-[18px] border border-[#DDE3EA] dark:border-white/[0.09] transition-all duration-300 select-none"
+        >
+          {/* Header row: Label kecil + Tanggal lengkap + Tombol X */}
+          <div className="flex items-start justify-between gap-4 pb-3 border-b border-black/10 dark:border-white/[0.08]">
+            <div className="space-y-0.5 min-w-0">
+              <span className="block text-[10px] font-bold uppercase tracking-[0.1em] text-[#697586] dark:text-[#929BA9]">
+                DAILY PERFORMANCE
+              </span>
+              <h3 className="text-xs sm:text-sm font-bold text-[#151D2A] dark:text-[#F2F4F7] truncate">
+                {selectedDateFormatted}
+              </h3>
+            </div>
+            <button
+              type="button"
+              data-testid="daily-card-close-button"
+              onClick={() => setSelectedDate(null)}
+              className="p-1.5 rounded-full text-[#697586] dark:text-[#929BA9] hover:text-[#151D2A] dark:hover:text-[#F2F4F7] hover:bg-black/5 dark:hover:bg-white/10 transition-colors cursor-pointer shrink-0"
+              title="Tutup Detail Harian"
+              aria-label="Tutup Detail Harian"
+            >
+              <X className="h-4 w-4 stroke-[2]" />
+            </button>
+          </div>
+
+          {/* Bagian nilai utama: Net P/L paling menonjol + keterangan DAILY NET PROFIT/LOSS + closed trades count */}
+          <div className="py-3.5 flex flex-col sm:flex-row sm:items-baseline justify-between gap-2 font-mono-numbers tabular-nums">
+            <div className="space-y-0.5">
+              <div
+                data-testid="daily-card-net-pnl"
+                className={`text-2xl sm:text-3xl font-bold tracking-tight ${
+                  selectedDateNetProfit > 0
+                    ? 'text-[#059669] dark:text-[#00A878]'
+                    : selectedDateNetProfit < 0
+                    ? 'text-[#E11D48] dark:text-[#E05260]'
+                    : 'text-[#151D2A] dark:text-[#F2F4F7]'
+                }`}
+              >
+                {isPrivacyMode
+                  ? '******'
+                  : activeCurrency === 'IDR'
+                  ? (() => {
+                      const idrVal = computeCumulativeProfitInDisplayCurrency(
+                        selectedTrades,
+                        'IDR',
+                        activeRateRecord
+                      );
+                      const sign = idrVal > 0 ? '+' : idrVal < 0 ? '-' : '';
+                      const formatted = new Intl.NumberFormat('id-ID', {
+                        style: 'currency',
+                        currency: 'IDR',
+                        maximumFractionDigits: 0,
+                      }).format(Math.abs(idrVal));
+                      return `${sign}${formatted}`;
+                    })()
+                  : `${selectedDateNetProfit > 0 ? '+' : selectedDateNetProfit < 0 ? '-' : ''}${formatCurrency(
+                      Math.abs(selectedDateNetProfit),
+                      settings,
+                      false
+                    )}`}
+              </div>
+              <div
+                className={`text-[10px] sm:text-[11px] font-semibold tracking-wider uppercase font-sans ${
+                  selectedDateNetProfit > 0
+                    ? 'text-[#059669] dark:text-[#00A878]'
+                    : selectedDateNetProfit < 0
+                    ? 'text-[#E11D48] dark:text-[#E05260]'
+                    : selectedTrades.length > 0
+                    ? 'text-[#697586] dark:text-[#929BA9]'
+                    : 'text-[#697586] dark:text-[#929BA9]'
+                }`}
+              >
+                {selectedDateNetProfit > 0
+                  ? 'DAILY NET PROFIT'
+                  : selectedDateNetProfit < 0
+                  ? 'DAILY NET LOSS'
+                  : selectedTrades.length > 0
+                  ? 'DAILY BREAKEVEN'
+                  : 'NO TRADES'}
+              </div>
+            </div>
+
+            <div className="text-xs text-[#697586] dark:text-[#929BA9] font-sans">
+              {selectedTrades.length}{' '}
+              {selectedTrades.length === 1 ? 'Closed Trade' : 'Closed Trades'}
+            </div>
+          </div>
+
+          {/* Bagian transaksi: Horizontal rows tanpa background hijau/merah */}
+          <div className="pt-2 border-t border-black/10 dark:border-white/[0.08]">
+            {selectedTrades.length === 0 ? (
+              <div className="py-4 text-center text-xs text-[#697586] dark:text-[#929BA9]">
+                No trades on this date
+              </div>
+            ) : (
+              <div className="divide-y divide-black/5 dark:divide-white/[0.06] max-h-60 overflow-y-auto pr-0.5">
+                {selectedTrades.map((t) => {
+                  const pnl = computeTradeNetProfit(t);
+                  const isBuy = t.position === 'BUY';
+                  const isWin = pnl > 0;
+                  const isLoss = pnl < 0;
+
+                  return (
+                    <button
+                      key={t.id}
+                      type="button"
+                      onClick={() => onViewTrade?.(t)}
+                      className="w-full py-2.5 px-2 flex items-center justify-between text-left cursor-pointer text-xs font-mono-numbers tabular-nums group transition-colors hover:bg-black/5 dark:hover:bg-white/[0.05] rounded-lg"
+                    >
+                      {/* Left: Instrument, Direction (BUY/SELL text only), Lot */}
+                      <div className="flex items-center gap-3 min-w-0">
+                        <span className="font-bold text-[#151D2A] dark:text-[#F2F4F7] group-hover:text-[#1769E8] dark:group-hover:text-white transition-colors truncate">
+                          {t.instrument}
+                        </span>
+                        <span
+                          className={`text-xs font-bold uppercase ${
+                            isBuy
+                              ? 'text-[#059669] dark:text-[#00A878]'
+                              : 'text-[#E11D48] dark:text-[#E05260]'
+                          }`}
+                        >
+                          {t.position}
+                        </span>
+                        <span className="text-[#697586] dark:text-[#929BA9] text-[11px] truncate">
+                          {Number(t.lotSize || 0).toFixed(2)} Lot
+                        </span>
+                      </div>
+
+                      {/* Right: Realized P/L */}
+                      <div className="flex items-center gap-2 shrink-0">
+                        <span
+                          className={`font-bold ${
+                            isWin
+                              ? 'text-[#059669] dark:text-[#00A878]'
+                              : isLoss
+                              ? 'text-[#E11D48] dark:text-[#E05260]'
+                              : 'text-[#697586] dark:text-[#929BA9]'
+                          }`}
+                        >
+                          {isPrivacyMode
+                            ? '******'
+                            : formatTradeFinancialValue(
+                                t,
+                                'netProfit',
+                                activeCurrency,
+                                activeRateRecord,
+                                false,
+                                true
+                              )}
+                        </span>
+                        <ArrowUpRight className="h-3.5 w-3.5 text-[#697586] dark:text-[#929BA9] group-hover:text-[#1769E8] dark:group-hover:text-white transition-colors" />
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        </div>
       )}
-    </section>
+    </div>
   );
 };

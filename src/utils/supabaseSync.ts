@@ -680,6 +680,7 @@ export function mapDatabaseRowToTrade(row: any): Trade {
     postTradeEvaluation: meta.postTradeEvaluation || undefined,
     disciplineRating,
     executionNotes: meta.executionNotes || undefined,
+    closeExchangeRate: meta.closeExchangeRate || undefined,
     isDemo,
     createdAt: row.created_at,
     updatedAt: row.updated_at,

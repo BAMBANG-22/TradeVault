@@ -237,7 +237,10 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                 Spesifikasi Broker (XAUUSD)
               </span>
               <span className="text-[11px] text-[#697586] dark:text-[#929BA9] block mt-0.5 truncate">
-                1 Pip = ${settings.xauusdPipSize === 0.1 ? '0.10' : '1.00'} • {settings.xauusdContractSize} oz • Komisi ${settings.brokerCommissionPerLot}/lot
+                {settings.xauusdPipSize === 0.1
+                  ? 'Mode A (1 Pip = $0.10 Harga)'
+                  : 'Mode B (1 Pip = $1.00 Harga)'}{' '}
+                • {settings.xauusdContractSize} oz • Komisi ${settings.brokerCommissionPerLot}/lot
               </span>
             </div>
             <div className="shrink-0">

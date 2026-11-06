@@ -9,6 +9,7 @@ import {
   formatCurrency,
   computeDrawdownCurveSeries,
 } from '../../utils/calculations';
+import { useGlobalCurrency } from '../../utils/currencyRate';
 import { AppSettings } from '../../types/settings';
 import {
   resolveEquityCurvePointAtClientX,
@@ -22,6 +23,7 @@ interface DrawdownChartProps {
   settings: AppSettings;
   height?: number;
   isPrivacyMode?: boolean;
+  viewMode?: 'percent' | 'nominal';
 }
 
 export type DrawdownInteractionEventType =
@@ -78,7 +80,31 @@ export const DrawdownChart: React.FC<DrawdownChartProps> = ({
   settings,
   height = 200,
   isPrivacyMode = false,
+  viewMode = 'percent',
 }) => {
+  const { preferredCurrency, effectiveRate, formatDynamic } = useGlobalCurrency();
+  const fmtMoney = (val: number, privacy = false) =>
+    preferredCurrency === 'IDR' ? formatDynamic(val, privacy) : formatCurrency(val, settings, privacy);
+
+  const fmtCompactAxis = (valUsd: number): string => {
+    if (isPrivacyMode) return '******';
+    const isIdr = preferredCurrency === 'IDR' || settings?.currency === 'IDR';
+    const converted =
+      preferredCurrency === 'IDR' && settings?.currency !== 'IDR'
+        ? Math.round(valUsd * (effectiveRate || 16250))
+        : valUsd;
+    const abs = Math.abs(converted);
+    if (isIdr) {
+      if (abs >= 1_000_000_000) return `Rp${(abs / 1_000_000_000).toFixed(1)}M`;
+      if (abs >= 1_000_000) return `Rp${(abs / 1_000_000).toFixed(1)}jt`;
+      if (abs >= 1_000) return `Rp${Math.round(abs / 1_000)}rb`;
+      return `Rp${Math.round(abs)}`;
+    }
+    const sym = settings?.currency === 'EUR' ? '€' : '$';
+    if (abs >= 1_000_000) return `${sym}${(abs / 1_000_000).toFixed(2)}M`;
+    if (abs >= 10_000) return `${sym}${Math.round(abs / 1_000)}k`;
+    return formatCurrency(valUsd, settings, false);
+  };
   // Ephemeral interaction state ONLY — never persists a selected point after touch/mouse release
   const [hoveredPoint, setHoveredPoint] = useState<EquityPoint | null>(null);
   const [tooltipPlacement, setTooltipPlacement] = useState<DynamicTooltipPlacement | null>(null);
@@ -92,6 +118,7 @@ export const DrawdownChart: React.FC<DrawdownChartProps> = ({
     safeCurve,
     hasExecutedTrades,
     hasValidStartingBalance,
+    maxDrawdownAmount,
     yMax,
     tickValues,
   } = computeDrawdownCurveSeries(equityCurve, settings);
@@ -326,7 +353,18 @@ export const DrawdownChart: React.FC<DrawdownChartProps> = ({
         {/* Subtle horizontal gridlines & compact Y-axis labels */}
         {tickValues.map((val, i) => {
           const yPos = getY(val);
-          const label = val <= 0.001 ? '0.0%' : `-${val.toFixed(1)}%`;
+          const nominalMax = Math.max(maxDrawdownAmount, 50);
+          const nominalTick = yMax > 0 ? (val / yMax) * nominalMax : 0;
+          const label =
+            viewMode === 'nominal'
+              ? isPrivacyMode
+                ? '******'
+                : val <= 0.001
+                ? fmtCompactAxis(0)
+                : `-${fmtCompactAxis(nominalTick)}`
+              : val <= 0.001
+              ? '0.0%'
+              : `-${val.toFixed(1)}%`;
           return (
             <g key={i}>
               <line
@@ -446,19 +484,19 @@ export const DrawdownChart: React.FC<DrawdownChartProps> = ({
               {isPrivacyMode
                 ? '******'
                 : hoveredPoint.drawdownAmount > 0
-                ? `-${formatCurrency(hoveredPoint.drawdownAmount, settings, false)}`
-                : formatCurrency(0, settings, false)}
+                ? `-${fmtMoney(hoveredPoint.drawdownAmount, false)}`
+                : fmtMoney(0, false)}
             </span>
           </div>
           <div className="mt-0.5 text-[10px] text-[#697586] dark:text-[#929BA9]">
             Peak:{' '}
             {isPrivacyMode
               ? '******'
-              : formatCurrency(hoveredPoint.peak, settings, false)}{' '}
+              : fmtMoney(hoveredPoint.peak, false)}{' '}
             • Saldo:{' '}
             {isPrivacyMode
               ? '******'
-              : formatCurrency(hoveredPoint.equity, settings, false)}
+              : fmtMoney(hoveredPoint.equity, false)}
           </div>
         </div>
       )}

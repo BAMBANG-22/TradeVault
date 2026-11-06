@@ -116,6 +116,9 @@ export function encodeTradeNotesWithMetaB64(
   if (trade.executionNotes !== undefined && trade.executionNotes !== '') {
     payload.executionNotes = trade.executionNotes;
   }
+  if (trade.closeExchangeRate && typeof trade.closeExchangeRate === 'object') {
+    payload.closeExchangeRate = trade.closeExchangeRate;
+  }
 
   if (extraMeta?.wallClockDateTime) payload.wallClockDateTime = extraMeta.wallClockDateTime;
   if (extraMeta?.ianaTimezone) payload.ianaTimezone = extraMeta.ianaTimezone;
