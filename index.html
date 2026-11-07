@@ -16,7 +16,8 @@
         try {
           var theme = localStorage.getItem('tradevault_theme_v1');
           var root = document.documentElement;
-          if (theme === 'light') {
+          var resolvedTheme = theme === 'light' ? 'light' : 'dark';
+          if (resolvedTheme === 'light') {
             root.classList.add('light');
             root.classList.remove('dark');
             var meta = document.querySelector('meta[name="theme-color"]');
@@ -24,6 +25,9 @@
           } else {
             root.classList.add('dark');
             root.classList.remove('light');
+          }
+          if (window.TradeVaultSystemBars && typeof window.TradeVaultSystemBars.setTheme === 'function') {
+            window.TradeVaultSystemBars.setTheme(resolvedTheme);
           }
         } catch (e) {}
       })();

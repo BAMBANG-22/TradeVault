@@ -62,6 +62,18 @@ export function applyThemeToDocument(theme: AppTheme): void {
   if (metaThemeColor) {
     metaThemeColor.setAttribute('content', theme === 'light' ? '#F5F7FA' : '#080A0E');
   }
+
+  // Synchronize native Android status bar (top) and navigation bar (bottom) colors
+  try {
+    if (typeof window !== 'undefined') {
+      const nativeBridge = (window as any).TradeVaultSystemBars;
+      if (nativeBridge && typeof nativeBridge.setTheme === 'function') {
+        nativeBridge.setTheme(theme);
+      }
+    }
+  } catch {
+    // Ignore bridge errors in standard web browsers
+  }
 }
 
 /**
