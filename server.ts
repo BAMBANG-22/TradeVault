@@ -284,6 +284,8 @@ function parseAiJsonResponse(text: string): Record<string, any> {
   };
 }
 
+const quotaCooldownUntilByModel = new Map<string, number>();
+
 // AI Vision Endpoint: Extract trade data from chart screenshot
 app.post('/api/extract-trade-screenshot', async (req, res) => {
   try {
@@ -388,18 +390,23 @@ ${geometryHintBlock}
    - On XAUUSD, the distance |entryPrice - stopLoss| and |takeProfit - entryPrice| must be at least >= 1.00 point (never tiny 0.04 noise).`;
 
     const candidateModels = [
-      'gemini-3.8-flash',
-      'gemini-3.1-flash-lite',
       'gemini-flash-latest',
+      'gemini-3.1-flash-lite',
+      'gemini-2.5-flash',
+      'gemini-3-flash-preview',
+      'gemini-3.8-flash',
     ];
-    let lastError: any = null;
     let responseText = '';
     let usedModel = '';
 
     for (const model of candidateModels) {
+      const cooldownUntil = quotaCooldownUntilByModel.get(model) || 0;
+      if (Date.now() < cooldownUntil) {
+        continue;
+      }
+
       for (let attempt = 1; attempt <= 2; attempt++) {
         try {
-          console.log(`[AI Vision] Scanning screenshot with ${model} (attempt ${attempt})...`);
           const response = await ai.models.generateContent({
             model,
             contents: [
@@ -440,25 +447,30 @@ ${geometryHintBlock}
           if (response && response.text) {
             responseText = response.text;
             usedModel = model;
-            console.log(`[AI Vision] Scan success with model: ${model}`);
             break;
           }
         } catch (err: any) {
-          lastError = err;
           const errMsg = err?.message || String(err);
-          const isHighDemandOrOverload =
+          const isQuotaExhausted =
+            errMsg.includes('429') ||
+            errMsg.includes('RESOURCE_EXHAUSTED') ||
+            errMsg.includes('Quota exceeded');
+
+          if (isQuotaExhausted) {
+            // Put this model on a 15-minute cooldown and immediately switch to the next candidate model
+            quotaCooldownUntilByModel.set(model, Date.now() + 15 * 60 * 1000);
+            break;
+          }
+
+          const isTransientServerOverload =
             errMsg.includes('503') ||
             errMsg.includes('high demand') ||
             errMsg.includes('overloaded') ||
-            errMsg.includes('429') ||
-            errMsg.includes('RESOURCE_EXHAUSTED') ||
             errMsg.includes('UNAVAILABLE') ||
             errMsg.includes('500');
 
-          console.warn(`[AI Vision] ${model} attempt ${attempt} error: ${errMsg}`);
-
-          if (isHighDemandOrOverload && attempt < 2) {
-            await new Promise((resolve) => setTimeout(resolve, 600));
+          if (isTransientServerOverload && attempt < 2) {
+            await new Promise((resolve) => setTimeout(resolve, 500));
             continue;
           }
           break;
@@ -468,12 +480,13 @@ ${geometryHintBlock}
     }
 
     if (!responseText) {
-      throw (
-        lastError ||
-        new Error(
-          'Model AI sedang mengalami lonjakan antrean sementara. Silakan klik Scan Cepat sekali lagi.'
-        )
-      );
+      res.status(200).json({
+        success: false,
+        quotaExhausted: true,
+        error:
+          'Batas kuota harian tier gratis tercapai sementara; beralih otomatis ke pemindai geometri kanvas & OCR.',
+      });
+      return;
     }
 
     const parsedData = parseAiJsonResponse(responseText);
