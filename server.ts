@@ -388,9 +388,8 @@ ${geometryHintBlock}
    - On XAUUSD, the distance |entryPrice - stopLoss| and |takeProfit - entryPrice| must be at least >= 1.00 point (never tiny 0.04 noise).`;
 
     const candidateModels = [
-      'gemini-2.5-flash',
-      'gemini-3-flash-preview',
-      'gemini-3.1-flash-lite-preview',
+      'gemini-3.8-flash',
+      'gemini-3.1-flash-lite',
       'gemini-flash-latest',
     ];
     let lastError: any = null;

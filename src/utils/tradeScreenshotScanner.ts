@@ -1,4 +1,3 @@
-import { GoogleGenAI, Type } from '@google/genai';
 import { TradePosition } from '../types/trade';
 import { CHART_PREFS_STORAGE_KEY } from '../components/chart/MarketChartView';
 
@@ -1093,7 +1092,7 @@ ${geometryHintBlock}
 export function normalizeGeminiScanResponse(
   parsedData: any,
   canvasHints?: CanvasZoneAnalysis | null,
-  modelUsed = 'gemini-2.5-flash',
+  modelUsed = 'gemini-3.8-flash',
   resolvedImageUrl?: string
 ): ExtractedTradeScanData {
   const cleanInstrument = normalizeScanInstrument(parsedData?.instrument);
@@ -1205,162 +1204,6 @@ export function normalizeGeminiScanResponse(
     modelUsed,
     resolvedImageUrl,
   };
-}
-
-/**
- * PRIORITY #1 IN ANDROID APK & WEB:
- * Calls Gemini Vision (`gemini-2.5-flash` / `gemini-3-flash-preview`) DIRECTLY from the client
- * using `@google/genai` SDK and direct REST `fetch` to `generativelanguage.googleapis.com`
- * with the full, uncropped, unaltered 1920px image.
- */
-async function callGeminiVisionDirectFromClient(
-  dataUrl: string,
-  canvasHints?: CanvasZoneAnalysis | null,
-  resolvedImageUrl?: string
-): Promise<ExtractedTradeScanData | null> {
-  const apiKey =
-    (typeof process !== 'undefined' && (process as any).env?.GEMINI_API_KEY) ||
-    (typeof import.meta !== 'undefined' && (import.meta as any).env?.VITE_GEMINI_API_KEY) ||
-    '';
-
-  if (!apiKey || typeof apiKey !== 'string' || apiKey.trim().length < 10) {
-    return null;
-  }
-
-  const match = dataUrl.match(/^data:([a-zA-Z0-9]+\/[a-zA-Z0-9-.+]+);base64,(.+)$/);
-  if (!match) return null;
-  const mimeType = match[1];
-  const base64Data = match[2];
-
-  const prompt = buildGeminiScreenshotPrompt(canvasHints);
-  const candidateModels = [
-    'gemini-2.5-flash',
-    'gemini-3-flash-preview',
-    'gemini-3.1-flash-lite-preview',
-    'gemini-flash-latest',
-  ];
-
-  const responseSchemaObj = {
-    type: Type.OBJECT,
-    properties: {
-      detected: { type: Type.BOOLEAN },
-      source: { type: Type.STRING, description: 'MT5, TRADINGVIEW, or CHART' },
-      instrument: { type: Type.STRING, description: 'e.g. XAUUSD, EURUSD, GBPUSD, USDJPY, BTCUSD' },
-      position: { type: Type.STRING, description: 'BUY or SELL' },
-      lotSize: { type: Type.NUMBER, description: 'Lot size ONLY for MT5 (e.g. 0.12). Null for TradingView.' },
-      entryPrice: { type: Type.NUMBER, description: 'Exact Entry price from Y-axis badge/box (normalized decimal, e.g. 4093.045 or 4042.74)' },
-      stopLoss: { type: Type.NUMBER, description: 'Exact Stop Loss price from Y-axis badge/box (e.g. 4099.857 or 4031.97)' },
-      takeProfit: { type: Type.NUMBER, description: 'Exact Take Profit price from Y-axis badge/box (e.g. 4054.405 or 4074.43)' },
-      exitPrice: { type: Type.NUMBER },
-      profit: { type: Type.NUMBER },
-      plannedRiskReward: { type: Type.NUMBER },
-      timeframe: { type: Type.STRING },
-      currentPrice: { type: Type.NUMBER, description: 'Live running market price badge (e.g. 4050.87 or 4105.78)' },
-      status: { type: Type.STRING, description: 'PLANNED (for BUY LIMIT / SELL LIMIT / BUY STOP / SELL STOP or TradingView setup), ACTIVE (for open market order), or CLOSED' },
-      notes: { type: Type.STRING, description: 'Include exact order text seen on left edge e.g. BUY LIMIT 0.12, TP, SL' },
-    },
-    required: ['detected', 'instrument', 'position'],
-  };
-
-  // 1A. Try direct REST fetch to generativelanguage.googleapis.com (works reliably inside Capacitor Android WebView)
-  for (const model of candidateModels) {
-    try {
-      const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(
-        apiKey.trim()
-      )}`;
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), 14000);
-      const res = await fetch(endpoint, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        signal: controller.signal,
-        body: JSON.stringify({
-          contents: [
-            {
-              parts: [
-                {
-                  inlineData: {
-                    mimeType,
-                    data: base64Data,
-                  },
-                },
-                { text: prompt },
-              ],
-            },
-          ],
-          generationConfig: {
-            responseMimeType: 'application/json',
-            responseSchema: responseSchemaObj,
-            temperature: 0.1,
-          },
-        }),
-      });
-      clearTimeout(timer);
-
-      if (res.ok) {
-        const json = await res.json();
-        const textOut = json?.candidates?.[0]?.content?.parts?.[0]?.text;
-        if (textOut) {
-          const parsed = JSON.parse(textOut);
-          const normalized = normalizeGeminiScanResponse(
-            parsed,
-            canvasHints,
-            `direct-${model}`,
-            resolvedImageUrl
-          );
-          if (normalized.entryPrice !== null && normalized.entryPrice > 0) {
-            return normalized;
-          }
-        }
-      }
-    } catch {
-      // Try next model or SDK
-    }
-  }
-
-  // 1B. Fallback to @google/genai SDK client
-  try {
-    const ai = new GoogleGenAI({ apiKey: apiKey.trim() });
-    for (const model of candidateModels) {
-      try {
-        const response = await ai.models.generateContent({
-          model,
-          contents: [
-            {
-              inlineData: {
-                mimeType,
-                data: base64Data,
-              },
-            },
-            prompt,
-          ],
-          config: {
-            responseMimeType: 'application/json',
-            responseSchema: responseSchemaObj,
-            temperature: 0.1,
-          },
-        });
-        if (response?.text) {
-          const parsed = JSON.parse(response.text);
-          const normalized = normalizeGeminiScanResponse(
-            parsed,
-            canvasHints,
-            `sdk-${model}`,
-            resolvedImageUrl
-          );
-          if (normalized.entryPrice !== null && normalized.entryPrice > 0) {
-            return normalized;
-          }
-        }
-      } catch {
-        // continue
-      }
-    }
-  } catch {
-    // ignore
-  }
-
-  return null;
 }
 
 async function runOcrSpaceOnDataUrl(
@@ -1948,19 +1791,7 @@ export async function scanTradeScreenshotOrUrl(inputSource: string): Promise<Ext
         imageHeight: 0,
       };
 
-  // PRIORITY 1: Direct Client-Side Gemini Vision Call (sends full 1920px unaltered image directly from APK/browser)
-  if (dataUrlToAnalyze) {
-    const directGeminiResult = await callGeminiVisionDirectFromClient(
-      dataUrlToAnalyze,
-      canvasGeom,
-      !isDataUrl ? tvResolved.directImageUrl : undefined
-    );
-    if (directGeminiResult && directGeminiResult.entryPrice !== null) {
-      return directGeminiResult;
-    }
-  }
-
-  // PRIORITY 2: Server-Side Gemini Vision API
+  // PRIORITY 1: Server-Side Gemini Vision API (`/api/extract-trade-screenshot`)
   const payload: {
     imageBase64?: string;
     imageUrl?: string;
