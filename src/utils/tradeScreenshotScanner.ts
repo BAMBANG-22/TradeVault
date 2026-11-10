@@ -665,10 +665,10 @@ export async function analyzeChartCanvasGeometry(dataUrl: string): Promise<Canva
       const isBlueNavyProfitPixel = (r: number, g: number, b: number): boolean => {
         if (isDarkChartBg) {
           // Navy / Dark Blue / Cyan tint over dark background: B channel is elevated above R and background B
-          return b > r + 12 && b >= medBgB + 10 && b >= 34 && r < 135 && b >= g - 8;
+          return b > r + 8 && b >= medBgB + 7 && b >= 28 && r < 140 && b >= g - 10;
         }
         // Light background blue/navy tint
-        return b > r + 14 && b > g + 6 && r < 225 && b >= 140;
+        return b > r + 10 && b >= g && r < 230 && b >= 120;
       };
 
       // 2A. Risk Zone Option 1: Standard Red / Crimson
@@ -678,18 +678,18 @@ export async function analyzeChartCanvasGeometry(dataUrl: string): Promise<Canva
         return isDarkRedZone || isLightRedZone;
       };
 
-      // 2B. Risk Zone Option 2: Custom Grey / Slate / Translucent White-Grey
+      // 2B. Risk Zone Option 2: Custom Dark Grey / Slate / Translucent White-Grey
       const isGreySlateRiskPixel = (r: number, g: number, b: number): boolean => {
         const maxDiff = Math.max(Math.abs(r - g), Math.abs(g - b), Math.abs(r - b));
-        if (maxDiff > 18) return false; // Must be neutral grey/slate, not strongly saturated
+        if (maxDiff > 22) return false; // Must be neutral grey/slate, not strongly saturated
         const avg = (r + g + b) / 3;
         const bgAvg = (medBgR + medBgG + medBgB) / 3;
         if (isDarkChartBg) {
-          // Translucent grey/slate box over dark background is noticeably brighter than background
-          return avg >= bgAvg + 12 && avg >= 34 && avg <= 175;
+          // Translucent dark grey/slate box over dark background is noticeably brighter than background
+          return avg >= bgAvg + 8 && avg >= 28 && avg <= 185;
         }
         // Translucent grey/slate box over light background is noticeably darker than white background
-        return avg <= bgAvg - 12 && avg >= 90 && avg <= 230;
+        return avg <= bgAvg - 8 && avg >= 80 && avg <= 235;
       };
 
       const findLongestHorizontalRun = (
@@ -1639,30 +1639,7 @@ export function synthesizeTradeScanFromSignals(params: {
   if (stopLoss === null) stopLoss = findRealBadgePriceAtY(targetSlY);
   if (entryPrice === null) entryPrice = findRealBadgePriceAtY(targetEntryY);
 
-  // If 3 distinct real badge prices were read on the right-hand Y-axis and match the BUY/SELL order with valid distance
-  if (
-    (entryPrice === null || stopLoss === null || takeProfit === null) &&
-    validPriceTokens.length === 3
-  ) {
-    const uniqueSorted = Array.from(new Set(validPriceTokens.map((t) => t.val))).sort(
-      (a, b) => a - b
-    );
-    if (
-      uniqueSorted.length === 3 &&
-      uniqueSorted[1] - uniqueSorted[0] >= priceSpec.minSlTpDistance &&
-      uniqueSorted[2] - uniqueSorted[1] >= priceSpec.minSlTpDistance
-    ) {
-      if (position === 'BUY') {
-        if (stopLoss === null) stopLoss = uniqueSorted[0];
-        if (entryPrice === null) entryPrice = uniqueSorted[1];
-        if (takeProfit === null) takeProfit = uniqueSorted[2];
-      } else {
-        if (takeProfit === null) takeProfit = uniqueSorted[0];
-        if (entryPrice === null) entryPrice = uniqueSorted[1];
-        if (stopLoss === null) stopLoss = uniqueSorted[2];
-      }
-    }
-  }
+  // Strictly NO synthetic/interpolated fallback: if any level is not detected at its label or Y-coordinate, keep it null!
 
   // Enforce directional consistency & minimum point distance (reject 0.04 micro-noise, NEVER invent fake prices!)
   if (stopLoss !== null && takeProfit !== null && stopLoss !== takeProfit) {

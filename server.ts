@@ -341,60 +341,54 @@ app.post('/api/extract-trade-screenshot', async (req, res) => {
 - A TradingView ${canvasHints.inferredPosition || 'BUY/SELL'} Position Box (Profit Zone & Risk Zone) was detected:
   * Verified Direction: ${canvasHints.inferredPosition || 'UNKNOWN'} (${
             canvasHints.inferredPosition === 'SELL'
-              ? 'Risk Zone (Grey/Slate or Red) is ABOVE Profit Zone (Blue/Navy or Green) -> SELL'
-              : 'Profit Zone (Green or Blue/Navy) is ABOVE Risk Zone (Red or Grey/Slate) -> BUY'
+              ? 'Risk Zone (Dark Grey/Slate or Red) is at the TOP and Profit Zone (Dark Blue/Navy or Green) is at the BOTTOM -> SELL (TP < Entry < SL)'
+              : 'Profit Zone (Green or Dark Blue/Navy) is at the TOP and Risk Zone (Red or Dark Grey/Slate) is at the BOTTOM -> BUY (SL < Entry < TP)'
           })
-  * Top of Position Box is at vertical Y = ${
+  * Top boundary of Position Box is at vertical Y = ${
     canvasHints.boxTopYRatio != null ? (canvasHints.boxTopYRatio * 100).toFixed(1) + '%' : 'N/A'
   } from top of image.
   * Central Dividing Line (Entry Price) is at vertical Y = ${
     canvasHints.entryYRatio != null ? (canvasHints.entryYRatio * 100).toFixed(1) + '%' : 'N/A'
   } from top of image.
-  * Bottom of Position Box is at vertical Y = ${
+  * Bottom boundary of Position Box is at vertical Y = ${
     canvasHints.boxBottomYRatio != null ? (canvasHints.boxBottomYRatio * 100).toFixed(1) + '%' : 'N/A'
   } from top of image.\n`
         : '';
 
     const prompt = `You are an elite financial chart & order OCR specialist for MetaTrader 5 (MT5 / MT4) and TradingView.
-Carefully inspect the full, uncropped screenshot from the left edge to the right-hand Y-axis price scale.
+Carefully inspect the full, uncropped screenshot from the left edge to the rightmost Y-axis price scale.
 ${geometryHintBlock}
-1. RULES FOR METATRADER 5 (MT5) CHARTS:
-   - Read the text labels at the LEFT edge of the chart: "TP", "SL", "BUY LIMIT", "SELL LIMIT", "BUY STOP", "SELL STOP", "BUY", "SELL" (for example: "TP", "BUY LIMIT 0.12", "SL").
-   - Follow each label's horizontal dashed line straight across to the RIGHT-HAND Y-AXIS, and ONLY extract the price number that is inside a THIN OUTLINED BOX (kotak berbingkai tipis) aligned with that horizontal line:
-     * Example: "TP" line -> outlined box "4074.43" on right Y-axis -> takeProfit = 4074.43
-     * Example: "BUY LIMIT 0.12" line -> outlined box "4042.74" on right Y-axis -> entryPrice = 4042.74, lotSize = 0.12, position = "BUY"
-     * Example: "SL" line -> outlined box "4031.97" on right Y-axis -> stopLoss = 4031.97
-   - IGNORE unframed plain background grid numbers on the Y-axis (such as "4052.92" or "4030.42").
-   - IGNORE the bright blue/colored running price badge that has a countdown timer next to/below it (such as "4050.87 / 00:50") — put that ONLY in currentPrice, NEVER in entryPrice, stopLoss, or takeProfit!
-   - CRITICAL STATUS RULE: If the order label contains "LIMIT" or "STOP" (e.g. "BUY LIMIT 0.12", "SELL LIMIT", "BUY STOP"), you MUST set status = "PLANNED" (NOT "ACTIVE")!
+1. SPATIAL VISUAL RULES FOR METATRADER 5 (MT5) CHARTS:
+   - Read the order labels at the LEFT edge of the chart: "TP", "SL", "BUY LIMIT", "SELL LIMIT", "BUY STOP", "SELL STOP", "BUY", "SELL" (for example: "TP", "BUY LIMIT 0.12", "SL").
+   - Follow each label's horizontal dashed line straight across to the RIGHTMOST Y-AXIS, and ONLY extract the price number that is inside a BORDERED / OUTLINED BOX (kotak berbingkai) aligned with that dashed line:
+     * Example: "TP" dashed line -> bordered box "4074.43" on right Y-axis -> takeProfit = 4074.43
+     * Example: "BUY LIMIT 0.12" dashed line -> bordered box "4042.74" on right Y-axis -> entryPrice = 4042.74, lotSize = 0.12, position = "BUY"
+     * Example: "SL" dashed line -> bordered box "4031.97" on right Y-axis -> stopLoss = 4031.97
+   - IGNORE plain unbordered grid numbers on the Y-axis (such as "4052.92" or "4030.42").
+   - IGNORE the running candle price badge (such as "4050.87 / 00:50") — put that ONLY in currentPrice, NEVER in entryPrice, stopLoss, or takeProfit!
+   - STATUS RULE: If the order label contains "LIMIT" or "STOP" (e.g. "BUY LIMIT", "SELL LIMIT", "BUY STOP", "SELL STOP"), you MUST set status = "PLANNED".
 
-2. RULES FOR TRADINGVIEW CHARTS:
-   - Look for the TWO LARGE VERTICALLY-ADJACENT COLORED BLOCKS of the Position Tool — these can be either:
-     * Standard Green (Profit) & Red (Risk), OR
-     * Custom Dark Blue / Navy (Profit Zone) & Grey / Slate (Risk Zone)!
+2. SPATIAL VISUAL RULES FOR TRADINGVIEW CHARTS:
+   - Detect the Position Tool's two vertically-adjacent rectangular zones even when customized with Dark Blue / Navy (Profit Zone) and Dark Grey / Slate (Risk Zone) instead of Green and Red.
+   - IGNORE indicator or annotation boxes inside the chart such as "OB m5", "FVG", or "BOS", and ignore the live running candle price badge (e.g. "4.105,78" or "4.105,735").
+   - Read the Y-axis price badges at:
+     (1) The outer TOP boundary of the top box,
+     (2) The CENTRAL HORIZONTAL DIVIDING LINE between the two boxes (Entry Price),
+     (3) The outer BOTTOM boundary of the bottom box.
    - Direction Rule:
-     * If the Grey/Slate or Red Risk block is at the TOP and the Dark Blue/Navy or Green Profit block is at the BOTTOM, the position is SELL (takeProfit < entryPrice < stopLoss).
-     * If the Green or Dark Blue/Navy Profit block is at the TOP and the Red or Grey/Slate Risk block is at the BOTTOM, the position is BUY (stopLoss < entryPrice < takeProfit).
-   - IGNORE small inner annotation boxes in the middle of the chart (such as boxes labeled "OB m5", "FVG", "BOS", etc.) and ignore the live market candle price badge (e.g. "4.105,780" or "4.105,735").
-   - Read the exact price labels on the RIGHT-HAND Y-AXIS aligned with:
-     (1) The outer TOP edge of the top block (for SELL: stopLoss, e.g. "4.099,857" -> 4099.857),
-     (2) The CENTRAL HORIZONTAL DIVIDING LINE where the two blocks meet (entryPrice, e.g. "4.093,045" -> 4093.045),
-     (3) The outer BOTTOM edge of the bottom block (for SELL: takeProfit, e.g. the blue badge "4.054,405" -> 4054.405).
-   - NUMBER FORMAT NORMALIZATION: If the Y-axis uses dot thousands and comma decimals (e.g. "4.099,857", "4.093,045", "4.054,405"), remove the thousands dot (.) and convert the comma (,) to a decimal point -> 4099.857, 4093.045, 4054.405.
+     * If the Dark Blue / Navy (or Green) target box is at the BOTTOM and the Dark Grey / Slate (or Red) risk box is at the TOP, the direction is SELL (takeProfit < entryPrice < stopLoss, e.g. SL = 4099.857 at top, Entry = 4093.045 in middle, TP = 4054.405 at bottom).
+     * If the Green (or Dark Blue / Navy) target box is at the TOP and the Red (or Dark Grey / Slate) risk box is at the BOTTOM, the direction is BUY (stopLoss < entryPrice < takeProfit).
+   - LOCAL NUMBER FORMAT NORMALIZATION: If the Y-axis uses dot thousands separators and comma decimal separators (such as "4.054,405" or "4.105,735"), remove the thousands dot (.) and convert the comma (,) to a decimal point -> 4054.405 and 4105.735.
    - LOT SIZE ON TRADINGVIEW: Always return null for lotSize on TradingView.
 
-3. MANDATORY VALIDATION (NO FAKE NUMBERS):
-   - Never invent or calculate synthetic SL/TP prices with arbitrary offsets!
-   - For BUY: stopLoss < entryPrice < takeProfit.
-   - For SELL: takeProfit < entryPrice < stopLoss.
-   - On XAUUSD, the distance |entryPrice - stopLoss| and |takeProfit - entryPrice| must be at least >= 1.00 point (never tiny 0.04 noise).`;
+3. NO FAKE / SYNTHETIC NUMBERS:
+   - NEVER invent, interpolate, or calculate synthetic SL/TP numbers using offsets (such as entry - 0.04 or + 0.08).
+   - If Entry, SL, or TP is not clearly visible on the chart, return null for that field so the user can fill it manually.`;
 
     const candidateModels = [
+      'gemini-2.5-flash',
       'gemini-flash-latest',
       'gemini-3.1-flash-lite',
-      'gemini-2.5-flash',
-      'gemini-3-flash-preview',
-      'gemini-3.8-flash',
     ];
     let responseText = '';
     let usedModel = '';
@@ -428,15 +422,15 @@ ${geometryHintBlock}
                   instrument: { type: Type.STRING, description: 'Clean instrument symbol, e.g. XAUUSD, EURUSD, GBPUSD, USDJPY, BTCUSD, US30, NAS100' },
                   position: { type: Type.STRING, description: 'BUY or SELL' },
                   lotSize: { type: Type.NUMBER, description: 'Lot size ONLY if source is MT5 (e.g. 0.01, 0.12, 0.25). Null for TradingView.' },
-                  entryPrice: { type: Type.NUMBER, description: 'Exact entry price from right Y-axis badge/outlined box' },
-                  stopLoss: { type: Type.NUMBER, description: 'Exact Stop Loss price from right Y-axis badge/outlined box' },
-                  takeProfit: { type: Type.NUMBER, description: 'Exact Take Profit price from right Y-axis badge/outlined box' },
+                  entryPrice: { type: Type.NUMBER, description: 'Exact entry price from right Y-axis bordered box/badge, or null if not detected' },
+                  stopLoss: { type: Type.NUMBER, description: 'Exact Stop Loss price from right Y-axis bordered box/badge, or null if not detected' },
+                  takeProfit: { type: Type.NUMBER, description: 'Exact Take Profit price from right Y-axis bordered box/badge, or null if not detected' },
                   exitPrice: { type: Type.NUMBER, description: 'Close/exit price if trade is closed' },
                   profit: { type: Type.NUMBER, description: 'Floating or closed profit/loss amount' },
                   plannedRiskReward: { type: Type.NUMBER, description: 'Risk/Reward ratio number (e.g. 2.0 for 1:2 RR)' },
                   timeframe: { type: Type.STRING, description: 'Chart timeframe (e.g. M1, M5, M15, M30, H1, H4, D1)' },
-                  currentPrice: { type: Type.NUMBER, description: 'Current live market price on the right price scale' },
-                  status: { type: Type.STRING, description: 'PLANNED (for BUY LIMIT / SELL LIMIT / BUY STOP / SELL STOP or TradingView setup), ACTIVE (for open market order), or CLOSED' },
+                  currentPrice: { type: Type.NUMBER, description: 'Current live running market price on the right price scale' },
+                  status: { type: Type.STRING, description: 'PLANNED (when LIMIT or STOP is present, or TradingView setup), ACTIVE (open market order), or CLOSED' },
                   notes: { type: Type.STRING, description: 'Brief summary of visual readings including left-edge order labels' },
                 },
                 required: ['detected', 'instrument', 'position'],
@@ -457,8 +451,8 @@ ${geometryHintBlock}
             errMsg.includes('Quota exceeded');
 
           if (isQuotaExhausted) {
-            // Put this model on a 15-minute cooldown and immediately switch to the next candidate model
-            quotaCooldownUntilByModel.set(model, Date.now() + 15 * 60 * 1000);
+            // Put this model on a 1-hour (3600s) cooldown and immediately try the next model in the queue
+            quotaCooldownUntilByModel.set(model, Date.now() + 60 * 60 * 1000);
             break;
           }
 
@@ -513,7 +507,7 @@ ${geometryHintBlock}
     // Lifecycle status detection (strictly detect LIMIT / STOP as PLANNED)
     const notesStr = String(parsedData.notes || '');
     const rawStatusStr = String(parsedData.status || '').toUpperCase();
-    const hasPendingKeyword = /\b(BUY\s+LIMIT|SELL\s+LIMIT|BUY\s+STOP|SELL\s+STOP|LIMIT|PENDING)\b/i.test(
+    const hasPendingKeyword = /\b(BUY\s+LIMIT|SELL\s+LIMIT|BUY\s+STOP|SELL\s+STOP|LIMIT|STOP|PENDING)\b/i.test(
       notesStr
     );
     const status: 'PLANNED' | 'ACTIVE' | 'CLOSED' =
@@ -525,7 +519,7 @@ ${geometryHintBlock}
         ? 'ACTIVE'
         : 'PLANNED';
 
-    // Normalize numeric values with robust parseNumericValue
+    // Normalize numeric values with robust parseNumericValue (supports "4.054,405" -> 4054.405)
     let entryPrice = parseNumericValue(parsedData.entryPrice, cleanInstrument);
     let stopLoss = parseNumericValue(parsedData.stopLoss, cleanInstrument);
     let takeProfit = parseNumericValue(parsedData.takeProfit, cleanInstrument);
@@ -563,11 +557,23 @@ ${geometryHintBlock}
       }
     }
 
-    // Reject tiny micro-noise SL/TP (< minDistance, e.g. 0.04 on XAUUSD)
-    if (entryPrice !== null && stopLoss !== null && Math.abs(entryPrice - stopLoss) < minDistance) {
+    // Reject tiny micro-noise or invalid SL/TP (< minDistance, e.g. 0.04 on XAUUSD) -> return null so user can fill manually
+    if (
+      entryPrice !== null &&
+      stopLoss !== null &&
+      (Math.abs(entryPrice - stopLoss) < minDistance ||
+        (cleanPosition === 'BUY' && stopLoss >= entryPrice) ||
+        (cleanPosition === 'SELL' && stopLoss <= entryPrice))
+    ) {
       stopLoss = null;
     }
-    if (entryPrice !== null && takeProfit !== null && Math.abs(takeProfit - entryPrice) < minDistance) {
+    if (
+      entryPrice !== null &&
+      takeProfit !== null &&
+      (Math.abs(takeProfit - entryPrice) < minDistance ||
+        (cleanPosition === 'BUY' && takeProfit <= entryPrice) ||
+        (cleanPosition === 'SELL' && takeProfit >= entryPrice))
+    ) {
       takeProfit = null;
     }
 
@@ -595,10 +601,10 @@ ${geometryHintBlock}
         status,
         plannedRiskReward: plannedRR,
         timeframe: parsedData.timeframe || null,
-        currentPrice: currentPrice || null,
-        confidence: parsedData.confidence || 0.92,
+        currentPrice: currentPrice ?? null,
+        confidence: parsedData.confidence || 0.95,
         notes: parsedData.notes || '',
-        modelUsed: usedModel || 'gemini-3-flash-preview',
+        modelUsed: usedModel || 'gemini-2.5-flash',
       },
     });
   } catch (error: any) {

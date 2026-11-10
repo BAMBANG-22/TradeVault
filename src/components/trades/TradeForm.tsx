@@ -864,14 +864,20 @@ export const TradeForm: React.FC<TradeFormProps> = ({
       if (data.entryPrice !== null && data.entryPrice !== undefined) {
         setEntryPrice(String(data.entryPrice));
         extractedInfoSummary.push(`Entry: ${data.entryPrice}`);
+      } else {
+        setEntryPrice('');
       }
       if (data.stopLoss !== null && data.stopLoss !== undefined) {
         setStopLoss(String(data.stopLoss));
         extractedInfoSummary.push(`SL: ${data.stopLoss}`);
+      } else {
+        setStopLoss('');
       }
       if (data.takeProfit !== null && data.takeProfit !== undefined) {
         setTakeProfit(String(data.takeProfit));
         extractedInfoSummary.push(`TP: ${data.takeProfit}`);
+      } else {
+        setTakeProfit('');
       }
 
       // Lot Size Policy:
