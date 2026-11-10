@@ -26,6 +26,9 @@ import {
 import {
   resolveTradingViewSnapshotUrl,
   synthesizeTradeScanFromSignals,
+  normalizeChartPriceNumber,
+  extractPriceNumbersFromLine,
+  normalizeGeminiScanResponse,
 } from '../src/utils/tradeScreenshotScanner';
 import {
   buildUnifiedXauusdLotInput,
@@ -1317,41 +1320,106 @@ console.log('\n--- [C4] Testing Draggable Style/Settings Bar & Tap-to-Deselect B
   assert.equal(tvAutoLot.isValid, true, 'Standard Equity Auto-Lot for TradingView scan must be valid');
   assert.equal(tvAutoLot.recommendedLot, 0.1, 'TradingView scan with $1,000 equity, 1% risk, 10-pip SL on XAUUSD must yield 0.10 Lot');
 
-  // 8a-2. Verify Theil-Sen Linear Y-Axis Interpolation when colored badges themselves are missed by OCR
-  // Only background grid ticks (4030 at y=80, 4010 at y=160, 3970 at y=320) are read:
-  // Slope = -20 / 80 = -0.25 per px. At y=120 -> 4020, y=200 -> 4000, y=240 -> 3990.
-  const synthTvInterpolated = synthesizeTradeScanFromSignals({
+  // 8a-2. Verify TradingView European/Indonesian Number Format (`4.054,405` -> `4054.405`) & Real User Screenshot #1:
+  // SELL setup with Grey Risk box on top (`4.099,857`), Entry in middle (`4.093,045`), and Dark Blue/Navy Profit box on bottom (`4.054,405`),
+  // while live candle is at `4.105,78` and inner box says `"OB m5"`.
+  assert.equal(
+    normalizeChartPriceNumber('4.099,857', 'XAUUSD'),
+    4099.857,
+    'Must normalize 4.099,857 to 4099.857'
+  );
+  assert.equal(
+    normalizeChartPriceNumber('4.093,045', 'XAUUSD'),
+    4093.045,
+    'Must normalize 4.093,045 to 4093.045'
+  );
+  assert.equal(
+    normalizeChartPriceNumber('4.054,405', 'XAUUSD'),
+    4054.405,
+    'Must normalize 4.054,405 to 4054.405'
+  );
+  assert.equal(
+    normalizeChartPriceNumber('4.105,735', 'XAUUSD'),
+    4105.735,
+    'Must normalize 4.105,735 to 4105.735'
+  );
+
+  const extractedLineNums = extractPriceNumbersFromLine(
+    'SL: 4.099,857 | Entry: 4.093,045 | TP: 4.054,405',
+    'XAUUSD'
+  );
+  assert.deepEqual(
+    extractedLineNums.map((x) => x.val),
+    [4099.857, 4093.045, 4054.405],
+    'extractPriceNumbersFromLine must parse dot-thousands comma-decimal format accurately'
+  );
+
+  const synthTvBlueGreySell = synthesizeTradeScanFromSignals({
     ocr: {
-      fullText: 'OANDA:XAUUSD 15\n4030.00\n4010.00\n3970.00',
+      fullText:
+        'XAUUSD 5\nOB m5\n4.105,780\n4.099,857\n4.093,045\n4.054,405',
       lines: [
-        { text: 'OANDA:XAUUSD 15', centerY: 30, minX: 20, maxX: 200 },
-        { text: '4030.00', centerY: 80, minX: 900, maxX: 960 },
-        { text: '4010.00', centerY: 160, minX: 900, maxX: 960 },
-        { text: '3970.00', centerY: 320, minX: 900, maxX: 960 },
+        { text: 'XAUUSD 5', centerY: 28, minX: 20, maxX: 180 },
+        { text: 'OB m5', centerY: 235, minX: 380, maxX: 450 },
+        { text: '4.105,780', centerY: 140, minX: 900, maxX: 975 }, // Live candle price above setup
+        { text: '4.099,857', centerY: 190, minX: 900, maxX: 975 }, // Top of Grey Risk Zone (SL)
+        { text: '4.093,045', centerY: 245, minX: 900, maxX: 975 }, // Dividing Line (Entry)
+        { text: '4.054,405', centerY: 480, minX: 900, maxX: 975 }, // Bottom of Blue/Navy Profit Zone (TP)
       ],
       words: [],
     },
     canvasGeom: {
       hasPositionBox: true,
-      inferredPosition: 'BUY',
-      inferredRR: 2.0,
-      entryYRatio: 200 / 600,
-      tpYRatio: 120 / 600,
-      slYRatio: 240 / 600,
-      boxTopYRatio: 120 / 600,
-      boxBottomYRatio: 240 / 600,
-      rightAxisGreenBadgeYRatio: 120 / 600,
-      rightAxisRedBadgeYRatio: 240 / 600,
-      rightAxisBlueOrDarkBadgeYRatio: 200 / 600,
+      inferredPosition: 'SELL',
+      inferredRR: 5.67,
+      profitTheme: 'BLUE_NAVY',
+      riskTheme: 'GREY_SLATE',
+      slYRatio: 190 / 600,
+      entryYRatio: 245 / 600,
+      tpYRatio: 480 / 600,
+      boxTopYRatio: 190 / 600,
+      boxBottomYRatio: 480 / 600,
+      rightAxisGreenBadgeYRatio: null,
+      rightAxisRedBadgeYRatio: null,
+      rightAxisBlueOrDarkBadgeYRatio: 480 / 600,
       horizontalLineYRatios: [],
       imageWidth: 1000,
       imageHeight: 600,
     },
     urlMeta: null,
   });
-  assert.equal(synthTvInterpolated.entryPrice, 4000, 'Linear Y-axis model must interpolate Entry = 4000 from grid ticks');
-  assert.equal(synthTvInterpolated.takeProfit, 4020, 'Linear Y-axis model must interpolate TP = 4020 from grid ticks');
-  assert.equal(synthTvInterpolated.stopLoss, 3990, 'Linear Y-axis model must interpolate SL = 3990 from grid ticks');
+  assert.equal(synthTvBlueGreySell.source, 'TRADINGVIEW');
+  assert.equal(synthTvBlueGreySell.position, 'SELL', 'Grey Risk on top + Blue/Navy Profit on bottom must be SELL');
+  assert.equal(synthTvBlueGreySell.stopLoss, 4099.857, 'Must extract SL = 4099.857 from top of Grey Risk zone');
+  assert.equal(synthTvBlueGreySell.entryPrice, 4093.045, 'Must extract Entry = 4093.045 from dividing line (ignoring 4105.78)');
+  assert.equal(synthTvBlueGreySell.takeProfit, 4054.405, 'Must extract TP = 4054.405 from bottom Blue/Navy badge');
+  assert.equal(synthTvBlueGreySell.lotSize, null, 'TradingView lotSize must be null');
+  assert.equal(synthTvBlueGreySell.status, 'PLANNED', 'TradingView setup status must be PLANNED');
+
+  // Verify zero synthetic SL/TP fabrication when SL/TP badges are absent or invalid micro-noise (0.04 diff)
+  const noFakeFallbackCheck = normalizeGeminiScanResponse(
+    {
+      detected: true,
+      source: 'TRADINGVIEW',
+      instrument: 'XAUUSD',
+      position: 'BUY',
+      entryPrice: '4105.78',
+      stopLoss: '4105.74', // Fake 0.04 noise -> MUST BE REJECTED to null!
+      takeProfit: '4105.86', // Fake 0.08 noise -> MUST BE REJECTED to null!
+    },
+    null
+  );
+  assert.equal(noFakeFallbackCheck.entryPrice, 4105.78);
+  assert.equal(
+    noFakeFallbackCheck.stopLoss,
+    null,
+    'Micro-noise SL (0.04 diff on XAUUSD) must be rejected as null, never accepted or fabricated'
+  );
+  assert.equal(
+    noFakeFallbackCheck.takeProfit,
+    null,
+    'Micro-noise TP (0.08 diff on XAUUSD) must be rejected as null, never accepted or fabricated'
+  );
 
   // 8b. TradingView SELL Position Scan (Red above Green)
   const synthTvSell = synthesizeTradeScanFromSignals({
@@ -1394,32 +1462,39 @@ console.log('\n--- [C4] Testing Draggable Style/Settings Bar & Tap-to-Deselect B
   assert.equal(synthTvSell.takeProfit, 1.079, 'Must extract SELL TP = 1.07900 (below Entry)');
   assert.equal(synthTvSell.lotSize, null, 'TradingView SELL scan must return lotSize = null');
 
-  // 8c. MT5 BUY Position Scan (Must extract Entry, SL, TP AND directly identify & output MT5 Lot Size)
-  const synthMt5Buy = synthesizeTradeScanFromSignals({
+  // 8c. Real User Screenshot #2: MT5 Chart with "TP" aligned to "4074.43", "BUY LIMIT 0.12" aligned to "4042.74",
+  // and "SL" aligned to "4031.97", while running price is "4050.87" and grid has "4052.92".
+  // Must detect: BUY | Status: PLANNED | Lot: 0.12 | Entry: 4042.74 | SL: 4031.97 | TP: 4074.43
+  const synthMt5BuyLimit = synthesizeTradeScanFromSignals({
     ocr: {
-      fullText: 'XAUUSD, M15\n#84920123 buy 0.25 at 4000.00\nsl: 3990.00 tp: 4025.00\n4025.00\n4000.00\n3990.00',
+      fullText:
+        'XAUUSD, M5\nTP\n4074.43\n4052.92\n4050.87\nBUY LIMIT 0.12\n4042.74\nSL\n4031.97',
       lines: [
-        { text: 'XAUUSD, M15', centerY: 30, minX: 20, maxX: 220 },
-        { text: '#84920123 buy 0.25 at 4000.00', centerY: 200, minX: 40, maxX: 350 },
-        { text: 'sl: 3990.00 tp: 4025.00', centerY: 225, minX: 40, maxX: 300 },
-        { text: '4025.00', centerY: 100, minX: 900, maxX: 970 },
-        { text: '4000.00', centerY: 200, minX: 900, maxX: 970 },
-        { text: '3990.00', centerY: 240, minX: 900, maxX: 970 },
+        { text: 'XAUUSD, M5', centerY: 28, minX: 20, maxX: 180 },
+        { text: 'TP', centerY: 110, minX: 25, maxX: 65 },
+        { text: '4074.43', centerY: 112, minX: 900, maxX: 975 },
+        { text: '4052.92', centerY: 210, minX: 900, maxX: 975 }, // Unframed grid number
+        { text: '4050.87', centerY: 225, minX: 900, maxX: 975 }, // Running price badge
+        { text: 'BUY LIMIT 0.12', centerY: 280, minX: 25, maxX: 190 },
+        { text: '4042.74', centerY: 282, minX: 900, maxX: 975 },
+        { text: 'SL', centerY: 350, minX: 25, maxX: 65 },
+        { text: '4031.97', centerY: 352, minX: 900, maxX: 975 },
       ],
       words: [],
     },
     canvasGeom: null,
     urlMeta: null,
   });
-  assert.equal(synthMt5Buy.source, 'MT5', 'Must classify MT5 order screenshot as MT5');
-  assert.equal(synthMt5Buy.instrument, 'XAUUSD', 'Must extract XAUUSD from MT5');
-  assert.equal(synthMt5Buy.position, 'BUY', 'Must detect BUY from MT5 order ticket');
-  assert.equal(synthMt5Buy.lotSize, 0.25, 'MT5 scan MUST extract exact Lot Size 0.25 used on MT5');
-  assert.equal(synthMt5Buy.entryPrice, 4000, 'MT5 scan must extract Entry = 4000.00');
-  assert.equal(synthMt5Buy.stopLoss, 3990, 'MT5 scan must extract SL = 3990.00');
-  assert.equal(synthMt5Buy.takeProfit, 4025, 'MT5 scan must extract TP = 4025.00');
+  assert.equal(synthMt5BuyLimit.source, 'MT5', 'Must classify MT5 BUY LIMIT screenshot as MT5');
+  assert.equal(synthMt5BuyLimit.instrument, 'XAUUSD', 'Must extract XAUUSD');
+  assert.equal(synthMt5BuyLimit.position, 'BUY', 'Must detect BUY');
+  assert.equal(synthMt5BuyLimit.status, 'PLANNED', 'BUY LIMIT 0.12 must set status = PLANNED (not ACTIVE)');
+  assert.equal(synthMt5BuyLimit.lotSize, 0.12, 'Must extract exact MT5 Lot Size = 0.12');
+  assert.equal(synthMt5BuyLimit.entryPrice, 4042.74, 'Must extract Entry = 4042.74 aligned with BUY LIMIT 0.12');
+  assert.equal(synthMt5BuyLimit.stopLoss, 4031.97, 'Must extract SL = 4031.97 aligned with SL line (not 4032.56)');
+  assert.equal(synthMt5BuyLimit.takeProfit, 4074.43, 'Must extract TP = 4074.43 aligned with TP line (not 4052.92)');
 
-  // 8d. MT5 SELL Position Scan via Horizontal Order Lines & Right-Axis Price Scale
+  // 8d. MT5 SELL Position Scan via Horizontal Order Lines & Right-Axis Price Scale (Market Order -> ACTIVE)
   const synthMt5Sell = synthesizeTradeScanFromSignals({
     ocr: {
       fullText: 'BTCUSD, H1\n#99102341 sell 0.10\nsl\ntp\n96800.00\n96250.00\n95150.00',
@@ -1434,38 +1509,24 @@ console.log('\n--- [C4] Testing Draggable Style/Settings Bar & Tap-to-Deselect B
       ],
       words: [],
     },
-    canvasGeom: {
-      hasPositionBox: false,
-      inferredPosition: null,
-      inferredRR: null,
-      entryYRatio: null,
-      tpYRatio: null,
-      slYRatio: null,
-      boxTopYRatio: null,
-      boxBottomYRatio: null,
-      rightAxisGreenBadgeYRatio: null,
-      rightAxisRedBadgeYRatio: 120 / 600,
-      rightAxisBlueOrDarkBadgeYRatio: 230 / 600,
-      horizontalLineYRatios: [120 / 600, 230 / 600, 450 / 600],
-      imageWidth: 1000,
-      imageHeight: 600,
-    },
+    canvasGeom: null,
     urlMeta: null,
   });
   assert.equal(synthMt5Sell.source, 'MT5', 'Must classify MT5 SELL chart as MT5');
   assert.equal(synthMt5Sell.instrument, 'BTCUSD', 'Must extract BTCUSD from MT5');
   assert.equal(synthMt5Sell.position, 'SELL', 'Must detect SELL from MT5 order line');
+  assert.equal(synthMt5Sell.status, 'ACTIVE', 'Executed MT5 market order (sell 0.10 without LIMIT/STOP) must be ACTIVE');
   assert.equal(synthMt5Sell.lotSize, 0.1, 'MT5 SELL scan MUST extract exact Lot Size 0.10');
   assert.equal(synthMt5Sell.entryPrice, 96250, 'MT5 SELL scan must extract Entry = 96250 from order line Y');
   assert.equal(synthMt5Sell.stopLoss, 96800, 'MT5 SELL scan must extract SL = 96800 from sl line Y (above Entry)');
   assert.equal(synthMt5Sell.takeProfit, 95150, 'MT5 SELL scan must extract TP = 95150 from tp line Y (below Entry)');
 
   // 8e. TradingView Disambiguation: Must NOT confuse "Open 4015.20" (OHLC header), "Open P&L: -1850.00" (floating label),
-  // or live market candle badge (4012.50 at y=150) with the true Entry dividing line (4000.00 at y=200)!
+  // or live market candle badge (4012.50 at y=150) with the true Entry dividing line badge (4000.00 at y=200)!
   const synthTvDisambig = synthesizeTradeScanFromSignals({
     ocr: {
       fullText:
-        'OANDA:XAUUSD 15 Open 4015.20 High 4022.00 Low 3995.00 Close 4012.50\nOpen P&L: -1850.00, Qty: 1.5, Risk/Reward Ratio: 2.00\n4020.00\n4012.50\n3990.00',
+        'OANDA:XAUUSD 15 Open 4015.20 High 4022.00 Low 3995.00 Close 4012.50\nOpen P&L: -1850.00, Qty: 1.5, Risk/Reward Ratio: 2.00\n4020.00\n4012.50\n4000.00\n3990.00',
       lines: [
         {
           text: 'OANDA:XAUUSD 15 Open 4015.20 High 4022.00 Low 3995.00 Close 4012.50',
@@ -1480,7 +1541,8 @@ console.log('\n--- [C4] Testing Draggable Style/Settings Bar & Tap-to-Deselect B
           maxX: 580,
         },
         { text: '4020.00', centerY: 120, minX: 900, maxX: 960 },
-        { text: '4012.50', centerY: 150, minX: 900, maxX: 960 }, // Live candle price badge (occluding entry badge)
+        { text: '4012.50', centerY: 150, minX: 900, maxX: 960 }, // Live candle price badge
+        { text: '4000.00', centerY: 200, minX: 900, maxX: 960 }, // True dividing line Entry badge
         { text: '3990.00', centerY: 240, minX: 900, maxX: 960 },
       ],
       words: [],
@@ -1489,14 +1551,14 @@ console.log('\n--- [C4] Testing Draggable Style/Settings Bar & Tap-to-Deselect B
       hasPositionBox: true,
       inferredPosition: 'BUY',
       inferredRR: 2.0,
-      entryYRatio: 200 / 600, // Exact dividing line between Green (120..200) and Red (200..240)
+      entryYRatio: 200 / 600,
       tpYRatio: 120 / 600,
       slYRatio: 240 / 600,
       boxTopYRatio: 120 / 600,
       boxBottomYRatio: 240 / 600,
       rightAxisGreenBadgeYRatio: 120 / 600,
       rightAxisRedBadgeYRatio: 240 / 600,
-      rightAxisBlueOrDarkBadgeYRatio: null,
+      rightAxisBlueOrDarkBadgeYRatio: 200 / 600,
       horizontalLineYRatios: [],
       imageWidth: 1000,
       imageHeight: 600,
@@ -1529,7 +1591,7 @@ console.log('\n--- [C4] Testing Draggable Style/Settings Bar & Tap-to-Deselect B
   assert.equal(synthMt5Arrow.currentPrice, 3328.1, 'Must extract second price after arrow (3328.10) as Current Price');
   assert.equal(synthMt5Arrow.stopLoss, 3350, 'Must extract S/L = 3350.00');
   assert.equal(synthMt5Arrow.takeProfit, 3315, 'Must extract T/P = 3315.00');
-  console.log('✓ C4.8 APK Scan Kilat (TradingView & MT5 BUY/SELL + Lot Policy + Disambiguation): Verified Entry, SL, TP, MT5 Lot extraction, and TradingView Equity Auto-Lot');
+  console.log('✓ C4.8 APK Scan Kilat (TradingView Blue/Grey & Green/Red + 4.054,405 format + MT5 BUY LIMIT PLANNED + Zero Fake Numbers): All assertions passed');
 }
 
 console.log('\n====================================================================');

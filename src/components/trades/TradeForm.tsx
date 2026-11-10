@@ -132,7 +132,7 @@ export const compressAndResizeImage = (
   file: File | Blob,
   maxWidth = 1920,
   maxHeight = 1920,
-  quality = 0.88
+  quality = 0.9
 ): Promise<string> => {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -847,8 +847,17 @@ export const TradeForm: React.FC<TradeFormProps> = ({
         setPosition(data.position);
         extractedInfoSummary.push(`Posisi: ${data.position}`);
       }
-      if (data.status === 'ACTIVE' || data.status === 'CLOSED') {
+      if (data.status === 'PLANNED') {
+        setLifecycleStatus('PLANNED');
+        if (data.source === 'MT5') {
+          setOrderType('Pending');
+        }
+        extractedInfoSummary.push('Status: PLANNED');
+      } else if (data.status === 'ACTIVE' || data.status === 'CLOSED') {
         setLifecycleStatus(data.status === 'ACTIVE' ? 'OPEN' : 'CLOSED');
+        if (data.status === 'ACTIVE') {
+          setOrderType('Market');
+        }
         extractedInfoSummary.push(`Status: ${data.status}`);
       }
       if (data.entryPrice !== null && data.entryPrice !== undefined) {

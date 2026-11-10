@@ -1,3 +1,4 @@
+import { GoogleGenAI, Type } from '@google/genai';
 import { TradePosition } from '../types/trade';
 import { CHART_PREFS_STORAGE_KEY } from '../components/chart/MarketChartView';
 
@@ -31,6 +32,8 @@ export interface CanvasZoneAnalysis {
   slYRatio: number | null;
   boxTopYRatio: number | null;
   boxBottomYRatio: number | null;
+  profitTheme?: 'GREEN' | 'BLUE_NAVY' | null;
+  riskTheme?: 'RED' | 'GREY_SLATE' | null;
   rightAxisGreenBadgeYRatio?: number | null;
   rightAxisRedBadgeYRatio?: number | null;
   rightAxisBlueOrDarkBadgeYRatio?: number | null;
@@ -56,33 +59,33 @@ export interface OcrExtractionResult {
 }
 
 /**
- * Valid price ranges per instrument so random timestamps/ticket numbers (e.g. #12345678, 2026, 15:00)
- * are never confused with Entry/SL/TP prices.
+ * Valid price ranges and minimum SL/TP point distance per instrument.
+ * Note: No synthetic fallback pip steps are allowed.
  */
 export const INSTRUMENT_PRICE_RANGES: Record<
   string,
-  { min: number; max: number; decimals: number; defaultPipStep: number }
+  { min: number; max: number; decimals: number; minSlTpDistance: number }
 > = {
-  XAUUSD: { min: 1500, max: 6500, decimals: 2, defaultPipStep: 10 },
-  XAGUSD: { min: 15, max: 90, decimals: 3, defaultPipStep: 0.4 },
-  BTCUSD: { min: 15000, max: 250000, decimals: 2, defaultPipStep: 450 },
-  ETHUSD: { min: 800, max: 12000, decimals: 2, defaultPipStep: 35 },
-  SOLUSD: { min: 20, max: 1000, decimals: 2, defaultPipStep: 3 },
-  EURUSD: { min: 0.85, max: 1.35, decimals: 5, defaultPipStep: 0.0025 },
-  GBPUSD: { min: 1.05, max: 1.65, decimals: 5, defaultPipStep: 0.003 },
-  AUDUSD: { min: 0.5, max: 0.95, decimals: 5, defaultPipStep: 0.002 },
-  NZDUSD: { min: 0.45, max: 0.85, decimals: 5, defaultPipStep: 0.002 },
-  USDCAD: { min: 1.15, max: 1.6, decimals: 5, defaultPipStep: 0.0025 },
-  USDCHF: { min: 0.7, max: 1.2, decimals: 5, defaultPipStep: 0.0025 },
-  EURGBP: { min: 0.7, max: 1.0, decimals: 5, defaultPipStep: 0.002 },
-  USDJPY: { min: 95, max: 200, decimals: 3, defaultPipStep: 0.35 },
-  EURJPY: { min: 110, max: 220, decimals: 3, defaultPipStep: 0.4 },
-  GBPJPY: { min: 130, max: 250, decimals: 3, defaultPipStep: 0.45 },
-  AUDJPY: { min: 70, max: 140, decimals: 3, defaultPipStep: 0.35 },
-  US30: { min: 25000, max: 65000, decimals: 2, defaultPipStep: 120 },
-  NAS100: { min: 10000, max: 35000, decimals: 2, defaultPipStep: 80 },
-  SPX500: { min: 3000, max: 9000, decimals: 2, defaultPipStep: 25 },
-  GER40: { min: 12000, max: 30000, decimals: 2, defaultPipStep: 60 },
+  XAUUSD: { min: 1500, max: 6500, decimals: 3, minSlTpDistance: 1.0 },
+  XAGUSD: { min: 15, max: 90, decimals: 3, minSlTpDistance: 0.05 },
+  BTCUSD: { min: 15000, max: 250000, decimals: 2, minSlTpDistance: 25 },
+  ETHUSD: { min: 800, max: 12000, decimals: 2, minSlTpDistance: 2 },
+  SOLUSD: { min: 20, max: 1000, decimals: 2, minSlTpDistance: 0.2 },
+  EURUSD: { min: 0.85, max: 1.35, decimals: 5, minSlTpDistance: 0.0003 },
+  GBPUSD: { min: 1.05, max: 1.65, decimals: 5, minSlTpDistance: 0.0003 },
+  AUDUSD: { min: 0.5, max: 0.95, decimals: 5, minSlTpDistance: 0.0003 },
+  NZDUSD: { min: 0.45, max: 0.85, decimals: 5, minSlTpDistance: 0.0003 },
+  USDCAD: { min: 1.15, max: 1.6, decimals: 5, minSlTpDistance: 0.0003 },
+  USDCHF: { min: 0.7, max: 1.2, decimals: 5, minSlTpDistance: 0.0003 },
+  EURGBP: { min: 0.7, max: 1.0, decimals: 5, minSlTpDistance: 0.0003 },
+  USDJPY: { min: 95, max: 200, decimals: 3, minSlTpDistance: 0.03 },
+  EURJPY: { min: 110, max: 220, decimals: 3, minSlTpDistance: 0.03 },
+  GBPJPY: { min: 130, max: 250, decimals: 3, minSlTpDistance: 0.03 },
+  AUDJPY: { min: 70, max: 140, decimals: 3, minSlTpDistance: 0.03 },
+  US30: { min: 25000, max: 65000, decimals: 2, minSlTpDistance: 15 },
+  NAS100: { min: 10000, max: 35000, decimals: 2, minSlTpDistance: 10 },
+  SPX500: { min: 3000, max: 9000, decimals: 2, minSlTpDistance: 3 },
+  GER40: { min: 12000, max: 30000, decimals: 2, minSlTpDistance: 5 },
 };
 
 const REMOTE_SCAN_API_ENDPOINTS = [
@@ -90,6 +93,126 @@ const REMOTE_SCAN_API_ENDPOINTS = [
   'https://ais-pre-qmgrbl6vkm3qzsovjavbgc-342426605045.asia-southeast1.run.app/api/extract-trade-screenshot',
   'https://ais-dev-qmgrbl6vkm3qzsovjavbgc-342426605045.asia-southeast1.run.app/api/extract-trade-screenshot',
 ];
+
+/**
+ * Normalizes TradingView and MT5 price strings, specifically handling:
+ * - European/Indonesian format `X.XXX,XXX` (e.g. `4.054,405` -> `4054.405`, `4.099,857` -> `4099.857`, `4.105,735` -> `4105.735`)
+ * - International format `X,XXX.XXX` or space-separated `96 250.00` (`4,054.405` -> `4054.405`)
+ * - Comma decimal format (`4054,405` -> `4054.405`)
+ * - Misread dot-thousands on XAUUSD where `4.054` or `4.054405` was parsed as ~4.05 instead of `4054.405`
+ */
+export function normalizeChartPriceNumber(
+  raw: unknown,
+  instrument = 'XAUUSD'
+): number | null {
+  if (raw === null || raw === undefined || raw === '') return null;
+
+  const cleanInst = normalizeScanInstrument(instrument);
+  const spec = INSTRUMENT_PRICE_RANGES[cleanInst] || INSTRUMENT_PRICE_RANGES.XAUUSD;
+
+  if (typeof raw === 'number') {
+    if (!Number.isFinite(raw) || raw <= 0) return null;
+    // Fix XAUUSD dot-thousands misread (e.g. 4.054405 instead of 4054.405)
+    if (cleanInst === 'XAUUSD' && raw >= 1.5 && raw <= 6.5) {
+      return Number((raw * 1000).toFixed(3));
+    }
+    return raw;
+  }
+
+  let s = String(raw).trim();
+  if (!s) return null;
+
+  // Strip surrounding non-numeric characters except sign, digits, dot, comma, space
+  s = s.replace(/[^0-9.,+\- ]/g, '').trim();
+  if (!s) return null;
+
+  // Case 1: Format `X.XXX,XXX` or `XX.XXX,XX` (Dot as thousands separator, Comma as decimal separator)
+  // Example: "4.054,405" -> "4054.405", "4.099,857" -> "4099.857"
+  if (/^[+-]?\d{1,3}(?:\.\d{3})+,\d+$/.test(s)) {
+    s = s.replace(/\./g, '').replace(',', '.');
+  }
+  // Case 2: Format `X,XXX.XXX` or `XX XXX.XX` (Comma/Space as thousands separator, Dot as decimal)
+  // Example: "4,054.405" -> "4054.405", "96 250.00" -> "96250.00"
+  else if (/^[+-]?\d{1,3}(?:[ ,]\d{3})+\.\d+$/.test(s)) {
+    s = s.replace(/[ ,]/g, '');
+  }
+  // Case 3: Both dot and comma exist in other positions
+  else if (s.includes('.') && s.includes(',')) {
+    const lastDot = s.lastIndexOf('.');
+    const lastComma = s.lastIndexOf(',');
+    if (lastComma > lastDot) {
+      // Comma is the decimal separator (e.g. "4.054,405")
+      s = s.replace(/\./g, '').replace(',', '.');
+    } else {
+      // Dot is the decimal separator (e.g. "4,054.405")
+      s = s.replace(/,/g, '');
+    }
+  }
+  // Case 4: Only comma exists (e.g. "4054,405" or "1,08520" or "4,054")
+  else if (s.includes(',') && !s.includes('.')) {
+    const parts = s.split(',');
+    if (
+      parts.length === 2 &&
+      parts[1].length === 3 &&
+      (cleanInst === 'XAUUSD' || cleanInst === 'BTCUSD' || cleanInst === 'US30' || cleanInst === 'NAS100')
+    ) {
+      // Check if replacing comma with dot gives ~4.054 on XAUUSD (which is actually 4054)
+      const asDecimal = parseFloat(s.replace(',', '.'));
+      if (asDecimal >= spec.min && asDecimal <= spec.max) {
+        s = s.replace(',', '.');
+      } else {
+        s = s.replace(/,/g, '');
+      }
+    } else {
+      s = s.replace(',', '.');
+    }
+  }
+  // Case 5: Multiple dots (e.g. "4.054.405")
+  else if ((s.match(/\./g) || []).length >= 2) {
+    const lastDot = s.lastIndexOf('.');
+    s = s.slice(0, lastDot).replace(/\./g, '') + '.' + s.slice(lastDot + 1);
+  } else {
+    s = s.replace(/ /g, '');
+  }
+
+  const parsed = parseFloat(s);
+  if (isNaN(parsed) || !Number.isFinite(parsed) || parsed <= 0) return null;
+
+  // If XAUUSD price was written as "4.054" or "4.099857" (1.5..6.5) because dot was thousands separator
+  if (cleanInst === 'XAUUSD' && parsed >= 1.5 && parsed <= 6.5) {
+    return Number((parsed * 1000).toFixed(3));
+  }
+
+  return parsed;
+}
+
+/**
+ * Extracts all price-formatted numbers from a line of text, supporting both
+ * `4.054,405` (dot thousands + comma decimals) and `4074.43` / `4,074.43`.
+ */
+export function extractPriceNumbersFromLine(
+  lineText: string,
+  instrument = 'XAUUSD'
+): Array<{ raw: string; val: number }> {
+  const results: Array<{ raw: string; val: number }> = [];
+  if (!lineText) return results;
+
+  // Match:
+  // 1) Dot-thousands with comma-decimals: e.g. 4.054,405 or 4.099,857
+  // 2) Comma/space-thousands with dot-decimals: e.g. 4,054.405 or 96 250.00
+  // 3) Standard decimal with dot or comma: e.g. 4074.43 or 4054,405 or 1.08500
+  const regex =
+    /\b([0-9]{1,3}(?:\.[0-9]{3})+,[0-9]{1,5}|[0-9]{1,3}(?:[ ,][0-9]{3})+\.[0-9]{1,5}|[0-9]{1,6}[.,][0-9]{1,5})\b/g;
+
+  for (const m of lineText.matchAll(regex)) {
+    const rawToken = m[1];
+    const normalized = normalizeChartPriceNumber(rawToken, instrument);
+    if (normalized !== null && normalized > 0) {
+      results.push({ raw: rawToken, val: normalized });
+    }
+  }
+  return results;
+}
 
 /**
  * Resolves any TradingView share URL (e.g. https://www.tradingview.com/x/ABCD1234/)
@@ -249,7 +372,6 @@ function normalizeTimeframeLabel(raw: string | null | undefined): string | null 
 
 /**
  * Safe JSON fetch that NEVER throws `Unexpected token '<', "<!doctype"... is not valid JSON`
- * when Capacitor's local Android WebView server returns `index.html` for `/api/*` routes.
  */
 async function safeFetchApiJson(
   url: string,
@@ -291,8 +413,7 @@ async function safeFetchApiJson(
 }
 
 /**
- * Fetches an external image URL (including TradingView S3 snapshots) into a base64 Data URL
- * using direct CORS fetch or public CORS proxy fallback so it can be analyzed on-device in the APK.
+ * Fetches an external image URL (including TradingView S3 snapshots) into a base64 Data URL.
  */
 async function fetchImageUrlAsDataUrl(imageUrl: string): Promise<{
   dataUrl: string | null;
@@ -381,107 +502,6 @@ async function fetchImageUrlAsDataUrl(imageUrl: string): Promise<{
   return { dataUrl: null, pageTitle, pageDescription };
 }
 
-/**
- * Prepares a clean, uncorrupted high-resolution image for OCR AND a 2x-upscaled Right-Axis Price Scale strip
- * so small price badge digits on the Y-axis are never destroyed or missed.
- */
-async function buildCleanOcrImages(
-  dataUrl: string,
-  maxDim = 1600
-): Promise<{
-  fullOcrDataUrl: string;
-  rightAxisCropDataUrl: string | null;
-  rightAxisScaleFactor: number;
-  rightAxisOffsetX: number;
-  width: number;
-  height: number;
-}> {
-  if (typeof document === 'undefined') {
-    return {
-      fullOcrDataUrl: dataUrl,
-      rightAxisCropDataUrl: null,
-      rightAxisScaleFactor: 2,
-      rightAxisOffsetX: 750,
-      width: 1000,
-      height: 600,
-    };
-  }
-  return new Promise((resolve) => {
-    const img = new Image();
-    img.crossOrigin = 'anonymous';
-    img.onerror = () =>
-      resolve({
-        fullOcrDataUrl: dataUrl,
-        rightAxisCropDataUrl: null,
-        rightAxisScaleFactor: 2,
-        rightAxisOffsetX: 750,
-        width: 1000,
-        height: 600,
-      });
-    img.onload = () => {
-      let w = img.width;
-      let h = img.height;
-      if (w > maxDim || h > maxDim) {
-        if (w > h) {
-          h = Math.round((h * maxDim) / w);
-          w = maxDim;
-        } else {
-          w = Math.round((w * maxDim) / h);
-          h = maxDim;
-        }
-      }
-      const canvas = document.createElement('canvas');
-      canvas.width = w;
-      canvas.height = h;
-      const ctx = canvas.getContext('2d');
-      if (!ctx) {
-        resolve({
-          fullOcrDataUrl: dataUrl,
-          rightAxisCropDataUrl: null,
-          rightAxisScaleFactor: 2,
-          rightAxisOffsetX: Math.floor(w * 0.72),
-          width: w,
-          height: h,
-        });
-        return;
-      }
-      ctx.imageSmoothingEnabled = true;
-      ctx.imageSmoothingQuality = 'high';
-      ctx.drawImage(img, 0, 0, w, h);
-
-      // Build a 2x-upscaled Right-Axis Price Scale crop (rightmost 28% of image) so small badge digits are 2x larger for OCR
-      let rightAxisCropDataUrl: string | null = null;
-      const scaleFactor = 2;
-      const cropX = Math.floor(w * 0.72);
-      const cropW = Math.max(1, w - cropX);
-      try {
-        const axisCanvas = document.createElement('canvas');
-        axisCanvas.width = cropW * scaleFactor;
-        axisCanvas.height = h * scaleFactor;
-        const axisCtx = axisCanvas.getContext('2d');
-        if (axisCtx) {
-          axisCtx.imageSmoothingEnabled = true;
-          axisCtx.imageSmoothingQuality = 'high';
-          axisCtx.drawImage(img, Math.floor(img.width * 0.72), 0, Math.max(1, img.width - Math.floor(img.width * 0.72)), img.height, 0, 0, axisCanvas.width, axisCanvas.height);
-          rightAxisCropDataUrl = axisCanvas.toDataURL('image/jpeg', 0.92);
-        }
-      } catch {
-        // ignore crop error
-      }
-
-      resolve({
-        fullOcrDataUrl: canvas.toDataURL('image/jpeg', 0.9),
-        rightAxisCropDataUrl,
-        rightAxisScaleFactor: scaleFactor,
-        rightAxisOffsetX: cropX,
-        width: w,
-        height: h,
-      });
-    };
-    img.src = dataUrl;
-  });
-}
-
 interface VerticalSegment {
   top: number;
   bottom: number;
@@ -507,7 +527,7 @@ function extractContiguousSegments(
 
   const finalizeSegment = (top: number, bottom: number, sum: number) => {
     const h = bottom - top + 1;
-    if (h < 5) return;
+    if (h < 6) return;
     let medianLeftX = 0;
     let medianRightX = 0;
     if (rowLeftX && rowRightX) {
@@ -564,11 +584,12 @@ function extractContiguousSegments(
 }
 
 /**
- * 2D Rectangle-Aware Canvas Geometry Analyzer:
- * 1) Finds TradingView Long/Short Position Tool by matching vertically adjacent Green Profit Zone & Red Risk Zone
- *    rectangles that share the SAME horizontal [leftX, rightX] span (filtering out narrow candlesticks & volume bars).
- * 2) Refines the exact TP, Entry dividing line, and SL Y-coordinates strictly within [boxLeftX, boxRightX].
- * 3) Scans the Right-Hand Price Scale (x = 76%..99%) for Green (TP), Red (SL), and Blue/Slate (Entry) price badges.
+ * 2D Rectangle-Aware Canvas Geometry Analyzer supporting BOTH:
+ * - Standard TradingView Theme: Green/Teal Profit Zone (TP) + Red/Crimson Risk Zone (SL)
+ * - Custom TradingView Theme: Dark Blue / Navy / Cyan Profit Zone (TP) + Grey / Slate Risk Zone (SL)
+ *
+ * Ensures that if the Blue/Navy (Profit) box is BELOW the Grey/Slate (Risk) box,
+ * the direction is deterministically SELL (TP at bottom < Entry in middle < SL at top).
  */
 export async function analyzeChartCanvasGeometry(dataUrl: string): Promise<CanvasZoneAnalysis> {
   const empty: CanvasZoneAnalysis = {
@@ -580,6 +601,8 @@ export async function analyzeChartCanvasGeometry(dataUrl: string): Promise<Canva
     slYRatio: null,
     boxTopYRatio: null,
     boxBottomYRatio: null,
+    profitTheme: null,
+    riskTheme: null,
     rightAxisGreenBadgeYRatio: null,
     rightAxisRedBadgeYRatio: null,
     rightAxisBlueOrDarkBadgeYRatio: null,
@@ -614,19 +637,62 @@ export async function analyzeChartCanvasGeometry(dataUrl: string): Promise<Canva
       const plotMinY = Math.floor(sampleH * 0.06);
       const plotMaxY = Math.floor(sampleH * 0.88);
 
-      const isGreenZonePixel = (r: number, g: number, b: number): boolean => {
+      // Estimate background luminance & RGB median from left edge of plot
+      const bgR: number[] = [];
+      const bgG: number[] = [];
+      const bgB: number[] = [];
+      for (let y = plotMinY; y <= plotMaxY; y += 10) {
+        const idx = (y * sampleW + plotMinX + 4) * 4;
+        bgR.push(imgData[idx]);
+        bgG.push(imgData[idx + 1]);
+        bgB.push(imgData[idx + 2]);
+      }
+      bgR.sort((a, b) => a - b);
+      bgG.sort((a, b) => a - b);
+      bgB.sort((a, b) => a - b);
+      const medBgR = bgR[Math.floor(bgR.length / 2)] ?? 15;
+      const medBgG = bgG[Math.floor(bgG.length / 2)] ?? 18;
+      const medBgB = bgB[Math.floor(bgB.length / 2)] ?? 24;
+      const isDarkChartBg = (medBgR + medBgG + medBgB) / 3 < 128;
+
+      // 1A. Profit Zone Option 1: Standard Green / Teal
+      const isGreenProfitPixel = (r: number, g: number, b: number): boolean => {
         const isDarkGreenZone = g > r + 10 && g >= 26 && b >= 20 && r < 145;
         const isLightGreenZone = g > r + 9 && g >= 180 && r < 238 && b >= 170;
         return isDarkGreenZone || isLightGreenZone;
       };
 
-      const isRedZonePixel = (r: number, g: number, b: number): boolean => {
+      // 1B. Profit Zone Option 2: Custom Dark Blue / Navy / Cyan
+      const isBlueNavyProfitPixel = (r: number, g: number, b: number): boolean => {
+        if (isDarkChartBg) {
+          // Navy / Dark Blue / Cyan tint over dark background: B channel is elevated above R and background B
+          return b > r + 12 && b >= medBgB + 10 && b >= 34 && r < 135 && b >= g - 8;
+        }
+        // Light background blue/navy tint
+        return b > r + 14 && b > g + 6 && r < 225 && b >= 140;
+      };
+
+      // 2A. Risk Zone Option 1: Standard Red / Crimson
+      const isRedRiskPixel = (r: number, g: number, b: number): boolean => {
         const isDarkRedZone = r > g + 12 && r > b + 10 && r >= 34 && g < 135;
         const isLightRedZone = r > g + 11 && r > b + 9 && r >= 195 && g < 235;
         return isDarkRedZone || isLightRedZone;
       };
 
-      // Helper to find the longest horizontal run of matching pixels on row y (bridging small 1-4px candle gaps)
+      // 2B. Risk Zone Option 2: Custom Grey / Slate / Translucent White-Grey
+      const isGreySlateRiskPixel = (r: number, g: number, b: number): boolean => {
+        const maxDiff = Math.max(Math.abs(r - g), Math.abs(g - b), Math.abs(r - b));
+        if (maxDiff > 18) return false; // Must be neutral grey/slate, not strongly saturated
+        const avg = (r + g + b) / 3;
+        const bgAvg = (medBgR + medBgG + medBgB) / 3;
+        if (isDarkChartBg) {
+          // Translucent grey/slate box over dark background is noticeably brighter than background
+          return avg >= bgAvg + 12 && avg >= 34 && avg <= 175;
+        }
+        // Translucent grey/slate box over light background is noticeably darker than white background
+        return avg <= bgAvg - 12 && avg >= 90 && avg <= 230;
+      };
+
       const findLongestHorizontalRun = (
         y: number,
         minX: number,
@@ -655,9 +721,9 @@ export async function analyzeChartCanvasGeometry(dataUrl: string): Promise<Canva
             gap = 0;
           } else if (curL !== -1) {
             gap++;
-            if (gap > 5) {
+            if (gap > 6) {
               const w = curR - curL + 1;
-              if (w > bestW && curMatches >= w * 0.58) {
+              if (w > bestW && curMatches >= w * 0.55) {
                 bestW = w;
                 bestL = curL;
                 bestR = curR;
@@ -672,7 +738,7 @@ export async function analyzeChartCanvasGeometry(dataUrl: string): Promise<Canva
         }
         if (curL !== -1) {
           const w = curR - curL + 1;
-          if (w > bestW && curMatches >= w * 0.58) {
+          if (w > bestW && curMatches >= w * 0.55) {
             bestW = w;
             bestL = curL;
             bestR = curR;
@@ -682,50 +748,55 @@ export async function analyzeChartCanvasGeometry(dataUrl: string): Promise<Canva
         return { width: bestW, leftX: bestL, rightX: bestR, matchCount: bestMatches };
       };
 
+      const minBoxRunWidth = 48; // >= 8% of chart width, ignoring small candlesticks & tiny OB tags
+
       const greenRowScore = new Float32Array(sampleH);
       const greenRowLeftX = new Int16Array(sampleH);
       const greenRowRightX = new Int16Array(sampleH);
+
+      const blueRowScore = new Float32Array(sampleH);
+      const blueRowLeftX = new Int16Array(sampleH);
+      const blueRowRightX = new Int16Array(sampleH);
 
       const redRowScore = new Float32Array(sampleH);
       const redRowLeftX = new Int16Array(sampleH);
       const redRowRightX = new Int16Array(sampleH);
 
-      const horizLineScore = new Float32Array(sampleH);
-
-      // Minimum horizontal box width: 42px out of 600px (7% of image width) — eliminates narrow 3-10px candlesticks!
-      const minBoxRunWidth = 42;
+      const greyRowScore = new Float32Array(sampleH);
+      const greyRowLeftX = new Int16Array(sampleH);
+      const greyRowRightX = new Int16Array(sampleH);
 
       for (let y = plotMinY; y <= plotMaxY; y++) {
-        const gRun = findLongestHorizontalRun(y, plotMinX, plotMaxX, isGreenZonePixel);
+        const gRun = findLongestHorizontalRun(y, plotMinX, plotMaxX, isGreenProfitPixel);
         if (gRun.width >= minBoxRunWidth) {
           greenRowScore[y] = gRun.matchCount;
           greenRowLeftX[y] = gRun.leftX;
           greenRowRightX[y] = gRun.rightX;
         }
 
-        const rRun = findLongestHorizontalRun(y, plotMinX, plotMaxX, isRedZonePixel);
+        const bRun = findLongestHorizontalRun(y, plotMinX, plotMaxX, isBlueNavyProfitPixel);
+        if (bRun.width >= minBoxRunWidth) {
+          blueRowScore[y] = bRun.matchCount;
+          blueRowLeftX[y] = bRun.leftX;
+          blueRowRightX[y] = bRun.rightX;
+        }
+
+        const rRun = findLongestHorizontalRun(y, plotMinX, plotMaxX, isRedRiskPixel);
         if (rRun.width >= minBoxRunWidth) {
           redRowScore[y] = rRun.matchCount;
           redRowLeftX[y] = rRun.leftX;
           redRowRightX[y] = rRun.rightX;
         }
 
-        let lineColoredPixels = 0;
-        for (let x = plotMinX; x <= plotMaxX; x++) {
-          const idx = (y * sampleW + x) * 4;
-          const r = imgData[idx];
-          const g = imgData[idx + 1];
-          const b = imgData[idx + 2];
-          const maxC = Math.max(r, g, b);
-          const minC = Math.min(r, g, b);
-          if (maxC - minC >= 35 && maxC >= 75) {
-            lineColoredPixels++;
-          }
+        const grRun = findLongestHorizontalRun(y, plotMinX, plotMaxX, isGreySlateRiskPixel);
+        if (grRun.width >= minBoxRunWidth) {
+          greyRowScore[y] = grRun.matchCount;
+          greyRowLeftX[y] = grRun.leftX;
+          greyRowRightX[y] = grRun.rightX;
         }
-        if (lineColoredPixels >= 95) horizLineScore[y] = lineColoredPixels;
       }
 
-      // 2. Scan Right-Hand Price Axis (x: 77% to 99%) for Colored Price Badges (TP = Green, SL = Red, Entry = Blue/Slate)
+      // Scan Right-Hand Price Axis (x: 77% to 99%) for Colored Price Badges
       const axisMinX = Math.floor(sampleW * 0.77);
       const axisMaxX = Math.floor(sampleW * 0.99);
       const axisGreenRows = new Float32Array(sampleH);
@@ -744,7 +815,7 @@ export async function analyzeChartCanvasGeometry(dataUrl: string): Promise<Canva
 
           if (g > r + 22 && g >= 75 && r < 135) gBadge++;
           if (r > g + 25 && r > b + 18 && r >= 95 && g < 125) rBadge++;
-          if (b > r + 22 && b > g + 10 && b >= 90 && r < 125) bBadge++;
+          if (b > r + 20 && b >= 75 && r < 135) bBadge++;
         }
         if (gBadge >= 12) axisGreenRows[y] = gBadge;
         if (rBadge >= 12) axisRedRows[y] = rBadge;
@@ -765,65 +836,81 @@ export async function analyzeChartCanvasGeometry(dataUrl: string): Promise<Canva
       const rightAxisRedBadgeYRatio = findStrongestBadgeCenterRatio(axisRedRows);
       const rightAxisBlueOrDarkBadgeYRatio = findStrongestBadgeCenterRatio(axisBlueRows);
 
-      const horizSegs = extractContiguousSegments(horizLineScore, plotMinY, plotMaxY, 2).filter(
-        (s) => s.height >= 1 && s.height <= 8
-      );
-      const horizontalLineYRatios = horizSegs.map((s) => (s.top + s.bottom) / 2 / sampleH);
+      // Extract candidate Profit segments (Green OR Blue/Navy) and Risk segments (Red OR Grey/Slate)
+      const profitCandidates: Array<{
+        seg: VerticalSegment;
+        theme: 'GREEN' | 'BLUE_NAVY';
+        predicate: (r: number, g: number, b: number) => boolean;
+      }> = [
+        ...extractContiguousSegments(greenRowScore, plotMinY, plotMaxY, 5, greenRowLeftX, greenRowRightX)
+          .filter((s) => s.height >= 12)
+          .map((seg) => ({ seg, theme: 'GREEN' as const, predicate: isGreenProfitPixel })),
+        ...extractContiguousSegments(blueRowScore, plotMinY, plotMaxY, 5, blueRowLeftX, blueRowRightX)
+          .filter((s) => s.height >= 12)
+          .map((seg) => ({ seg, theme: 'BLUE_NAVY' as const, predicate: isBlueNavyProfitPixel })),
+      ];
 
-      // 3. Match Adjacent Green & Red Vertical Segments that share the SAME horizontal [leftX, rightX] span!
-      const greenSegs = extractContiguousSegments(
-        greenRowScore,
-        plotMinY,
-        plotMaxY,
-        5,
-        greenRowLeftX,
-        greenRowRightX
-      ).filter((s) => s.height >= 8);
-
-      const redSegs = extractContiguousSegments(
-        redRowScore,
-        plotMinY,
-        plotMaxY,
-        5,
-        redRowLeftX,
-        redRowRightX
-      ).filter((s) => s.height >= 8);
+      const riskCandidates: Array<{
+        seg: VerticalSegment;
+        theme: 'RED' | 'GREY_SLATE';
+        predicate: (r: number, g: number, b: number) => boolean;
+      }> = [
+        ...extractContiguousSegments(redRowScore, plotMinY, plotMaxY, 5, redRowLeftX, redRowRightX)
+          .filter((s) => s.height >= 10)
+          .map((seg) => ({ seg, theme: 'RED' as const, predicate: isRedRiskPixel })),
+        ...extractContiguousSegments(greyRowScore, plotMinY, plotMaxY, 5, greyRowLeftX, greyRowRightX)
+          .filter((s) => s.height >= 10)
+          .map((seg) => ({ seg, theme: 'GREY_SLATE' as const, predicate: isGreySlateRiskPixel })),
+      ];
 
       let bestPair: {
-        g: VerticalSegment;
-        r: VerticalSegment;
+        profitSeg: VerticalSegment;
+        riskSeg: VerticalSegment;
+        profitTheme: 'GREEN' | 'BLUE_NAVY';
+        riskTheme: 'RED' | 'GREY_SLATE';
+        profitPred: (r: number, g: number, b: number) => boolean;
+        riskPred: (r: number, g: number, b: number) => boolean;
         isLong: boolean;
         boxLeftX: number;
         boxRightX: number;
         score: number;
       } | null = null;
 
-      for (const g of greenSegs) {
-        for (const r of redSegs) {
-          const gL = g.medianLeftX ?? plotMinX;
-          const gR = g.medianRightX ?? plotMaxX;
+      for (const pCand of profitCandidates) {
+        for (const rCand of riskCandidates) {
+          const p = pCand.seg;
+          const r = rCand.seg;
+          const pL = p.medianLeftX ?? plotMinX;
+          const pR = p.medianRightX ?? plotMaxX;
           const rL = r.medianLeftX ?? plotMinX;
           const rR = r.medianRightX ?? plotMaxX;
 
-          const overlapL = Math.max(gL, rL);
-          const overlapR = Math.min(gR, rR);
+          const overlapL = Math.max(pL, rL);
+          const overlapR = Math.min(pR, rR);
           const overlapW = Math.max(0, overlapR - overlapL);
-          const minSpanW = Math.max(1, Math.min(gR - gL, rR - rL));
+          const minSpanW = Math.max(1, Math.min(pR - pL, rR - rL));
           const horizOverlapRatio = overlapW / minSpanW;
 
-          // Both Green and Red rectangles of a TradingView Position Tool MUST overlap horizontally by >= 55%
+          // Both Profit and Risk rectangles must share the same horizontal span (filters out small "OB m5" inner boxes!)
           if (horizOverlapRatio < 0.55 || overlapW < minBoxRunWidth) continue;
 
-          // Case 1: BUY (Long) -> Green Profit Zone is directly ABOVE Red Risk Zone (g.bottom ~= r.top)
-          const gapBuy = Math.abs(r.top - g.bottom);
-          if (gapBuy <= sampleH * 0.045 && g.top < r.bottom) {
+          // Total vertical height must be at least 30px on 800px canvas to ignore tiny annotations
+          if (p.height + r.height < 30) continue;
+
+          // Case 1: BUY (Long) -> Profit Zone (Green or Blue/Navy) is ABOVE Risk Zone (Red or Grey/Slate)
+          const gapBuy = Math.abs(r.top - p.bottom);
+          if (gapBuy <= sampleH * 0.045 && p.top < r.bottom) {
             const score =
-              ((g.height + r.height) * (g.avgScore + r.avgScore) * horizOverlapRatio) /
+              ((p.height + r.height) * (p.avgScore + r.avgScore) * horizOverlapRatio) /
               (1 + gapBuy * 2.5);
             if (!bestPair || score > bestPair.score) {
               bestPair = {
-                g,
-                r,
+                profitSeg: p,
+                riskSeg: r,
+                profitTheme: pCand.theme,
+                riskTheme: rCand.theme,
+                profitPred: pCand.predicate,
+                riskPred: rCand.predicate,
                 isLong: true,
                 boxLeftX: overlapL,
                 boxRightX: overlapR,
@@ -832,16 +919,20 @@ export async function analyzeChartCanvasGeometry(dataUrl: string): Promise<Canva
             }
           }
 
-          // Case 2: SELL (Short) -> Red Risk Zone is directly ABOVE Green Profit Zone (r.bottom ~= g.top)
-          const gapSell = Math.abs(g.top - r.bottom);
-          if (gapSell <= sampleH * 0.045 && r.top < g.bottom) {
+          // Case 2: SELL (Short) -> Risk Zone (Red or Grey/Slate) is ABOVE Profit Zone (Green or Blue/Navy)
+          const gapSell = Math.abs(p.top - r.bottom);
+          if (gapSell <= sampleH * 0.045 && r.top < p.bottom) {
             const score =
-              ((g.height + r.height) * (g.avgScore + r.avgScore) * horizOverlapRatio) /
+              ((p.height + r.height) * (p.avgScore + r.avgScore) * horizOverlapRatio) /
               (1 + gapSell * 2.5);
             if (!bestPair || score > bestPair.score) {
               bestPair = {
-                g,
-                r,
+                profitSeg: p,
+                riskSeg: r,
+                profitTheme: pCand.theme,
+                riskTheme: rCand.theme,
+                profitPred: pCand.predicate,
+                riskPred: rCand.predicate,
                 isLong: false,
                 boxLeftX: overlapL,
                 boxRightX: overlapR,
@@ -853,48 +944,50 @@ export async function analyzeChartCanvasGeometry(dataUrl: string): Promise<Canva
       }
 
       if (bestPair) {
-        const { g, r, isLong, boxLeftX, boxRightX } = bestPair;
+        const { profitSeg, riskSeg, profitTheme, riskTheme, profitPred, riskPred, isLong, boxLeftX, boxRightX } =
+          bestPair;
         const boxW = Math.max(1, boxRightX - boxLeftX);
 
-        // Refine exact top/bottom of Green & Red zones strictly inside [boxLeftX, boxRightX]
-        let refinedGreenTop = g.top;
-        let refinedGreenBottom = g.bottom;
-        for (let y = Math.max(plotMinY, g.top - 4); y <= Math.min(plotMaxY, g.bottom + 4); y++) {
+        let refinedProfitTop = profitSeg.top;
+        let refinedProfitBottom = profitSeg.bottom;
+        for (let y = Math.max(plotMinY, profitSeg.top - 4); y <= Math.min(plotMaxY, profitSeg.bottom + 4); y++) {
           let cnt = 0;
           for (let x = boxLeftX; x <= boxRightX; x++) {
             const idx = (y * sampleW + x) * 4;
-            if (isGreenZonePixel(imgData[idx], imgData[idx + 1], imgData[idx + 2])) cnt++;
+            if (profitPred(imgData[idx], imgData[idx + 1], imgData[idx + 2])) cnt++;
           }
-          if (cnt >= boxW * 0.55) {
-            if (y < refinedGreenTop) refinedGreenTop = y;
-            if (y > refinedGreenBottom) refinedGreenBottom = y;
+          if (cnt >= boxW * 0.52) {
+            if (y < refinedProfitTop) refinedProfitTop = y;
+            if (y > refinedProfitBottom) refinedProfitBottom = y;
           }
         }
 
-        let refinedRedTop = r.top;
-        let refinedRedBottom = r.bottom;
-        for (let y = Math.max(plotMinY, r.top - 4); y <= Math.min(plotMaxY, r.bottom + 4); y++) {
+        let refinedRiskTop = riskSeg.top;
+        let refinedRiskBottom = riskSeg.bottom;
+        for (let y = Math.max(plotMinY, riskSeg.top - 4); y <= Math.min(plotMaxY, riskSeg.bottom + 4); y++) {
           let cnt = 0;
           for (let x = boxLeftX; x <= boxRightX; x++) {
             const idx = (y * sampleW + x) * 4;
-            if (isRedZonePixel(imgData[idx], imgData[idx + 1], imgData[idx + 2])) cnt++;
+            if (riskPred(imgData[idx], imgData[idx + 1], imgData[idx + 2])) cnt++;
           }
-          if (cnt >= boxW * 0.55) {
-            if (y < refinedRedTop) refinedRedTop = y;
-            if (y > refinedRedBottom) refinedRedBottom = y;
+          if (cnt >= boxW * 0.52) {
+            if (y < refinedRiskTop) refinedRiskTop = y;
+            if (y > refinedRiskBottom) refinedRiskBottom = y;
           }
         }
 
-        const greenH = Math.max(4, refinedGreenBottom - refinedGreenTop);
-        const redH = Math.max(4, refinedRedBottom - refinedRedTop);
+        const profitH = Math.max(4, refinedProfitBottom - refinedProfitTop);
+        const riskH = Math.max(4, refinedRiskBottom - refinedRiskTop);
         const inferredPosition: TradePosition = isLong ? 'BUY' : 'SELL';
-        const inferredRR = Math.max(0.15, Math.min(30, Number((greenH / redH).toFixed(2))));
+        const inferredRR = Math.max(0.15, Math.min(30, Number((profitH / riskH).toFixed(2))));
 
+        // For BUY: Profit is on top (tpY = refinedProfitTop), Entry is middle divider, SL is bottom of Risk (refinedRiskBottom)
+        // For SELL: Risk (Grey/Red) is on top (slY = refinedRiskTop), Entry is middle divider, Profit (Blue/Green) is bottom (tpY = refinedProfitBottom)
         const entryY = isLong
-          ? (refinedGreenBottom + refinedRedTop) / 2
-          : (refinedRedBottom + refinedGreenTop) / 2;
-        const tpY = isLong ? refinedGreenTop : refinedGreenBottom;
-        const slY = isLong ? refinedRedBottom : refinedRedTop;
+          ? (refinedProfitBottom + refinedRiskTop) / 2
+          : (refinedRiskBottom + refinedProfitTop) / 2;
+        const tpY = isLong ? refinedProfitTop : refinedProfitBottom;
+        const slY = isLong ? refinedRiskBottom : refinedRiskTop;
 
         resolve({
           hasPositionBox: true,
@@ -903,12 +996,14 @@ export async function analyzeChartCanvasGeometry(dataUrl: string): Promise<Canva
           entryYRatio: entryY / sampleH,
           tpYRatio: tpY / sampleH,
           slYRatio: slY / sampleH,
-          boxTopYRatio: Math.min(refinedGreenTop, refinedRedTop) / sampleH,
-          boxBottomYRatio: Math.max(refinedGreenBottom, refinedRedBottom) / sampleH,
+          boxTopYRatio: Math.min(refinedProfitTop, refinedRiskTop) / sampleH,
+          boxBottomYRatio: Math.max(refinedProfitBottom, refinedRiskBottom) / sampleH,
+          profitTheme,
+          riskTheme,
           rightAxisGreenBadgeYRatio,
           rightAxisRedBadgeYRatio,
           rightAxisBlueOrDarkBadgeYRatio,
-          horizontalLineYRatios,
+          horizontalLineYRatios: [],
           imageWidth: img.width,
           imageHeight: img.height,
         });
@@ -920,7 +1015,6 @@ export async function analyzeChartCanvasGeometry(dataUrl: string): Promise<Canva
         rightAxisGreenBadgeYRatio,
         rightAxisRedBadgeYRatio,
         rightAxisBlueOrDarkBadgeYRatio,
-        horizontalLineYRatios,
         imageWidth: img.width,
         imageHeight: img.height,
       });
@@ -929,15 +1023,349 @@ export async function analyzeChartCanvasGeometry(dataUrl: string): Promise<Canva
   });
 }
 
+/**
+ * Builds the unified Gemini Vision prompt incorporating the exact visual rules for MT5 and TradingView.
+ */
+export function buildGeminiScreenshotPrompt(canvasHints?: CanvasZoneAnalysis | null): string {
+  const geometryHintBlock =
+    canvasHints && canvasHints.hasPositionBox
+      ? `\nPIXEL GEOMETRY SCANNER HINTS (VERIFIED FROM IMAGE):
+- Detected a TradingView ${canvasHints.inferredPosition || 'BUY/SELL'} Position Box (${
+          canvasHints.profitTheme === 'BLUE_NAVY' ? 'Dark Blue/Navy Profit Zone' : 'Green Profit Zone'
+        } & ${
+          canvasHints.riskTheme === 'GREY_SLATE' ? 'Grey/Slate Risk Zone' : 'Red Risk Zone'
+        }):
+  * Verified Direction: ${canvasHints.inferredPosition} (${
+          canvasHints.inferredPosition === 'SELL'
+            ? 'Risk Zone is at the TOP, Profit Zone is at the BOTTOM -> SELL'
+            : 'Profit Zone is at the TOP, Risk Zone is at the BOTTOM -> BUY'
+        })
+  * Top of Position Box (${canvasHints.inferredPosition === 'SELL' ? 'STOP LOSS' : 'TAKE PROFIT'}) is at vertical Y = ${
+          canvasHints.boxTopYRatio != null ? (canvasHints.boxTopYRatio * 100).toFixed(1) + '%' : 'N/A'
+        } from top of image.
+  * Central Dividing Line between the two blocks (ENTRY PRICE) is at vertical Y = ${
+          canvasHints.entryYRatio != null ? (canvasHints.entryYRatio * 100).toFixed(1) + '%' : 'N/A'
+        } from top of image.
+  * Bottom of Position Box (${canvasHints.inferredPosition === 'SELL' ? 'TAKE PROFIT' : 'STOP LOSS'}) is at vertical Y = ${
+          canvasHints.boxBottomYRatio != null ? (canvasHints.boxBottomYRatio * 100).toFixed(1) + '%' : 'N/A'
+        } from top of image.\n`
+      : '';
+
+  return `You are an elite financial chart & order OCR specialist for MetaTrader 5 (MT5 / MT4) and TradingView.
+Carefully inspect the full, uncropped screenshot from the left edge to the right-hand Y-axis price scale.
+${geometryHintBlock}
+1. RULES FOR METATRADER 5 (MT5) CHARTS:
+   - Read the text labels at the LEFT edge of the chart: "TP", "SL", "BUY LIMIT", "SELL LIMIT", "BUY STOP", "SELL STOP", "BUY", "SELL" (for example: "TP", "BUY LIMIT 0.12", "SL").
+   - Follow each label's horizontal dashed line straight across to the RIGHT-HAND Y-AXIS, and ONLY extract the price number that is inside a THIN OUTLINED BOX (kotak berbingkai tipis) aligned with that horizontal line:
+     * Example: "TP" line -> outlined box "4074.43" on right Y-axis -> takeProfit = 4074.43
+     * Example: "BUY LIMIT 0.12" line -> outlined box "4042.74" on right Y-axis -> entryPrice = 4042.74, lotSize = 0.12, position = "BUY"
+     * Example: "SL" line -> outlined box "4031.97" on right Y-axis -> stopLoss = 4031.97
+   - IGNORE unframed plain background grid numbers on the Y-axis (such as "4052.92" or "4030.42").
+   - IGNORE the bright blue/colored running price badge that has a countdown timer next to/below it (such as "4050.87 / 00:50") — put that ONLY in currentPrice, NEVER in entryPrice, stopLoss, or takeProfit!
+   - CRITICAL STATUS RULE: If the order label contains "LIMIT" or "STOP" (e.g. "BUY LIMIT 0.12", "SELL LIMIT", "BUY STOP"), you MUST set status = "PLANNED" (NOT "ACTIVE")!
+
+2. RULES FOR TRADINGVIEW CHARTS:
+   - Look for the TWO LARGE VERTICALLY-ADJACENT COLORED BLOCKS of the Position Tool — these can be either:
+     * Standard Green (Profit) & Red (Risk), OR
+     * Custom Dark Blue / Navy (Profit Zone) & Grey / Slate (Risk Zone)!
+   - Direction Rule:
+     * If the Grey/Slate or Red Risk block is at the TOP and the Dark Blue/Navy or Green Profit block is at the BOTTOM, the position is SELL (takeProfit < entryPrice < stopLoss).
+     * If the Green or Dark Blue/Navy Profit block is at the TOP and the Red or Grey/Slate Risk block is at the BOTTOM, the position is BUY (stopLoss < entryPrice < takeProfit).
+   - IGNORE small inner annotation boxes in the middle of the chart (such as boxes labeled "OB m5", "FVG", "BOS", etc.) and ignore the live market candle price badge (e.g. "4.105,780" or "4.105,735").
+   - Read the exact price labels on the RIGHT-HAND Y-AXIS aligned with:
+     (1) The outer TOP edge of the top block (for SELL: stopLoss, e.g. "4.099,857" -> 4099.857),
+     (2) The CENTRAL HORIZONTAL DIVIDING LINE where the two blocks meet (entryPrice, e.g. "4.093,045" -> 4093.045),
+     (3) The outer BOTTOM edge of the bottom block (for SELL: takeProfit, e.g. the blue badge "4.054,405" -> 4054.405).
+   - NUMBER FORMAT NORMALIZATION: If the Y-axis uses dot thousands and comma decimals (e.g. "4.099,857", "4.093,045", "4.054,405"), remove the thousands dot (.) and convert the comma (,) to a decimal point -> 4099.857, 4093.045, 4054.405.
+   - LOT SIZE ON TRADINGVIEW: Always return null for lotSize on TradingView.
+
+3. MANDATORY VALIDATION (NO FAKE NUMBERS):
+   - Never invent or calculate synthetic SL/TP prices with arbitrary offsets!
+   - For BUY: stopLoss < entryPrice < takeProfit.
+   - For SELL: takeProfit < entryPrice < stopLoss.
+   - On XAUUSD, the distance |entryPrice - stopLoss| and |takeProfit - entryPrice| must be at least >= 1.00 point (never tiny 0.04 noise).`;
+}
+
+/**
+ * Parses and validates raw JSON returned by Gemini Vision (client-side or server-side),
+ * applying `normalizeChartPriceNumber` and strict BUY/SELL & LIMIT/STOP rules without any fake synthetic formulas.
+ */
+export function normalizeGeminiScanResponse(
+  parsedData: any,
+  canvasHints?: CanvasZoneAnalysis | null,
+  modelUsed = 'gemini-2.5-flash',
+  resolvedImageUrl?: string
+): ExtractedTradeScanData {
+  const cleanInstrument = normalizeScanInstrument(parsedData?.instrument);
+  const spec = INSTRUMENT_PRICE_RANGES[cleanInstrument] || INSTRUMENT_PRICE_RANGES.XAUUSD;
+
+  const rawSource = String(parsedData?.source || '').toUpperCase();
+  const source: 'MT5' | 'TRADINGVIEW' | 'CHART' =
+    rawSource === 'MT5'
+      ? 'MT5'
+      : rawSource === 'TRADINGVIEW' || canvasHints?.hasPositionBox
+      ? 'TRADINGVIEW'
+      : 'CHART';
+
+  let position: TradePosition =
+    String(parsedData?.position || '').toUpperCase() === 'SELL' ? 'SELL' : 'BUY';
+
+  if (
+    source === 'TRADINGVIEW' &&
+    canvasHints?.hasPositionBox &&
+    (canvasHints.inferredPosition === 'BUY' || canvasHints.inferredPosition === 'SELL')
+  ) {
+    position = canvasHints.inferredPosition;
+  }
+
+  let entryPrice = normalizeChartPriceNumber(parsedData?.entryPrice, cleanInstrument);
+  let stopLoss = normalizeChartPriceNumber(parsedData?.stopLoss, cleanInstrument);
+  let takeProfit = normalizeChartPriceNumber(parsedData?.takeProfit, cleanInstrument);
+  const exitPrice = normalizeChartPriceNumber(parsedData?.exitPrice, cleanInstrument);
+  const currentPrice = normalizeChartPriceNumber(parsedData?.currentPrice, cleanInstrument);
+  const profit =
+    parsedData?.profit !== null && parsedData?.profit !== undefined
+      ? Number(parsedData.profit)
+      : null;
+
+  const rawLot = normalizeChartPriceNumber(parsedData?.lotSize, 'EURUSD');
+  const lotSize = source === 'MT5' && rawLot !== null && rawLot > 0 && rawLot <= 200 ? rawLot : null;
+
+  // Enforce directional ordering when all 3 real prices are present
+  if (entryPrice !== null && stopLoss !== null && takeProfit !== null) {
+    if (stopLoss < entryPrice && entryPrice < takeProfit) {
+      position = 'BUY';
+    } else if (takeProfit < entryPrice && entryPrice < stopLoss) {
+      position = 'SELL';
+    } else if (position === 'BUY' && stopLoss > takeProfit) {
+      const tmp = stopLoss;
+      stopLoss = takeProfit;
+      takeProfit = tmp;
+    } else if (position === 'SELL' && stopLoss < takeProfit) {
+      const tmp = stopLoss;
+      stopLoss = takeProfit;
+      takeProfit = tmp;
+    }
+  }
+
+  // Reject tiny fake/micro-noise SL or TP (< minSlTpDistance, e.g. 0.04 on XAUUSD)
+  if (entryPrice !== null && stopLoss !== null && Math.abs(entryPrice - stopLoss) < spec.minSlTpDistance) {
+    stopLoss = null;
+  }
+  if (entryPrice !== null && takeProfit !== null && Math.abs(takeProfit - entryPrice) < spec.minSlTpDistance) {
+    takeProfit = null;
+  }
+
+  // Detect PENDING / LIMIT / STOP status
+  const notesText = String(parsedData?.notes || '');
+  const rawStatus = String(parsedData?.status || '').toUpperCase();
+  const hasLimitOrStopKeyword = /\b(BUY\s+LIMIT|SELL\s+LIMIT|BUY\s+STOP|SELL\s+STOP|LIMIT|PENDING)\b/i.test(
+    notesText
+  );
+
+  let status: 'PLANNED' | 'ACTIVE' | 'CLOSED' =
+    rawStatus === 'CLOSED'
+      ? 'CLOSED'
+      : rawStatus === 'PLANNED' || hasLimitOrStopKeyword
+      ? 'PLANNED'
+      : rawStatus === 'ACTIVE'
+      ? 'ACTIVE'
+      : 'PLANNED';
+
+  if (source === 'TRADINGVIEW' && status !== 'CLOSED') {
+    status = 'PLANNED';
+  }
+
+  let plannedRiskReward = normalizeChartPriceNumber(parsedData?.plannedRiskReward, 'EURUSD');
+  if (entryPrice !== null && stopLoss !== null && takeProfit !== null) {
+    const risk = Math.abs(entryPrice - stopLoss);
+    const reward = Math.abs(takeProfit - entryPrice);
+    if (risk >= spec.minSlTpDistance) {
+      plannedRiskReward = Number((reward / risk).toFixed(2));
+    }
+  }
+
+  return {
+    detected: parsedData?.detected !== false && entryPrice !== null,
+    source,
+    instrument: cleanInstrument,
+    position,
+    lotSize,
+    entryPrice,
+    stopLoss,
+    takeProfit,
+    exitPrice,
+    profit: profit !== null && Number.isFinite(profit) ? profit : null,
+    status,
+    plannedRiskReward,
+    timeframe: normalizeTimeframeLabel(parsedData?.timeframe),
+    currentPrice,
+    confidence: 0.96,
+    notes: notesText || `${cleanInstrument} ${position}`,
+    modelUsed,
+    resolvedImageUrl,
+  };
+}
+
+/**
+ * PRIORITY #1 IN ANDROID APK & WEB:
+ * Calls Gemini Vision (`gemini-2.5-flash` / `gemini-3-flash-preview`) DIRECTLY from the client
+ * using `@google/genai` SDK and direct REST `fetch` to `generativelanguage.googleapis.com`
+ * with the full, uncropped, unaltered 1920px image.
+ */
+async function callGeminiVisionDirectFromClient(
+  dataUrl: string,
+  canvasHints?: CanvasZoneAnalysis | null,
+  resolvedImageUrl?: string
+): Promise<ExtractedTradeScanData | null> {
+  const apiKey =
+    (typeof process !== 'undefined' && (process as any).env?.GEMINI_API_KEY) ||
+    (typeof import.meta !== 'undefined' && (import.meta as any).env?.VITE_GEMINI_API_KEY) ||
+    '';
+
+  if (!apiKey || typeof apiKey !== 'string' || apiKey.trim().length < 10) {
+    return null;
+  }
+
+  const match = dataUrl.match(/^data:([a-zA-Z0-9]+\/[a-zA-Z0-9-.+]+);base64,(.+)$/);
+  if (!match) return null;
+  const mimeType = match[1];
+  const base64Data = match[2];
+
+  const prompt = buildGeminiScreenshotPrompt(canvasHints);
+  const candidateModels = [
+    'gemini-2.5-flash',
+    'gemini-3-flash-preview',
+    'gemini-3.1-flash-lite-preview',
+    'gemini-flash-latest',
+  ];
+
+  const responseSchemaObj = {
+    type: Type.OBJECT,
+    properties: {
+      detected: { type: Type.BOOLEAN },
+      source: { type: Type.STRING, description: 'MT5, TRADINGVIEW, or CHART' },
+      instrument: { type: Type.STRING, description: 'e.g. XAUUSD, EURUSD, GBPUSD, USDJPY, BTCUSD' },
+      position: { type: Type.STRING, description: 'BUY or SELL' },
+      lotSize: { type: Type.NUMBER, description: 'Lot size ONLY for MT5 (e.g. 0.12). Null for TradingView.' },
+      entryPrice: { type: Type.NUMBER, description: 'Exact Entry price from Y-axis badge/box (normalized decimal, e.g. 4093.045 or 4042.74)' },
+      stopLoss: { type: Type.NUMBER, description: 'Exact Stop Loss price from Y-axis badge/box (e.g. 4099.857 or 4031.97)' },
+      takeProfit: { type: Type.NUMBER, description: 'Exact Take Profit price from Y-axis badge/box (e.g. 4054.405 or 4074.43)' },
+      exitPrice: { type: Type.NUMBER },
+      profit: { type: Type.NUMBER },
+      plannedRiskReward: { type: Type.NUMBER },
+      timeframe: { type: Type.STRING },
+      currentPrice: { type: Type.NUMBER, description: 'Live running market price badge (e.g. 4050.87 or 4105.78)' },
+      status: { type: Type.STRING, description: 'PLANNED (for BUY LIMIT / SELL LIMIT / BUY STOP / SELL STOP or TradingView setup), ACTIVE (for open market order), or CLOSED' },
+      notes: { type: Type.STRING, description: 'Include exact order text seen on left edge e.g. BUY LIMIT 0.12, TP, SL' },
+    },
+    required: ['detected', 'instrument', 'position'],
+  };
+
+  // 1A. Try direct REST fetch to generativelanguage.googleapis.com (works reliably inside Capacitor Android WebView)
+  for (const model of candidateModels) {
+    try {
+      const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(
+        apiKey.trim()
+      )}`;
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 14000);
+      const res = await fetch(endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        signal: controller.signal,
+        body: JSON.stringify({
+          contents: [
+            {
+              parts: [
+                {
+                  inlineData: {
+                    mimeType,
+                    data: base64Data,
+                  },
+                },
+                { text: prompt },
+              ],
+            },
+          ],
+          generationConfig: {
+            responseMimeType: 'application/json',
+            responseSchema: responseSchemaObj,
+            temperature: 0.1,
+          },
+        }),
+      });
+      clearTimeout(timer);
+
+      if (res.ok) {
+        const json = await res.json();
+        const textOut = json?.candidates?.[0]?.content?.parts?.[0]?.text;
+        if (textOut) {
+          const parsed = JSON.parse(textOut);
+          const normalized = normalizeGeminiScanResponse(
+            parsed,
+            canvasHints,
+            `direct-${model}`,
+            resolvedImageUrl
+          );
+          if (normalized.entryPrice !== null && normalized.entryPrice > 0) {
+            return normalized;
+          }
+        }
+      }
+    } catch {
+      // Try next model or SDK
+    }
+  }
+
+  // 1B. Fallback to @google/genai SDK client
+  try {
+    const ai = new GoogleGenAI({ apiKey: apiKey.trim() });
+    for (const model of candidateModels) {
+      try {
+        const response = await ai.models.generateContent({
+          model,
+          contents: [
+            {
+              inlineData: {
+                mimeType,
+                data: base64Data,
+              },
+            },
+            prompt,
+          ],
+          config: {
+            responseMimeType: 'application/json',
+            responseSchema: responseSchemaObj,
+            temperature: 0.1,
+          },
+        });
+        if (response?.text) {
+          const parsed = JSON.parse(response.text);
+          const normalized = normalizeGeminiScanResponse(
+            parsed,
+            canvasHints,
+            `sdk-${model}`,
+            resolvedImageUrl
+          );
+          if (normalized.entryPrice !== null && normalized.entryPrice > 0) {
+            return normalized;
+          }
+        }
+      } catch {
+        // continue
+      }
+    }
+  } catch {
+    // ignore
+  }
+
+  return null;
+}
+
 async function runOcrSpaceOnDataUrl(
-  base64DataUrl: string,
-  scaleDownDivisor = 1,
-  offsetX = 0
-): Promise<{
-  fullText: string;
-  lines: Array<{ text: string; centerY: number; minX: number; maxX: number }>;
-  words: OcrWordBox[];
-}> {
+  base64DataUrl: string
+): Promise<OcrExtractionResult> {
   const words: OcrWordBox[] = [];
   const lines: Array<{ text: string; centerY: number; minX: number; maxX: number }> = [];
   let fullText = '';
@@ -972,10 +1400,10 @@ async function runOcrSpaceOnDataUrl(
               for (const w of line.Words) {
                 const wt = String(w.WordText || '').trim();
                 if (!wt) continue;
-                const left = (Number(w.Left) || 0) / scaleDownDivisor + offsetX;
-                const top = (Number(w.Top) || 0) / scaleDownDivisor;
-                const width = (Number(w.Width) || 0) / scaleDownDivisor;
-                const height = (Number(w.Height) || 0) / scaleDownDivisor;
+                const left = Number(w.Left) || 0;
+                const top = Number(w.Top) || 0;
+                const width = Number(w.Width) || 0;
+                const height = Number(w.Height) || 0;
                 const box: OcrWordBox = {
                   text: wt,
                   left,
@@ -1011,71 +1439,6 @@ async function runOcrSpaceOnDataUrl(
   return { fullText, lines, words };
 }
 
-/**
- * Runs OCR on both the clean full chart AND the 2x-upscaled Right-Hand Price Axis strip
- * so small TP / Entry / SL badge numbers on the Y-axis are captured with 1:1 vertical Y-coordinate accuracy.
- */
-async function extractChartOcrText(dataUrl: string, imageUrl?: string): Promise<{
-  ocr: OcrExtractionResult;
-  ocrImageWidth: number;
-  ocrImageHeight: number;
-}> {
-  const prepared = await buildCleanOcrImages(dataUrl, 1600);
-
-  const [fullOcr, axisOcr] = await Promise.all([
-    runOcrSpaceOnDataUrl(prepared.fullOcrDataUrl, 1, 0),
-    prepared.rightAxisCropDataUrl
-      ? runOcrSpaceOnDataUrl(
-          prepared.rightAxisCropDataUrl,
-          prepared.rightAxisScaleFactor,
-          prepared.rightAxisOffsetX
-        )
-      : Promise.resolve({ fullText: '', lines: [], words: [] }),
-  ]);
-
-  const words = [...fullOcr.words, ...axisOcr.words];
-  const lines = [...fullOcr.lines, ...axisOcr.lines];
-  let fullText = [fullOcr.fullText, axisOcr.fullText].filter(Boolean).join('\n');
-
-  if (!fullText && typeof window !== 'undefined' && 'TextDetector' in window) {
-    try {
-      const img = await new Promise<HTMLImageElement>((resolve, reject) => {
-        const el = new Image();
-        el.crossOrigin = 'anonymous';
-        el.onload = () => resolve(el);
-        el.onerror = reject;
-        el.src = dataUrl || imageUrl || '';
-      });
-      const detector = new (window as any).TextDetector();
-      const detectedBlocks = await detector.detect(img);
-      if (Array.isArray(detectedBlocks)) {
-        const blockTexts: string[] = [];
-        for (const b of detectedBlocks) {
-          const val = String(b.rawValue || '').trim();
-          if (!val) continue;
-          blockTexts.push(val);
-          const rect = b.boundingBox || { x: 0, y: 0, width: 0, height: 0 };
-          lines.push({
-            text: val,
-            centerY: (rect.y || 0) + (rect.height || 0) / 2,
-            minX: rect.x || 0,
-            maxX: (rect.x || 0) + (rect.width || 0),
-          });
-        }
-        fullText = blockTexts.join('\n');
-      }
-    } catch {
-      // Ignore native TextDetector error
-    }
-  }
-
-  return {
-    ocr: { fullText, lines, words },
-    ocrImageWidth: prepared.width,
-    ocrImageHeight: prepared.height,
-  };
-}
-
 function getActiveChartSymbolFallback(): string {
   if (typeof window === 'undefined') return 'XAUUSD';
   try {
@@ -1093,77 +1456,12 @@ function getActiveChartSymbolFallback(): string {
 }
 
 /**
- * Fits a robust Theil-Sen linear price-scale model P(y) = slope * y + intercept
- * from right-axis OCR price numbers (where price decreases as pixel Y increases downward).
- */
-function buildRobustPriceAxisModel(
-  axisCandidates: Array<{ val: number; y: number }>,
-  decimals: number
-): {
-  priceAtY: (y: number) => number;
-  findClosestBadgePriceAtY: (targetY: number, maxPixelDist: number) => number | null;
-  minAxisPrice: number;
-  maxAxisPrice: number;
-} | null {
-  if (axisCandidates.length < 2) return null;
-
-  const sorted = axisCandidates.slice().sort((a, b) => a.y - b.y);
-  const slopes: number[] = [];
-
-  for (let i = 0; i < sorted.length; i++) {
-    for (let j = i + 1; j < sorted.length; j++) {
-      const dy = sorted[j].y - sorted[i].y;
-      const dp = sorted[j].val - sorted[i].val;
-      // On a chart Y-axis, lower on screen (larger Y) means lower price (dp < 0)
-      if (dy >= 10 && dp < 0) {
-        slopes.push(dp / dy);
-      }
-    }
-  }
-
-  if (slopes.length === 0) return null;
-  slopes.sort((a, b) => a - b);
-  const medianSlope = slopes[Math.floor(slopes.length / 2)];
-
-  const intercepts = sorted.map((pt) => pt.val - medianSlope * pt.y).sort((a, b) => a - b);
-  const medianIntercept = intercepts[Math.floor(intercepts.length / 2)];
-
-  const priceAtY = (y: number): number => {
-    const raw = medianSlope * y + medianIntercept;
-    return Number(raw.toFixed(decimals));
-  };
-
-  const findClosestBadgePriceAtY = (targetY: number, maxPixelDist: number): number | null => {
-    let best: { price: number; dist: number } | null = null;
-    const expectedPrice = priceAtY(targetY);
-    const maxAllowedPriceDiff = Math.abs(medianSlope) * maxPixelDist * 2.5;
-
-    for (const cand of sorted) {
-      const dist = Math.abs(cand.y - targetY);
-      if (
-        dist <= maxPixelDist &&
-        Math.abs(cand.val - expectedPrice) <= Math.max(maxAllowedPriceDiff, 1e-4)
-      ) {
-        if (!best || dist < best.dist) {
-          best = { price: Number(cand.val.toFixed(decimals)), dist };
-        }
-      }
-    }
-    return best ? best.price : null;
-  };
-
-  const allVals = sorted.map((c) => c.val);
-  const minAxisPrice = Math.min(...allVals);
-  const maxAxisPrice = Math.max(...allVals);
-
-  return { priceAtY, findClosestBadgePriceAtY, minAxisPrice, maxAxisPrice };
-}
-
-/**
  * Parses OCR text + spatial Y-coordinates + Canvas geometry into a complete ExtractedTradeScanData object.
- * Strictly enforces:
- * - MT5: extracts and sets `lotSize` directly from the screenshot.
- * - TradingView: sets `lotSize = null` so the app calculates Lot automatically from Equity & Risk %.
+ * STRICT RULES:
+ * - ZERO synthetic/fake SL/TP formulas or linear Y-axis guessing!
+ * - Only real numbers read from OCR badges/labels are used.
+ * - Supports European/Indonesian TradingView price format (`4.054,405` -> `4054.405`).
+ * - Detects `BUY LIMIT` / `SELL LIMIT` / `BUY STOP` / `SELL STOP` as `status: 'PLANNED'`.
  */
 export function synthesizeTradeScanFromSignals(params: {
   ocr: OcrExtractionResult;
@@ -1208,8 +1506,25 @@ export function synthesizeTradeScanFromSignals(params: {
   const imgW = canvasGeom.imageWidth || 1000;
   const imgH = canvasGeom.imageHeight || 600;
 
-  // 1. Detect MT5 Order Lines & Labels with their exact Y-coordinates
+  // 1. Detect Instrument / Pair first so number normalization knows the instrument
+  let instrument = urlMeta.symbolFromUrl || '';
+  if (!instrument) {
+    const symbolRegex =
+      /\b(XAUUSD|GOLD|XAU\/USD|BTCUSD|BTCUSDT|ETHUSD|ETHUSDT|SOLUSD|EURUSD|GBPUSD|USDJPY|USDCHF|USDCAD|AUDUSD|NZDUSD|EURGBP|EURJPY|GBPJPY|AUDJPY|US30|NAS100|USTEC|SPX500|US500|GER40)\b/i;
+    const m = combinedText.match(symbolRegex);
+    if (m && m[1]) {
+      instrument = normalizeScanInstrument(m[1]);
+    }
+  }
+  if (!instrument) {
+    instrument = getActiveChartSymbolFallback();
+  }
+
+  let priceSpec = INSTRUMENT_PRICE_RANGES[instrument] || INSTRUMENT_PRICE_RANGES.XAUUSD;
+
+  // 2. Detect MT5 Order Lines & Labels with their exact Y-coordinates and LIMIT/STOP pending status
   let mt5OrderDirection: TradePosition | null = null;
+  let mt5IsPendingOrder = false;
   let mt5DetectedLot: number | null = null;
   let mt5EntryFromText: number | null = null;
   let mt5CurrentFromArrow: number | null = null;
@@ -1219,75 +1534,70 @@ export function synthesizeTradeScanFromSignals(params: {
 
   for (const line of ocr.lines) {
     const t = line.text.trim();
-    // Match MT5 chart order line: e.g. "#123456 buy 0.10", "sell 0.25", "buy limit 0.05 at 2650.00"
+    // Match MT5 chart order line: e.g. "BUY LIMIT 0.12", "#123456 buy 0.10", "sell stop 0.25 at 2650.00"
     const orderMatch = t.match(
-      /\b(buy|sell)(?:\s+limit|\s+stop)?\s+(\d+(?:\.\d{1,2})?)(?:\s*(?:at|@)\s*([0-9][0-9, ]*(?:\.[0-9]+)?))?/i
+      /\b(buy|sell)(?:\s+(limit|stop))?\s+(\d+(?:[.,]\d{1,2})?)(?:\s*(?:at|@)\s*([0-9][0-9., ]+))?/i
     );
     if (orderMatch) {
       mt5OrderDirection = orderMatch[1].toUpperCase() === 'SELL' ? 'SELL' : 'BUY';
-      const parsedLot = parseFloat(orderMatch[2]);
+      if (orderMatch[2]) {
+        mt5IsPendingOrder = true;
+      }
+      const parsedLot = parseFloat(orderMatch[3].replace(',', '.'));
       if (!isNaN(parsedLot) && parsedLot >= 0.01 && parsedLot <= 200) {
         mt5DetectedLot = parsedLot;
       }
-      if (orderMatch[3]) {
-        const p = parseFloat(orderMatch[3].replace(/[, ]/g, ''));
-        if (!isNaN(p) && p > 0) mt5EntryFromText = p;
+      if (orderMatch[4]) {
+        const p = normalizeChartPriceNumber(orderMatch[4], instrument);
+        if (p !== null && p >= priceSpec.min && p <= priceSpec.max) {
+          mt5EntryFromText = p;
+        }
       }
       mt5OrderLineY = line.centerY;
     }
 
-    // Match MT5 Trade/History Tab "<entryPrice> -> <currentPrice>" arrow syntax (e.g. "3320.50 -> 3328.10")
+    // Match MT5 Trade/History Tab "<entryPrice> -> <currentPrice>" arrow syntax
     const arrowMatch = t.match(
-      /\b([0-9]{1,6}(?:[ ,][0-9]{3})*\.[0-9]{1,5})\s*(?:->|→|-›|=>)\s*([0-9]{1,6}(?:[ ,][0-9]{3})*\.[0-9]{1,5})\b/
+      /\b([0-9]{1,6}(?:[ .,][0-9]{3})*[.,][0-9]{1,5})\s*(?:->|→|-›|=>)\s*([0-9]{1,6}(?:[ .,][0-9]{3})*[.,][0-9]{1,5})\b/
     );
     if (arrowMatch) {
-      const p1 = parseFloat(arrowMatch[1].replace(/[ ,]/g, ''));
-      const p2 = parseFloat(arrowMatch[2].replace(/[ ,]/g, ''));
-      if (!isNaN(p1) && p1 > 0) mt5EntryFromText = p1;
-      if (!isNaN(p2) && p2 > 0) mt5CurrentFromArrow = p2;
+      const p1 = normalizeChartPriceNumber(arrowMatch[1], instrument);
+      const p2 = normalizeChartPriceNumber(arrowMatch[2], instrument);
+      if (p1 !== null && p1 >= priceSpec.min && p1 <= priceSpec.max) mt5EntryFromText = p1;
+      if (p2 !== null && p2 >= priceSpec.min && p2 <= priceSpec.max) mt5CurrentFromArrow = p2;
     }
 
-    // Match MT5 "sl" / "s/l" label on horizontal line
+    // Match MT5 "SL" / "S/L" label on horizontal line
     if (/^(?:s\/l|sl)\b/i.test(t) || /\bsl\s*[:=]?\s*\d/i.test(t)) {
       mt5SlLineY = line.centerY;
     }
-    // Match MT5 "tp" / "t/p" label on horizontal line
+    // Match MT5 "TP" / "T/P" label on horizontal line
     if (/^(?:t\/p|tp)\b/i.test(t) || /\btp\s*[:=]?\s*\d/i.test(t)) {
       mt5TpLineY = line.centerY;
     }
   }
 
-  // Fallback regex over fullText if lines array was not populated
   if (!mt5OrderDirection) {
     const fullOrderMatch = combinedText.match(
-      /\b(buy|sell)(?:\s+limit|\s+stop)?\s+(\d+\.\d{2})(?:\s*(?:at|@)\s*([0-9][0-9, ]*(?:\.[0-9]+)?))?/i
+      /\b(buy|sell)(?:\s+(limit|stop))?\s+(\d+[.,]\d{2})(?:\s*(?:at|@)\s*([0-9][0-9., ]+))?/i
     );
     if (fullOrderMatch) {
       mt5OrderDirection = fullOrderMatch[1].toUpperCase() === 'SELL' ? 'SELL' : 'BUY';
-      const parsedLot = parseFloat(fullOrderMatch[2]);
+      if (fullOrderMatch[2]) mt5IsPendingOrder = true;
+      const parsedLot = parseFloat(fullOrderMatch[3].replace(',', '.'));
       if (!isNaN(parsedLot) && parsedLot >= 0.01 && parsedLot <= 200) {
         mt5DetectedLot = parsedLot;
       }
-      if (fullOrderMatch[3]) {
-        const p = parseFloat(fullOrderMatch[3].replace(/[, ]/g, ''));
-        if (!isNaN(p) && p > 0) mt5EntryFromText = p;
+      if (fullOrderMatch[4]) {
+        const p = normalizeChartPriceNumber(fullOrderMatch[4], instrument);
+        if (p !== null && p >= priceSpec.min && p <= priceSpec.max) {
+          mt5EntryFromText = p;
+        }
       }
     }
   }
 
-  if (mt5EntryFromText === null) {
-    const fullArrowMatch = combinedText.match(
-      /\b([0-9]{1,6}(?:[ ,][0-9]{3})*\.[0-9]{1,5})\s*(?:->|→|-›|=>)\s*([0-9]{1,6}(?:[ ,][0-9]{3})*\.[0-9]{1,5})\b/
-    );
-    if (fullArrowMatch) {
-      const p1 = parseFloat(fullArrowMatch[1].replace(/[ ,]/g, ''));
-      const p2 = parseFloat(fullArrowMatch[2].replace(/[ ,]/g, ''));
-      if (!isNaN(p1) && p1 > 0) mt5EntryFromText = p1;
-      if (!isNaN(p2) && p2 > 0) mt5CurrentFromArrow = p2;
-    }
-  }
-
-  // 2. Determine Source ('MT5' vs 'TRADINGVIEW')
+  // 3. Determine Source ('MT5' vs 'TRADINGVIEW')
   let source: 'MT5' | 'TRADINGVIEW' | 'CHART' = 'TRADINGVIEW';
   const hasTvMarkers =
     urlMeta.isTradingViewUrl ||
@@ -1312,17 +1622,6 @@ export function synthesizeTradeScanFromSignals(params: {
     source = 'MT5';
   }
 
-  // 3. Detect Instrument / Pair
-  let instrument = urlMeta.symbolFromUrl || '';
-  if (!instrument) {
-    const symbolRegex =
-      /\b(XAUUSD|GOLD|XAU\/USD|BTCUSD|BTCUSDT|ETHUSD|ETHUSDT|SOLUSD|EURUSD|GBPUSD|USDJPY|USDCHF|USDCAD|AUDUSD|NZDUSD|EURGBP|EURJPY|GBPJPY|AUDJPY|US30|NAS100|USTEC|SPX500|US500|GER40)\b/i;
-    const m = combinedText.match(symbolRegex);
-    if (m && m[1]) {
-      instrument = normalizeScanInstrument(m[1]);
-    }
-  }
-
   let timeframe = urlMeta.timeframeFromUrl;
   if (!timeframe) {
     const tfMatch = combinedText.match(/\b(M1|M3|M5|M15|M30|H1|H4|D1|1M|5M|15M|30M|1H|4H|1D|DAILY)\b/i);
@@ -1331,13 +1630,7 @@ export function synthesizeTradeScanFromSignals(params: {
     }
   }
 
-  if (!instrument) {
-    instrument = getActiveChartSymbolFallback();
-  }
-
-  let priceSpec = INSTRUMENT_PRICE_RANGES[instrument] || INSTRUMENT_PRICE_RANGES.XAUUSD;
-
-  // 4. Collect all decimal numbers from OCR lines with their spatial (X, Y) coordinates
+  // 4. Collect all price tokens from OCR lines using `extractPriceNumbersFromLine` (supports 4.054,405!)
   const allDecimalTokens: Array<{
     raw: string;
     val: number;
@@ -1347,38 +1640,29 @@ export function synthesizeTradeScanFromSignals(params: {
   }> = [];
 
   for (const line of ocr.lines) {
-    const matches = line.text.matchAll(/\b([0-9]{1,3}(?:[ ,][0-9]{3})*\.[0-9]{1,5}|[0-9]{1,6}\.[0-9]{1,5})\b/g);
-    for (const m of matches) {
-      const cleaned = m[1].replace(/[ ,]/g, '');
-      const num = parseFloat(cleaned);
-      if (!isNaN(num) && num > 0) {
-        allDecimalTokens.push({
-          raw: cleaned,
-          val: num,
-          y: line.centerY,
-          x: line.maxX,
-          isRightAxis: line.maxX >= imgW * 0.65 || line.minX >= imgW * 0.6,
-        });
-      }
+    const tokens = extractPriceNumbersFromLine(line.text, instrument);
+    for (const tok of tokens) {
+      allDecimalTokens.push({
+        raw: tok.raw,
+        val: tok.val,
+        y: line.centerY,
+        x: line.maxX,
+        isRightAxis: line.maxX >= imgW * 0.65 || line.minX >= imgW * 0.6,
+      });
     }
   }
 
   if (allDecimalTokens.length === 0 && combinedText) {
-    const matches = combinedText.matchAll(/\b([0-9]{1,6}\.[0-9]{1,5})\b/g);
-    let idx = 0;
-    for (const m of matches) {
-      const num = parseFloat(m[1]);
-      if (!isNaN(num) && num > 0) {
-        allDecimalTokens.push({
-          raw: m[1],
-          val: num,
-          y: idx * 25,
-          x: imgW * 0.85,
-          isRightAxis: true,
-        });
-        idx++;
-      }
-    }
+    const tokens = extractPriceNumbersFromLine(combinedText, instrument);
+    tokens.forEach((tok, idx) => {
+      allDecimalTokens.push({
+        raw: tok.raw,
+        val: tok.val,
+        y: idx * 25,
+        x: imgW * 0.85,
+        isRightAxis: true,
+      });
+    });
   }
 
   // Auto-correct instrument if Y-axis numbers clearly belong to another instrument range
@@ -1387,15 +1671,9 @@ export function synthesizeTradeScanFromSignals(params: {
   );
   if (!urlMeta.symbolFromUrl && matchingInitialRange.length < 2) {
     const btcTokens = allDecimalTokens.filter((t) => t.val >= 40000 && t.val <= 180000);
-    const eurTokens = allDecimalTokens.filter(
-      (t) => t.raw.split('.')[1]?.length >= 4 && t.val >= 1.01 && t.val <= 1.18
-    );
-    const gbpTokens = allDecimalTokens.filter(
-      (t) => t.raw.split('.')[1]?.length >= 4 && t.val >= 1.2 && t.val <= 1.42
-    );
-    const jpyTokens = allDecimalTokens.filter(
-      (t) => t.raw.split('.')[1]?.length === 3 && t.val >= 130 && t.val <= 175
-    );
+    const eurTokens = allDecimalTokens.filter((t) => t.val >= 1.01 && t.val <= 1.18);
+    const gbpTokens = allDecimalTokens.filter((t) => t.val >= 1.2 && t.val <= 1.42);
+    const jpyTokens = allDecimalTokens.filter((t) => t.val >= 130 && t.val <= 175);
 
     if (btcTokens.length >= 2) instrument = 'BTCUSD';
     else if (eurTokens.length >= 2) instrument = 'EURUSD';
@@ -1411,65 +1689,45 @@ export function synthesizeTradeScanFromSignals(params: {
     return true;
   });
 
-  // 5. Build Robust Linear Y-Axis Price Model P(y) = slope * y + intercept FIRST
-  // so we know the visible viewport price bounds [minAxisPrice, maxAxisPrice]
-  const rightAxisTokens = validPriceTokens.filter((t) => t.isRightAxis && t.y > 0);
-  const axisModel = buildRobustPriceAxisModel(
-    rightAxisTokens.length >= 2 ? rightAxisTokens : validPriceTokens.filter((t) => t.y > 0),
-    priceSpec.decimals
-  );
-
-  const isWithinVisibleAxisRange = (val: number): boolean => {
-    if (val < priceSpec.min || val > priceSpec.max) return false;
-    if (!axisModel) return true;
-    const span = Math.max(priceSpec.defaultPipStep * 4, (axisModel.maxAxisPrice - axisModel.minAxisPrice) * 1.25);
-    return val >= axisModel.minAxisPrice - span && val <= axisModel.maxAxisPrice + span;
-  };
-
-  // 6. Extract Explicit Labeled Prices (Target/TP, Stop/SL, Entry)
-  // NOTE: Do NOT match bare `\bopen` because TradingView labels say "Open P&L: -1520.00" and chart headers say "Open 4012.50"!
-  let explicitEntry: number | null =
-    mt5EntryFromText !== null && isWithinVisibleAxisRange(mt5EntryFromText)
-      ? mt5EntryFromText
-      : null;
+  // 5. Extract Explicit Labeled Prices (Target/TP, Stop/SL, Entry)
+  let explicitEntry: number | null = mt5EntryFromText;
   let explicitSL: number | null = null;
   let explicitTP: number | null = null;
   let explicitRR: number | null = null;
-  let explicitProfit: number | null = null;
 
   const entryMatch = combinedText.match(
-    /(?:entry\s*price|open\s*price|harga\s*entry|\bentry\s*[:=@])\s*([0-9][0-9, ]*\.[0-9]{1,5})/i
+    /(?:entry\s*price|open\s*price|harga\s*entry|\bentry\s*[:=@])\s*([0-9][0-9., ]+)/i
   );
   if (entryMatch?.[1] && explicitEntry === null) {
-    const v = parseFloat(entryMatch[1].replace(/[ ,]/g, ''));
-    if (!isNaN(v) && isWithinVisibleAxisRange(v)) explicitEntry = v;
+    const v = normalizeChartPriceNumber(entryMatch[1], instrument);
+    if (v !== null && v >= priceSpec.min && v <= priceSpec.max) explicitEntry = v;
   }
 
   const slMatch = combinedText.match(
-    /(?:stop\s*loss|\bstop\s*[:=]|\bs\/l\s*[:=]?|\bsl\s*[:=])\s*([0-9][0-9, ]*\.[0-9]{1,5})/i
+    /(?:stop\s*loss|\bstop\s*[:=]|\bs\/l\s*[:=]?|\bsl\s*[:=])\s*([0-9][0-9., ]+)/i
   );
   if (slMatch?.[1]) {
-    const v = parseFloat(slMatch[1].replace(/[ ,]/g, ''));
-    if (!isNaN(v) && isWithinVisibleAxisRange(v)) explicitSL = v;
+    const v = normalizeChartPriceNumber(slMatch[1], instrument);
+    if (v !== null && v >= priceSpec.min && v <= priceSpec.max) explicitSL = v;
   }
 
   const tpMatch = combinedText.match(
-    /(?:take\s*profit|\btarget\s*[:=]|\bt\/p\s*[:=]?|\btp\s*[:=])\s*([0-9][0-9, ]*\.[0-9]{1,5})/i
+    /(?:take\s*profit|\btarget\s*[:=]|\bt\/p\s*[:=]?|\btp\s*[:=])\s*([0-9][0-9., ]+)/i
   );
   if (tpMatch?.[1]) {
-    const v = parseFloat(tpMatch[1].replace(/[ ,]/g, ''));
-    if (!isNaN(v) && isWithinVisibleAxisRange(v)) explicitTP = v;
+    const v = normalizeChartPriceNumber(tpMatch[1], instrument);
+    if (v !== null && v >= priceSpec.min && v <= priceSpec.max) explicitTP = v;
   }
 
   const rrMatch = combinedText.match(
-    /(?:risk\/reward(?:\s*ratio)?|r:r|\brr\b|1\s*:)\s*[:=]?\s*(\d+(?:\.\d{1,2})?)/i
+    /(?:risk\/reward(?:\s*ratio)?|r:r|\brr\b|1\s*:)\s*[:=]?\s*(\d+(?:[.,]\d{1,2})?)/i
   );
   if (rrMatch?.[1]) {
-    const v = parseFloat(rrMatch[1]);
+    const v = parseFloat(rrMatch[1].replace(',', '.'));
     if (!isNaN(v) && v >= 0.15 && v <= 30) explicitRR = v;
   }
 
-  // 7. Determine Position Direction (BUY vs SELL)
+  // 6. Determine Position Direction (BUY vs SELL)
   let position: TradePosition = 'BUY';
   if (canvasGeom.hasPositionBox && canvasGeom.inferredPosition) {
     position = canvasGeom.inferredPosition;
@@ -1477,50 +1735,33 @@ export function synthesizeTradeScanFromSignals(params: {
     position = mt5OrderDirection;
   } else if (explicitTP !== null && explicitSL !== null && explicitTP !== explicitSL) {
     position = explicitTP > explicitSL ? 'BUY' : 'SELL';
-  } else if (
-    canvasGeom.rightAxisGreenBadgeYRatio !== null &&
-    canvasGeom.rightAxisGreenBadgeYRatio !== undefined &&
-    canvasGeom.rightAxisRedBadgeYRatio !== null &&
-    canvasGeom.rightAxisRedBadgeYRatio !== undefined
-  ) {
-    position =
-      canvasGeom.rightAxisGreenBadgeYRatio < canvasGeom.rightAxisRedBadgeYRatio ? 'BUY' : 'SELL';
   } else if (mt5TpLineY !== null && mt5SlLineY !== null && mt5TpLineY !== mt5SlLineY) {
     position = mt5TpLineY < mt5SlLineY ? 'BUY' : 'SELL';
   } else if (/\b(SHORT|SELL)\b/i.test(combinedText) && !/\b(LONG|BUY)\b/i.test(combinedText)) {
     position = 'SELL';
   }
 
-  // 8. Resolve Entry, TP, and SL Prices using Y-Coordinate Badge Alignment + Theil-Sen Linear Scale Model
+  // 7. Match REAL OCR Price Badges at Target Y-Coordinates (NO synthetic linear interpolation!)
   let entryPrice = explicitEntry;
   let takeProfit = explicitTP;
   let stopLoss = explicitSL;
 
-  const badgeTolerancePx = Math.max(14, imgH * 0.028);
+  const badgeTolerancePx = Math.max(18, imgH * 0.045);
 
-  const resolvePriceAtTargetY = (targetY: number | null): number | null => {
+  const findRealBadgePriceAtY = (targetY: number | null): number | null => {
     if (targetY === null || !Number.isFinite(targetY)) return null;
-    if (axisModel) {
-      const directBadge = axisModel.findClosestBadgePriceAtY(targetY, badgeTolerancePx);
-      if (directBadge !== null) return directBadge;
-      const interpolated = axisModel.priceAtY(targetY);
-      if (interpolated >= priceSpec.min && interpolated <= priceSpec.max) {
-        return interpolated;
+    const candidates = validPriceTokens.filter((t) => t.isRightAxis);
+    const pool = candidates.length > 0 ? candidates : validPriceTokens;
+    let closest: { val: number; dist: number } | null = null;
+    for (const tok of pool) {
+      const d = Math.abs(tok.y - targetY);
+      if (d <= badgeTolerancePx && (!closest || d < closest.dist)) {
+        closest = { val: tok.val, dist: d };
       }
-    } else {
-      let closest: { val: number; dist: number } | null = null;
-      for (const tok of validPriceTokens) {
-        const d = Math.abs(tok.y - targetY);
-        if (d <= badgeTolerancePx * 1.5 && (!closest || d < closest.dist)) {
-          closest = { val: Number(tok.val.toFixed(priceSpec.decimals)), dist: d };
-        }
-      }
-      if (closest) return closest.val;
     }
-    return null;
+    return closest ? closest.val : null;
   };
 
-  // Case A: TradingView Position Box Y-levels (or Right-Axis Badge Y-levels)
   const targetEntryY =
     canvasGeom.entryYRatio !== null && canvasGeom.entryYRatio !== undefined
       ? canvasGeom.entryYRatio * imgH
@@ -1551,118 +1792,36 @@ export function synthesizeTradeScanFromSignals(params: {
       ? canvasGeom.rightAxisRedBadgeYRatio * imgH
       : null;
 
-  if (takeProfit === null) takeProfit = resolvePriceAtTargetY(targetTpY);
-  if (stopLoss === null) stopLoss = resolvePriceAtTargetY(targetSlY);
-  if (entryPrice === null) entryPrice = resolvePriceAtTargetY(targetEntryY);
+  if (takeProfit === null) takeProfit = findRealBadgePriceAtY(targetTpY);
+  if (stopLoss === null) stopLoss = findRealBadgePriceAtY(targetSlY);
+  if (entryPrice === null) entryPrice = findRealBadgePriceAtY(targetEntryY);
 
-  // Case B: If TradingView Position Box is detected and TP & SL are known, verify Entry against the exact Green/Red dividing line!
+  // If 3 distinct real badge prices were read on the right-hand Y-axis and match the BUY/SELL order with valid distance
   if (
-    canvasGeom.hasPositionBox &&
-    takeProfit !== null &&
-    stopLoss !== null &&
-    Math.abs(takeProfit - stopLoss) > 0 &&
-    canvasGeom.tpYRatio !== null &&
-    canvasGeom.slYRatio !== null &&
-    canvasGeom.entryYRatio !== null &&
-    Math.abs(canvasGeom.slYRatio - canvasGeom.tpYRatio) > 0.02
+    (entryPrice === null || stopLoss === null || takeProfit === null) &&
+    validPriceTokens.length === 3
   ) {
-    const entryFraction =
-      (canvasGeom.entryYRatio - canvasGeom.tpYRatio) /
-      (canvasGeom.slYRatio - canvasGeom.tpYRatio);
-    if (entryFraction > 0.05 && entryFraction < 0.95) {
-      const geomEntry = Number(
-        (takeProfit - entryFraction * (takeProfit - stopLoss)).toFixed(priceSpec.decimals)
-      );
-      if (
-        entryPrice === null ||
-        Math.abs(entryPrice - geomEntry) > Math.abs(takeProfit - stopLoss) * 0.16
-      ) {
-        entryPrice = geomEntry;
-      }
-    }
-  }
-
-  // Case C: If MT5 horizontal lines were detected on Canvas and some level is still missing
-  if (
-    (entryPrice === null || takeProfit === null || stopLoss === null) &&
-    canvasGeom.horizontalLineYRatios &&
-    canvasGeom.horizontalLineYRatios.length >= 2 &&
-    axisModel
-  ) {
-    const linePrices = canvasGeom.horizontalLineYRatios
-      .map((r) => resolvePriceAtTargetY(r * imgH))
-      .filter((p): p is number => p !== null && p >= priceSpec.min && p <= priceSpec.max)
-      .sort((a, b) => a - b);
-
-    if (linePrices.length >= 3) {
-      const lowP = linePrices[0];
-      const midP = linePrices[Math.floor(linePrices.length / 2)];
-      const highP = linePrices[linePrices.length - 1];
+    const uniqueSorted = Array.from(new Set(validPriceTokens.map((t) => t.val))).sort(
+      (a, b) => a - b
+    );
+    if (
+      uniqueSorted.length === 3 &&
+      uniqueSorted[1] - uniqueSorted[0] >= priceSpec.minSlTpDistance &&
+      uniqueSorted[2] - uniqueSorted[1] >= priceSpec.minSlTpDistance
+    ) {
       if (position === 'BUY') {
-        if (stopLoss === null) stopLoss = lowP;
-        if (entryPrice === null) entryPrice = midP;
-        if (takeProfit === null) takeProfit = highP;
+        if (stopLoss === null) stopLoss = uniqueSorted[0];
+        if (entryPrice === null) entryPrice = uniqueSorted[1];
+        if (takeProfit === null) takeProfit = uniqueSorted[2];
       } else {
-        if (takeProfit === null) takeProfit = lowP;
-        if (entryPrice === null) entryPrice = midP;
-        if (stopLoss === null) stopLoss = highP;
+        if (takeProfit === null) takeProfit = uniqueSorted[0];
+        if (entryPrice === null) entryPrice = uniqueSorted[1];
+        if (stopLoss === null) stopLoss = uniqueSorted[2];
       }
     }
   }
 
-  // Case D: If exactly 3 price badges were read on the screenshot (e.g. TP, Entry, SL badges), assign by vertical/price order
-  if (entryPrice === null && stopLoss === null && takeProfit === null && validPriceTokens.length >= 3) {
-    const uniqueSorted = Array.from(
-      new Set(validPriceTokens.map((t) => Number(t.val.toFixed(priceSpec.decimals))))
-    ).sort((a, b) => a - b);
-
-    if (uniqueSorted.length === 3) {
-      if (position === 'BUY') {
-        stopLoss = uniqueSorted[0];
-        entryPrice = uniqueSorted[1];
-        takeProfit = uniqueSorted[2];
-      } else {
-        takeProfit = uniqueSorted[0];
-        entryPrice = uniqueSorted[1];
-        stopLoss = uniqueSorted[2];
-      }
-    } else if (uniqueSorted.length > 3) {
-      const midIdx = Math.floor(uniqueSorted.length / 2);
-      const lowCandidate = uniqueSorted[Math.max(0, midIdx - 1)];
-      const midCandidate = uniqueSorted[midIdx];
-      const highCandidate = uniqueSorted[Math.min(uniqueSorted.length - 1, midIdx + 1)];
-      if (position === 'BUY') {
-        stopLoss = lowCandidate;
-        entryPrice = midCandidate;
-        takeProfit = highCandidate;
-      } else {
-        takeProfit = lowCandidate;
-        entryPrice = midCandidate;
-        stopLoss = highCandidate;
-      }
-    }
-  } else if (entryPrice === null && validPriceTokens.length >= 1) {
-    const midIdx = Math.floor(validPriceTokens.length / 2);
-    entryPrice = Number(validPriceTokens[midIdx].val.toFixed(priceSpec.decimals));
-  }
-
-  // 9. Mathematical Derivation if 2 of (Entry, SL, TP) + R:R are known
-  const effectiveRR = explicitRR || canvasGeom.inferredRR || 2.0;
-  if (entryPrice === null && stopLoss !== null && takeProfit !== null) {
-    if (takeProfit > stopLoss) {
-      position = 'BUY';
-      entryPrice = Number(
-        ((takeProfit + effectiveRR * stopLoss) / (1 + effectiveRR)).toFixed(priceSpec.decimals)
-      );
-    } else if (takeProfit < stopLoss) {
-      position = 'SELL';
-      entryPrice = Number(
-        ((effectiveRR * stopLoss + takeProfit) / (1 + effectiveRR)).toFixed(priceSpec.decimals)
-      );
-    }
-  }
-
-  // 10. Enforce Strict Directional Consistency & Populate Missing SL / TP
+  // Enforce directional consistency & minimum point distance (reject 0.04 micro-noise, NEVER invent fake prices!)
   if (stopLoss !== null && takeProfit !== null && stopLoss !== takeProfit) {
     if (!canvasGeom.hasPositionBox && !mt5OrderDirection) {
       position = takeProfit > stopLoss ? 'BUY' : 'SELL';
@@ -1676,45 +1835,43 @@ export function synthesizeTradeScanFromSignals(params: {
     }
   }
 
-  if (entryPrice !== null) {
-    const riskDist =
-      stopLoss !== null && Math.abs(entryPrice - stopLoss) > 0
-        ? Math.abs(entryPrice - stopLoss)
-        : takeProfit !== null && Math.abs(takeProfit - entryPrice) > 0
-        ? Math.abs(takeProfit - entryPrice) / effectiveRR
-        : priceSpec.defaultPipStep;
-
-    if (position === 'BUY') {
-      if (stopLoss === null || stopLoss >= entryPrice) {
-        stopLoss = Number((entryPrice - riskDist).toFixed(priceSpec.decimals));
-      }
-      if (takeProfit === null || takeProfit <= entryPrice) {
-        const actualRisk = Math.abs(entryPrice - stopLoss);
-        takeProfit = Number((entryPrice + actualRisk * effectiveRR).toFixed(priceSpec.decimals));
-      }
-    } else {
-      if (stopLoss === null || stopLoss <= entryPrice) {
-        stopLoss = Number((entryPrice + riskDist).toFixed(priceSpec.decimals));
-      }
-      if (takeProfit === null || takeProfit >= entryPrice) {
-        const actualRisk = Math.abs(stopLoss - entryPrice);
-        takeProfit = Number((entryPrice - actualRisk * effectiveRR).toFixed(priceSpec.decimals));
-      }
+  if (entryPrice !== null && stopLoss !== null) {
+    if (
+      Math.abs(entryPrice - stopLoss) < priceSpec.minSlTpDistance ||
+      (position === 'BUY' && stopLoss >= entryPrice) ||
+      (position === 'SELL' && stopLoss <= entryPrice)
+    ) {
+      stopLoss = null;
     }
   }
 
-  // 11. Strict Lot Size Rule:
-  // - MT5: Use the identified MT5 lot size so it is input directly into the app.
+  if (entryPrice !== null && takeProfit !== null) {
+    if (
+      Math.abs(takeProfit - entryPrice) < priceSpec.minSlTpDistance ||
+      (position === 'BUY' && takeProfit <= entryPrice) ||
+      (position === 'SELL' && takeProfit >= entryPrice)
+    ) {
+      takeProfit = null;
+    }
+  }
+
+  // Strict Lot Size & Status Rule:
+  // - MT5: Use the identified MT5 lot size; if BUY LIMIT / SELL LIMIT / BUY STOP / SELL STOP, status is 'PLANNED'.
   // - TradingView: Set lotSize = null so TradeForm calculates lot automatically from Equity & Risk %.
   const finalLotSize: number | null = source === 'MT5' ? mt5DetectedLot : null;
+  const hasLimitKeywordInFullText = /\b(BUY\s+LIMIT|SELL\s+LIMIT|BUY\s+STOP|SELL\s+STOP)\b/i.test(
+    combinedText
+  );
   const finalStatus: 'PLANNED' | 'ACTIVE' | 'CLOSED' =
-    source === 'MT5' && finalLotSize !== null ? 'ACTIVE' : 'PLANNED';
+    source === 'MT5' && finalLotSize !== null && !mt5IsPendingOrder && !hasLimitKeywordInFullText
+      ? 'ACTIVE'
+      : 'PLANNED';
 
   let plannedRiskReward = explicitRR || canvasGeom.inferredRR || null;
   if (entryPrice !== null && stopLoss !== null && takeProfit !== null) {
     const risk = Math.abs(entryPrice - stopLoss);
     const reward = Math.abs(takeProfit - entryPrice);
-    if (risk > 0) {
+    if (risk >= priceSpec.minSlTpDistance) {
       plannedRiskReward = Number((reward / risk).toFixed(2));
     }
   }
@@ -1737,21 +1894,23 @@ export function synthesizeTradeScanFromSignals(params: {
     stopLoss,
     takeProfit,
     exitPrice: null,
-    profit: explicitProfit,
+    profit: null,
     status: finalStatus,
     plannedRiskReward,
     timeframe,
     currentPrice: mt5CurrentFromArrow ?? entryPrice,
-    confidence: 0.94,
+    confidence: 0.95,
     notes: `Terdeteksi otomatis (${summaryParts.join(' · ')})`,
-    modelUsed: 'hybrid-apk-vision-v3',
+    modelUsed: 'hybrid-apk-vision-v4',
     resolvedImageUrl: urlMeta.directImageUrl || undefined,
   };
 }
 
 /**
  * Main entry point for scanning a trade screenshot (Data URL or TradingView/Chart Image URL).
- * Works seamlessly on both Full-Stack Web Server AND Standalone Capacitor Android APK.
+ * PRIORITY 1: Direct Client-Side Gemini Vision API Call (works directly inside the Android APK without needing Express server).
+ * PRIORITY 2: Server-Side `/api/extract-trade-screenshot` endpoint.
+ * PRIORITY 3: Real-Badge OCR + 2D Multi-Theme Canvas Geometry (zero fake/synthetic numbers).
  */
 export async function scanTradeScreenshotOrUrl(inputSource: string): Promise<ExtractedTradeScanData> {
   const trimmed = (inputSource || '').trim();
@@ -1762,8 +1921,6 @@ export async function scanTradeScreenshotOrUrl(inputSource: string): Promise<Ext
   const isDataUrl = trimmed.startsWith('data:image/');
   const tvResolved = resolveTradingViewSnapshotUrl(trimmed);
 
-  // Step 1: Resolve image into Data URL if needed and run fast (~15ms) 2D Canvas Geometry Analysis first
-  // so both the Gemini Vision Server AND the On-Device Scanner receive exact Position Box Y-coordinates!
   let dataUrlToAnalyze: string | null = isDataUrl ? trimmed : null;
   let pageTitle = '';
   let pageDescription = '';
@@ -1775,6 +1932,7 @@ export async function scanTradeScreenshotOrUrl(inputSource: string): Promise<Ext
     pageDescription = fetched.pageDescription;
   }
 
+  // Run fast (~15ms) 2D Multi-Theme Canvas Geometry Analysis (supports Green/Red AND Dark Blue/Navy + Grey/Slate)
   const canvasGeom: CanvasZoneAnalysis = dataUrlToAnalyze
     ? await analyzeChartCanvasGeometry(dataUrlToAnalyze)
     : {
@@ -1790,7 +1948,19 @@ export async function scanTradeScreenshotOrUrl(inputSource: string): Promise<Ext
         imageHeight: 0,
       };
 
-  // Step 2: Try Server-Side Gemini 3 Vision API (both relative `/api/...` for Web and Cloud Run URLs for Android APK)
+  // PRIORITY 1: Direct Client-Side Gemini Vision Call (sends full 1920px unaltered image directly from APK/browser)
+  if (dataUrlToAnalyze) {
+    const directGeminiResult = await callGeminiVisionDirectFromClient(
+      dataUrlToAnalyze,
+      canvasGeom,
+      !isDataUrl ? tvResolved.directImageUrl : undefined
+    );
+    if (directGeminiResult && directGeminiResult.entryPrice !== null) {
+      return directGeminiResult;
+    }
+  }
+
+  // PRIORITY 2: Server-Side Gemini Vision API
   const payload: {
     imageBase64?: string;
     imageUrl?: string;
@@ -1816,36 +1986,26 @@ export async function scanTradeScreenshotOrUrl(inputSource: string): Promise<Ext
     );
 
     if (serverRes.ok && serverRes.json?.success && serverRes.json?.data) {
-      const d = serverRes.json.data as ExtractedTradeScanData;
-      if (d.entryPrice !== null && d.entryPrice > 0) {
-        const isMt5 = d.source === 'MT5';
-        return {
-          ...d,
-          lotSize: isMt5 ? d.lotSize : null,
-          resolvedImageUrl: !isDataUrl ? tvResolved.directImageUrl : undefined,
-        };
+      const normalized = normalizeGeminiScanResponse(
+        serverRes.json.data,
+        canvasGeom,
+        serverRes.json.data.modelUsed || 'server-gemini',
+        !isDataUrl ? tvResolved.directImageUrl : undefined
+      );
+      if (normalized.entryPrice !== null && normalized.entryPrice > 0) {
+        return normalized;
       }
     }
   }
 
-  // Step 3: Standalone Android APK Offline / Fallback Multi-Pass OCR + 2D Canvas Geometry Scanner
-  const ocrPack = dataUrlToAnalyze
-    ? await extractChartOcrText(dataUrlToAnalyze, tvResolved.directImageUrl)
-    : {
-        ocr: { fullText: '', lines: [], words: [] },
-        ocrImageWidth: 1000,
-        ocrImageHeight: 600,
-      };
-
-  const alignedCanvasGeom: CanvasZoneAnalysis = {
-    ...canvasGeom,
-    imageWidth: ocrPack.ocrImageWidth || canvasGeom.imageWidth || 1000,
-    imageHeight: ocrPack.ocrImageHeight || canvasGeom.imageHeight || 600,
-  };
+  // PRIORITY 3: Real-Badge OCR + Multi-Theme Canvas Geometry (Strictly NO synthetic SL/TP fabrication)
+  const ocr = dataUrlToAnalyze
+    ? await runOcrSpaceOnDataUrl(dataUrlToAnalyze)
+    : { fullText: '', lines: [], words: [] };
 
   return synthesizeTradeScanFromSignals({
-    ocr: ocrPack.ocr,
-    canvasGeom: alignedCanvasGeom,
+    ocr,
+    canvasGeom,
     urlMeta: {
       isTradingViewUrl: tvResolved.isTradingViewUrl,
       symbolFromUrl: tvResolved.symbolFromUrl,

@@ -26,22 +26,19 @@ app.use('/api', (req, res, next) => {
   next();
 });
 
-interface CanvasHintsPayload {
-  hasPositionBox?: boolean;
-  inferredPosition?: 'BUY' | 'SELL' | null;
-  inferredRR?: number | null;
-  entryYRatio?: number | null;
-  tpYRatio?: number | null;
-  slYRatio?: number | null;
-  rightAxisGreenBadgeYRatio?: number | null;
-  rightAxisRedBadgeYRatio?: number | null;
-  rightAxisBlueOrDarkBadgeYRatio?: number | null;
-}
-
 interface ExtractScreenshotRequest {
   imageBase64?: string;
   imageUrl?: string;
-  canvasHints?: CanvasHintsPayload | null;
+  canvasHints?: {
+    hasPositionBox?: boolean;
+    inferredPosition?: 'BUY' | 'SELL' | null;
+    inferredRR?: number | null;
+    entryYRatio?: number | null;
+    tpYRatio?: number | null;
+    slYRatio?: number | null;
+    boxTopYRatio?: number | null;
+    boxBottomYRatio?: number | null;
+  } | null;
 }
 
 /**
@@ -120,30 +117,57 @@ async function fetchImageBufferFromUrl(url: string): Promise<{ buffer: Buffer; m
  * Prevents SyntaxError when LLM outputs unescaped quotes, trailing characters, or partial tokens.
  */
 
-function parseNumericValue(val: any): number | null {
-  if (val === null || val === undefined) return null;
-  if (typeof val === 'number') return isNaN(val) ? null : val;
+function parseNumericValue(val: any, instrument = 'XAUUSD'): number | null {
+  if (val === null || val === undefined || val === '') return null;
+  if (typeof val === 'number') {
+    if (isNaN(val) || !Number.isFinite(val)) return null;
+    if (instrument === 'XAUUSD' && val >= 1.5 && val <= 6.5) {
+      return Number((val * 1000).toFixed(3));
+    }
+    return val;
+  }
   if (typeof val === 'string') {
-    const s = val.trim();
+    let s = val.trim();
     if (!s) return null;
 
-    // Check if string contains contextual prefix e.g. "at 96,250", "@ 1.0852", "entry: 2650"
     const contextualMatch = s.match(
-      /(?:at|@|entry[:\s]|open[:\s]|price[:\s]|level[:\s])\s*([+-]?[0-9][0-9, ]*(?:\.[0-9]+)?)/i
+      /(?:at|@|entry[:\s]|open[:\s]|price[:\s]|level[:\s])\s*([+-]?[0-9][0-9., ]+)/i
     );
     if (contextualMatch) {
-      const cleaned = contextualMatch[1].replace(/[, ]/g, '').trim();
-      const num = parseFloat(cleaned);
-      if (!isNaN(num)) return num;
+      s = contextualMatch[1].trim();
     }
 
-    // Extract first valid numerical sequence
-    const match = s.match(/[-+]?[0-9][0-9, ]*(?:\.[0-9]+)?/);
-    if (!match) return null;
-    const cleaned = match[0].replace(/[, ]/g, '').trim();
-    if (!cleaned) return null;
-    const num = parseFloat(cleaned);
-    return isNaN(num) ? null : num;
+    s = s.replace(/[^0-9.,+\- ]/g, '').trim();
+    if (!s) return null;
+
+    // Format X.XXX,XXX (dot thousands, comma decimal e.g. "4.054,405" -> "4054.405")
+    if (/^[+-]?\d{1,3}(?:\.\d{3})+,\d+$/.test(s)) {
+      s = s.replace(/\./g, '').replace(',', '.');
+    } else if (/^[+-]?\d{1,3}(?:[ ,]\d{3})+\.\d+$/.test(s)) {
+      s = s.replace(/[ ,]/g, '');
+    } else if (s.includes('.') && s.includes(',')) {
+      const lastDot = s.lastIndexOf('.');
+      const lastComma = s.lastIndexOf(',');
+      if (lastComma > lastDot) {
+        s = s.replace(/\./g, '').replace(',', '.');
+      } else {
+        s = s.replace(/,/g, '');
+      }
+    } else if (s.includes(',') && !s.includes('.')) {
+      s = s.replace(',', '.');
+    } else if ((s.match(/\./g) || []).length >= 2) {
+      const lastDot = s.lastIndexOf('.');
+      s = s.slice(0, lastDot).replace(/\./g, '') + '.' + s.slice(lastDot + 1);
+    } else {
+      s = s.replace(/ /g, '');
+    }
+
+    const num = parseFloat(s);
+    if (isNaN(num) || !Number.isFinite(num)) return null;
+    if (instrument === 'XAUUSD' && num >= 1.5 && num <= 6.5) {
+      return Number((num * 1000).toFixed(3));
+    }
+    return num;
   }
   return null;
 }
@@ -224,16 +248,17 @@ function parseAiJsonResponse(text: string): Record<string, any> {
 
   // 5. Ultimate Fallback: Deterministic Regex Token Extractor (100% resilient)
   console.warn('[AI Vision] JSON parsing required regex fallback recovery for payload snippet:', clean.slice(0, 150));
-  const extractNum = (key: string): number | null => {
-    const m = text.match(new RegExp(`"${key}"\\s*:\\s*"?([^",}\\r\\n]+)"?`, 'i'));
-    if (m) {
-      return parseNumericValue(m[1]);
-    }
-    return null;
-  };
   const extractStr = (key: string): string | null => {
     const m = text.match(new RegExp(`"${key}"\\s*:\\s*"([^"\\r\\n]*)"`, 'i'));
     return m ? m[1].trim() : null;
+  };
+  const inst = normalizeInstrument(extractStr('instrument'));
+  const extractNum = (key: string): number | null => {
+    const m = text.match(new RegExp(`"${key}"\\s*:\\s*"?([^",}\\r\\n]+)"?`, 'i'));
+    if (m) {
+      return parseNumericValue(m[1], inst);
+    }
+    return null;
   };
   const extractBool = (key: string): boolean => {
     const m = text.match(new RegExp(`"${key}"\\s*:\\s*(true|false)`, 'i'));
@@ -243,7 +268,7 @@ function parseAiJsonResponse(text: string): Record<string, any> {
   return {
     detected: extractBool('detected'),
     source: extractStr('source') || 'MT5',
-    instrument: extractStr('instrument') || 'XAUUSD',
+    instrument: inst,
     position: (extractStr('position') || 'BUY').toUpperCase(),
     lotSize: extractNum('lotSize'),
     entryPrice: extractNum('entryPrice'),
@@ -262,7 +287,7 @@ function parseAiJsonResponse(text: string): Record<string, any> {
 // AI Vision Endpoint: Extract trade data from chart screenshot
 app.post('/api/extract-trade-screenshot', async (req, res) => {
   try {
-    const { imageBase64, imageUrl } = req.body as ExtractScreenshotRequest;
+    const { imageBase64, imageUrl, canvasHints } = req.body as ExtractScreenshotRequest;
 
     if (!imageBase64 && !imageUrl) {
       res.status(400).json({
@@ -308,75 +333,66 @@ app.post('/api/extract-trade-screenshot', async (req, res) => {
       },
     });
 
-    const prompt = `You are an elite financial trade OCR specialist for MetaTrader 5 (MT5), MetaTrader 4 (MT4), and TradingView charts.
-Carefully inspect the chart screenshot to identify the exact pair/instrument, entry price, stop loss, take profit, lot size, direction, and trade status.
+    const geometryHintBlock =
+      canvasHints && canvasHints.hasPositionBox
+        ? `\nPIXEL GEOMETRY SCANNER HINTS (VERIFIED FROM IMAGE PIXELS):
+- A TradingView ${canvasHints.inferredPosition || 'BUY/SELL'} Position Box (Profit Zone & Risk Zone) was detected:
+  * Verified Direction: ${canvasHints.inferredPosition || 'UNKNOWN'} (${
+            canvasHints.inferredPosition === 'SELL'
+              ? 'Risk Zone (Grey/Slate or Red) is ABOVE Profit Zone (Blue/Navy or Green) -> SELL'
+              : 'Profit Zone (Green or Blue/Navy) is ABOVE Risk Zone (Red or Grey/Slate) -> BUY'
+          })
+  * Top of Position Box is at vertical Y = ${
+    canvasHints.boxTopYRatio != null ? (canvasHints.boxTopYRatio * 100).toFixed(1) + '%' : 'N/A'
+  } from top of image.
+  * Central Dividing Line (Entry Price) is at vertical Y = ${
+    canvasHints.entryYRatio != null ? (canvasHints.entryYRatio * 100).toFixed(1) + '%' : 'N/A'
+  } from top of image.
+  * Bottom of Position Box is at vertical Y = ${
+    canvasHints.boxBottomYRatio != null ? (canvasHints.boxBottomYRatio * 100).toFixed(1) + '%' : 'N/A'
+  } from top of image.\n`
+        : '';
 
-1. INSTRUMENT / PAIR IDENTIFICATION (CRITICAL - DO NOT DEFAULT TO XAUUSD UNLESS IT IS TRULY GOLD):
-   - You MUST read the exact symbol shown on the chart:
-     * MT5: Look at the chart title tab or top-left corner (e.g. "BTCUSD, H1", "EURUSD, M15", "XAUUSD, M5", "GBPUSD, Daily"), background watermark, or terminal symbol column.
-     * TradingView: Look at the top-left symbol ticker (e.g. "BTCUSDT", "BINANCE:BTCUSD", "FX:EURUSD", "OANDA:XAUUSD", "GBPUSD"), or large background watermark.
-     * Recognize the pair accurately:
-       - Crypto: BTCUSD, BTCUSDT, ETHUSD, SOLUSD
-       - Commodities: XAUUSD (Gold), XAGUSD (Silver)
-       - Forex: EURUSD, GBPUSD, USDJPY, AUDUSD, USDCAD, USDCHF, NZDUSD, EURGBP, GBPJPY
-       - Indices: US30, NAS100, SPX500, GER40
-   - Strip broker prefixes/suffixes so instrument is cleanly e.g. "BTCUSD", "EURUSD", "XAUUSD".
+    const prompt = `You are an elite financial chart & order OCR specialist for MetaTrader 5 (MT5 / MT4) and TradingView.
+Carefully inspect the full, uncropped screenshot from the left edge to the right-hand Y-axis price scale.
+${geometryHintBlock}
+1. RULES FOR METATRADER 5 (MT5) CHARTS:
+   - Read the text labels at the LEFT edge of the chart: "TP", "SL", "BUY LIMIT", "SELL LIMIT", "BUY STOP", "SELL STOP", "BUY", "SELL" (for example: "TP", "BUY LIMIT 0.12", "SL").
+   - Follow each label's horizontal dashed line straight across to the RIGHT-HAND Y-AXIS, and ONLY extract the price number that is inside a THIN OUTLINED BOX (kotak berbingkai tipis) aligned with that horizontal line:
+     * Example: "TP" line -> outlined box "4074.43" on right Y-axis -> takeProfit = 4074.43
+     * Example: "BUY LIMIT 0.12" line -> outlined box "4042.74" on right Y-axis -> entryPrice = 4042.74, lotSize = 0.12, position = "BUY"
+     * Example: "SL" line -> outlined box "4031.97" on right Y-axis -> stopLoss = 4031.97
+   - IGNORE unframed plain background grid numbers on the Y-axis (such as "4052.92" or "4030.42").
+   - IGNORE the bright blue/colored running price badge that has a countdown timer next to/below it (such as "4050.87 / 00:50") — put that ONLY in currentPrice, NEVER in entryPrice, stopLoss, or takeProfit!
+   - CRITICAL STATUS RULE: If the order label contains "LIMIT" or "STOP" (e.g. "BUY LIMIT 0.12", "SELL LIMIT", "BUY STOP"), you MUST set status = "PLANNED" (NOT "ACTIVE")!
 
-2. ENTRY PRICE (CRITICAL - MANDATORY, DO NOT RETURN NULL):
-   Every trade has an entry execution price. You must search all of the following locations:
-   - MT5 / MT4:
-     * HORIZONTAL ORDER LINE: An open order is shown as a horizontal dashed line across the candles with a label like "#12345678 sell 0.10" or "sell 0.10" or "buy 0.10". Follow this horizontal dashed line to the RIGHT-SIDE Y-AXIS PRICE SCALE: read the exact numerical price badge or level at this line!
-     * ORDER LINE TEXT: Some brokers show text right on the line, e.g. "sell 0.10 at 96250.00" or "at 96,250.00" or "@ 1.08520".
-     * EXECUTION ARROW: MT5 marks the entry candle with a small colored triangle arrow (red down-arrow for SELL, blue up-arrow for BUY). Read the price level where this arrow points.
-     * MOBILE APP TOP BANNER: In MT5 Mobile, the top card or header displays "sell 0.10 at 96 250.00 -> 95 800.00". The first price after "at" is the Entry Price!
-     * TERMINAL TRADE TAB: In the bottom table, look at columns: Type | Volume | Price. The first "Price" column is the Entry Price!
-     * RELATIVE POSITION SANITY:
-       - For SELL: Entry Price is strictly BETWEEN Stop Loss and Take Profit (takeProfit < entryPrice < stopLoss).
-       - For BUY: Entry Price is strictly BETWEEN Stop Loss and Take Profit (stopLoss < entryPrice < takeProfit).
-   - TRADINGVIEW:
-     * LONG / SHORT POSITION TOOL: The green and red risk/reward box. The CENTRAL HORIZONTAL DIVIDING LINE between the green profit zone and red stop loss zone IS THE ENTRY PRICE! Read the exact price tag on the right-hand Y-axis at this middle dividing line, or read "Open: <price>" / "Entry: <price>" from the center box.
-     * BROKER / PAPER TRADING ORDER LINE: Horizontal line with "Buy <lot> @ <price>" or "Sell <lot> @ <price>". The number after "@" is the Entry Price.
+2. RULES FOR TRADINGVIEW CHARTS:
+   - Look for the TWO LARGE VERTICALLY-ADJACENT COLORED BLOCKS of the Position Tool — these can be either:
+     * Standard Green (Profit) & Red (Risk), OR
+     * Custom Dark Blue / Navy (Profit Zone) & Grey / Slate (Risk Zone)!
+   - Direction Rule:
+     * If the Grey/Slate or Red Risk block is at the TOP and the Dark Blue/Navy or Green Profit block is at the BOTTOM, the position is SELL (takeProfit < entryPrice < stopLoss).
+     * If the Green or Dark Blue/Navy Profit block is at the TOP and the Red or Grey/Slate Risk block is at the BOTTOM, the position is BUY (stopLoss < entryPrice < takeProfit).
+   - IGNORE small inner annotation boxes in the middle of the chart (such as boxes labeled "OB m5", "FVG", "BOS", etc.) and ignore the live market candle price badge (e.g. "4.105,780" or "4.105,735").
+   - Read the exact price labels on the RIGHT-HAND Y-AXIS aligned with:
+     (1) The outer TOP edge of the top block (for SELL: stopLoss, e.g. "4.099,857" -> 4099.857),
+     (2) The CENTRAL HORIZONTAL DIVIDING LINE where the two blocks meet (entryPrice, e.g. "4.093,045" -> 4093.045),
+     (3) The outer BOTTOM edge of the bottom block (for SELL: takeProfit, e.g. the blue badge "4.054,405" -> 4054.405).
+   - NUMBER FORMAT NORMALIZATION: If the Y-axis uses dot thousands and comma decimals (e.g. "4.099,857", "4.093,045", "4.054,405"), remove the thousands dot (.) and convert the comma (,) to a decimal point -> 4099.857, 4093.045, 4054.405.
+   - LOT SIZE ON TRADINGVIEW: Always return null for lotSize on TradingView.
 
-3. STOP LOSS (SL) & TAKE PROFIT (TP):
-   - MT5:
-     * Stop Loss (SL): Red or grey dashed horizontal line labeled "sl", "s/l", "sl <price>", or highlighted in a red badge on the right price scale.
-     * Take Profit (TP): Red, green, or grey dashed horizontal line labeled "tp", "t/p", "tp <price>", or highlighted in a badge on the right price scale.
-     * For SELL: SL is strictly ABOVE entry price. TP is strictly BELOW entry price.
-     * For BUY: SL is strictly BELOW entry price. TP is strictly ABOVE entry price.
-   - TRADINGVIEW:
-     * Stop Loss: The outer horizontal line of the red box, labeled "Stop: <price>" or red tag on the price axis.
-     * Take Profit: The outer horizontal line of the green box, labeled "Target: <price>" or green tag on the price axis.
+3. MANDATORY VALIDATION (NO FAKE NUMBERS):
+   - Never invent or calculate synthetic SL/TP prices with arbitrary offsets!
+   - For BUY: stopLoss < entryPrice < takeProfit.
+   - For SELL: takeProfit < entryPrice < stopLoss.
+   - On XAUUSD, the distance |entryPrice - stopLoss| and |takeProfit - entryPrice| must be at least >= 1.00 point (never tiny 0.04 noise).`;
 
-4. LOT SIZE / VOLUME & POSITION DIRECTION:
-   - Identify BUY (Long) or SELL (Short).
-   - Volume / Lot size: Look for "0.10", "0.05", "1.00", "sell 0.10", "buy 0.05", or "Volume: 0.10".
-
-5. CRYPTO & FOREX NUMBERS:
-   - BTCUSD prices are 5-6 digits (e.g. 80,000 to 110,000, like 96450.00). MT5 may show spaces or commas ("96 450.00" or "96,450.00"). Output clean numbers.
-   - EURUSD prices are 1.0xxxx to 1.1xxxx (5 decimals).
-   - XAUUSD prices are 2600.00 to 2900.00.
-
-STRICT OUTPUT JSON FORMAT:
-{
-  "detected": true,
-  "source": "MT5" | "TRADINGVIEW" | "CHART",
-  "instrument": "BTCUSD" | "EURUSD" | "XAUUSD" | "GBPUSD" | string,
-  "position": "BUY" | "SELL",
-  "lotSize": number or null (e.g. 0.10),
-  "entryPrice": number (MANDATORY: entry line price on right axis, 'at <price>', or TradingView middle dividing line),
-  "stopLoss": number or null (SL dashed line, label, or right axis badge),
-  "takeProfit": number or null (TP dashed line, label, or right axis badge),
-  "exitPrice": number or null,
-  "profit": number or null,
-  "plannedRiskReward": number or null,
-  "timeframe": string or null,
-  "currentPrice": number or null,
-  "status": "ACTIVE" | "CLOSED" | "PLANNED",
-  "notes": string
-}`;
-
-    // Prioritize ultra-fast low-latency Flash-Lite model first
-    const candidateModels = ['gemini-3.1-flash-lite', 'gemini-flash-latest', 'gemini-3.8-flash'];
+    const candidateModels = [
+      'gemini-2.5-flash',
+      'gemini-3-flash-preview',
+      'gemini-3.1-flash-lite-preview',
+      'gemini-flash-latest',
+    ];
     let lastError: any = null;
     let responseText = '';
     let usedModel = '';
@@ -384,7 +400,7 @@ STRICT OUTPUT JSON FORMAT:
     for (const model of candidateModels) {
       for (let attempt = 1; attempt <= 2; attempt++) {
         try {
-          console.log(`[AI Vision] Fast scanning with ${model} (attempt ${attempt})...`);
+          console.log(`[AI Vision] Scanning screenshot with ${model} (attempt ${attempt})...`);
           const response = await ai.models.generateContent({
             model,
             contents: [
@@ -401,21 +417,21 @@ STRICT OUTPUT JSON FORMAT:
               responseSchema: {
                 type: Type.OBJECT,
                 properties: {
-                  detected: { type: Type.BOOLEAN, description: 'True if trade setup or order lines are detected' },
+                  detected: { type: Type.BOOLEAN, description: 'True if trade setup or order is detected' },
                   source: { type: Type.STRING, description: 'MT5, TRADINGVIEW, or CHART' },
-                  instrument: { type: Type.STRING, description: 'Clean instrument symbol, e.g. BTCUSD, EURUSD, XAUUSD, GBPUSD, USDJPY, US30, NAS100' },
+                  instrument: { type: Type.STRING, description: 'Clean instrument symbol, e.g. XAUUSD, EURUSD, GBPUSD, USDJPY, BTCUSD, US30, NAS100' },
                   position: { type: Type.STRING, description: 'BUY or SELL' },
-                  lotSize: { type: Type.NUMBER, description: 'Lot size / volume (e.g. 0.01, 0.10, 1.00)' },
-                  entryPrice: { type: Type.NUMBER, description: 'Mandatory entry execution price. Look for horizontal entry order line, ticket label, price scale tag, or TradingView middle divider line' },
-                  stopLoss: { type: Type.NUMBER, description: 'Stop loss price level (red dashed line, SL label, or price axis badge)' },
-                  takeProfit: { type: Type.NUMBER, description: 'Take profit price level (green/red dashed line, TP label, or price axis badge)' },
+                  lotSize: { type: Type.NUMBER, description: 'Lot size ONLY if source is MT5 (e.g. 0.01, 0.12, 0.25). Null for TradingView.' },
+                  entryPrice: { type: Type.NUMBER, description: 'Exact entry price from right Y-axis badge/outlined box' },
+                  stopLoss: { type: Type.NUMBER, description: 'Exact Stop Loss price from right Y-axis badge/outlined box' },
+                  takeProfit: { type: Type.NUMBER, description: 'Exact Take Profit price from right Y-axis badge/outlined box' },
                   exitPrice: { type: Type.NUMBER, description: 'Close/exit price if trade is closed' },
                   profit: { type: Type.NUMBER, description: 'Floating or closed profit/loss amount' },
                   plannedRiskReward: { type: Type.NUMBER, description: 'Risk/Reward ratio number (e.g. 2.0 for 1:2 RR)' },
-                  timeframe: { type: Type.STRING, description: 'Chart timeframe (e.g. M1, M5, M15, H1, H4, D1)' },
-                  currentPrice: { type: Type.NUMBER, description: 'Current market price on the right price scale' },
-                  status: { type: Type.STRING, description: 'ACTIVE, CLOSED, or PLANNED' },
-                  notes: { type: Type.STRING, description: 'Brief visual observations and price readings' },
+                  timeframe: { type: Type.STRING, description: 'Chart timeframe (e.g. M1, M5, M15, M30, H1, H4, D1)' },
+                  currentPrice: { type: Type.NUMBER, description: 'Current live market price on the right price scale' },
+                  status: { type: Type.STRING, description: 'PLANNED (for BUY LIMIT / SELL LIMIT / BUY STOP / SELL STOP or TradingView setup), ACTIVE (for open market order), or CLOSED' },
+                  notes: { type: Type.STRING, description: 'Brief summary of visual readings including left-edge order labels' },
                 },
                 required: ['detected', 'instrument', 'position'],
               },
@@ -425,7 +441,7 @@ STRICT OUTPUT JSON FORMAT:
           if (response && response.text) {
             responseText = response.text;
             usedModel = model;
-            console.log(`[AI Vision] Fast scan success with model: ${model}`);
+            console.log(`[AI Vision] Scan success with model: ${model}`);
             break;
           }
         } catch (err: any) {
@@ -443,7 +459,7 @@ STRICT OUTPUT JSON FORMAT:
           console.warn(`[AI Vision] ${model} attempt ${attempt} error: ${errMsg}`);
 
           if (isHighDemandOrOverload && attempt < 2) {
-            await new Promise((resolve) => setTimeout(resolve, 800));
+            await new Promise((resolve) => setTimeout(resolve, 600));
             continue;
           }
           break;
@@ -456,7 +472,7 @@ STRICT OUTPUT JSON FORMAT:
       throw (
         lastError ||
         new Error(
-          'Model AI sedang mengalami lonjakan antrean sementara. Silakan klik Scan AI sekali lagi.'
+          'Model AI sedang mengalami lonjakan antrean sementara. Silakan klik Scan Cepat sekali lagi.'
         )
       );
     }
@@ -466,69 +482,65 @@ STRICT OUTPUT JSON FORMAT:
     // Normalize instrument name & strip broker suffixes
     const cleanInstrument = normalizeInstrument(parsedData.instrument);
 
-    // Normalize position
-    let cleanPosition: 'BUY' | 'SELL' = parsedData.position === 'SELL' ? 'SELL' : 'BUY';
+    // Normalize position (prefer verified canvas box direction if TradingView box is present)
+    let cleanPosition: 'BUY' | 'SELL' =
+      canvasHints?.hasPositionBox && (canvasHints.inferredPosition === 'BUY' || canvasHints.inferredPosition === 'SELL')
+        ? canvasHints.inferredPosition
+        : parsedData.position === 'SELL'
+        ? 'SELL'
+        : 'BUY';
 
     // Source detection
     const source: 'MT5' | 'TRADINGVIEW' | 'CHART' =
       parsedData.source === 'MT5'
         ? 'MT5'
-        : parsedData.source === 'TRADINGVIEW'
+        : parsedData.source === 'TRADINGVIEW' || canvasHints?.hasPositionBox
         ? 'TRADINGVIEW'
         : 'CHART';
 
-    // Lifecycle status detection
+    // Lifecycle status detection (strictly detect LIMIT / STOP as PLANNED)
+    const notesStr = String(parsedData.notes || '');
+    const rawStatusStr = String(parsedData.status || '').toUpperCase();
+    const hasPendingKeyword = /\b(BUY\s+LIMIT|SELL\s+LIMIT|BUY\s+STOP|SELL\s+STOP|LIMIT|PENDING)\b/i.test(
+      notesStr
+    );
     const status: 'PLANNED' | 'ACTIVE' | 'CLOSED' =
-      parsedData.status === 'CLOSED'
+      rawStatusStr === 'CLOSED'
         ? 'CLOSED'
-        : parsedData.status === 'ACTIVE'
+        : rawStatusStr === 'PLANNED' || hasPendingKeyword || source === 'TRADINGVIEW'
+        ? 'PLANNED'
+        : rawStatusStr === 'ACTIVE'
         ? 'ACTIVE'
         : 'PLANNED';
 
     // Normalize numeric values with robust parseNumericValue
-    let entryPrice = parseNumericValue(parsedData.entryPrice);
-    let stopLoss = parseNumericValue(parsedData.stopLoss);
-    let takeProfit = parseNumericValue(parsedData.takeProfit);
-    const exitPrice = parseNumericValue(parsedData.exitPrice);
-    const profit = parseNumericValue(parsedData.profit);
-    const rawLotSize = parseNumericValue(parsedData.lotSize);
+    let entryPrice = parseNumericValue(parsedData.entryPrice, cleanInstrument);
+    let stopLoss = parseNumericValue(parsedData.stopLoss, cleanInstrument);
+    let takeProfit = parseNumericValue(parsedData.takeProfit, cleanInstrument);
+    const exitPrice = parseNumericValue(parsedData.exitPrice, cleanInstrument);
+    const profit = parseNumericValue(parsedData.profit, 'EURUSD');
+    const rawLotSize = parseNumericValue(parsedData.lotSize, 'EURUSD');
     // Strictly return lotSize ONLY for MT5 (for TradingView, lotSize must be null so client uses standard Equity Auto-Lot)
     const lotSize = source === 'MT5' && rawLotSize !== null && rawLotSize > 0 ? rawLotSize : null;
-    let plannedRR = parseNumericValue(parsedData.plannedRiskReward);
-    const currentPrice = parseNumericValue(parsedData.currentPrice);
+    let plannedRR = parseNumericValue(parsedData.plannedRiskReward, 'EURUSD');
+    const currentPrice = parseNumericValue(parsedData.currentPrice, cleanInstrument);
 
-    // Precision decimals based on instrument
-    const decimals =
-      cleanInstrument === 'BTCUSD' ||
-      cleanInstrument === 'ETHUSD' ||
-      cleanInstrument === 'XAUUSD' ||
-      cleanInstrument.includes('JPY') ||
-      cleanInstrument.includes('30') ||
-      cleanInstrument.includes('100')
-        ? 2
-        : 5;
+    const minDistance =
+      cleanInstrument === 'XAUUSD'
+        ? 1.0
+        : cleanInstrument === 'BTCUSD'
+        ? 25
+        : cleanInstrument.includes('JPY') || cleanInstrument === 'XAGUSD'
+        ? 0.03
+        : 0.0003;
 
-    // Mathematical Derivation Fallback 1: If entryPrice is null, but SL, TP, and plannedRR are known
-    if (entryPrice === null && stopLoss !== null && takeProfit !== null && plannedRR !== null && plannedRR > 0) {
-      if (cleanPosition === 'SELL') {
-        entryPrice = parseFloat(((plannedRR * stopLoss + takeProfit) / (1 + plannedRR)).toFixed(decimals));
-      } else {
-        entryPrice = parseFloat(((takeProfit + plannedRR * stopLoss) / (1 + plannedRR)).toFixed(decimals));
-      }
-    }
-
-    // Mathematical Derivation Fallback 2: If entryPrice is still null, but currentPrice lies strictly between SL and TP for an active trade
-    if (entryPrice === null && currentPrice !== null && stopLoss !== null && takeProfit !== null) {
-      const minBound = Math.min(stopLoss, takeProfit);
-      const maxBound = Math.max(stopLoss, takeProfit);
-      if (minBound < currentPrice && currentPrice < maxBound) {
-        entryPrice = parseFloat(currentPrice.toFixed(decimals));
-      }
-    }
-
-    // Enforce strict BUY / SELL directional consistency when Entry, SL, and TP are all present
+    // Enforce strict BUY / SELL directional order when all 3 real prices are present (NO synthetic SL/TP calculations!)
     if (entryPrice !== null && stopLoss !== null && takeProfit !== null) {
-      if (cleanPosition === 'BUY' && stopLoss > takeProfit) {
+      if (stopLoss < entryPrice && entryPrice < takeProfit) {
+        cleanPosition = 'BUY';
+      } else if (takeProfit < entryPrice && entryPrice < stopLoss) {
+        cleanPosition = 'SELL';
+      } else if (cleanPosition === 'BUY' && stopLoss > takeProfit) {
         const tmp = stopLoss;
         stopLoss = takeProfit;
         takeProfit = tmp;
@@ -537,18 +549,20 @@ STRICT OUTPUT JSON FORMAT:
         stopLoss = takeProfit;
         takeProfit = tmp;
       }
-      if (stopLoss < entryPrice && entryPrice < takeProfit) {
-        cleanPosition = 'BUY';
-      } else if (takeProfit < entryPrice && entryPrice < stopLoss) {
-        cleanPosition = 'SELL';
-      }
     }
 
-    // If plannedRR is missing but entry, SL, and TP are present, calculate RR automatically
-    if (plannedRR === null && entryPrice !== null && stopLoss !== null && takeProfit !== null) {
+    // Reject tiny micro-noise SL/TP (< minDistance, e.g. 0.04 on XAUUSD)
+    if (entryPrice !== null && stopLoss !== null && Math.abs(entryPrice - stopLoss) < minDistance) {
+      stopLoss = null;
+    }
+    if (entryPrice !== null && takeProfit !== null && Math.abs(takeProfit - entryPrice) < minDistance) {
+      takeProfit = null;
+    }
+
+    if (entryPrice !== null && stopLoss !== null && takeProfit !== null) {
       const risk = Math.abs(entryPrice - stopLoss);
       const reward = Math.abs(takeProfit - entryPrice);
-      if (risk > 0) {
+      if (risk >= minDistance) {
         plannedRR = parseFloat((reward / risk).toFixed(2));
       }
     }
@@ -569,10 +583,10 @@ STRICT OUTPUT JSON FORMAT:
         status,
         plannedRiskReward: plannedRR,
         timeframe: parsedData.timeframe || null,
-        currentPrice: parsedData.currentPrice || null,
-        confidence: parsedData.confidence || 0.85,
+        currentPrice: currentPrice || null,
+        confidence: parsedData.confidence || 0.92,
         notes: parsedData.notes || '',
-        modelUsed: usedModel || 'gemini-3.1-flash-lite',
+        modelUsed: usedModel || 'gemini-3-flash-preview',
       },
     });
   } catch (error: any) {
