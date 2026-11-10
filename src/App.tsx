@@ -36,6 +36,7 @@ import {
   fetchSettingsFromSupabase,
   loadUserSettingsWithFallback,
   saveSettingsToSupabase,
+  extractAllTradeStoragePaths,
 } from './utils/supabaseSync';
 import { useTheme } from './utils/theme';
 
@@ -50,6 +51,7 @@ import { TradeTable } from './components/trades/TradeTable';
 import { TradeForm } from './components/trades/TradeForm';
 import { AnalyticsView } from './components/analytics/AnalyticsView';
 import { RiskCalculatorView } from './components/risk/RiskCalculatorView';
+import { MarketChartView } from './components/chart/MarketChartView';
 import { SettingsView } from './components/settings/SettingsView';
 
 // Modals
@@ -75,6 +77,10 @@ export default function App() {
   const [trades, setTrades] = useState<Trade[]>(() => loadStoredTrades(null));
   const [settings, setSettings] = useState<AppSettings>(() => loadStoredSettings());
   const [activeTab, setActiveTab] = useState<string>('dashboard');
+  const [visitedTabs, setVisitedTabs] = useState<Record<string, boolean>>({
+    dashboard: true,
+    trades: true,
+  });
 
   // Supabase Auth States
   const [currentUser, setCurrentUser] = useState<any | null>(null);
@@ -158,8 +164,35 @@ export default function App() {
       });
     }
     activeTabRef.current = nextTab;
+    setVisitedTabs((prev) => (prev[nextTab] ? prev : { ...prev, [nextTab]: true }));
     setActiveTab(nextTab);
   }, []);
+
+  // Self-healing storage pass: deduplicate any legacy trade where beforeScreenshotUrl in [TV_META]
+  // duplicates trade.screenshotUrl, freeing up localStorage & RAM on mobile devices.
+  useEffect(() => {
+    let anyDeduplicated = false;
+    const cleaned = tradesRef.current.map((t) => {
+      if (!t.executionNotes || !t.screenshotUrl) return t;
+      const meta = decodeLifecycleMetaFromExecutionNotes(t.executionNotes);
+      if (meta.beforeScreenshotUrl && meta.beforeScreenshotUrl.trim() === t.screenshotUrl.trim()) {
+        anyDeduplicated = true;
+        const nextMeta = { ...meta };
+        delete nextMeta.beforeScreenshotUrl;
+        return {
+          ...t,
+          executionNotes:
+            encodeLifecycleMetaIntoExecutionNotes(t.executionNotes, nextMeta) || undefined,
+        };
+      }
+      return t;
+    });
+    if (anyDeduplicated) {
+      tradesRef.current = cleaned;
+      setTrades(cleaned);
+      saveStoredTrades(cleaned, currentUser?.id || null);
+    }
+  }, [currentUser?.id]);
 
   // Continuously track window scroll position for the active main view
   useEffect(() => {
@@ -465,14 +498,17 @@ export default function App() {
         }
       }
 
-      // Identify if there is an existing storage screenshot that should be cleaned up
-      // ONLY after new transaction succeeds in database
-      let oldStoragePathToClean: string | null = null;
-      if (isEdit && editingTrade?.screenshotUrl && isStoragePath(editingTrade.screenshotUrl)) {
-        if (editingTrade.screenshotUrl !== finalTrade.screenshotUrl) {
-          oldStoragePathToClean = editingTrade.screenshotUrl;
-        }
-      }
+      // Identify existing trade record in store (works for both TradeForm and TradeDetailModal updates)
+      const existingTradeRecord =
+        tradesRef.current.find(
+          (t) =>
+            t.id.toLowerCase() ===
+            (targetOriginalId || finalTrade.id).toLowerCase()
+        ) || editingTrade;
+
+      const previousStoragePaths = isEdit
+        ? extractAllTradeStoragePaths(existingTradeRecord)
+        : [];
 
       // If user is logged in and attached a NEW base64 screenshot, upload to private Storage first.
       // uploadScreenshotToSupabase internally reuses and verifies screenshotUploadCache (and evicts deleted paths).
@@ -502,22 +538,39 @@ export default function App() {
         uploadedScreenshotPath = uploadRes.data;
       }
 
-      // Also upload AFTER TRADE screenshot in [TV_META] if present as Base64
-      if (verifiedUserId && finalTrade.executionNotes) {
+      // Also upload/deduplicate BEFORE & AFTER TRADE screenshots in [TV_META] if present
+      if (finalTrade.executionNotes) {
         const decodedMeta = decodeLifecycleMetaFromExecutionNotes(finalTrade.executionNotes);
         if (Object.keys(decodedMeta).length > 0) {
           let metaChanged = false;
           const nextMeta = { ...decodedMeta };
-          if (
-            nextMeta.beforeScreenshotUrl &&
-            nextMeta.beforeScreenshotUrl.startsWith('data:image/')
-          ) {
-            if (uploadedScreenshotPath) {
-              nextMeta.beforeScreenshotUrl = uploadedScreenshotPath;
+          const mainUrl = finalTrade.screenshotUrl ? finalTrade.screenshotUrl.trim() : '';
+
+          if (nextMeta.beforeScreenshotUrl) {
+            const beforeTrimmed = nextMeta.beforeScreenshotUrl.trim();
+            if (beforeTrimmed === mainUrl || (uploadedScreenshotPath && beforeTrimmed.startsWith('data:image/'))) {
+              delete nextMeta.beforeScreenshotUrl;
+              metaChanged = true;
+            } else if (verifiedUserId && beforeTrimmed.startsWith('data:image/')) {
+              setIsCloudSyncing(true);
+              const beforeUploadRes = await uploadScreenshotToSupabase(
+                beforeTrimmed,
+                `${finalTrade.id}_before`,
+                verifiedUserId
+              );
+              setIsCloudSyncing(false);
+              if (!beforeUploadRes.success || !beforeUploadRes.data) {
+                const beforeErrMsg = `Gagal mengunggah screenshot Before Trade ke Storage: ${beforeUploadRes.error}.`;
+                showToast(beforeErrMsg, 'error');
+                return { success: false, error: beforeErrMsg };
+              }
+              nextMeta.beforeScreenshotUrl = beforeUploadRes.data;
               metaChanged = true;
             }
           }
+
           if (
+            verifiedUserId &&
             nextMeta.afterScreenshotUrl &&
             nextMeta.afterScreenshotUrl.startsWith('data:image/')
           ) {
@@ -545,6 +598,11 @@ export default function App() {
         }
       }
 
+      const activeStoragePathsOnFinalTrade = new Set(extractAllTradeStoragePaths(finalTrade));
+      const oldStoragePathsToClean = previousStoragePaths.filter(
+        (p) => !activeStoragePathsOnFinalTrade.has(p)
+      );
+
       // If user is logged in, persist to Supabase public.trades
       if (verifiedUserId) {
         setIsCloudSyncing(true);
@@ -564,9 +622,9 @@ export default function App() {
           };
         }
 
-        // Clean up previous storage file ONLY after database update is confirmed successful
-        if (oldStoragePathToClean) {
-          deleteScreenshotFromSupabase(oldStoragePathToClean).catch((err) => {
+        // Clean up any replaced/deleted storage files ONLY after database update is confirmed successful
+        for (const oldPath of oldStoragePathsToClean) {
+          deleteScreenshotFromSupabase(oldPath).catch((err) => {
             console.warn('Peringatan: Gagal membersihkan screenshot lama dari storage:', err);
           });
         }
@@ -708,13 +766,13 @@ export default function App() {
             return;
           }
 
-          // Clean up private storage file ONLY after database deletion is confirmed successful
-          if (targetTrade.screenshotUrl && isStoragePath(targetTrade.screenshotUrl)) {
+          // Clean up all private storage files (Before & After) ONLY after database deletion is confirmed successful
+          for (const storagePath of extractAllTradeStoragePaths(targetTrade)) {
             try {
-              await deleteScreenshotFromSupabase(targetTrade.screenshotUrl);
+              await deleteScreenshotFromSupabase(storagePath);
             } catch (err) {
               console.warn(
-                `Peringatan: Gagal menghapus file storage "${targetTrade.screenshotUrl}":`,
+                `Peringatan: Gagal menghapus file storage "${storagePath}":`,
                 err
               );
             }
@@ -1236,9 +1294,57 @@ export default function App() {
   };
 
   // Open Screenshot zoom modal
-  const handleViewScreenshot = (url: string, title: string) => {
-    setScreenshotModal({ url, title });
+  const handleViewScreenshot = (url: string, title?: string) => {
+    setScreenshotModal({ url, title: title || 'Screenshot Transaksi' });
   };
+
+  // Open TradeForm pre-filled from Chart Long/Short position drawing
+  const handleCreateTradeFromChart = useCallback(
+    (tradeData: {
+      pair?: string;
+      position?: 'BUY' | 'SELL';
+      entryPrice?: number;
+      stopLoss?: number;
+      takeProfit?: number;
+      notes?: string;
+      plannedRiskReward?: number;
+      lotSize?: number;
+      riskAmount?: number;
+      riskPercentage?: number;
+    }) => {
+      const nowIso = new Date().toISOString();
+      const newTradeTemplate: Trade = {
+        id: crypto.randomUUID ? crypto.randomUUID() : `trade_${Date.now()}`,
+        dateTime: nowIso,
+        instrument: tradeData.pair || 'XAUUSD',
+        position: tradeData.position || 'BUY',
+        strategy: 'Chart Analysis',
+        session: 'London',
+        entryPrice: tradeData.entryPrice || 0,
+        stopLoss: tradeData.stopLoss,
+        takeProfit: tradeData.takeProfit,
+        exitPrice: tradeData.entryPrice || 0,
+        lotSize: tradeData.lotSize && tradeData.lotSize > 0 ? tradeData.lotSize : 0.01,
+        riskAmount:
+          typeof tradeData.riskAmount === 'number' && tradeData.riskAmount >= 0
+            ? tradeData.riskAmount
+            : 0,
+        riskPercentage:
+          tradeData.riskPercentage && tradeData.riskPercentage > 0
+            ? tradeData.riskPercentage
+            : settings.defaultRiskPercent || 1,
+        grossProfit: 0,
+        netProfit: 0,
+        commission: 0,
+        swap: 0,
+        outcome: 'BREAKEVEN',
+        notes: tradeData.notes || 'Dari Analisis Chart TradingView',
+      };
+      setEditingTrade(newTradeTemplate);
+      setIsAddTradeModalOpen(true);
+    },
+    [settings.defaultRiskPercent]
+  );
 
   return (
     <div className="min-h-screen w-full bg-[#F5F7FA] text-[#151D2A] dark:bg-[#050607] dark:text-[#F2F4F7] flex flex-col font-sans transition-colors duration-150">
@@ -1473,65 +1579,88 @@ export default function App() {
               />
             </div>
 
-            <div className={activeTab === 'detail' ? 'block' : 'hidden'} aria-hidden={activeTab !== 'detail'}>
-              <TradeDetailModal
-                trade={tradeForDetail || (trades.length > 0 ? trades[0] : null)}
-                allTrades={trades}
-                settings={settings}
-                isOpen={activeTab === 'detail'}
-                isFullPage={true}
-                isChildModalOpen={Boolean(screenshotModal)}
-                onClose={() => handleNavigateTab('trades')}
-                onSelectTrade={(t) => setTradeForDetail(t)}
-                onEdit={handleOpenEdit}
-                onDelete={(t) => setTradeForDelete(t)}
-                onViewScreenshot={handleViewScreenshot}
-                onSaveTradeUpdate={(updatedTrade, origId) =>
-                  handleSaveTrade(updatedTrade, origId, { stayOnCurrentTab: true })
-                }
-                onOpenMobileMenu={() => setIsMobileMenuOpen(true)}
-              />
-            </div>
+            {(activeTab === 'detail' || visitedTabs['detail']) && (
+              <div className={activeTab === 'detail' ? 'block' : 'hidden'} aria-hidden={activeTab !== 'detail'}>
+                <TradeDetailModal
+                  trade={tradeForDetail || (trades.length > 0 ? trades[0] : null)}
+                  allTrades={trades}
+                  settings={settings}
+                  isOpen={activeTab === 'detail'}
+                  isFullPage={true}
+                  isChildModalOpen={Boolean(screenshotModal)}
+                  onClose={() => handleNavigateTab('trades')}
+                  onSelectTrade={(t) => setTradeForDetail(t)}
+                  onEdit={handleOpenEdit}
+                  onDelete={(t) => setTradeForDelete(t)}
+                  onViewScreenshot={handleViewScreenshot}
+                  onSaveTradeUpdate={(updatedTrade, origId) =>
+                    handleSaveTrade(updatedTrade, origId, { stayOnCurrentTab: true })
+                  }
+                  onOpenMobileMenu={() => setIsMobileMenuOpen(true)}
+                />
+              </div>
+            )}
 
-            <div className={activeTab === 'analytics' ? 'block' : 'hidden'} aria-hidden={activeTab !== 'analytics'}>
-              <AnalyticsView
-                trades={trades}
-                settings={settings}
-                onViewTrade={handleOpenTradeDetail}
-              />
-            </div>
+            {(activeTab === 'analytics' || visitedTabs['analytics']) && (
+              <div className={activeTab === 'analytics' ? 'block' : 'hidden'} aria-hidden={activeTab !== 'analytics'}>
+                <AnalyticsView
+                  trades={trades}
+                  settings={settings}
+                  onViewTrade={handleOpenTradeDetail}
+                />
+              </div>
+            )}
 
-            <div className={activeTab === 'risk' ? 'block' : 'hidden'} aria-hidden={activeTab !== 'risk'}>
-              <RiskCalculatorView
-                currentEquity={currentEquity}
-                settings={settings}
-                onUpdateSettings={handleUpdateSettings}
-                dailyLossToday={metrics.dailyLossToday}
-                trades={trades}
-              />
-            </div>
+            {(activeTab === 'risk' || visitedTabs['risk']) && (
+              <div className={activeTab === 'risk' ? 'block' : 'hidden'} aria-hidden={activeTab !== 'risk'}>
+                <RiskCalculatorView
+                  currentEquity={currentEquity}
+                  settings={settings}
+                  onUpdateSettings={handleUpdateSettings}
+                  dailyLossToday={metrics.dailyLossToday}
+                  trades={trades}
+                />
+              </div>
+            )}
 
-            <div className={activeTab === 'settings' ? 'block' : 'hidden'} aria-hidden={activeTab !== 'settings'}>
-              <SettingsView
-                settings={settings}
-                trades={trades}
-                onSaveSettings={handleUpdateSettings}
-                onUpdateTrades={handleUpdateTrades}
-                onImportCsvTrades={handleImportCsvTrades}
-                onLoadDemoTrades={handleLoadDemoTrades}
-                onClearAllTrades={handleClearAllTrades}
-                onRequestClearDemo={() => setIsClearDemoModalOpen(true)}
-                onOpenLocalInfo={() => setIsLocalInfoModalOpen(true)}
-                onOpenBackupModal={() => setIsBackupModalOpen(true)}
-                currentUser={currentUser}
-                onOpenAuth={() => setIsAuthModalOpen(true)}
-                onOpenAccount={() => setIsAccountModalOpen(true)}
-                onOpenConfig={() => setIsSupabaseConfigOpen(true)}
-                isCloudSyncing={isCloudSyncing}
-                onSyncLocalToCloud={handleSyncLocalToCloud}
-                onReloadFromCloud={handleReloadFromCloud}
-              />
-            </div>
+            {(activeTab === 'market-chart' || visitedTabs['market-chart']) && (
+              <div className={activeTab === 'market-chart' ? 'block' : 'hidden'} aria-hidden={activeTab !== 'market-chart'}>
+                <MarketChartView
+                  isActive={activeTab === 'market-chart'}
+                  currentUser={currentUser}
+                  trades={trades}
+                  settings={settings}
+                  currentEquity={currentEquity}
+                  onOpenAuth={() => setIsAuthModalOpen(true)}
+                  onOpenAccount={() => setIsAccountModalOpen(true)}
+                  onCreateTradeFromPosition={handleCreateTradeFromChart}
+                />
+              </div>
+            )}
+
+            {(activeTab === 'settings' || visitedTabs['settings']) && (
+              <div className={activeTab === 'settings' ? 'block' : 'hidden'} aria-hidden={activeTab !== 'settings'}>
+                <SettingsView
+                  settings={settings}
+                  trades={trades}
+                  onSaveSettings={handleUpdateSettings}
+                  onUpdateTrades={handleUpdateTrades}
+                  onImportCsvTrades={handleImportCsvTrades}
+                  onLoadDemoTrades={handleLoadDemoTrades}
+                  onClearAllTrades={handleClearAllTrades}
+                  onRequestClearDemo={() => setIsClearDemoModalOpen(true)}
+                  onOpenLocalInfo={() => setIsLocalInfoModalOpen(true)}
+                  onOpenBackupModal={() => setIsBackupModalOpen(true)}
+                  currentUser={currentUser}
+                  onOpenAuth={() => setIsAuthModalOpen(true)}
+                  onOpenAccount={() => setIsAccountModalOpen(true)}
+                  onOpenConfig={() => setIsSupabaseConfigOpen(true)}
+                  isCloudSyncing={isCloudSyncing}
+                  onSyncLocalToCloud={handleSyncLocalToCloud}
+                  onReloadFromCloud={handleReloadFromCloud}
+                />
+              </div>
+            )}
           </main>
         </div>
       </div>

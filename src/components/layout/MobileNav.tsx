@@ -9,6 +9,7 @@ import {
   BookOpen,
   BarChart3,
   ShieldAlert,
+  CandlestickChart,
   X,
   Plus,
   PlusCircle,
@@ -80,6 +81,7 @@ export const MobileNav: React.FC<MobileNavProps> = ({
     { id: 'add-trade', label: 'Catat Trade Baru', icon: PlusCircle },
     { id: 'analytics', label: 'Analytics', icon: BarChart3 },
     { id: 'risk', label: 'Risk Management', icon: ShieldAlert },
+    { id: 'market-chart', label: 'Market Chart', icon: CandlestickChart },
   ];
 
   return (

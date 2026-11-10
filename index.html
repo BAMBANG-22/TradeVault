@@ -2,7 +2,7 @@
 <html lang="id">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
     <meta name="theme-color" content="#050607" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <title>TradeVault Journal - XAUUSD Trading Analytics</title>
@@ -13,6 +13,17 @@
     <meta name="twitter:card" content="summary_large_image" />
     <script>
       (function() {
+        window.addEventListener('error', function(event) {
+          if (
+            event &&
+            (event.message === 'Script error.' || event.message === 'Script error') &&
+            (!event.filename || event.filename === '' || String(event.filename).indexOf('tradingview') !== -1)
+          ) {
+            event.stopImmediatePropagation();
+            event.preventDefault();
+            return false;
+          }
+        }, true);
         try {
           var theme = localStorage.getItem('tradevault_theme_v1');
           var root = document.documentElement;

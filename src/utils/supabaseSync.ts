@@ -13,6 +13,10 @@ import {
   decodeTradeNotesWithMeta,
   encodeTradeNotesWithMetaB64,
 } from '../storage/utf8Base64Url';
+import {
+  decodeLifecycleMetaFromExecutionNotes,
+  encodeLifecycleMetaIntoExecutionNotes,
+} from './tradeLifecycle';
 
 export interface SyncResult<T = void> {
   success: boolean;
@@ -1469,87 +1473,201 @@ export async function uploadScreenshotToSupabase(
  *   verified cached path) and returns a cloned Trade with screenshotUrl set to the storage path.
  * - If upload fails: returns { success: false, error } without mutating or deleting the source trade's screenshotUrl.
  */
+/**
+ * Helper to extract all storage paths referenced by a trade (including main screenshotUrl
+ * and lifecycle beforeScreenshotUrl / afterScreenshotUrl in executionNotes).
+ */
+export function extractAllTradeStoragePaths(trade: Partial<Trade> | null | undefined): string[] {
+  if (!trade) return [];
+  const paths: string[] = [];
+  const addIfStoragePath = (val?: string | null) => {
+    if (!val || typeof val !== 'string') return;
+    const trimmed = val.trim();
+    if (trimmed && isStoragePath(trimmed) && !paths.includes(trimmed)) {
+      paths.push(trimmed);
+    }
+  };
+  addIfStoragePath(trade.screenshotUrl);
+  if (trade.executionNotes) {
+    const meta = decodeLifecycleMetaFromExecutionNotes(trade.executionNotes);
+    addIfStoragePath(meta.beforeScreenshotUrl);
+    addIfStoragePath(meta.afterScreenshotUrl);
+  }
+  return paths;
+}
+
+/**
+ * Syncs and deduplicates any Base64 screenshots embedded inside trade.executionNotes ([TV_META:...])
+ * so that raw Base64 strings never bloat the database `notes` column or localStorage.
+ */
+async function syncLifecycleExecutionNotesScreenshots(
+  trade: Trade,
+  cleanUserId: string
+): Promise<SyncResult<{ executionNotes?: string; wasUploaded: boolean }>> {
+  if (!trade.executionNotes || typeof trade.executionNotes !== 'string') {
+    return {
+      success: true,
+      data: { executionNotes: trade.executionNotes, wasUploaded: false },
+    };
+  }
+
+  const meta = decodeLifecycleMetaFromExecutionNotes(trade.executionNotes);
+  if (Object.keys(meta).length === 0) {
+    return {
+      success: true,
+      data: { executionNotes: trade.executionNotes, wasUploaded: false },
+    };
+  }
+
+  let changed = false;
+  let wasUploaded = false;
+  const nextMeta = { ...meta };
+  const mainRef = trade.screenshotUrl ? String(trade.screenshotUrl).trim() : '';
+
+  // 1. Handle beforeScreenshotUrl: if identical to main screenshotUrl, omit from [TV_META]
+  // because resolveTradeLifecycle automatically falls back to trade.screenshotUrl.
+  if (nextMeta.beforeScreenshotUrl) {
+    const beforeRef = nextMeta.beforeScreenshotUrl.trim();
+    if (beforeRef === mainRef) {
+      delete nextMeta.beforeScreenshotUrl;
+      changed = true;
+    } else if (beforeRef.startsWith('data:image/')) {
+      const uploadRes = await uploadScreenshotToSupabase(
+        beforeRef,
+        `${trade.id}_before`,
+        cleanUserId
+      );
+      if (!uploadRes.success || !uploadRes.data) {
+        return {
+          success: false,
+          error:
+            uploadRes.error ||
+            `Gagal mengunggah screenshot Before Trade untuk "${trade.id}" ke Supabase Storage.`,
+        };
+      }
+      if (uploadRes.data === mainRef) {
+        delete nextMeta.beforeScreenshotUrl;
+      } else {
+        nextMeta.beforeScreenshotUrl = uploadRes.data;
+      }
+      changed = true;
+      wasUploaded = true;
+    }
+  }
+
+  // 2. Handle afterScreenshotUrl: upload Base64 to Storage and store compact storage path
+  if (nextMeta.afterScreenshotUrl) {
+    const afterRef = nextMeta.afterScreenshotUrl.trim();
+    if (afterRef.startsWith('data:image/')) {
+      const uploadRes = await uploadScreenshotToSupabase(
+        afterRef,
+        `${trade.id}_after`,
+        cleanUserId
+      );
+      if (!uploadRes.success || !uploadRes.data) {
+        return {
+          success: false,
+          error:
+            uploadRes.error ||
+            `Gagal mengunggah screenshot After Trade untuk "${trade.id}" ke Supabase Storage.`,
+        };
+      }
+      nextMeta.afterScreenshotUrl = uploadRes.data;
+      changed = true;
+      wasUploaded = true;
+    }
+  }
+
+  if (!changed) {
+    return {
+      success: true,
+      data: { executionNotes: trade.executionNotes, wasUploaded: false },
+    };
+  }
+
+  const nextExecutionNotes = encodeLifecycleMetaIntoExecutionNotes(
+    trade.executionNotes,
+    nextMeta
+  );
+  return {
+    success: true,
+    data: {
+      executionNotes: nextExecutionNotes || undefined,
+      wasUploaded,
+    },
+  };
+}
+
 export async function ensureTradeScreenshotSynced(
   trade: Trade,
   userId: string
 ): Promise<SyncResult<{ trade: Trade; uploadedStoragePath?: string; wasUploaded: boolean }>> {
-  const rawRef = trade.screenshotUrl ? String(trade.screenshotUrl).trim() : '';
-  if (!rawRef) {
-    return {
-      success: true,
-      data: {
-        trade: { ...trade, screenshotUrl: undefined },
-        wasUploaded: false,
-      },
-    };
-  }
-
   const cleanUserId = userId.trim();
+  const rawRef = trade.screenshotUrl ? String(trade.screenshotUrl).trim() : '';
 
-  // Handle existing storage paths (e.g. from cloud trades or JSON backup restore)
-  if (!rawRef.startsWith('data:image/')) {
-    if (isStoragePath(rawRef)) {
-      const isOwnedByActiveUser = rawRef.startsWith(`${cleanUserId}/`);
-      const isAccessible = isOwnedByActiveUser ? await verifyStorageObjectAccessible(rawRef) : false;
+  let syncedScreenshotUrl: string | undefined = rawRef || undefined;
+  let uploadedStoragePath: string | undefined;
+  let wasMainUploaded = false;
 
-      if (isAccessible) {
-        return {
-          success: true,
-          data: {
-            trade: { ...trade, screenshotUrl: rawRef },
-            wasUploaded: false,
-          },
-        };
-      }
+  if (rawRef) {
+    if (!rawRef.startsWith('data:image/')) {
+      if (isStoragePath(rawRef)) {
+        const isOwnedByActiveUser = rawRef.startsWith(`${cleanUserId}/`);
+        const isAccessible = isOwnedByActiveUser ? await verifyStorageObjectAccessible(rawRef) : false;
 
-      // Object is missing in Storage (e.g. deleted before restoring JSON backup) or from another user:
-      // Check if we have its Base64 image data cached in memory to re-upload cleanly
-      const cachedBase64 = getCachedBase64ForStoragePath(rawRef);
-      if (cachedBase64) {
-        evictScreenshotUploadCacheByPath(rawRef);
-        const reuploadRes = await uploadScreenshotToSupabase(cachedBase64, trade.id, cleanUserId);
-        if (!reuploadRes.success || !reuploadRes.data) {
-          return {
-            success: false,
-            error:
-              reuploadRes.error ||
-              `Gagal mengunggah ulang screenshot untuk transaksi "${trade.id}" ke Supabase Storage.`,
-          };
+        if (!isAccessible) {
+          const cachedBase64 = getCachedBase64ForStoragePath(rawRef);
+          if (cachedBase64) {
+            evictScreenshotUploadCacheByPath(rawRef);
+            const reuploadRes = await uploadScreenshotToSupabase(cachedBase64, trade.id, cleanUserId);
+            if (!reuploadRes.success || !reuploadRes.data) {
+              return {
+                success: false,
+                error:
+                  reuploadRes.error ||
+                  `Gagal mengunggah ulang screenshot untuk transaksi "${trade.id}" ke Supabase Storage.`,
+              };
+            }
+            syncedScreenshotUrl = reuploadRes.data;
+            uploadedStoragePath = reuploadRes.data;
+            wasMainUploaded = true;
+          }
         }
+      }
+    } else {
+      const existingCachedPath = getCachedUploadedScreenshotPath(cleanUserId, trade.id, rawRef);
+      const wasAlreadyCached = Boolean(
+        existingCachedPath &&
+          existingCachedPath.startsWith(`${cleanUserId}/`) &&
+          (await verifyStorageObjectAccessible(existingCachedPath))
+      );
+
+      const uploadRes = await uploadScreenshotToSupabase(rawRef, trade.id, cleanUserId);
+      if (!uploadRes.success || !uploadRes.data) {
         return {
-          success: true,
-          data: {
-            trade: { ...trade, screenshotUrl: reuploadRes.data },
-            uploadedStoragePath: reuploadRes.data,
-            wasUploaded: true,
-          },
+          success: false,
+          error:
+            uploadRes.error ||
+            `Gagal mengunggah screenshot untuk transaksi "${trade.id}" ke Supabase Storage.`,
         };
       }
+      syncedScreenshotUrl = uploadRes.data;
+      uploadedStoragePath = uploadRes.data;
+      wasMainUploaded = !wasAlreadyCached;
     }
-
-    return {
-      success: true,
-      data: {
-        trade: { ...trade, screenshotUrl: rawRef },
-        wasUploaded: false,
-      },
-    };
   }
 
-  const existingCachedPath = getCachedUploadedScreenshotPath(cleanUserId, trade.id, rawRef);
-  const wasAlreadyCached = Boolean(
-    existingCachedPath &&
-      existingCachedPath.startsWith(`${cleanUserId}/`) &&
-      (await verifyStorageObjectAccessible(existingCachedPath))
-  );
+  const tradeWithMainSynced: Trade = {
+    ...trade,
+    screenshotUrl: syncedScreenshotUrl,
+  };
 
-  const uploadRes = await uploadScreenshotToSupabase(rawRef, trade.id, cleanUserId);
-  if (!uploadRes.success || !uploadRes.data) {
+  // Also sync and deduplicate any Base64 screenshots inside executionNotes ([TV_META:...])
+  const metaSync = await syncLifecycleExecutionNotesScreenshots(tradeWithMainSynced, cleanUserId);
+  if (!metaSync.success || !metaSync.data) {
     return {
       success: false,
-      error:
-        uploadRes.error ||
-        `Gagal mengunggah screenshot untuk transaksi "${trade.id}" ke Supabase Storage.`,
+      error: metaSync.error || `Gagal menyinkronkan metadata screenshot untuk "${trade.id}".`,
     };
   }
 
@@ -1557,11 +1675,11 @@ export async function ensureTradeScreenshotSynced(
     success: true,
     data: {
       trade: {
-        ...trade,
-        screenshotUrl: uploadRes.data,
+        ...tradeWithMainSynced,
+        executionNotes: metaSync.data.executionNotes,
       },
-      uploadedStoragePath: uploadRes.data,
-      wasUploaded: !wasAlreadyCached,
+      uploadedStoragePath,
+      wasUploaded: wasMainUploaded || metaSync.data.wasUploaded,
     },
   };
 }
@@ -2162,10 +2280,11 @@ export async function migrateLocalTradesToSupabase(
       const res = await upsertTradeToSupabase(trade, userId);
       if (res.success && res.data) {
         successCount++;
-        // Preserve all local trade fields while adopting the synced storage path in screenshotUrl
+        // Preserve all local trade fields while adopting the synced storage paths in screenshotUrl & executionNotes
         syncedTrades.push({
           ...trade,
           screenshotUrl: res.data.screenshotUrl || undefined,
+          executionNotes: res.data.executionNotes || trade.executionNotes,
         });
       } else {
         failedCount++;
@@ -2427,9 +2546,10 @@ export async function deleteTradesListFromSupabase(
     seenUuids.add(dbUuid);
     tradeUuidsToDelete.push(dbUuid);
 
-    const rawScreenshot = trade.screenshotUrl ? String(trade.screenshotUrl).trim() : '';
-    if (rawScreenshot && isStoragePath(rawScreenshot) && !keepScreenshotPaths.has(rawScreenshot)) {
-      screenshotsPendingCleanup.push({ tradeId: trade.id, storagePath: rawScreenshot });
+    for (const storagePath of extractAllTradeStoragePaths(trade)) {
+      if (!keepScreenshotPaths.has(storagePath)) {
+        screenshotsPendingCleanup.push({ tradeId: trade.id, storagePath });
+      }
     }
   }
 
@@ -2525,9 +2645,8 @@ export async function deleteObsoleteTradesFromSupabase(
       if (GENERIC_UUID_REGEX.test(cleanId)) {
         keepUuids.add(cleanId.toLowerCase());
       }
-      const rawUrl = t.screenshotUrl ? String(t.screenshotUrl).trim() : '';
-      if (rawUrl && isStoragePath(rawUrl)) {
-        keepScreenshotPaths.add(rawUrl);
+      for (const pathItem of extractAllTradeStoragePaths(t)) {
+        keepScreenshotPaths.add(pathItem);
       }
     }
 
@@ -2580,12 +2699,13 @@ export async function deleteObsoleteTradesFromSupabase(
       for (const [uuid, prevTrade] of candidateByUuid.entries()) {
         const legacyPrevUuid = computeLegacyUnscopedUuid(prevTrade.id);
         if (keepUuids.has(uuid) || keepUuids.has(legacyPrevUuid)) {
-          const oldPath = prevTrade.screenshotUrl ? String(prevTrade.screenshotUrl).trim() : '';
-          if (oldPath && isStoragePath(oldPath) && !keepScreenshotPaths.has(oldPath)) {
-            try {
-              await deleteScreenshotFromSupabase(oldPath);
-            } catch (err) {
-              console.warn(`Peringatan: Gagal membersihkan screenshot usang "${oldPath}":`, err);
+          for (const oldPath of extractAllTradeStoragePaths(prevTrade)) {
+            if (!keepScreenshotPaths.has(oldPath)) {
+              try {
+                await deleteScreenshotFromSupabase(oldPath);
+              } catch (err) {
+                console.warn(`Peringatan: Gagal membersihkan screenshot usang "${oldPath}":`, err);
+              }
             }
           }
         }

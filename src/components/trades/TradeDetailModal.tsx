@@ -360,7 +360,7 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
   const realizedR = isClosed ? computeRealizedRMultiple(trade) : null;
   const compliance = evaluateTradeCompliance(trade, settings);
 
-  // Compress and persist BEFORE or AFTER screenshot
+  // Compress and persist BEFORE or AFTER screenshot (Smart WebP/JPEG ~45-90KB)
   const handleScreenshotSlotUpload = (
     slot: 'BEFORE' | 'AFTER',
     e: React.ChangeEvent<HTMLInputElement>
@@ -374,7 +374,7 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
       const img = new window.Image();
       img.onload = async () => {
         const canvas = document.createElement('canvas');
-        const MAX_DIM = 1200;
+        const MAX_DIM = 1280;
         let width = img.width;
         let height = img.height;
         if (width > height && width > MAX_DIM) {
@@ -387,12 +387,30 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
         canvas.width = width;
         canvas.height = height;
         const ctx = canvas.getContext('2d');
-        const compressedDataUrl = ctx
-          ? (ctx.drawImage(img, 0, 0, width, height), canvas.toDataURL('image/jpeg', 0.8))
-          : (event.target?.result as string);
+        let compressedDataUrl = event.target?.result as string;
+        if (ctx) {
+          ctx.imageSmoothingEnabled = true;
+          ctx.imageSmoothingQuality = 'high';
+          ctx.drawImage(img, 0, 0, width, height);
+          const webpUrl = canvas.toDataURL('image/webp', 0.78);
+          compressedDataUrl =
+            webpUrl && webpUrl.startsWith('data:image/webp')
+              ? webpUrl
+              : canvas.toDataURL('image/jpeg', 0.78);
+        }
 
         setIsUploadingImage(true);
         try {
+          const nextMainScreenshot =
+            slot === 'BEFORE' ? compressedDataUrl : trade.screenshotUrl;
+          const nextBeforeMeta =
+            slot === 'BEFORE'
+              ? undefined
+              : resolved.beforeScreenshotUrl &&
+                  resolved.beforeScreenshotUrl !== nextMainScreenshot
+                ? resolved.beforeScreenshotUrl
+                : undefined;
+
           const nextMeta: TradeLifecycleMeta = {
             status: resolved.status,
             orderType: resolved.orderType,
@@ -407,8 +425,7 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
             entryTime: resolved.entryTime,
             exitTime: resolved.exitTime,
             closeType: resolved.closeType,
-            beforeScreenshotUrl:
-              slot === 'BEFORE' ? compressedDataUrl : resolved.beforeScreenshotUrl,
+            beforeScreenshotUrl: nextBeforeMeta,
             afterScreenshotUrl:
               slot === 'AFTER' ? compressedDataUrl : resolved.afterScreenshotUrl,
             cancellationReason: resolved.cancellationReason,
@@ -418,8 +435,7 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
 
           const updatedTrade: Trade = {
             ...trade,
-            screenshotUrl:
-              slot === 'BEFORE' ? compressedDataUrl : trade.screenshotUrl,
+            screenshotUrl: nextMainScreenshot,
             executionNotes: encodeLifecycleMetaIntoExecutionNotes(
               trade.executionNotes,
               nextMeta
@@ -440,6 +456,14 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
     if (!onSaveTradeUpdate) return;
     setIsUploadingImage(true);
     try {
+      const nextMainScreenshot = slot === 'BEFORE' ? undefined : trade.screenshotUrl;
+      const nextBeforeMeta =
+        slot === 'BEFORE'
+          ? undefined
+          : resolved.beforeScreenshotUrl && resolved.beforeScreenshotUrl !== nextMainScreenshot
+            ? resolved.beforeScreenshotUrl
+            : undefined;
+
       const nextMeta: TradeLifecycleMeta = {
         status: resolved.status,
         orderType: resolved.orderType,
@@ -454,8 +478,7 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
         entryTime: resolved.entryTime,
         exitTime: resolved.exitTime,
         closeType: resolved.closeType,
-        beforeScreenshotUrl:
-          slot === 'BEFORE' ? undefined : resolved.beforeScreenshotUrl,
+        beforeScreenshotUrl: nextBeforeMeta,
         afterScreenshotUrl:
           slot === 'AFTER' ? undefined : resolved.afterScreenshotUrl,
         cancellationReason: resolved.cancellationReason,
@@ -465,7 +488,7 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
 
       const updatedTrade: Trade = {
         ...trade,
-        screenshotUrl: slot === 'BEFORE' ? undefined : trade.screenshotUrl,
+        screenshotUrl: nextMainScreenshot,
         executionNotes: encodeLifecycleMetaIntoExecutionNotes(
           trade.executionNotes,
           nextMeta

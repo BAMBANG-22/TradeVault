@@ -1,6 +1,7 @@
 package com.tradevault.journal;
 
 import android.content.SharedPreferences;
+import android.content.pm.ActivityInfo;
 import android.content.res.Configuration;
 import android.graphics.Canvas;
 import android.graphics.Color;
@@ -65,8 +66,11 @@ public class MainActivity extends BridgeActivity {
     @Override
     public void onConfigurationChanged(Configuration newConfig) {
         super.onConfigurationChanged(newConfig);
-        // Re-assert TradeVault's in-app theme colors so OS day/night changes never cause mismatched bars
+        // Re-assert TradeVault's in-app theme colors and system bar insets across portrait/landscape transitions
         applySystemBarThemeColors(currentAppTheme);
+        if (getWindow() != null && getWindow().getDecorView() != null) {
+            ViewCompat.requestApplyInsets(getWindow().getDecorView());
+        }
     }
 
     /**
@@ -236,6 +240,17 @@ public class MainActivity extends BridgeActivity {
         @JavascriptInterface
         public void setTheme(String theme) {
             persistAndApplyTheme(theme);
+        }
+
+        @JavascriptInterface
+        public void setScreenOrientation(final String mode) {
+            runOnUiThread(() -> {
+                if ("landscape".equalsIgnoreCase(mode)) {
+                    setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE);
+                } else {
+                    setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_PORTRAIT);
+                }
+            });
         }
     }
 

@@ -18,6 +18,10 @@ key.properties
 
 # AI Studio Workspace & Rollback
 .aistudio/
+.backup_*/
+tradevault-systembars-sync.zip
+public/tradevault-systembars-sync.zip
+public/assets/aistudio/TradeVault-main_*.zip
 
 # IDE & Local Temporary Files
 .idea/

@@ -10,6 +10,7 @@ import {
   PlusCircle,
   BarChart3,
   ShieldAlert,
+  CandlestickChart,
   User,
   ChevronRight,
   Moon,
@@ -56,6 +57,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
     { id: 'add-trade', label: 'Catat Trade Baru', icon: PlusCircle },
     { id: 'analytics', label: 'Analytics', icon: BarChart3 },
     { id: 'risk', label: 'Risk Management', icon: ShieldAlert },
+    { id: 'market-chart', label: 'Market Chart', icon: CandlestickChart },
   ];
 
   return (

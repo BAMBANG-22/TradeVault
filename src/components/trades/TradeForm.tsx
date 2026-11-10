@@ -60,6 +60,7 @@ import {
   ArrowLeft,
   Check,
   Search,
+  Sparkles,
 } from 'lucide-react';
 
 export interface TradeSaveResult {
@@ -118,6 +119,58 @@ const EXECUTION_ADHERENCE_OPTIONS: { value: ExecutionAdherenceTag; label: string
   { value: 'SL_MOVED_VIOLATION', label: 'Pelanggaran — SL Digeser / Diperlebar Saat Floating Loss' },
   { value: 'TP_MODIFIED_VIOLATION', label: 'Deviasi — TP Diubah / Ditutup Prematur Tanpa Aturan' },
 ];
+
+/**
+ * Smart client-side image downscaling and WebP/JPEG compression (~45-90KB) to save ~75% Supabase Storage
+ * and localStorage quota while keeping MT4/MT5/TradingView SL/TP price numbers razor-sharp.
+ */
+export const compressAndResizeImage = (
+  file: File | Blob,
+  maxWidth = 1280,
+  maxHeight = 1280,
+  quality = 0.78
+): Promise<string> => {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error('Gagal membaca file gambar'));
+    reader.onload = (event) => {
+      const img = new Image();
+      img.onerror = () => reject(new Error('Format gambar tidak didukung'));
+      img.onload = () => {
+        let width = img.width;
+        let height = img.height;
+        if (width > maxWidth || height > maxHeight) {
+          if (width > height) {
+            height = Math.round((height * maxWidth) / width);
+            width = maxWidth;
+          } else {
+            width = Math.round((width * maxHeight) / height);
+            height = maxHeight;
+          }
+        }
+        const canvas = document.createElement('canvas');
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext('2d');
+        if (ctx) {
+          ctx.imageSmoothingEnabled = true;
+          ctx.imageSmoothingQuality = 'high';
+          ctx.drawImage(img, 0, 0, width, height);
+          const webpUrl = canvas.toDataURL('image/webp', quality);
+          if (webpUrl && webpUrl.startsWith('data:image/webp')) {
+            resolve(webpUrl);
+          } else {
+            resolve(canvas.toDataURL('image/jpeg', quality));
+          }
+        } else {
+          resolve(event.target?.result as string);
+        }
+      };
+      img.src = event.target?.result as string;
+    };
+    reader.readAsDataURL(file);
+  });
+};
 
 export const TradeForm: React.FC<TradeFormProps> = ({
   initialTrade,
@@ -327,6 +380,66 @@ export const TradeForm: React.FC<TradeFormProps> = ({
     setPreviewDisplayUrl(trimmed);
     setIsPreviewLoading(false);
   }, [screenshotUrl]);
+
+  // AI Vision Screenshot Scanner State
+  const [isScanningScreenshot, setIsScanningScreenshot] = useState<boolean>(false);
+  const handleScanScreenshotAIRef = useRef<((src?: string) => Promise<void>) | null>(null);
+  const [scanResultFeedback, setScanResultFeedback] = useState<{
+    type: 'success' | 'error';
+    message: string;
+    details?: {
+      source?: 'MT5' | 'TRADINGVIEW' | 'CHART';
+      instrument: string;
+      position: TradePosition;
+      lotSize?: number | null;
+      entryPrice: number | null;
+      stopLoss: number | null;
+      takeProfit: number | null;
+      exitPrice?: number | null;
+      profit?: number | null;
+      status?: 'PLANNED' | 'ACTIVE' | 'CLOSED';
+      plannedRiskReward: number | null;
+    };
+  } | null>(null);
+
+  // Support pasting screenshot directly from clipboard (Ctrl+V / Cmd+V) with instant compression & auto-scan
+  useEffect(() => {
+    const handlePaste = (e: ClipboardEvent) => {
+      const activeEl = document.activeElement as HTMLElement | null;
+      if (
+        activeEl &&
+        (activeEl.tagName === 'INPUT' || activeEl.tagName === 'TEXTAREA') &&
+        (activeEl as HTMLInputElement).type !== 'file'
+      ) {
+        if (!e.clipboardData?.files || e.clipboardData.files.length === 0) {
+          return;
+        }
+      }
+
+      const files = e.clipboardData?.files;
+      if (files && files.length > 0) {
+        const file = files[0];
+        if (file.type.startsWith('image/')) {
+          e.preventDefault();
+          compressAndResizeImage(file)
+            .then((compressedB64) => {
+              setScreenshotUrl(compressedB64);
+              setScanResultFeedback(null);
+              // Auto-trigger ultra-fast scan immediately upon paste
+              if (handleScanScreenshotAIRef.current) {
+                handleScanScreenshotAIRef.current(compressedB64);
+              }
+            })
+            .catch(() => {
+              triggerValidationError('Gagal memproses gambar dari clipboard.');
+            });
+        }
+      }
+    };
+
+    window.addEventListener('paste', handlePaste);
+    return () => window.removeEventListener('paste', handlePaste);
+  }, []);
 
   // Synchronize form when initialTrade changes
   useEffect(() => {
@@ -673,7 +786,7 @@ export const TradeForm: React.FC<TradeFormProps> = ({
     }
   };
 
-  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
@@ -682,43 +795,139 @@ export const TradeForm: React.FC<TradeFormProps> = ({
       return;
     }
 
-    const reader = new FileReader();
-    reader.onload = (event) => {
-      const img = new Image();
-      img.onload = () => {
-        const canvas = document.createElement('canvas');
-        const MAX_WIDTH = 1200;
-        const MAX_HEIGHT = 1200;
-        let width = img.width;
-        let height = img.height;
-
-        if (width > height) {
-          if (width > MAX_WIDTH) {
-            height = Math.round((height * MAX_WIDTH) / width);
-            width = MAX_WIDTH;
-          }
-        } else {
-          if (height > MAX_HEIGHT) {
-            width = Math.round((width * MAX_HEIGHT) / height);
-            height = MAX_HEIGHT;
-          }
-        }
-
-        canvas.width = width;
-        canvas.height = height;
-        const ctx = canvas.getContext('2d');
-        if (ctx) {
-          ctx.drawImage(img, 0, 0, width, height);
-          const compressedDataUrl = canvas.toDataURL('image/jpeg', 0.8);
-          setScreenshotUrl(compressedDataUrl);
-        } else {
-          setScreenshotUrl(event.target?.result as string);
-        }
-      };
-      img.src = event.target?.result as string;
-    };
-    reader.readAsDataURL(file);
+    try {
+      const compressedDataUrl = await compressAndResizeImage(file);
+      setScreenshotUrl(compressedDataUrl);
+      setScanResultFeedback(null);
+      // Auto-trigger ultra-fast AI scan immediately
+      handleScanScreenshotAI(compressedDataUrl);
+    } catch {
+      triggerValidationError('Gagal memproses file gambar.');
+    }
   };
+
+  const handleScanScreenshotAI = async (sourceUrlOverride?: string) => {
+    const targetSource = (sourceUrlOverride || screenshotUrl || '').trim();
+    if (!targetSource) {
+      triggerValidationError('Unggah gambar atau masukkan tautan screenshot terlebih dahulu.');
+      return;
+    }
+
+    setIsScanningScreenshot(true);
+    setScanResultFeedback(null);
+    setErrorMsg(null);
+
+    try {
+      const isDataUrl = targetSource.startsWith('data:image/');
+      const payload: { imageBase64?: string; imageUrl?: string } = {};
+      if (isDataUrl) {
+        payload.imageBase64 = targetSource;
+      } else {
+        payload.imageUrl = targetSource;
+      }
+
+      const res = await fetch('/api/extract-trade-screenshot', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+
+      const resJson = await res.json();
+      if (!res.ok || !resJson.success) {
+        throw new Error(resJson.error || 'Gagal mengekstrak data dari screenshot.');
+      }
+
+      const data = resJson.data;
+      if (!data) {
+        throw new Error('Tidak ada data setup yang terbaca pada gambar.');
+      }
+
+      // Re-enable real-time calculation sync
+      preserveInitialRiskRef.current = false;
+
+      const extractedInfoSummary: string[] = [];
+
+      if (data.instrument) {
+        setInstrument(data.instrument);
+        extractedInfoSummary.push(`Pair: ${data.instrument}`);
+      }
+      if (data.position === 'BUY' || data.position === 'SELL') {
+        setPosition(data.position);
+        extractedInfoSummary.push(`Posisi: ${data.position}`);
+      }
+      if (data.lotSize !== null && data.lotSize !== undefined && data.lotSize > 0) {
+        setLotSize(String(data.lotSize));
+        setIsAutoLotActive(false);
+        extractedInfoSummary.push(`Lot: ${data.lotSize}`);
+      }
+      if (data.status === 'ACTIVE' || data.status === 'CLOSED') {
+        setLifecycleStatus(data.status);
+        extractedInfoSummary.push(`Status: ${data.status}`);
+      }
+      if (data.entryPrice !== null && data.entryPrice !== undefined) {
+        setEntryPrice(String(data.entryPrice));
+        extractedInfoSummary.push(`Entry: ${data.entryPrice}`);
+      }
+      if (data.stopLoss !== null && data.stopLoss !== undefined) {
+        setStopLoss(String(data.stopLoss));
+        extractedInfoSummary.push(`SL: ${data.stopLoss}`);
+      }
+      if (data.takeProfit !== null && data.takeProfit !== undefined) {
+        setTakeProfit(String(data.takeProfit));
+        extractedInfoSummary.push(`TP: ${data.takeProfit}`);
+      }
+      if (data.exitPrice !== null && data.exitPrice !== undefined && data.exitPrice > 0) {
+        setExitPrice(String(data.exitPrice));
+        extractedInfoSummary.push(`Exit: ${data.exitPrice}`);
+      }
+      if (data.profit !== null && data.profit !== undefined) {
+        const p = Number(data.profit);
+        setGrossProfit(p.toFixed(2));
+        setNetProfit(p.toFixed(2));
+        setOutcome(classifyNetProfitOutcome(p));
+        extractedInfoSummary.push(`P/L: ${p >= 0 ? '+' : ''}${p.toFixed(2)}`);
+      }
+
+      if (data.notes) {
+        setNotes((prev) => {
+          const noteText = `[AI Screenshot Scan]: ${data.notes}`;
+          if (!prev) return noteText;
+          if (!prev.includes(data.notes)) return `${prev}\n${noteText}`;
+          return prev;
+        });
+      }
+
+      const sourceLabel = data.source === 'MT5' ? 'MetaTrader 5 (MT5)' : 'TradingView / Chart';
+      setScanResultFeedback({
+        type: 'success',
+        message: `Berhasil mendeteksi dari ${sourceLabel}: ${data.instrument} ${data.position}!`,
+        details: {
+          source: data.source,
+          instrument: data.instrument,
+          position: data.position,
+          lotSize: data.lotSize,
+          entryPrice: data.entryPrice,
+          stopLoss: data.stopLoss,
+          takeProfit: data.takeProfit,
+          exitPrice: data.exitPrice,
+          profit: data.profit,
+          status: data.status,
+          plannedRiskReward: data.plannedRiskReward,
+        },
+      });
+    } catch (err: any) {
+      setScanResultFeedback({
+        type: 'error',
+        message: err.message || 'Gagal memproses screenshot chart.',
+      });
+    } finally {
+      setIsScanningScreenshot(false);
+    }
+  };
+
+  useEffect(() => {
+    handleScanScreenshotAIRef.current = handleScanScreenshotAI;
+  });
 
   const handleOutcomeChange = (newOutcome: TradeOutcome) => {
     pnlInputModeRef.current = 'gross';
@@ -1073,7 +1282,8 @@ export const TradeForm: React.FC<TradeFormProps> = ({
           ? existingResolved?.exitTime || nowIso
           : undefined,
       closeType: effectiveStatus === 'CLOSED' ? closeType : undefined,
-      beforeScreenshotUrl: screenshotUrl.trim() || undefined,
+      // Omit beforeScreenshotUrl when stored in main trade.screenshotUrl so Base64/paths are never duplicated in [TV_META]
+      beforeScreenshotUrl: undefined,
       afterScreenshotUrl: afterScreenshotUrl.trim() || undefined,
       cancellationReason: existingResolved?.cancellationReason,
       cancelledAt: existingResolved?.cancelledAt,
@@ -2028,11 +2238,41 @@ export const TradeForm: React.FC<TradeFormProps> = ({
                   className="hidden"
                 />
               </label>
+
+              <button
+                type="button"
+                onClick={() => handleScanScreenshotAI()}
+                disabled={isScanningScreenshot || !screenshotUrl.trim()}
+                className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[11px] font-semibold transition-all cursor-pointer shrink-0 ${
+                  isScanningScreenshot
+                    ? 'bg-amber-500/20 text-amber-500 border border-amber-500/40 cursor-wait'
+                    : screenshotUrl.trim()
+                    ? 'bg-amber-500/15 hover:bg-amber-500/25 text-amber-600 dark:text-amber-400 border border-amber-500/30 shadow-xs'
+                    : 'bg-[#F5F7FA] dark:bg-[#12161D] border border-[#DDE3EA] dark:border-[#1E232B] text-[#94A3B8] dark:text-[#606875] opacity-50 cursor-not-allowed'
+                }`}
+                title="Ekstrak data posisi (Pair, BUY/SELL, Entry, SL, TP) otomatis dalam 1-2 detik"
+              >
+                {isScanningScreenshot ? (
+                  <>
+                    <Loader2 className="h-3 w-3 animate-spin text-amber-500" />
+                    <span>Scan Kilat...</span>
+                  </>
+                ) : (
+                  <>
+                    <Sparkles className="h-3 w-3 text-amber-500" />
+                    <span>Scan Cepat</span>
+                  </>
+                )}
+              </button>
+
               <input
                 type="text"
                 value={screenshotUrl}
-                onChange={(e) => setScreenshotUrl(e.target.value)}
-                placeholder="Atau tempel URL gambar..."
+                onChange={(e) => {
+                  setScreenshotUrl(e.target.value);
+                  setScanResultFeedback(null);
+                }}
+                placeholder="Tempel URL snapshot TradingView / tekan Ctrl+V gambar..."
                 className="flex-1 bg-transparent border-b border-[#DDE3EA] dark:border-[#1E232B] py-1 text-xs text-[#151D2A] dark:text-[#F2F4F7] placeholder-[#94A3B8] dark:placeholder-[#606875] focus:outline-none focus:border-[#697586] dark:focus:border-[#929BA9]"
               />
             </div>
@@ -2050,30 +2290,140 @@ export const TradeForm: React.FC<TradeFormProps> = ({
             )}
 
             {screenshotUrl && (
-              <div className="relative rounded-2xl overflow-hidden border border-[#DDE3EA] dark:border-[#1E232B] h-24 bg-[#F5F7FA] dark:bg-[#12161D] flex items-center justify-center">
-                {isPreviewLoading ? (
-                  <Loader2 className="h-4 w-4 animate-spin text-[#697586] dark:text-[#929BA9]" />
-                ) : previewDisplayUrl ? (
-                  <img
-                    src={previewDisplayUrl}
-                    alt="Chart Preview"
-                    className="w-full h-24 object-cover"
-                  />
-                ) : (
-                  <span className="text-[11px] text-[#697586] dark:text-[#929BA9]">Pratinjau tersimpan</span>
+              <div className="space-y-2">
+                <div className="relative rounded-2xl overflow-hidden border border-[#DDE3EA] dark:border-[#1E232B] h-28 bg-[#F5F7FA] dark:bg-[#12161D] flex items-center justify-center">
+                  {isPreviewLoading ? (
+                    <Loader2 className="h-4 w-4 animate-spin text-[#697586] dark:text-[#929BA9]" />
+                  ) : previewDisplayUrl ? (
+                    <img
+                      src={previewDisplayUrl}
+                      alt="Chart Preview"
+                      className="w-full h-28 object-cover"
+                    />
+                  ) : (
+                    <span className="text-[11px] text-[#697586] dark:text-[#929BA9]">Pratinjau tersimpan</span>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setScreenshotUrl('');
+                      setPreviewDisplayUrl('');
+                      setScanResultFeedback(null);
+                    }}
+                    className="absolute top-1.5 right-1.5 rounded-full bg-white/90 dark:bg-[#0B0D11]/90 border border-[#DDE3EA] dark:border-[#1E232B] p-1 text-[#151D2A] dark:text-[#F2F4F7] cursor-pointer hover:bg-white"
+                  >
+                    <X className="h-3 w-3 stroke-[2]" />
+                  </button>
+                </div>
+
+                {!isScanningScreenshot && (
+                  <button
+                    type="button"
+                    onClick={() => handleScanScreenshotAI()}
+                    className="w-full flex items-center justify-center gap-1.5 py-1.5 px-3 rounded-xl bg-amber-500/10 hover:bg-amber-500/15 border border-amber-500/25 text-xs font-semibold text-amber-700 dark:text-amber-300 transition-colors cursor-pointer"
+                  >
+                    <Sparkles className="h-3.5 w-3.5 text-amber-500 shrink-0" />
+                    <span>⚡ Scan Kilat & Isi Otomatis (AI Flash Lite)</span>
+                  </button>
                 )}
+              </div>
+            )}
+
+            {scanResultFeedback && (
+              <div
+                className={`p-2.5 rounded-xl border text-xs flex items-start justify-between gap-2 ${
+                  scanResultFeedback.type === 'success'
+                    ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-800 dark:text-emerald-300'
+                    : 'bg-red-500/10 border-red-500/20 text-red-800 dark:text-red-300'
+                }`}
+              >
+                <div className="space-y-1.5 flex-1">
+                  <div className="flex items-center gap-1.5 font-semibold">
+                    {scanResultFeedback.type === 'success' ? (
+                      <Check className="h-3.5 w-3.5 text-emerald-500 shrink-0" />
+                    ) : (
+                      <AlertCircle className="h-3.5 w-3.5 text-red-500 shrink-0" />
+                    )}
+                    <span>{scanResultFeedback.message}</span>
+                  </div>
+
+                  {scanResultFeedback.type === 'error' && (
+                    <div className="pl-5 pt-0.5 flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => handleScanScreenshotAI()}
+                        disabled={isScanningScreenshot}
+                        className="px-2.5 py-1 rounded-lg bg-red-500/15 hover:bg-red-500/25 text-red-700 dark:text-red-300 font-semibold text-[11px] inline-flex items-center gap-1 cursor-pointer transition-colors"
+                      >
+                        <RefreshCw className={`h-3 w-3 ${isScanningScreenshot ? 'animate-spin' : ''}`} />
+                        <span>Coba Scan Lagi</span>
+                      </button>
+                    </div>
+                  )}
+
+                  {scanResultFeedback.details && (
+                    <div className="text-[11px] opacity-90 pl-5 flex flex-wrap items-center gap-x-2 gap-y-1">
+                      {scanResultFeedback.details.source && (
+                        <span className={`px-1.5 py-0.2 rounded font-bold text-[10px] ${
+                          scanResultFeedback.details.source === 'MT5'
+                            ? 'bg-blue-500/20 text-blue-700 dark:text-blue-300'
+                            : 'bg-sky-500/20 text-sky-700 dark:text-sky-300'
+                        }`}>
+                          {scanResultFeedback.details.source === 'MT5' ? 'MetaTrader 5' : 'TradingView'}
+                        </span>
+                      )}
+                      <span>Instrumen: <b>{scanResultFeedback.details.instrument}</b></span>
+                      <span>Arah: <b>{scanResultFeedback.details.position}</b></span>
+                      {scanResultFeedback.details.lotSize !== null && scanResultFeedback.details.lotSize !== undefined && (
+                        <span>Lot: <b>{scanResultFeedback.details.lotSize}</b></span>
+                      )}
+                      {scanResultFeedback.details.entryPrice !== null && (
+                        <span>Entry: <b>{scanResultFeedback.details.entryPrice}</b></span>
+                      )}
+                      {scanResultFeedback.details.stopLoss !== null && (
+                        <span>SL: <b>{scanResultFeedback.details.stopLoss}</b></span>
+                      )}
+                      {scanResultFeedback.details.takeProfit !== null && (
+                        <span>TP: <b>{scanResultFeedback.details.takeProfit}</b></span>
+                      )}
+                      {scanResultFeedback.details.exitPrice !== null && scanResultFeedback.details.exitPrice !== undefined && (
+                        <span>Exit: <b>{scanResultFeedback.details.exitPrice}</b></span>
+                      )}
+                      {scanResultFeedback.details.profit !== null && scanResultFeedback.details.profit !== undefined && (
+                        <span>P/L: <b>{scanResultFeedback.details.profit >= 0 ? '+' : ''}{scanResultFeedback.details.profit}</b></span>
+                      )}
+                      {scanResultFeedback.details.status && (
+                        <span>Status: <b>{scanResultFeedback.details.status}</b></span>
+                      )}
+                      {scanResultFeedback.details.plannedRiskReward !== null && (
+                        <span>R:R: <b>1:{scanResultFeedback.details.plannedRiskReward}</b></span>
+                      )}
+                    </div>
+                  )}
+                </div>
                 <button
                   type="button"
-                  onClick={() => {
-                    setScreenshotUrl('');
-                    setPreviewDisplayUrl('');
-                  }}
-                  className="absolute top-1.5 right-1.5 rounded-full bg-white/90 dark:bg-[#0B0D11]/90 border border-[#DDE3EA] dark:border-[#1E232B] p-1 text-[#151D2A] dark:text-[#F2F4F7] cursor-pointer"
+                  onClick={() => setScanResultFeedback(null)}
+                  className="text-current opacity-60 hover:opacity-100 p-0.5 cursor-pointer shrink-0"
                 >
-                  <X className="h-3 w-3 stroke-[2]" />
+                  <X className="h-3 w-3" />
                 </button>
               </div>
             )}
+
+            {/* Panduan Screenshot MetaTrader 5 & TradingView */}
+            <div className="text-[11px] text-[#697586] dark:text-[#929BA9] bg-[#F5F7FA] dark:bg-[#12161D] rounded-xl p-2.5 border border-[#DDE3EA] dark:border-[#1E232B] space-y-1.5">
+              <div className="font-semibold text-[#151D2A] dark:text-[#F2F4F7] flex items-center gap-1.5">
+                <span>💡</span>
+                <span>Mendukung Screenshot MetaTrader 5 (MT5) & TradingView:</span>
+              </div>
+              <p className="leading-relaxed">
+                <b>• MetaTrader 5 (MT5 Mobile / PC):</b> Ambil screenshot pada tab <b>Trade</b> (posisi berjalan), tab <b>History</b> (riwayat selesai), atau <b>Chart MT5</b> dengan garis order. AI otomatis membaca Pair, Buy/Sell, Ukuran Lot, Entry, SL, TP, hingga Profit!
+              </p>
+              <p className="leading-relaxed">
+                <b>• TradingView / Advance Chart:</b> Tekan <kbd className="px-1 py-0.5 rounded bg-black/10 dark:bg-white/10 font-mono text-[10px]">Win + Shift + S</kbd> (Windows) atau <kbd className="px-1 py-0.5 rounded bg-black/10 dark:bg-white/10 font-mono text-[10px]">Cmd + Shift + 4</kbd> (Mac), lalu langsung tekan <kbd className="px-1 py-0.5 rounded bg-black/10 dark:bg-white/10 font-mono text-[10px]">Ctrl + V</kbd> di sini untuk memindai instan!
+              </p>
+            </div>
           </div>
 
           {/* 7 & 8. Notes / Reflection & Additional Fields */}
