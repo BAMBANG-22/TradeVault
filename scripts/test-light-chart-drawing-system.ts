@@ -1459,7 +1459,77 @@ console.log('\n--- [C4] Testing Draggable Style/Settings Bar & Tap-to-Deselect B
   assert.equal(synthMt5Sell.entryPrice, 96250, 'MT5 SELL scan must extract Entry = 96250 from order line Y');
   assert.equal(synthMt5Sell.stopLoss, 96800, 'MT5 SELL scan must extract SL = 96800 from sl line Y (above Entry)');
   assert.equal(synthMt5Sell.takeProfit, 95150, 'MT5 SELL scan must extract TP = 95150 from tp line Y (below Entry)');
-  console.log('✓ C4.8 APK Scan Kilat (TradingView & MT5 BUY/SELL + Lot Policy): Verified Entry, SL, TP, MT5 Lot extraction, and TradingView Equity Auto-Lot');
+
+  // 8e. TradingView Disambiguation: Must NOT confuse "Open 4015.20" (OHLC header), "Open P&L: -1850.00" (floating label),
+  // or live market candle badge (4012.50 at y=150) with the true Entry dividing line (4000.00 at y=200)!
+  const synthTvDisambig = synthesizeTradeScanFromSignals({
+    ocr: {
+      fullText:
+        'OANDA:XAUUSD 15 Open 4015.20 High 4022.00 Low 3995.00 Close 4012.50\nOpen P&L: -1850.00, Qty: 1.5, Risk/Reward Ratio: 2.00\n4020.00\n4012.50\n3990.00',
+      lines: [
+        {
+          text: 'OANDA:XAUUSD 15 Open 4015.20 High 4022.00 Low 3995.00 Close 4012.50',
+          centerY: 24,
+          minX: 20,
+          maxX: 600,
+        },
+        {
+          text: 'Open P&L: -1850.00, Qty: 1.5, Risk/Reward Ratio: 2.00',
+          centerY: 195,
+          minX: 300,
+          maxX: 580,
+        },
+        { text: '4020.00', centerY: 120, minX: 900, maxX: 960 },
+        { text: '4012.50', centerY: 150, minX: 900, maxX: 960 }, // Live candle price badge (occluding entry badge)
+        { text: '3990.00', centerY: 240, minX: 900, maxX: 960 },
+      ],
+      words: [],
+    },
+    canvasGeom: {
+      hasPositionBox: true,
+      inferredPosition: 'BUY',
+      inferredRR: 2.0,
+      entryYRatio: 200 / 600, // Exact dividing line between Green (120..200) and Red (200..240)
+      tpYRatio: 120 / 600,
+      slYRatio: 240 / 600,
+      boxTopYRatio: 120 / 600,
+      boxBottomYRatio: 240 / 600,
+      rightAxisGreenBadgeYRatio: 120 / 600,
+      rightAxisRedBadgeYRatio: 240 / 600,
+      rightAxisBlueOrDarkBadgeYRatio: null,
+      horizontalLineYRatios: [],
+      imageWidth: 1000,
+      imageHeight: 600,
+    },
+    urlMeta: null,
+  });
+  assert.equal(synthTvDisambig.entryPrice, 4000, 'Must extract true dividing-line Entry = 4000 (ignoring Open 4015.20, Open P&L -1850.00, and live candle 4012.50)');
+  assert.equal(synthTvDisambig.takeProfit, 4020, 'Must extract TP = 4020');
+  assert.equal(synthTvDisambig.stopLoss, 3990, 'Must extract SL = 3990');
+  assert.equal(synthTvDisambig.lotSize, null, 'Must keep lotSize = null for TradingView');
+
+  // 8f. MT5 Mobile Trade / History Tab Arrow Syntax ("3340.50 -> 3328.10")
+  const synthMt5Arrow = synthesizeTradeScanFromSignals({
+    ocr: {
+      fullText: 'XAUUSD, sell 0.15\n3340.50 -> 3328.10\nS/L: 3350.00 T/P: 3315.00',
+      lines: [
+        { text: 'XAUUSD, sell 0.15', centerY: 80, minX: 30, maxX: 280 },
+        { text: '3340.50 -> 3328.10', centerY: 110, minX: 30, maxX: 260 },
+        { text: 'S/L: 3350.00 T/P: 3315.00', centerY: 145, minX: 30, maxX: 340 },
+      ],
+      words: [],
+    },
+    canvasGeom: null,
+    urlMeta: null,
+  });
+  assert.equal(synthMt5Arrow.source, 'MT5', 'Must classify MT5 mobile trade card as MT5');
+  assert.equal(synthMt5Arrow.position, 'SELL', 'Must detect SELL from MT5 mobile trade card');
+  assert.equal(synthMt5Arrow.lotSize, 0.15, 'Must extract Lot Size = 0.15 from MT5 mobile trade card');
+  assert.equal(synthMt5Arrow.entryPrice, 3340.5, 'Must extract first price before arrow (3340.50) as Entry Price');
+  assert.equal(synthMt5Arrow.currentPrice, 3328.1, 'Must extract second price after arrow (3328.10) as Current Price');
+  assert.equal(synthMt5Arrow.stopLoss, 3350, 'Must extract S/L = 3350.00');
+  assert.equal(synthMt5Arrow.takeProfit, 3315, 'Must extract T/P = 3315.00');
+  console.log('✓ C4.8 APK Scan Kilat (TradingView & MT5 BUY/SELL + Lot Policy + Disambiguation): Verified Entry, SL, TP, MT5 Lot extraction, and TradingView Equity Auto-Lot');
 }
 
 console.log('\n====================================================================');

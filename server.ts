@@ -26,9 +26,22 @@ app.use('/api', (req, res, next) => {
   next();
 });
 
+interface CanvasHintsPayload {
+  hasPositionBox?: boolean;
+  inferredPosition?: 'BUY' | 'SELL' | null;
+  inferredRR?: number | null;
+  entryYRatio?: number | null;
+  tpYRatio?: number | null;
+  slYRatio?: number | null;
+  rightAxisGreenBadgeYRatio?: number | null;
+  rightAxisRedBadgeYRatio?: number | null;
+  rightAxisBlueOrDarkBadgeYRatio?: number | null;
+}
+
 interface ExtractScreenshotRequest {
   imageBase64?: string;
   imageUrl?: string;
+  canvasHints?: CanvasHintsPayload | null;
 }
 
 /**

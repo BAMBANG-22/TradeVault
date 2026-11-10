@@ -130,9 +130,9 @@ const EXECUTION_ADHERENCE_OPTIONS: { value: ExecutionAdherenceTag; label: string
  */
 export const compressAndResizeImage = (
   file: File | Blob,
-  maxWidth = 1280,
-  maxHeight = 1280,
-  quality = 0.78
+  maxWidth = 1920,
+  maxHeight = 1920,
+  quality = 0.88
 ): Promise<string> => {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();

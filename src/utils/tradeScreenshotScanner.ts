@@ -1,5 +1,5 @@
 import { TradePosition } from '../types/trade';
-import { CHART_DRAWINGS_STORAGE_KEY, CHART_PREFS_STORAGE_KEY } from '../components/chart/MarketChartView';
+import { CHART_PREFS_STORAGE_KEY } from '../components/chart/MarketChartView';
 
 export interface ExtractedTradeScanData {
   detected: boolean;
@@ -63,8 +63,8 @@ export const INSTRUMENT_PRICE_RANGES: Record<
   string,
   { min: number; max: number; decimals: number; defaultPipStep: number }
 > = {
-  XAUUSD: { min: 1500, max: 6000, decimals: 2, defaultPipStep: 10 },
-  XAGUSD: { min: 15, max: 80, decimals: 3, defaultPipStep: 0.4 },
+  XAUUSD: { min: 1500, max: 6500, decimals: 2, defaultPipStep: 10 },
+  XAGUSD: { min: 15, max: 90, decimals: 3, defaultPipStep: 0.4 },
   BTCUSD: { min: 15000, max: 250000, decimals: 2, defaultPipStep: 450 },
   ETHUSD: { min: 800, max: 12000, decimals: 2, defaultPipStep: 35 },
   SOLUSD: { min: 20, max: 1000, decimals: 2, defaultPipStep: 3 },
@@ -84,6 +84,12 @@ export const INSTRUMENT_PRICE_RANGES: Record<
   SPX500: { min: 3000, max: 9000, decimals: 2, defaultPipStep: 25 },
   GER40: { min: 12000, max: 30000, decimals: 2, defaultPipStep: 60 },
 };
+
+const REMOTE_SCAN_API_ENDPOINTS = [
+  '/api/extract-trade-screenshot',
+  'https://ais-pre-qmgrbl6vkm3qzsovjavbgc-342426605045.asia-southeast1.run.app/api/extract-trade-screenshot',
+  'https://ais-dev-qmgrbl6vkm3qzsovjavbgc-342426605045.asia-southeast1.run.app/api/extract-trade-screenshot',
+];
 
 /**
  * Resolves any TradingView share URL (e.g. https://www.tradingview.com/x/ABCD1234/)
@@ -248,7 +254,7 @@ function normalizeTimeframeLabel(raw: string | null | undefined): string | null 
 async function safeFetchApiJson(
   url: string,
   options: RequestInit,
-  timeoutMs = 12000
+  timeoutMs = 11000
 ): Promise<{ ok: boolean; isHtmlFallback: boolean; status: number; json: any | null }> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -376,22 +382,42 @@ async function fetchImageUrlAsDataUrl(imageUrl: string): Promise<{
 }
 
 /**
- * Prepares an image for OCR with in-place right-axis contrast enhancement:
- * - Preserves 1:1 (x, y) coordinate mapping with the image dimensions
- * - Boosts contrast of white digits inside colored Green (#089981), Red (#F23645), and Blue (#2962FF)
- *   price badges on the right-hand Y-axis so OCR reads TP, Entry, and SL badge numbers cleanly.
+ * Prepares a clean, uncorrupted high-resolution image for OCR AND a 2x-upscaled Right-Axis Price Scale strip
+ * so small price badge digits on the Y-axis are never destroyed or missed.
  */
-async function buildEnhancedOcrDataUrl(
+async function buildCleanOcrImages(
   dataUrl: string,
-  maxDim = 1280
-): Promise<{ ocrDataUrl: string; width: number; height: number }> {
+  maxDim = 1600
+): Promise<{
+  fullOcrDataUrl: string;
+  rightAxisCropDataUrl: string | null;
+  rightAxisScaleFactor: number;
+  rightAxisOffsetX: number;
+  width: number;
+  height: number;
+}> {
   if (typeof document === 'undefined') {
-    return { ocrDataUrl: dataUrl, width: 1000, height: 600 };
+    return {
+      fullOcrDataUrl: dataUrl,
+      rightAxisCropDataUrl: null,
+      rightAxisScaleFactor: 2,
+      rightAxisOffsetX: 750,
+      width: 1000,
+      height: 600,
+    };
   }
   return new Promise((resolve) => {
     const img = new Image();
     img.crossOrigin = 'anonymous';
-    img.onerror = () => resolve({ ocrDataUrl: dataUrl, width: 1000, height: 600 });
+    img.onerror = () =>
+      resolve({
+        fullOcrDataUrl: dataUrl,
+        rightAxisCropDataUrl: null,
+        rightAxisScaleFactor: 2,
+        rightAxisOffsetX: 750,
+        width: 1000,
+        height: 600,
+      });
     img.onload = () => {
       let w = img.width;
       let h = img.height;
@@ -409,49 +435,45 @@ async function buildEnhancedOcrDataUrl(
       canvas.height = h;
       const ctx = canvas.getContext('2d');
       if (!ctx) {
-        resolve({ ocrDataUrl: dataUrl, width: w, height: h });
+        resolve({
+          fullOcrDataUrl: dataUrl,
+          rightAxisCropDataUrl: null,
+          rightAxisScaleFactor: 2,
+          rightAxisOffsetX: Math.floor(w * 0.72),
+          width: w,
+          height: h,
+        });
         return;
       }
-      ctx.fillStyle = '#0B0E14';
-      ctx.fillRect(0, 0, w, h);
+      ctx.imageSmoothingEnabled = true;
+      ctx.imageSmoothingQuality = 'high';
       ctx.drawImage(img, 0, 0, w, h);
 
+      // Build a 2x-upscaled Right-Axis Price Scale crop (rightmost 28% of image) so small badge digits are 2x larger for OCR
+      let rightAxisCropDataUrl: string | null = null;
+      const scaleFactor = 2;
+      const cropX = Math.floor(w * 0.72);
+      const cropW = Math.max(1, w - cropX);
       try {
-        // Enhance contrast in the rightmost 26% (Price Axis) so white digits inside colored TP/SL/Entry badges pop out
-        const axisStartX = Math.floor(w * 0.74);
-        const axisW = w - axisStartX;
-        if (axisW > 10) {
-          const imgData = ctx.getImageData(axisStartX, 0, axisW, h);
-          const d = imgData.data;
-          for (let i = 0; i < d.length; i += 4) {
-            const r = d[i];
-            const g = d[i + 1];
-            const b = d[i + 2];
-
-            const isGreenBadgeBg = g > r + 22 && g >= 70 && r < 140;
-            const isRedBadgeBg = r > g + 26 && r > b + 20 && r >= 90 && g < 130;
-            const isBlueBadgeBg = b > r + 26 && b > g + 15 && b >= 95 && r < 130;
-
-            if (isGreenBadgeBg || isRedBadgeBg || isBlueBadgeBg) {
-              // Darken the colored badge background so bright white text inside the badge has maximum contrast
-              d[i] = 18;
-              d[i + 1] = 22;
-              d[i + 2] = 30;
-            } else if (r > 185 && g > 185 && b > 185) {
-              // Crisp white text on dark/badge background
-              d[i] = 255;
-              d[i + 1] = 255;
-              d[i + 2] = 255;
-            }
-          }
-          ctx.putImageData(imgData, axisStartX, 0);
+        const axisCanvas = document.createElement('canvas');
+        axisCanvas.width = cropW * scaleFactor;
+        axisCanvas.height = h * scaleFactor;
+        const axisCtx = axisCanvas.getContext('2d');
+        if (axisCtx) {
+          axisCtx.imageSmoothingEnabled = true;
+          axisCtx.imageSmoothingQuality = 'high';
+          axisCtx.drawImage(img, Math.floor(img.width * 0.72), 0, Math.max(1, img.width - Math.floor(img.width * 0.72)), img.height, 0, 0, axisCanvas.width, axisCanvas.height);
+          rightAxisCropDataUrl = axisCanvas.toDataURL('image/jpeg', 0.92);
         }
       } catch {
-        // Ignore security/tainted canvas errors if any
+        // ignore crop error
       }
 
       resolve({
-        ocrDataUrl: canvas.toDataURL('image/jpeg', 0.88),
+        fullOcrDataUrl: canvas.toDataURL('image/jpeg', 0.9),
+        rightAxisCropDataUrl,
+        rightAxisScaleFactor: scaleFactor,
+        rightAxisOffsetX: cropX,
         width: w,
         height: h,
       });
@@ -465,14 +487,54 @@ interface VerticalSegment {
   bottom: number;
   height: number;
   avgScore: number;
+  medianLeftX?: number;
+  medianRightX?: number;
 }
 
-function extractContiguousSegments(rowScores: Float32Array, minY: number, maxY: number, maxGapRows = 4): VerticalSegment[] {
+function extractContiguousSegments(
+  rowScores: Float32Array,
+  minY: number,
+  maxY: number,
+  maxGapRows = 4,
+  rowLeftX?: Int16Array,
+  rowRightX?: Int16Array
+): VerticalSegment[] {
   const rawSegments: VerticalSegment[] = [];
   let curTop = -1;
   let curBottom = -1;
   let curSum = 0;
   let gapCount = 0;
+
+  const finalizeSegment = (top: number, bottom: number, sum: number) => {
+    const h = bottom - top + 1;
+    if (h < 5) return;
+    let medianLeftX = 0;
+    let medianRightX = 0;
+    if (rowLeftX && rowRightX) {
+      const lefts: number[] = [];
+      const rights: number[] = [];
+      for (let y = top; y <= bottom; y++) {
+        if (rowScores[y] > 0 && rowRightX[y] > rowLeftX[y]) {
+          lefts.push(rowLeftX[y]);
+          rights.push(rowRightX[y]);
+        }
+      }
+      if (lefts.length > 0) {
+        lefts.sort((a, b) => a - b);
+        rights.sort((a, b) => a - b);
+        medianLeftX = lefts[Math.floor(lefts.length / 2)];
+        medianRightX = rights[Math.floor(rights.length / 2)];
+      }
+    }
+    rawSegments.push({
+      top,
+      bottom,
+      height: h,
+      avgScore: sum / h,
+      medianLeftX,
+      medianRightX,
+    });
+  };
 
   for (let y = minY; y <= maxY; y++) {
     const val = rowScores[y];
@@ -487,15 +549,7 @@ function extractContiguousSegments(rowScores: Float32Array, minY: number, maxY: 
     } else if (curTop !== -1) {
       gapCount++;
       if (gapCount > maxGapRows) {
-        const h = curBottom - curTop + 1;
-        if (h >= 5) {
-          rawSegments.push({
-            top: curTop,
-            bottom: curBottom,
-            height: h,
-            avgScore: curSum / h,
-          });
-        }
+        finalizeSegment(curTop, curBottom, curSum);
         curTop = -1;
         curBottom = -1;
         curSum = 0;
@@ -504,24 +558,17 @@ function extractContiguousSegments(rowScores: Float32Array, minY: number, maxY: 
     }
   }
   if (curTop !== -1) {
-    const h = curBottom - curTop + 1;
-    if (h >= 5) {
-      rawSegments.push({
-        top: curTop,
-        bottom: curBottom,
-        height: h,
-        avgScore: curSum / h,
-      });
-    }
+    finalizeSegment(curTop, curBottom, curSum);
   }
   return rawSegments;
 }
 
 /**
- * High-precision Canvas geometry analyzer:
- * 1) Finds TradingView Long/Short Position Tool by matching vertically adjacent Green Profit Zone & Red Risk Zone segments.
- * 2) Scans the Right-Hand Price Scale (x = 76%..99%) for solid Green (TP), Red (SL), and Blue/Slate (Entry) price badges.
- * 3) Scans the Chart Area for MT5 horizontal order lines (Entry, SL, TP).
+ * 2D Rectangle-Aware Canvas Geometry Analyzer:
+ * 1) Finds TradingView Long/Short Position Tool by matching vertically adjacent Green Profit Zone & Red Risk Zone
+ *    rectangles that share the SAME horizontal [leftX, rightX] span (filtering out narrow candlesticks & volume bars).
+ * 2) Refines the exact TP, Entry dividing line, and SL Y-coordinates strictly within [boxLeftX, boxRightX].
+ * 3) Scans the Right-Hand Price Scale (x = 76%..99%) for Green (TP), Red (SL), and Blue/Slate (Entry) price badges.
  */
 export async function analyzeChartCanvasGeometry(dataUrl: string): Promise<CanvasZoneAnalysis> {
   const empty: CanvasZoneAnalysis = {
@@ -562,57 +609,124 @@ export async function analyzeChartCanvasGeometry(dataUrl: string): Promise<Canva
       ctx.drawImage(img, 0, 0, sampleW, sampleH);
       const imgData = ctx.getImageData(0, 0, sampleW, sampleH).data;
 
-      // 1. Scan Main Chart Plot Area (x: 8% to 78%, y: 7% to 88%) for TradingView Profit/Risk Zones & MT5 Horizontal Lines
-      const plotMinX = Math.floor(sampleW * 0.08);
+      const plotMinX = Math.floor(sampleW * 0.06);
       const plotMaxX = Math.floor(sampleW * 0.78);
-      const plotMinY = Math.floor(sampleH * 0.07);
+      const plotMinY = Math.floor(sampleH * 0.06);
       const plotMaxY = Math.floor(sampleH * 0.88);
 
+      const isGreenZonePixel = (r: number, g: number, b: number): boolean => {
+        const isDarkGreenZone = g > r + 10 && g >= 26 && b >= 20 && r < 145;
+        const isLightGreenZone = g > r + 9 && g >= 180 && r < 238 && b >= 170;
+        return isDarkGreenZone || isLightGreenZone;
+      };
+
+      const isRedZonePixel = (r: number, g: number, b: number): boolean => {
+        const isDarkRedZone = r > g + 12 && r > b + 10 && r >= 34 && g < 135;
+        const isLightRedZone = r > g + 11 && r > b + 9 && r >= 195 && g < 235;
+        return isDarkRedZone || isLightRedZone;
+      };
+
+      // Helper to find the longest horizontal run of matching pixels on row y (bridging small 1-4px candle gaps)
+      const findLongestHorizontalRun = (
+        y: number,
+        minX: number,
+        maxX: number,
+        predicate: (r: number, g: number, b: number) => boolean
+      ): { width: number; leftX: number; rightX: number; matchCount: number } => {
+        let bestW = 0;
+        let bestL = 0;
+        let bestR = 0;
+        let bestMatches = 0;
+
+        let curL = -1;
+        let curR = -1;
+        let curMatches = 0;
+        let gap = 0;
+
+        for (let x = minX; x <= maxX; x++) {
+          const idx = (y * sampleW + x) * 4;
+          if (predicate(imgData[idx], imgData[idx + 1], imgData[idx + 2])) {
+            if (curL === -1) {
+              curL = x;
+              curMatches = 0;
+            }
+            curR = x;
+            curMatches++;
+            gap = 0;
+          } else if (curL !== -1) {
+            gap++;
+            if (gap > 5) {
+              const w = curR - curL + 1;
+              if (w > bestW && curMatches >= w * 0.58) {
+                bestW = w;
+                bestL = curL;
+                bestR = curR;
+                bestMatches = curMatches;
+              }
+              curL = -1;
+              curR = -1;
+              curMatches = 0;
+              gap = 0;
+            }
+          }
+        }
+        if (curL !== -1) {
+          const w = curR - curL + 1;
+          if (w > bestW && curMatches >= w * 0.58) {
+            bestW = w;
+            bestL = curL;
+            bestR = curR;
+            bestMatches = curMatches;
+          }
+        }
+        return { width: bestW, leftX: bestL, rightX: bestR, matchCount: bestMatches };
+      };
+
       const greenRowScore = new Float32Array(sampleH);
+      const greenRowLeftX = new Int16Array(sampleH);
+      const greenRowRightX = new Int16Array(sampleH);
+
       const redRowScore = new Float32Array(sampleH);
+      const redRowLeftX = new Int16Array(sampleH);
+      const redRowRightX = new Int16Array(sampleH);
+
       const horizLineScore = new Float32Array(sampleH);
 
-      for (let y = plotMinY; y <= plotMaxY; y++) {
-        let greenCount = 0;
-        let redCount = 0;
-        let lineColoredPixels = 0;
+      // Minimum horizontal box width: 42px out of 600px (7% of image width) — eliminates narrow 3-10px candlesticks!
+      const minBoxRunWidth = 42;
 
+      for (let y = plotMinY; y <= plotMaxY; y++) {
+        const gRun = findLongestHorizontalRun(y, plotMinX, plotMaxX, isGreenZonePixel);
+        if (gRun.width >= minBoxRunWidth) {
+          greenRowScore[y] = gRun.matchCount;
+          greenRowLeftX[y] = gRun.leftX;
+          greenRowRightX[y] = gRun.rightX;
+        }
+
+        const rRun = findLongestHorizontalRun(y, plotMinX, plotMaxX, isRedZonePixel);
+        if (rRun.width >= minBoxRunWidth) {
+          redRowScore[y] = rRun.matchCount;
+          redRowLeftX[y] = rRun.leftX;
+          redRowRightX[y] = rRun.rightX;
+        }
+
+        let lineColoredPixels = 0;
         for (let x = plotMinX; x <= plotMaxX; x++) {
           const idx = (y * sampleW + x) * 4;
           const r = imgData[idx];
           const g = imgData[idx + 1];
           const b = imgData[idx + 2];
-
-          // Dark theme & Light theme TradingView Profit Zone (Teal/Emerald/Green)
-          const isDarkGreenZone = g > r + 11 && g >= 28 && b >= 22 && r < 145;
-          const isLightGreenZone = g > r + 10 && g >= 185 && r < 238 && b >= 175;
-          if (isDarkGreenZone || isLightGreenZone) {
-            greenCount++;
-          }
-
-          // Dark theme & Light theme TradingView Risk Zone (Red/Crimson/Rose)
-          const isDarkRedZone = r > g + 13 && r > b + 11 && r >= 35 && g < 135;
-          const isLightRedZone = r > g + 12 && r > b + 10 && r >= 200 && g < 235;
-          if (isDarkRedZone || isLightRedZone) {
-            redCount++;
-          }
-
-          // Detect saturated horizontal order lines (MT5 blue/red/green/cyan dashed or solid lines)
           const maxC = Math.max(r, g, b);
           const minC = Math.min(r, g, b);
           if (maxC - minC >= 35 && maxC >= 75) {
             lineColoredPixels++;
           }
         }
-
-        // Require at least ~7.5% of plot width (32 pixels out of 420) for zone box rows
-        if (greenCount >= 32) greenRowScore[y] = greenCount;
-        if (redCount >= 32) redRowScore[y] = redCount;
         if (lineColoredPixels >= 95) horizLineScore[y] = lineColoredPixels;
       }
 
-      // 2. Scan Right-Hand Price Axis (x: 78% to 99%) for Colored Price Badges (TP = Green, SL = Red, Entry = Blue/Slate)
-      const axisMinX = Math.floor(sampleW * 0.78);
+      // 2. Scan Right-Hand Price Axis (x: 77% to 99%) for Colored Price Badges (TP = Green, SL = Red, Entry = Blue/Slate)
+      const axisMinX = Math.floor(sampleW * 0.77);
       const axisMaxX = Math.floor(sampleW * 0.99);
       const axisGreenRows = new Float32Array(sampleH);
       const axisRedRows = new Float32Array(sampleH);
@@ -628,13 +742,13 @@ export async function analyzeChartCanvasGeometry(dataUrl: string): Promise<Canva
           const g = imgData[idx + 1];
           const b = imgData[idx + 2];
 
-          if (g > r + 24 && g >= 80 && r < 130) gBadge++;
-          if (r > g + 28 && r > b + 20 && r >= 100 && g < 120) rBadge++;
-          if (b > r + 25 && b > g + 12 && b >= 95 && r < 120) bBadge++;
+          if (g > r + 22 && g >= 75 && r < 135) gBadge++;
+          if (r > g + 25 && r > b + 18 && r >= 95 && g < 125) rBadge++;
+          if (b > r + 22 && b > g + 10 && b >= 90 && r < 125) bBadge++;
         }
-        if (gBadge >= 14) axisGreenRows[y] = gBadge;
-        if (rBadge >= 14) axisRedRows[y] = rBadge;
-        if (bBadge >= 14) axisBlueRows[y] = bBadge;
+        if (gBadge >= 12) axisGreenRows[y] = gBadge;
+        if (rBadge >= 12) axisRedRows[y] = rBadge;
+        if (bBadge >= 12) axisBlueRows[y] = bBadge;
       }
 
       const findStrongestBadgeCenterRatio = (rows: Float32Array): number | null => {
@@ -651,59 +765,136 @@ export async function analyzeChartCanvasGeometry(dataUrl: string): Promise<Canva
       const rightAxisRedBadgeYRatio = findStrongestBadgeCenterRatio(axisRedRows);
       const rightAxisBlueOrDarkBadgeYRatio = findStrongestBadgeCenterRatio(axisBlueRows);
 
-      // Extract distinct horizontal line peaks for MT5
       const horizSegs = extractContiguousSegments(horizLineScore, plotMinY, plotMaxY, 2).filter(
         (s) => s.height >= 1 && s.height <= 8
       );
       const horizontalLineYRatios = horizSegs.map((s) => (s.top + s.bottom) / 2 / sampleH);
 
-      // 3. Match Adjacent Green & Red Vertical Segments for TradingView Long/Short Position Tool
-      const greenSegs = extractContiguousSegments(greenRowScore, plotMinY, plotMaxY, 6).filter(
-        (s) => s.height >= 10
-      );
-      const redSegs = extractContiguousSegments(redRowScore, plotMinY, plotMaxY, 6).filter(
-        (s) => s.height >= 10
-      );
+      // 3. Match Adjacent Green & Red Vertical Segments that share the SAME horizontal [leftX, rightX] span!
+      const greenSegs = extractContiguousSegments(
+        greenRowScore,
+        plotMinY,
+        plotMaxY,
+        5,
+        greenRowLeftX,
+        greenRowRightX
+      ).filter((s) => s.height >= 8);
+
+      const redSegs = extractContiguousSegments(
+        redRowScore,
+        plotMinY,
+        plotMaxY,
+        5,
+        redRowLeftX,
+        redRowRightX
+      ).filter((s) => s.height >= 8);
 
       let bestPair: {
         g: VerticalSegment;
         r: VerticalSegment;
         isLong: boolean;
-        gap: number;
+        boxLeftX: number;
+        boxRightX: number;
         score: number;
       } | null = null;
 
       for (const g of greenSegs) {
         for (const r of redSegs) {
+          const gL = g.medianLeftX ?? plotMinX;
+          const gR = g.medianRightX ?? plotMaxX;
+          const rL = r.medianLeftX ?? plotMinX;
+          const rR = r.medianRightX ?? plotMaxX;
+
+          const overlapL = Math.max(gL, rL);
+          const overlapR = Math.min(gR, rR);
+          const overlapW = Math.max(0, overlapR - overlapL);
+          const minSpanW = Math.max(1, Math.min(gR - gL, rR - rL));
+          const horizOverlapRatio = overlapW / minSpanW;
+
+          // Both Green and Red rectangles of a TradingView Position Tool MUST overlap horizontally by >= 55%
+          if (horizOverlapRatio < 0.55 || overlapW < minBoxRunWidth) continue;
+
           // Case 1: BUY (Long) -> Green Profit Zone is directly ABOVE Red Risk Zone (g.bottom ~= r.top)
           const gapBuy = Math.abs(r.top - g.bottom);
-          if (gapBuy <= sampleH * 0.06 && g.top < r.bottom) {
-            const score = (g.height + r.height) * (g.avgScore + r.avgScore) / (1 + gapBuy * 2);
+          if (gapBuy <= sampleH * 0.045 && g.top < r.bottom) {
+            const score =
+              ((g.height + r.height) * (g.avgScore + r.avgScore) * horizOverlapRatio) /
+              (1 + gapBuy * 2.5);
             if (!bestPair || score > bestPair.score) {
-              bestPair = { g, r, isLong: true, gap: gapBuy, score };
+              bestPair = {
+                g,
+                r,
+                isLong: true,
+                boxLeftX: overlapL,
+                boxRightX: overlapR,
+                score,
+              };
             }
           }
+
           // Case 2: SELL (Short) -> Red Risk Zone is directly ABOVE Green Profit Zone (r.bottom ~= g.top)
           const gapSell = Math.abs(g.top - r.bottom);
-          if (gapSell <= sampleH * 0.06 && r.top < g.bottom) {
-            const score = (g.height + r.height) * (g.avgScore + r.avgScore) / (1 + gapSell * 2);
+          if (gapSell <= sampleH * 0.045 && r.top < g.bottom) {
+            const score =
+              ((g.height + r.height) * (g.avgScore + r.avgScore) * horizOverlapRatio) /
+              (1 + gapSell * 2.5);
             if (!bestPair || score > bestPair.score) {
-              bestPair = { g, r, isLong: false, gap: gapSell, score };
+              bestPair = {
+                g,
+                r,
+                isLong: false,
+                boxLeftX: overlapL,
+                boxRightX: overlapR,
+                score,
+              };
             }
           }
         }
       }
 
       if (bestPair) {
-        const { g, r, isLong } = bestPair;
-        const greenH = Math.max(4, g.bottom - g.top);
-        const redH = Math.max(4, r.bottom - r.top);
+        const { g, r, isLong, boxLeftX, boxRightX } = bestPair;
+        const boxW = Math.max(1, boxRightX - boxLeftX);
+
+        // Refine exact top/bottom of Green & Red zones strictly inside [boxLeftX, boxRightX]
+        let refinedGreenTop = g.top;
+        let refinedGreenBottom = g.bottom;
+        for (let y = Math.max(plotMinY, g.top - 4); y <= Math.min(plotMaxY, g.bottom + 4); y++) {
+          let cnt = 0;
+          for (let x = boxLeftX; x <= boxRightX; x++) {
+            const idx = (y * sampleW + x) * 4;
+            if (isGreenZonePixel(imgData[idx], imgData[idx + 1], imgData[idx + 2])) cnt++;
+          }
+          if (cnt >= boxW * 0.55) {
+            if (y < refinedGreenTop) refinedGreenTop = y;
+            if (y > refinedGreenBottom) refinedGreenBottom = y;
+          }
+        }
+
+        let refinedRedTop = r.top;
+        let refinedRedBottom = r.bottom;
+        for (let y = Math.max(plotMinY, r.top - 4); y <= Math.min(plotMaxY, r.bottom + 4); y++) {
+          let cnt = 0;
+          for (let x = boxLeftX; x <= boxRightX; x++) {
+            const idx = (y * sampleW + x) * 4;
+            if (isRedZonePixel(imgData[idx], imgData[idx + 1], imgData[idx + 2])) cnt++;
+          }
+          if (cnt >= boxW * 0.55) {
+            if (y < refinedRedTop) refinedRedTop = y;
+            if (y > refinedRedBottom) refinedRedBottom = y;
+          }
+        }
+
+        const greenH = Math.max(4, refinedGreenBottom - refinedGreenTop);
+        const redH = Math.max(4, refinedRedBottom - refinedRedTop);
         const inferredPosition: TradePosition = isLong ? 'BUY' : 'SELL';
         const inferredRR = Math.max(0.15, Math.min(30, Number((greenH / redH).toFixed(2))));
 
-        const entryY = isLong ? (g.bottom + r.top) / 2 : (r.bottom + g.top) / 2;
-        const tpY = isLong ? g.top : g.bottom;
-        const slY = isLong ? r.bottom : r.top;
+        const entryY = isLong
+          ? (refinedGreenBottom + refinedRedTop) / 2
+          : (refinedRedBottom + refinedGreenTop) / 2;
+        const tpY = isLong ? refinedGreenTop : refinedGreenBottom;
+        const slY = isLong ? refinedRedBottom : refinedRedTop;
 
         resolve({
           hasPositionBox: true,
@@ -712,8 +903,8 @@ export async function analyzeChartCanvasGeometry(dataUrl: string): Promise<Canva
           entryYRatio: entryY / sampleH,
           tpYRatio: tpY / sampleH,
           slYRatio: slY / sampleH,
-          boxTopYRatio: Math.min(g.top, r.top) / sampleH,
-          boxBottomYRatio: Math.max(g.bottom, r.bottom) / sampleH,
+          boxTopYRatio: Math.min(refinedGreenTop, refinedRedTop) / sampleH,
+          boxBottomYRatio: Math.max(refinedGreenBottom, refinedRedBottom) / sampleH,
           rightAxisGreenBadgeYRatio,
           rightAxisRedBadgeYRatio,
           rightAxisBlueOrDarkBadgeYRatio,
@@ -738,32 +929,29 @@ export async function analyzeChartCanvasGeometry(dataUrl: string): Promise<Canva
   });
 }
 
-/**
- * Runs OCR on the screenshot using:
- * 1) OCR.space Engine 2 on the contrast-enhanced image (with 1:1 coordinate mapping)
- * 2) Native Android Chromium `TextDetector` API fallback
- */
-async function extractChartOcrText(dataUrl: string, imageUrl?: string): Promise<{
-  ocr: OcrExtractionResult;
-  ocrImageWidth: number;
-  ocrImageHeight: number;
+async function runOcrSpaceOnDataUrl(
+  base64DataUrl: string,
+  scaleDownDivisor = 1,
+  offsetX = 0
+): Promise<{
+  fullText: string;
+  lines: Array<{ text: string; centerY: number; minX: number; maxX: number }>;
+  words: OcrWordBox[];
 }> {
   const words: OcrWordBox[] = [];
   const lines: Array<{ text: string; centerY: number; minX: number; maxX: number }> = [];
   let fullText = '';
 
-  const enhanced = await buildEnhancedOcrDataUrl(dataUrl, 1280);
-
   try {
     const formData = new FormData();
     formData.append('apikey', 'helloworld');
-    formData.append('base64Image', enhanced.ocrDataUrl);
+    formData.append('base64Image', base64DataUrl);
     formData.append('OCREngine', '2');
     formData.append('scale', 'true');
     formData.append('isOverlayRequired', 'true');
 
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 10000);
+    const timer = setTimeout(() => controller.abort(), 9500);
     const res = await fetch('https://api.ocr.space/parse/image', {
       method: 'POST',
       body: formData,
@@ -784,10 +972,10 @@ async function extractChartOcrText(dataUrl: string, imageUrl?: string): Promise<
               for (const w of line.Words) {
                 const wt = String(w.WordText || '').trim();
                 if (!wt) continue;
-                const left = Number(w.Left) || 0;
-                const top = Number(w.Top) || 0;
-                const width = Number(w.Width) || 0;
-                const height = Number(w.Height) || 0;
+                const left = (Number(w.Left) || 0) / scaleDownDivisor + offsetX;
+                const top = (Number(w.Top) || 0) / scaleDownDivisor;
+                const width = (Number(w.Width) || 0) / scaleDownDivisor;
+                const height = (Number(w.Height) || 0) / scaleDownDivisor;
                 const box: OcrWordBox = {
                   text: wt,
                   left,
@@ -817,8 +1005,37 @@ async function extractChartOcrText(dataUrl: string, imageUrl?: string): Promise<
       }
     }
   } catch {
-    // Fallback to native TextDetector if OCR.space is unreachable
+    // ignore OCR network errors
   }
+
+  return { fullText, lines, words };
+}
+
+/**
+ * Runs OCR on both the clean full chart AND the 2x-upscaled Right-Hand Price Axis strip
+ * so small TP / Entry / SL badge numbers on the Y-axis are captured with 1:1 vertical Y-coordinate accuracy.
+ */
+async function extractChartOcrText(dataUrl: string, imageUrl?: string): Promise<{
+  ocr: OcrExtractionResult;
+  ocrImageWidth: number;
+  ocrImageHeight: number;
+}> {
+  const prepared = await buildCleanOcrImages(dataUrl, 1600);
+
+  const [fullOcr, axisOcr] = await Promise.all([
+    runOcrSpaceOnDataUrl(prepared.fullOcrDataUrl, 1, 0),
+    prepared.rightAxisCropDataUrl
+      ? runOcrSpaceOnDataUrl(
+          prepared.rightAxisCropDataUrl,
+          prepared.rightAxisScaleFactor,
+          prepared.rightAxisOffsetX
+        )
+      : Promise.resolve({ fullText: '', lines: [], words: [] }),
+  ]);
+
+  const words = [...fullOcr.words, ...axisOcr.words];
+  const lines = [...fullOcr.lines, ...axisOcr.lines];
+  let fullText = [fullOcr.fullText, axisOcr.fullText].filter(Boolean).join('\n');
 
   if (!fullText && typeof window !== 'undefined' && 'TextDetector' in window) {
     try {
@@ -854,99 +1071,25 @@ async function extractChartOcrText(dataUrl: string, imageUrl?: string): Promise<
 
   return {
     ocr: { fullText, lines, words },
-    ocrImageWidth: enhanced.width,
-    ocrImageHeight: enhanced.height,
+    ocrImageWidth: prepared.width,
+    ocrImageHeight: prepared.height,
   };
 }
 
-function getLocalChartReferenceForInstrument(preferredInstrument?: string): {
-  instrument: string;
-  position: TradePosition | null;
-  entryPrice: number | null;
-  stopLoss: number | null;
-  takeProfit: number | null;
-  timeframe: string | null;
-} {
-  if (typeof window === 'undefined') {
-    return {
-      instrument: preferredInstrument || 'XAUUSD',
-      position: null,
-      entryPrice: null,
-      stopLoss: null,
-      takeProfit: null,
-      timeframe: null,
-    };
-  }
-
-  let activeSymbol = preferredInstrument || 'XAUUSD';
-  let activeTf: string | null = null;
+function getActiveChartSymbolFallback(): string {
+  if (typeof window === 'undefined') return 'XAUUSD';
   try {
     const rawPrefs = window.localStorage.getItem(CHART_PREFS_STORAGE_KEY);
     if (rawPrefs) {
       const prefs = JSON.parse(rawPrefs);
-      if (!preferredInstrument && prefs?.symbol) {
-        activeSymbol = normalizeScanInstrument(prefs.symbol);
-      }
-      if (prefs?.interval) {
-        activeTf = normalizeTimeframeLabel(prefs.interval);
+      if (prefs?.symbol) {
+        return normalizeScanInstrument(prefs.symbol);
       }
     }
   } catch {
     // ignore
   }
-
-  try {
-    const rawDrawings = window.localStorage.getItem(CHART_DRAWINGS_STORAGE_KEY);
-    if (rawDrawings) {
-      const drawings = JSON.parse(rawDrawings);
-      if (Array.isArray(drawings)) {
-        const posDrawings = drawings.filter(
-          (d: any) =>
-            d &&
-            (d.type === 'long_position' ||
-              d.type === 'short_position' ||
-              d.type === 'long' ||
-              d.type === 'short')
-        );
-        if (posDrawings.length > 0) {
-          const matching =
-            posDrawings
-              .slice()
-              .reverse()
-              .find((d: any) => normalizeScanInstrument(d.pair) === activeSymbol) ||
-            posDrawings[posDrawings.length - 1];
-
-          const isLong = matching.type === 'long_position' || matching.type === 'long';
-          const entry = Number(matching.p1?.price);
-          const sl = Number(matching.slPrice);
-          const tp = Number(matching.tpPrice);
-          const pair = normalizeScanInstrument(matching.pair || activeSymbol);
-
-          if (Number.isFinite(entry) && entry > 0) {
-            return {
-              instrument: pair,
-              position: isLong ? 'BUY' : 'SELL',
-              entryPrice: entry,
-              stopLoss: Number.isFinite(sl) && sl > 0 ? sl : null,
-              takeProfit: Number.isFinite(tp) && tp > 0 ? tp : null,
-              timeframe: activeTf,
-            };
-          }
-        }
-      }
-    }
-  } catch {
-    // ignore
-  }
-
-  return {
-    instrument: activeSymbol,
-    position: null,
-    entryPrice: null,
-    stopLoss: null,
-    takeProfit: null,
-    timeframe: activeTf,
-  };
+  return 'XAUUSD';
 }
 
 /**
@@ -959,6 +1102,8 @@ function buildRobustPriceAxisModel(
 ): {
   priceAtY: (y: number) => number;
   findClosestBadgePriceAtY: (targetY: number, maxPixelDist: number) => number | null;
+  minAxisPrice: number;
+  maxAxisPrice: number;
 } | null {
   if (axisCandidates.length < 2) return null;
 
@@ -970,7 +1115,7 @@ function buildRobustPriceAxisModel(
       const dy = sorted[j].y - sorted[i].y;
       const dp = sorted[j].val - sorted[i].val;
       // On a chart Y-axis, lower on screen (larger Y) means lower price (dp < 0)
-      if (dy >= 12 && dp < 0) {
+      if (dy >= 10 && dp < 0) {
         slopes.push(dp / dy);
       }
     }
@@ -991,11 +1136,14 @@ function buildRobustPriceAxisModel(
   const findClosestBadgePriceAtY = (targetY: number, maxPixelDist: number): number | null => {
     let best: { price: number; dist: number } | null = null;
     const expectedPrice = priceAtY(targetY);
-    const maxAllowedPriceDiff = Math.abs(medianSlope) * maxPixelDist * 2.2;
+    const maxAllowedPriceDiff = Math.abs(medianSlope) * maxPixelDist * 2.5;
 
     for (const cand of sorted) {
       const dist = Math.abs(cand.y - targetY);
-      if (dist <= maxPixelDist && Math.abs(cand.val - expectedPrice) <= Math.max(maxAllowedPriceDiff, 1e-4)) {
+      if (
+        dist <= maxPixelDist &&
+        Math.abs(cand.val - expectedPrice) <= Math.max(maxAllowedPriceDiff, 1e-4)
+      ) {
         if (!best || dist < best.dist) {
           best = { price: Number(cand.val.toFixed(decimals)), dist };
         }
@@ -1004,7 +1152,11 @@ function buildRobustPriceAxisModel(
     return best ? best.price : null;
   };
 
-  return { priceAtY, findClosestBadgePriceAtY };
+  const allVals = sorted.map((c) => c.val);
+  const minAxisPrice = Math.min(...allVals);
+  const maxAxisPrice = Math.max(...allVals);
+
+  return { priceAtY, findClosestBadgePriceAtY, minAxisPrice, maxAxisPrice };
 }
 
 /**
@@ -1060,6 +1212,7 @@ export function synthesizeTradeScanFromSignals(params: {
   let mt5OrderDirection: TradePosition | null = null;
   let mt5DetectedLot: number | null = null;
   let mt5EntryFromText: number | null = null;
+  let mt5CurrentFromArrow: number | null = null;
   let mt5OrderLineY: number | null = null;
   let mt5SlLineY: number | null = null;
   let mt5TpLineY: number | null = null;
@@ -1081,6 +1234,17 @@ export function synthesizeTradeScanFromSignals(params: {
         if (!isNaN(p) && p > 0) mt5EntryFromText = p;
       }
       mt5OrderLineY = line.centerY;
+    }
+
+    // Match MT5 Trade/History Tab "<entryPrice> -> <currentPrice>" arrow syntax (e.g. "3320.50 -> 3328.10")
+    const arrowMatch = t.match(
+      /\b([0-9]{1,6}(?:[ ,][0-9]{3})*\.[0-9]{1,5})\s*(?:->|→|-›|=>)\s*([0-9]{1,6}(?:[ ,][0-9]{3})*\.[0-9]{1,5})\b/
+    );
+    if (arrowMatch) {
+      const p1 = parseFloat(arrowMatch[1].replace(/[ ,]/g, ''));
+      const p2 = parseFloat(arrowMatch[2].replace(/[ ,]/g, ''));
+      if (!isNaN(p1) && p1 > 0) mt5EntryFromText = p1;
+      if (!isNaN(p2) && p2 > 0) mt5CurrentFromArrow = p2;
     }
 
     // Match MT5 "sl" / "s/l" label on horizontal line
@@ -1108,6 +1272,18 @@ export function synthesizeTradeScanFromSignals(params: {
         const p = parseFloat(fullOrderMatch[3].replace(/[, ]/g, ''));
         if (!isNaN(p) && p > 0) mt5EntryFromText = p;
       }
+    }
+  }
+
+  if (mt5EntryFromText === null) {
+    const fullArrowMatch = combinedText.match(
+      /\b([0-9]{1,6}(?:[ ,][0-9]{3})*\.[0-9]{1,5})\s*(?:->|→|-›|=>)\s*([0-9]{1,6}(?:[ ,][0-9]{3})*\.[0-9]{1,5})\b/
+    );
+    if (fullArrowMatch) {
+      const p1 = parseFloat(fullArrowMatch[1].replace(/[ ,]/g, ''));
+      const p2 = parseFloat(fullArrowMatch[2].replace(/[ ,]/g, ''));
+      if (!isNaN(p1) && p1 > 0) mt5EntryFromText = p1;
+      if (!isNaN(p2) && p2 > 0) mt5CurrentFromArrow = p2;
     }
   }
 
@@ -1155,9 +1331,8 @@ export function synthesizeTradeScanFromSignals(params: {
     }
   }
 
-  const localRef = getLocalChartReferenceForInstrument(instrument || undefined);
   if (!instrument) {
-    instrument = localRef.instrument || 'XAUUSD';
+    instrument = getActiveChartSymbolFallback();
   }
 
   let priceSpec = INSTRUMENT_PRICE_RANGES[instrument] || INSTRUMENT_PRICE_RANGES.XAUUSD;
@@ -1172,7 +1347,6 @@ export function synthesizeTradeScanFromSignals(params: {
   }> = [];
 
   for (const line of ocr.lines) {
-    // Handle numbers with optional space/comma thousands separator (e.g. "96 250.00" or "2650.50")
     const matches = line.text.matchAll(/\b([0-9]{1,3}(?:[ ,][0-9]{3})*\.[0-9]{1,5}|[0-9]{1,6}\.[0-9]{1,5})\b/g);
     for (const m of matches) {
       const cleaned = m[1].replace(/[ ,]/g, '');
@@ -1233,14 +1407,29 @@ export function synthesizeTradeScanFromSignals(params: {
 
   const validPriceTokens = allDecimalTokens.filter((t) => {
     if (t.val < priceSpec.min || t.val > priceSpec.max) return false;
-    // Exclude standard lot numbers (1.00, 0.90) on 5-decimal Forex pairs unless they have >=4 decimals
     if (priceSpec.decimals === 5 && (t.raw === '1.00' || t.raw === '1.0')) return false;
     return true;
   });
 
-  // 5. Extract Explicit Labeled Prices (Target/TP, Stop/SL, Entry/Open)
+  // 5. Build Robust Linear Y-Axis Price Model P(y) = slope * y + intercept FIRST
+  // so we know the visible viewport price bounds [minAxisPrice, maxAxisPrice]
+  const rightAxisTokens = validPriceTokens.filter((t) => t.isRightAxis && t.y > 0);
+  const axisModel = buildRobustPriceAxisModel(
+    rightAxisTokens.length >= 2 ? rightAxisTokens : validPriceTokens.filter((t) => t.y > 0),
+    priceSpec.decimals
+  );
+
+  const isWithinVisibleAxisRange = (val: number): boolean => {
+    if (val < priceSpec.min || val > priceSpec.max) return false;
+    if (!axisModel) return true;
+    const span = Math.max(priceSpec.defaultPipStep * 4, (axisModel.maxAxisPrice - axisModel.minAxisPrice) * 1.25);
+    return val >= axisModel.minAxisPrice - span && val <= axisModel.maxAxisPrice + span;
+  };
+
+  // 6. Extract Explicit Labeled Prices (Target/TP, Stop/SL, Entry)
+  // NOTE: Do NOT match bare `\bopen` because TradingView labels say "Open P&L: -1520.00" and chart headers say "Open 4012.50"!
   let explicitEntry: number | null =
-    mt5EntryFromText !== null && mt5EntryFromText >= priceSpec.min && mt5EntryFromText <= priceSpec.max
+    mt5EntryFromText !== null && isWithinVisibleAxisRange(mt5EntryFromText)
       ? mt5EntryFromText
       : null;
   let explicitSL: number | null = null;
@@ -1249,27 +1438,27 @@ export function synthesizeTradeScanFromSignals(params: {
   let explicitProfit: number | null = null;
 
   const entryMatch = combinedText.match(
-    /(?:entry\s*price|open\s*price|harga\s*entry|\bentry|\bopen|@)\s*[:=]?\s*([0-9][0-9, ]*\.[0-9]{1,5})/i
+    /(?:entry\s*price|open\s*price|harga\s*entry|\bentry\s*[:=@])\s*([0-9][0-9, ]*\.[0-9]{1,5})/i
   );
   if (entryMatch?.[1] && explicitEntry === null) {
     const v = parseFloat(entryMatch[1].replace(/[ ,]/g, ''));
-    if (!isNaN(v) && v >= priceSpec.min && v <= priceSpec.max) explicitEntry = v;
+    if (!isNaN(v) && isWithinVisibleAxisRange(v)) explicitEntry = v;
   }
 
   const slMatch = combinedText.match(
-    /(?:stop\s*loss|\bstop|\bs\/l|\bsl)\s*[:=]?\s*([0-9][0-9, ]*\.[0-9]{1,5})/i
+    /(?:stop\s*loss|\bstop\s*[:=]|\bs\/l\s*[:=]?|\bsl\s*[:=])\s*([0-9][0-9, ]*\.[0-9]{1,5})/i
   );
   if (slMatch?.[1]) {
     const v = parseFloat(slMatch[1].replace(/[ ,]/g, ''));
-    if (!isNaN(v) && v >= priceSpec.min && v <= priceSpec.max) explicitSL = v;
+    if (!isNaN(v) && isWithinVisibleAxisRange(v)) explicitSL = v;
   }
 
   const tpMatch = combinedText.match(
-    /(?:take\s*profit|\btarget|\bt\/p|\btp)\s*[:=]?\s*([0-9][0-9, ]*\.[0-9]{1,5})/i
+    /(?:take\s*profit|\btarget\s*[:=]|\bt\/p\s*[:=]?|\btp\s*[:=])\s*([0-9][0-9, ]*\.[0-9]{1,5})/i
   );
   if (tpMatch?.[1]) {
     const v = parseFloat(tpMatch[1].replace(/[ ,]/g, ''));
-    if (!isNaN(v) && v >= priceSpec.min && v <= priceSpec.max) explicitTP = v;
+    if (!isNaN(v) && isWithinVisibleAxisRange(v)) explicitTP = v;
   }
 
   const rrMatch = combinedText.match(
@@ -1279,13 +1468,6 @@ export function synthesizeTradeScanFromSignals(params: {
     const v = parseFloat(rrMatch[1]);
     if (!isNaN(v) && v >= 0.15 && v <= 30) explicitRR = v;
   }
-
-  // 6. Build Robust Linear Y-Axis Price Model P(y) = slope * y + intercept
-  const rightAxisTokens = validPriceTokens.filter((t) => t.isRightAxis && t.y > 0);
-  const axisModel = buildRobustPriceAxisModel(
-    rightAxisTokens.length >= 2 ? rightAxisTokens : validPriceTokens.filter((t) => t.y > 0),
-    priceSpec.decimals
-  );
 
   // 7. Determine Position Direction (BUY vs SELL)
   let position: TradePosition = 'BUY';
@@ -1301,15 +1483,12 @@ export function synthesizeTradeScanFromSignals(params: {
     canvasGeom.rightAxisRedBadgeYRatio !== null &&
     canvasGeom.rightAxisRedBadgeYRatio !== undefined
   ) {
-    // Smaller Y is higher on screen (higher price): Green badge above Red badge => TP > SL => BUY
     position =
       canvasGeom.rightAxisGreenBadgeYRatio < canvasGeom.rightAxisRedBadgeYRatio ? 'BUY' : 'SELL';
   } else if (mt5TpLineY !== null && mt5SlLineY !== null && mt5TpLineY !== mt5SlLineY) {
     position = mt5TpLineY < mt5SlLineY ? 'BUY' : 'SELL';
   } else if (/\b(SHORT|SELL)\b/i.test(combinedText) && !/\b(LONG|BUY)\b/i.test(combinedText)) {
     position = 'SELL';
-  } else if (localRef.position) {
-    position = localRef.position;
   }
 
   // 8. Resolve Entry, TP, and SL Prices using Y-Coordinate Badge Alignment + Theil-Sen Linear Scale Model
@@ -1322,16 +1501,13 @@ export function synthesizeTradeScanFromSignals(params: {
   const resolvePriceAtTargetY = (targetY: number | null): number | null => {
     if (targetY === null || !Number.isFinite(targetY)) return null;
     if (axisModel) {
-      // 1) Check if an OCR badge sits right at targetY
       const directBadge = axisModel.findClosestBadgePriceAtY(targetY, badgeTolerancePx);
       if (directBadge !== null) return directBadge;
-      // 2) Otherwise evaluate the linear price axis model at targetY
       const interpolated = axisModel.priceAtY(targetY);
       if (interpolated >= priceSpec.min && interpolated <= priceSpec.max) {
         return interpolated;
       }
     } else {
-      // If fewer than 2 axis ticks were available for linear model, check direct proximity
       let closest: { val: number; dist: number } | null = null;
       for (const tok of validPriceTokens) {
         const d = Math.abs(tok.y - targetY);
@@ -1375,11 +1551,38 @@ export function synthesizeTradeScanFromSignals(params: {
       ? canvasGeom.rightAxisRedBadgeYRatio * imgH
       : null;
 
-  if (entryPrice === null) entryPrice = resolvePriceAtTargetY(targetEntryY);
   if (takeProfit === null) takeProfit = resolvePriceAtTargetY(targetTpY);
   if (stopLoss === null) stopLoss = resolvePriceAtTargetY(targetSlY);
+  if (entryPrice === null) entryPrice = resolvePriceAtTargetY(targetEntryY);
 
-  // Case B: If MT5 horizontal lines were detected on Canvas and some level is still missing
+  // Case B: If TradingView Position Box is detected and TP & SL are known, verify Entry against the exact Green/Red dividing line!
+  if (
+    canvasGeom.hasPositionBox &&
+    takeProfit !== null &&
+    stopLoss !== null &&
+    Math.abs(takeProfit - stopLoss) > 0 &&
+    canvasGeom.tpYRatio !== null &&
+    canvasGeom.slYRatio !== null &&
+    canvasGeom.entryYRatio !== null &&
+    Math.abs(canvasGeom.slYRatio - canvasGeom.tpYRatio) > 0.02
+  ) {
+    const entryFraction =
+      (canvasGeom.entryYRatio - canvasGeom.tpYRatio) /
+      (canvasGeom.slYRatio - canvasGeom.tpYRatio);
+    if (entryFraction > 0.05 && entryFraction < 0.95) {
+      const geomEntry = Number(
+        (takeProfit - entryFraction * (takeProfit - stopLoss)).toFixed(priceSpec.decimals)
+      );
+      if (
+        entryPrice === null ||
+        Math.abs(entryPrice - geomEntry) > Math.abs(takeProfit - stopLoss) * 0.16
+      ) {
+        entryPrice = geomEntry;
+      }
+    }
+  }
+
+  // Case C: If MT5 horizontal lines were detected on Canvas and some level is still missing
   if (
     (entryPrice === null || takeProfit === null || stopLoss === null) &&
     canvasGeom.horizontalLineYRatios &&
@@ -1407,7 +1610,7 @@ export function synthesizeTradeScanFromSignals(params: {
     }
   }
 
-  // Case C: If exactly 3 price badges were read on the screenshot (e.g. TP, Entry, SL badges), assign by vertical/price order
+  // Case D: If exactly 3 price badges were read on the screenshot (e.g. TP, Entry, SL badges), assign by vertical/price order
   if (entryPrice === null && stopLoss === null && takeProfit === null && validPriceTokens.length >= 3) {
     const uniqueSorted = Array.from(
       new Set(validPriceTokens.map((t) => Number(t.val.toFixed(priceSpec.decimals))))
@@ -1424,7 +1627,6 @@ export function synthesizeTradeScanFromSignals(params: {
         stopLoss = uniqueSorted[2];
       }
     } else if (uniqueSorted.length > 3) {
-      // Pick the middle cluster rather than extreme chart top/bottom grid ticks
       const midIdx = Math.floor(uniqueSorted.length / 2);
       const lowCandidate = uniqueSorted[Math.max(0, midIdx - 1)];
       const midCandidate = uniqueSorted[midIdx];
@@ -1460,23 +1662,14 @@ export function synthesizeTradeScanFromSignals(params: {
     }
   }
 
-  // 10. Cross-reference with TradeVault's local Market Chart drawing if prices are still missing
-  if (entryPrice === null && localRef.entryPrice !== null && localRef.instrument === instrument) {
-    entryPrice = localRef.entryPrice;
-    if (stopLoss === null && localRef.stopLoss !== null) stopLoss = localRef.stopLoss;
-    if (takeProfit === null && localRef.takeProfit !== null) takeProfit = localRef.takeProfit;
-  }
-
-  // 11. Enforce Strict Directional Consistency & Populate Missing SL / TP
+  // 10. Enforce Strict Directional Consistency & Populate Missing SL / TP
   if (stopLoss !== null && takeProfit !== null && stopLoss !== takeProfit) {
-    // If both SL and TP were explicitly read, their relative order deterministically dictates BUY vs SELL
     if (!canvasGeom.hasPositionBox && !mt5OrderDirection) {
       position = takeProfit > stopLoss ? 'BUY' : 'SELL';
     } else if (
       (position === 'BUY' && takeProfit < stopLoss) ||
       (position === 'SELL' && takeProfit > stopLoss)
     ) {
-      // Swap if OCR misassigned SL and TP labels against the confirmed position direction
       const temp = stopLoss;
       stopLoss = takeProfit;
       takeProfit = temp;
@@ -1510,7 +1703,7 @@ export function synthesizeTradeScanFromSignals(params: {
     }
   }
 
-  // 12. Strict Lot Size Rule:
+  // 11. Strict Lot Size Rule:
   // - MT5: Use the identified MT5 lot size so it is input directly into the app.
   // - TradingView: Set lotSize = null so TradeForm calculates lot automatically from Equity & Risk %.
   const finalLotSize: number | null = source === 'MT5' ? mt5DetectedLot : null;
@@ -1548,10 +1741,10 @@ export function synthesizeTradeScanFromSignals(params: {
     status: finalStatus,
     plannedRiskReward,
     timeframe,
-    currentPrice: entryPrice,
-    confidence: 0.92,
+    currentPrice: mt5CurrentFromArrow ?? entryPrice,
+    confidence: 0.94,
     notes: `Terdeteksi otomatis (${summaryParts.join(' · ')})`,
-    modelUsed: 'hybrid-apk-vision-v2',
+    modelUsed: 'hybrid-apk-vision-v3',
     resolvedImageUrl: urlMeta.directImageUrl || undefined,
   };
 }
@@ -1569,36 +1762,8 @@ export async function scanTradeScreenshotOrUrl(inputSource: string): Promise<Ext
   const isDataUrl = trimmed.startsWith('data:image/');
   const tvResolved = resolveTradingViewSnapshotUrl(trimmed);
 
-  // 1. Try Server-Side AI Vision API (/api/extract-trade-screenshot) first
-  const payload: { imageBase64?: string; imageUrl?: string } = {};
-  if (isDataUrl) {
-    payload.imageBase64 = trimmed;
-  } else {
-    payload.imageUrl = tvResolved.directImageUrl || trimmed;
-  }
-
-  const serverRes = await safeFetchApiJson(
-    '/api/extract-trade-screenshot',
-    {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-    },
-    14000
-  );
-
-  if (serverRes.ok && serverRes.json?.success && serverRes.json?.data) {
-    const d = serverRes.json.data as ExtractedTradeScanData;
-    const isMt5 = d.source === 'MT5';
-    return {
-      ...d,
-      // Enforce user rule: only keep lotSize if source is MT5; for TradingView let Equity auto-lot calculate it
-      lotSize: isMt5 ? d.lotSize : null,
-      resolvedImageUrl: !isDataUrl ? tvResolved.directImageUrl : undefined,
-    };
-  }
-
-  // 2. Standalone Android APK / Client-Side Multi-Engine Vision + OCR + Canvas Geometry Scanner
+  // Step 1: Resolve image into Data URL if needed and run fast (~15ms) 2D Canvas Geometry Analysis first
+  // so both the Gemini Vision Server AND the On-Device Scanner receive exact Position Box Y-coordinates!
   let dataUrlToAnalyze: string | null = isDataUrl ? trimmed : null;
   let pageTitle = '';
   let pageDescription = '';
@@ -1610,31 +1775,68 @@ export async function scanTradeScreenshotOrUrl(inputSource: string): Promise<Ext
     pageDescription = fetched.pageDescription;
   }
 
-  const [canvasGeom, ocrPack] = await Promise.all([
-    dataUrlToAnalyze
-      ? analyzeChartCanvasGeometry(dataUrlToAnalyze)
-      : Promise.resolve<CanvasZoneAnalysis>({
-          hasPositionBox: false,
-          inferredPosition: null,
-          inferredRR: null,
-          entryYRatio: null,
-          tpYRatio: null,
-          slYRatio: null,
-          boxTopYRatio: null,
-          boxBottomYRatio: null,
-          imageWidth: 0,
-          imageHeight: 0,
-        }),
-    dataUrlToAnalyze
-      ? extractChartOcrText(dataUrlToAnalyze, tvResolved.directImageUrl)
-      : Promise.resolve({
-          ocr: { fullText: '', lines: [], words: [] },
-          ocrImageWidth: 1000,
-          ocrImageHeight: 600,
-        }),
-  ]);
+  const canvasGeom: CanvasZoneAnalysis = dataUrlToAnalyze
+    ? await analyzeChartCanvasGeometry(dataUrlToAnalyze)
+    : {
+        hasPositionBox: false,
+        inferredPosition: null,
+        inferredRR: null,
+        entryYRatio: null,
+        tpYRatio: null,
+        slYRatio: null,
+        boxTopYRatio: null,
+        boxBottomYRatio: null,
+        imageWidth: 0,
+        imageHeight: 0,
+      };
 
-  // Ensure coordinate system of canvasGeom matches ocrImageWidth/Height
+  // Step 2: Try Server-Side Gemini 3 Vision API (both relative `/api/...` for Web and Cloud Run URLs for Android APK)
+  const payload: {
+    imageBase64?: string;
+    imageUrl?: string;
+    canvasHints?: CanvasZoneAnalysis;
+  } = {
+    canvasHints: canvasGeom,
+  };
+  if (dataUrlToAnalyze) {
+    payload.imageBase64 = dataUrlToAnalyze;
+  } else {
+    payload.imageUrl = tvResolved.directImageUrl || trimmed;
+  }
+
+  for (const endpoint of REMOTE_SCAN_API_ENDPOINTS) {
+    const serverRes = await safeFetchApiJson(
+      endpoint,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      },
+      12000
+    );
+
+    if (serverRes.ok && serverRes.json?.success && serverRes.json?.data) {
+      const d = serverRes.json.data as ExtractedTradeScanData;
+      if (d.entryPrice !== null && d.entryPrice > 0) {
+        const isMt5 = d.source === 'MT5';
+        return {
+          ...d,
+          lotSize: isMt5 ? d.lotSize : null,
+          resolvedImageUrl: !isDataUrl ? tvResolved.directImageUrl : undefined,
+        };
+      }
+    }
+  }
+
+  // Step 3: Standalone Android APK Offline / Fallback Multi-Pass OCR + 2D Canvas Geometry Scanner
+  const ocrPack = dataUrlToAnalyze
+    ? await extractChartOcrText(dataUrlToAnalyze, tvResolved.directImageUrl)
+    : {
+        ocr: { fullText: '', lines: [], words: [] },
+        ocrImageWidth: 1000,
+        ocrImageHeight: 600,
+      };
+
   const alignedCanvasGeom: CanvasZoneAnalysis = {
     ...canvasGeom,
     imageWidth: ocrPack.ocrImageWidth || canvasGeom.imageWidth || 1000,
