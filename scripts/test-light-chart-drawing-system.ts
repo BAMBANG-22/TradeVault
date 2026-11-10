@@ -1317,6 +1317,42 @@ console.log('\n--- [C4] Testing Draggable Style/Settings Bar & Tap-to-Deselect B
   assert.equal(tvAutoLot.isValid, true, 'Standard Equity Auto-Lot for TradingView scan must be valid');
   assert.equal(tvAutoLot.recommendedLot, 0.1, 'TradingView scan with $1,000 equity, 1% risk, 10-pip SL on XAUUSD must yield 0.10 Lot');
 
+  // 8a-2. Verify Theil-Sen Linear Y-Axis Interpolation when colored badges themselves are missed by OCR
+  // Only background grid ticks (4030 at y=80, 4010 at y=160, 3970 at y=320) are read:
+  // Slope = -20 / 80 = -0.25 per px. At y=120 -> 4020, y=200 -> 4000, y=240 -> 3990.
+  const synthTvInterpolated = synthesizeTradeScanFromSignals({
+    ocr: {
+      fullText: 'OANDA:XAUUSD 15\n4030.00\n4010.00\n3970.00',
+      lines: [
+        { text: 'OANDA:XAUUSD 15', centerY: 30, minX: 20, maxX: 200 },
+        { text: '4030.00', centerY: 80, minX: 900, maxX: 960 },
+        { text: '4010.00', centerY: 160, minX: 900, maxX: 960 },
+        { text: '3970.00', centerY: 320, minX: 900, maxX: 960 },
+      ],
+      words: [],
+    },
+    canvasGeom: {
+      hasPositionBox: true,
+      inferredPosition: 'BUY',
+      inferredRR: 2.0,
+      entryYRatio: 200 / 600,
+      tpYRatio: 120 / 600,
+      slYRatio: 240 / 600,
+      boxTopYRatio: 120 / 600,
+      boxBottomYRatio: 240 / 600,
+      rightAxisGreenBadgeYRatio: 120 / 600,
+      rightAxisRedBadgeYRatio: 240 / 600,
+      rightAxisBlueOrDarkBadgeYRatio: 200 / 600,
+      horizontalLineYRatios: [],
+      imageWidth: 1000,
+      imageHeight: 600,
+    },
+    urlMeta: null,
+  });
+  assert.equal(synthTvInterpolated.entryPrice, 4000, 'Linear Y-axis model must interpolate Entry = 4000 from grid ticks');
+  assert.equal(synthTvInterpolated.takeProfit, 4020, 'Linear Y-axis model must interpolate TP = 4020 from grid ticks');
+  assert.equal(synthTvInterpolated.stopLoss, 3990, 'Linear Y-axis model must interpolate SL = 3990 from grid ticks');
+
   // 8b. TradingView SELL Position Scan (Red above Green)
   const synthTvSell = synthesizeTradeScanFromSignals({
     ocr: {

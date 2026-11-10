@@ -954,7 +954,7 @@ function getLocalChartReferenceForInstrument(preferredInstrument?: string): {
  * from right-axis OCR price numbers (where price decreases as pixel Y increases downward).
  */
 function buildRobustPriceAxisModel(
-  axisCandidates: Array<{ price: number; y: number }>,
+  axisCandidates: Array<{ val: number; y: number }>,
   decimals: number
 ): {
   priceAtY: (y: number) => number;
@@ -968,7 +968,7 @@ function buildRobustPriceAxisModel(
   for (let i = 0; i < sorted.length; i++) {
     for (let j = i + 1; j < sorted.length; j++) {
       const dy = sorted[j].y - sorted[i].y;
-      const dp = sorted[j].price - sorted[i].price;
+      const dp = sorted[j].val - sorted[i].val;
       // On a chart Y-axis, lower on screen (larger Y) means lower price (dp < 0)
       if (dy >= 12 && dp < 0) {
         slopes.push(dp / dy);
@@ -980,7 +980,7 @@ function buildRobustPriceAxisModel(
   slopes.sort((a, b) => a - b);
   const medianSlope = slopes[Math.floor(slopes.length / 2)];
 
-  const intercepts = sorted.map((pt) => pt.price - medianSlope * pt.y).sort((a, b) => a - b);
+  const intercepts = sorted.map((pt) => pt.val - medianSlope * pt.y).sort((a, b) => a - b);
   const medianIntercept = intercepts[Math.floor(intercepts.length / 2)];
 
   const priceAtY = (y: number): number => {
@@ -995,9 +995,9 @@ function buildRobustPriceAxisModel(
 
     for (const cand of sorted) {
       const dist = Math.abs(cand.y - targetY);
-      if (dist <= maxPixelDist && Math.abs(cand.price - expectedPrice) <= Math.max(maxAllowedPriceDiff, 1e-4)) {
+      if (dist <= maxPixelDist && Math.abs(cand.val - expectedPrice) <= Math.max(maxAllowedPriceDiff, 1e-4)) {
         if (!best || dist < best.dist) {
-          best = { price: Number(cand.price.toFixed(decimals)), dist };
+          best = { price: Number(cand.val.toFixed(decimals)), dist };
         }
       }
     }
