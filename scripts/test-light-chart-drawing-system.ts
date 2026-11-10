@@ -23,6 +23,10 @@ import {
   type ActiveDrawingToolId,
   type DrawingAnchor,
 } from '../src/components/chart/MarketChartView';
+import {
+  resolveTradingViewSnapshotUrl,
+  synthesizeTradeScanFromSignals,
+} from '../src/utils/tradeScreenshotScanner';
 
 console.log('====================================================================');
 console.log('TRADEVAULT LIGHT CHART DRAWING SYSTEM — AUTOMATED VERIFICATION SUITE');
@@ -1233,6 +1237,56 @@ console.log('\n--- [C4] Testing Draggable Style/Settings Bar & Tap-to-Deselect B
   // Verify prices stay 100% constant
   assert.equal(geomNarrow4H.rrRatio, '2.00', 'R:R ratio must stay strictly 2.00 across all timeframes');
   console.log('✓ C4.7 Multi-Timeframe Position Scaling Audit: M5 (22 bars) -> 1H (1.83 bars) -> 4H (0.46 bars) scales down proportionally without shifting or widening');
+
+  // 8. APK Scan Cepat (TradingView URL & Photo File) Anti-HTML-Fallback Verification
+  const tvShortlink = resolveTradingViewSnapshotUrl('https://www.tradingview.com/x/AbCd1234/');
+  assert.equal(tvShortlink.isTradingViewUrl, true, 'Must recognize TradingView /x/ shortlink');
+  assert.equal(tvShortlink.snapshotId, 'AbCd1234', 'Must extract TradingView snapshot ID');
+  assert.equal(
+    tvShortlink.directImageUrl,
+    'https://s3.tradingview.com/snapshots/a/AbCd1234.png',
+    'Must deterministically resolve TradingView /x/ shortlink to direct S3 PNG URL'
+  );
+
+  const synthScan = synthesizeTradeScanFromSignals({
+    ocr: {
+      fullText: 'OANDA:XAUUSD 15\n4020.00\n4000.00\n3990.00',
+      lines: [
+        { text: 'OANDA:XAUUSD 15', centerY: 30, minX: 20, maxX: 200 },
+        { text: '4020.00', centerY: 120, minX: 900, maxX: 960 },
+        { text: '4000.00', centerY: 200, minX: 900, maxX: 960 },
+        { text: '3990.00', centerY: 240, minX: 900, maxX: 960 },
+      ],
+      words: [],
+    },
+    canvasGeom: {
+      hasPositionBox: true,
+      inferredPosition: 'BUY',
+      inferredRR: 2.0,
+      entryYRatio: 200 / 600,
+      tpYRatio: 120 / 600,
+      slYRatio: 240 / 600,
+      boxTopYRatio: 120 / 600,
+      boxBottomYRatio: 240 / 600,
+      imageWidth: 1000,
+      imageHeight: 600,
+    },
+    urlMeta: {
+      isTradingViewUrl: true,
+      symbolFromUrl: null,
+      timeframeFromUrl: 'M15',
+      pageTitle: 'XAUUSD Chart',
+      pageDescription: '',
+      directImageUrl: tvShortlink.directImageUrl,
+    },
+  });
+  assert.equal(synthScan.instrument, 'XAUUSD', 'APK hybrid scanner must extract XAUUSD');
+  assert.equal(synthScan.position, 'BUY', 'APK hybrid scanner must detect BUY from green-above-red position box');
+  assert.equal(synthScan.entryPrice, 4000, 'APK hybrid scanner must interpolate Entry = 4000 from Y-axis');
+  assert.equal(synthScan.takeProfit, 4020, 'APK hybrid scanner must interpolate TP = 4020 from Y-axis');
+  assert.equal(synthScan.stopLoss, 3990, 'APK hybrid scanner must interpolate SL = 3990 from Y-axis');
+  assert.equal(synthScan.plannedRiskReward, 2, 'APK hybrid scanner must compute R:R = 1:2');
+  console.log('✓ C4.8 APK Scan Cepat & TradingView S3 URL Resolver: Protected against <!doctype html> JSON parse error and verified accurate hybrid extraction');
 }
 
 console.log('\n====================================================================');

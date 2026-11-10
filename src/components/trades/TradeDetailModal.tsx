@@ -33,6 +33,7 @@ import {
   getCurrentUsdIdrSnapshot,
   useGlobalCurrency,
 } from '../../utils/currencyRate';
+import { resolveTradingViewSnapshotUrl } from '../../utils/tradeScreenshotScanner';
 import {
   ArrowLeft,
   Edit2,
@@ -223,12 +224,14 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
     }
 
     const trimmed = rawBefore.trim();
-    if (
-      trimmed.startsWith('data:image/') ||
-      trimmed.startsWith('http://') ||
-      trimmed.startsWith('https://')
-    ) {
+    if (trimmed.startsWith('data:image/')) {
       setBeforeDisplayUrl(trimmed);
+      setIsBeforeLoading(false);
+      return;
+    }
+    if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) {
+      const resolvedTv = resolveTradingViewSnapshotUrl(trimmed);
+      setBeforeDisplayUrl(resolvedTv.directImageUrl || trimmed);
       setIsBeforeLoading(false);
       return;
     }
@@ -266,12 +269,14 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
     }
 
     const trimmed = rawAfter.trim();
-    if (
-      trimmed.startsWith('data:image/') ||
-      trimmed.startsWith('http://') ||
-      trimmed.startsWith('https://')
-    ) {
+    if (trimmed.startsWith('data:image/')) {
       setAfterDisplayUrl(trimmed);
+      setIsAfterLoading(false);
+      return;
+    }
+    if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) {
+      const resolvedTv = resolveTradingViewSnapshotUrl(trimmed);
+      setAfterDisplayUrl(resolvedTv.directImageUrl || trimmed);
       setIsAfterLoading(false);
       return;
     }

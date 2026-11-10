@@ -12,9 +12,19 @@ const __dirname = path.dirname(__filename);
 const app = express();
 const PORT = Number(process.env.PORT) || 3000;
 
-// Middleware for parsing large JSON / base64 payloads
+// Middleware for parsing large JSON / base64 payloads & CORS for mobile APK
 app.use(express.json({ limit: '25mb' }));
 app.use(express.urlencoded({ extended: true, limit: '25mb' }));
+app.use('/api', (req, res, next) => {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+  if (req.method === 'OPTIONS') {
+    res.status(204).end();
+    return;
+  }
+  next();
+});
 
 interface ExtractScreenshotRequest {
   imageBase64?: string;
@@ -26,6 +36,23 @@ interface ExtractScreenshotRequest {
  */
 async function fetchImageBufferFromUrl(url: string): Promise<{ buffer: Buffer; mimeType: string }> {
   const parsedUrl = new URL(url);
+
+  // Fast-path: TradingView /x/<ID>/ shortlink maps directly to s3.tradingview.com/snapshots/<firstChar>/<ID>.png
+  if (parsedUrl.hostname.toLowerCase().includes('tradingview.com')) {
+    const xMatch = parsedUrl.pathname.match(/\/x\/([A-Za-z0-9]+)\/?/i);
+    if (xMatch && xMatch[1]) {
+      const id = xMatch[1];
+      const directS3Url = `https://s3.tradingview.com/snapshots/${id.charAt(0).toLowerCase()}/${id}.png`;
+      const s3Res = await fetch(directS3Url, {
+        headers: { 'User-Agent': 'Mozilla/5.0', Accept: 'image/*' },
+      });
+      if (s3Res.ok) {
+        const s3Mime = s3Res.headers.get('content-type') || 'image/png';
+        const arrayBuf = await s3Res.arrayBuffer();
+        return { buffer: Buffer.from(arrayBuf), mimeType: s3Mime.split(';')[0] };
+      }
+    }
+  }
 
   // If user pasted a TradingView share link (e.g. https://www.tradingview.com/x/abcd/)
   const res = await fetch(parsedUrl.toString(), {
@@ -379,8 +406,6 @@ STRICT OUTPUT JSON FORMAT:
                 },
                 required: ['detected', 'instrument', 'position'],
               },
-              maxOutputTokens: 1500,
-              temperature: 0.1,
             },
           });
 

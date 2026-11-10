@@ -5,6 +5,7 @@ import {
   resolveScreenshotSignedUrlWithDiagnostics,
   getCachedBase64ForStoragePath,
 } from '../../utils/supabaseSync';
+import { resolveTradingViewSnapshotUrl } from '../../utils/tradeScreenshotScanner';
 
 interface ScreenshotModalProps {
   imageUrl: string | null;
@@ -44,12 +45,16 @@ export const ScreenshotModal: React.FC<ScreenshotModalProps> = ({
 
     const trimmed = imageUrl.trim();
 
-    if (
-      trimmed.startsWith('data:image/') ||
-      trimmed.startsWith('http://') ||
-      trimmed.startsWith('https://')
-    ) {
+    if (trimmed.startsWith('data:image/')) {
       setResolvedUrl(trimmed);
+      setIsLoading(false);
+      setLoadError(null);
+      return;
+    }
+
+    if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) {
+      const resolvedTv = resolveTradingViewSnapshotUrl(trimmed);
+      setResolvedUrl(resolvedTv.directImageUrl || trimmed);
       setIsLoading(false);
       setLoadError(null);
       return;

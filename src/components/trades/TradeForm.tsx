@@ -50,6 +50,10 @@ import {
   useGlobalCurrency,
 } from '../../utils/currencyRate';
 import {
+  scanTradeScreenshotOrUrl,
+  resolveTradingViewSnapshotUrl,
+} from '../../utils/tradeScreenshotScanner';
+import {
   X,
   Upload,
   AlertCircle,
@@ -348,12 +352,14 @@ export const TradeForm: React.FC<TradeFormProps> = ({
     }
 
     const trimmed = screenshotUrl.trim();
-    if (
-      trimmed.startsWith('data:image/') ||
-      trimmed.startsWith('http://') ||
-      trimmed.startsWith('https://')
-    ) {
+    if (trimmed.startsWith('data:image/')) {
       setPreviewDisplayUrl(trimmed);
+      setIsPreviewLoading(false);
+      return;
+    }
+    if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) {
+      const resolvedTv = resolveTradingViewSnapshotUrl(trimmed);
+      setPreviewDisplayUrl(resolvedTv.directImageUrl || trimmed);
       setIsPreviewLoading(false);
       return;
     }
@@ -818,28 +824,13 @@ export const TradeForm: React.FC<TradeFormProps> = ({
     setErrorMsg(null);
 
     try {
-      const isDataUrl = targetSource.startsWith('data:image/');
-      const payload: { imageBase64?: string; imageUrl?: string } = {};
-      if (isDataUrl) {
-        payload.imageBase64 = targetSource;
-      } else {
-        payload.imageUrl = targetSource;
-      }
-
-      const res = await fetch('/api/extract-trade-screenshot', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-      });
-
-      const resJson = await res.json();
-      if (!res.ok || !resJson.success) {
-        throw new Error(resJson.error || 'Gagal mengekstrak data dari screenshot.');
-      }
-
-      const data = resJson.data;
+      const data = await scanTradeScreenshotOrUrl(targetSource);
       if (!data) {
         throw new Error('Tidak ada data setup yang terbaca pada gambar.');
+      }
+
+      if (data.resolvedImageUrl && !targetSource.startsWith('data:image/')) {
+        setScreenshotUrl(data.resolvedImageUrl);
       }
 
       // Re-enable real-time calculation sync
