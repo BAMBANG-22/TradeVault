@@ -852,7 +852,7 @@ export const TradeForm: React.FC<TradeFormProps> = ({
         extractedInfoSummary.push(`Lot: ${data.lotSize}`);
       }
       if (data.status === 'ACTIVE' || data.status === 'CLOSED') {
-        setLifecycleStatus(data.status);
+        setLifecycleStatus(data.status === 'ACTIVE' ? 'OPEN' : 'CLOSED');
         extractedInfoSummary.push(`Status: ${data.status}`);
       }
       if (data.entryPrice !== null && data.entryPrice !== undefined) {
