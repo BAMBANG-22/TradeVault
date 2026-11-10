@@ -598,21 +598,18 @@ export const TradeForm: React.FC<TradeFormProps> = ({
     settings.xauusdLotStep,
   ]);
 
-  // Shared XAUUSD Lot Calculation Engine (identical to Risk Calculator -> Position Sizing)
+  // Shared Multi-Instrument Lot Calculation Engine (identical to Risk Calculator -> Position Sizing)
   const xauLotCalcResult = useMemo(() => {
     return calculateXauusdLot(
       buildUnifiedXauusdLotInput(
         {
+          symbol: instrument,
           equity: activeCapitalBasisValue,
           riskPercent: selectedRiskPercent,
           entryPrice: !isNaN(numEntry) && numEntry > 0 ? numEntry : 0,
           stopLossPrice: numSL !== undefined && !isNaN(numSL) && numSL > 0 ? numSL : 0,
           takeProfitPrice: numTP !== undefined && !isNaN(numTP) && numTP > 0 ? numTP : undefined,
           position,
-          contractSize: settings.xauusdContractSize || 100,
-          minLot: settings.xauusdMinLot || 0.01,
-          lotStep: settings.xauusdLotStep || 0.01,
-          maxLot: 100,
           leverage: settings.defaultLeverage || 500,
           accountCurrency: settings.currency,
         },
@@ -621,6 +618,7 @@ export const TradeForm: React.FC<TradeFormProps> = ({
       settings
     );
   }, [
+    instrument,
     activeCapitalBasisValue,
     selectedRiskPercent,
     numEntry,
@@ -630,16 +628,15 @@ export const TradeForm: React.FC<TradeFormProps> = ({
     settings,
   ]);
 
-  // Auto-synchronize Lot Size in Trade Log when Auto-Lot is active and XAUUSD Entry & SL are valid
+  // Auto-synchronize Lot Size in Trade Log when Auto-Lot is active and Entry & SL are valid
   useEffect(() => {
-    if (!isXauInstrument || !isAutoLotActive || preserveInitialRiskRef.current) {
+    if (!isAutoLotActive || preserveInitialRiskRef.current) {
       return;
     }
     if (xauLotCalcResult.isValid && xauLotCalcResult.recommendedLot > 0) {
       setLotSize(String(xauLotCalcResult.recommendedLot));
     }
   }, [
-    isXauInstrument,
     isAutoLotActive,
     xauLotCalcResult.isValid,
     xauLotCalcResult.recommendedLot,
@@ -838,6 +835,10 @@ export const TradeForm: React.FC<TradeFormProps> = ({
 
       const extractedInfoSummary: string[] = [];
 
+      const targetInstrument = data.instrument || instrument;
+      const targetPosition: TradePosition =
+        data.position === 'SELL' ? 'SELL' : data.position === 'BUY' ? 'BUY' : position;
+
       if (data.instrument) {
         setInstrument(data.instrument);
         extractedInfoSummary.push(`Pair: ${data.instrument}`);
@@ -845,11 +846,6 @@ export const TradeForm: React.FC<TradeFormProps> = ({
       if (data.position === 'BUY' || data.position === 'SELL') {
         setPosition(data.position);
         extractedInfoSummary.push(`Posisi: ${data.position}`);
-      }
-      if (data.lotSize !== null && data.lotSize !== undefined && data.lotSize > 0) {
-        setLotSize(String(data.lotSize));
-        setIsAutoLotActive(false);
-        extractedInfoSummary.push(`Lot: ${data.lotSize}`);
       }
       if (data.status === 'ACTIVE' || data.status === 'CLOSED') {
         setLifecycleStatus(data.status === 'ACTIVE' ? 'OPEN' : 'CLOSED');
@@ -867,6 +863,56 @@ export const TradeForm: React.FC<TradeFormProps> = ({
         setTakeProfit(String(data.takeProfit));
         extractedInfoSummary.push(`TP: ${data.takeProfit}`);
       }
+
+      // Lot Size Policy:
+      // - MT5: Directly input the lot size identified on MT5 and lock manual lot mode
+      // - TradingView / Chart: Keep Auto-Lot active so Lot Size follows standard Equity & Risk % calculation
+      if (
+        data.source === 'MT5' &&
+        data.lotSize !== null &&
+        data.lotSize !== undefined &&
+        data.lotSize > 0
+      ) {
+        setLotSize(String(data.lotSize));
+        setIsAutoLotActive(false);
+        extractedInfoSummary.push(`Lot MT5: ${data.lotSize}`);
+      } else {
+        setIsAutoLotActive(true);
+        if (
+          data.entryPrice !== null &&
+          data.entryPrice !== undefined &&
+          data.entryPrice > 0 &&
+          data.stopLoss !== null &&
+          data.stopLoss !== undefined &&
+          data.stopLoss > 0
+        ) {
+          const autoEquityLotCalc = calculateXauusdLot(
+            buildUnifiedXauusdLotInput(
+              {
+                symbol: targetInstrument,
+                equity: activeCapitalBasisValue,
+                riskPercent: selectedRiskPercent,
+                entryPrice: data.entryPrice,
+                stopLossPrice: data.stopLoss,
+                takeProfitPrice:
+                  data.takeProfit !== null && data.takeProfit !== undefined
+                    ? data.takeProfit
+                    : undefined,
+                position: targetPosition,
+                leverage: settings.defaultLeverage || 500,
+                accountCurrency: settings.currency,
+              },
+              settings
+            ),
+            settings
+          );
+          if (autoEquityLotCalc.isValid && autoEquityLotCalc.recommendedLot > 0) {
+            setLotSize(String(autoEquityLotCalc.recommendedLot));
+            extractedInfoSummary.push(`Lot Auto Equity: ${autoEquityLotCalc.recommendedLot}`);
+          }
+        }
+      }
+
       if (data.exitPrice !== null && data.exitPrice !== undefined && data.exitPrice > 0) {
         setExitPrice(String(data.exitPrice));
         extractedInfoSummary.push(`Exit: ${data.exitPrice}`);
@@ -896,7 +942,7 @@ export const TradeForm: React.FC<TradeFormProps> = ({
           source: data.source,
           instrument: data.instrument,
           position: data.position,
-          lotSize: data.lotSize,
+          lotSize: data.source === 'MT5' ? data.lotSize : null,
           entryPrice: data.entryPrice,
           stopLoss: data.stopLoss,
           takeProfit: data.takeProfit,
@@ -1678,7 +1724,7 @@ export const TradeForm: React.FC<TradeFormProps> = ({
                 >
                   Lot Size
                 </label>
-                {isXauInstrument && xauLotCalcResult.isValid && xauLotCalcResult.recommendedLot > 0 && (
+                {xauLotCalcResult.isValid && xauLotCalcResult.recommendedLot > 0 && (
                   <button
                     type="button"
                     onClick={() => {
@@ -1687,7 +1733,7 @@ export const TradeForm: React.FC<TradeFormProps> = ({
                       setLotSize(String(xauLotCalcResult.recommendedLot));
                     }}
                     className="text-[9px] font-semibold text-[#697586] dark:text-[#929BA9] hover:text-[#151D2A] dark:hover:text-[#F2F4F7] underline cursor-pointer"
-                    title="Gunakan rekomendasi lot otomatis"
+                    title="Gunakan rekomendasi lot otomatis sesuai Equity"
                   >
                     Rec {xauLotCalcResult.recommendedLot}
                   </button>

@@ -454,7 +454,7 @@ STRICT OUTPUT JSON FORMAT:
     const cleanInstrument = normalizeInstrument(parsedData.instrument);
 
     // Normalize position
-    const cleanPosition = parsedData.position === 'SELL' ? 'SELL' : 'BUY';
+    let cleanPosition: 'BUY' | 'SELL' = parsedData.position === 'SELL' ? 'SELL' : 'BUY';
 
     // Source detection
     const source: 'MT5' | 'TRADINGVIEW' | 'CHART' =
@@ -474,11 +474,13 @@ STRICT OUTPUT JSON FORMAT:
 
     // Normalize numeric values with robust parseNumericValue
     let entryPrice = parseNumericValue(parsedData.entryPrice);
-    const stopLoss = parseNumericValue(parsedData.stopLoss);
-    const takeProfit = parseNumericValue(parsedData.takeProfit);
+    let stopLoss = parseNumericValue(parsedData.stopLoss);
+    let takeProfit = parseNumericValue(parsedData.takeProfit);
     const exitPrice = parseNumericValue(parsedData.exitPrice);
     const profit = parseNumericValue(parsedData.profit);
-    const lotSize = parseNumericValue(parsedData.lotSize);
+    const rawLotSize = parseNumericValue(parsedData.lotSize);
+    // Strictly return lotSize ONLY for MT5 (for TradingView, lotSize must be null so client uses standard Equity Auto-Lot)
+    const lotSize = source === 'MT5' && rawLotSize !== null && rawLotSize > 0 ? rawLotSize : null;
     let plannedRR = parseNumericValue(parsedData.plannedRiskReward);
     const currentPrice = parseNumericValue(parsedData.currentPrice);
 
@@ -496,20 +498,36 @@ STRICT OUTPUT JSON FORMAT:
     // Mathematical Derivation Fallback 1: If entryPrice is null, but SL, TP, and plannedRR are known
     if (entryPrice === null && stopLoss !== null && takeProfit !== null && plannedRR !== null && plannedRR > 0) {
       if (cleanPosition === 'SELL') {
-        // (entry - TP) / (SL - entry) = RR => entry = (RR * SL + TP) / (1 + RR)
         entryPrice = parseFloat(((plannedRR * stopLoss + takeProfit) / (1 + plannedRR)).toFixed(decimals));
       } else {
-        // (TP - entry) / (entry - SL) = RR => entry = (TP + RR * SL) / (1 + RR)
         entryPrice = parseFloat(((takeProfit + plannedRR * stopLoss) / (1 + plannedRR)).toFixed(decimals));
       }
     }
 
     // Mathematical Derivation Fallback 2: If entryPrice is still null, but currentPrice lies strictly between SL and TP for an active trade
     if (entryPrice === null && currentPrice !== null && stopLoss !== null && takeProfit !== null) {
-      if (cleanPosition === 'SELL' && takeProfit < currentPrice && currentPrice < stopLoss) {
+      const minBound = Math.min(stopLoss, takeProfit);
+      const maxBound = Math.max(stopLoss, takeProfit);
+      if (minBound < currentPrice && currentPrice < maxBound) {
         entryPrice = parseFloat(currentPrice.toFixed(decimals));
-      } else if (cleanPosition === 'BUY' && stopLoss < currentPrice && currentPrice < takeProfit) {
-        entryPrice = parseFloat(currentPrice.toFixed(decimals));
+      }
+    }
+
+    // Enforce strict BUY / SELL directional consistency when Entry, SL, and TP are all present
+    if (entryPrice !== null && stopLoss !== null && takeProfit !== null) {
+      if (cleanPosition === 'BUY' && stopLoss > takeProfit) {
+        const tmp = stopLoss;
+        stopLoss = takeProfit;
+        takeProfit = tmp;
+      } else if (cleanPosition === 'SELL' && stopLoss < takeProfit) {
+        const tmp = stopLoss;
+        stopLoss = takeProfit;
+        takeProfit = tmp;
+      }
+      if (stopLoss < entryPrice && entryPrice < takeProfit) {
+        cleanPosition = 'BUY';
+      } else if (takeProfit < entryPrice && entryPrice < stopLoss) {
+        cleanPosition = 'SELL';
       }
     }
 

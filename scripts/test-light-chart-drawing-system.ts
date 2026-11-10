@@ -27,6 +27,10 @@ import {
   resolveTradingViewSnapshotUrl,
   synthesizeTradeScanFromSignals,
 } from '../src/utils/tradeScreenshotScanner';
+import {
+  buildUnifiedXauusdLotInput,
+  calculateXauusdLot,
+} from '../src/utils/riskCalculator';
 
 console.log('====================================================================');
 console.log('TRADEVAULT LIGHT CHART DRAWING SYSTEM — AUTOMATED VERIFICATION SUITE');
@@ -1248,14 +1252,19 @@ console.log('\n--- [C4] Testing Draggable Style/Settings Bar & Tap-to-Deselect B
     'Must deterministically resolve TradingView /x/ shortlink to direct S3 PNG URL'
   );
 
-  const synthScan = synthesizeTradeScanFromSignals({
+  // 8a. TradingView BUY Position Scan (Entry, TP, SL + lotSize must be null so Equity Auto-Lot is used)
+  const synthTvBuy = synthesizeTradeScanFromSignals({
     ocr: {
-      fullText: 'OANDA:XAUUSD 15\n4020.00\n4000.00\n3990.00',
+      fullText: 'OANDA:XAUUSD 15\nQty: 2.50\n4030.00\n4020.00\n4010.00\n4000.00\n3990.00\n3980.00',
       lines: [
         { text: 'OANDA:XAUUSD 15', centerY: 30, minX: 20, maxX: 200 },
+        { text: 'Qty: 2.50', centerY: 180, minX: 350, maxX: 460 },
+        { text: '4030.00', centerY: 80, minX: 900, maxX: 960 },
         { text: '4020.00', centerY: 120, minX: 900, maxX: 960 },
+        { text: '4010.00', centerY: 160, minX: 900, maxX: 960 },
         { text: '4000.00', centerY: 200, minX: 900, maxX: 960 },
         { text: '3990.00', centerY: 240, minX: 900, maxX: 960 },
+        { text: '3980.00', centerY: 280, minX: 900, maxX: 960 },
       ],
       words: [],
     },
@@ -1268,6 +1277,10 @@ console.log('\n--- [C4] Testing Draggable Style/Settings Bar & Tap-to-Deselect B
       slYRatio: 240 / 600,
       boxTopYRatio: 120 / 600,
       boxBottomYRatio: 240 / 600,
+      rightAxisGreenBadgeYRatio: 120 / 600,
+      rightAxisRedBadgeYRatio: 240 / 600,
+      rightAxisBlueOrDarkBadgeYRatio: 200 / 600,
+      horizontalLineYRatios: [],
       imageWidth: 1000,
       imageHeight: 600,
     },
@@ -1280,13 +1293,137 @@ console.log('\n--- [C4] Testing Draggable Style/Settings Bar & Tap-to-Deselect B
       directImageUrl: tvShortlink.directImageUrl,
     },
   });
-  assert.equal(synthScan.instrument, 'XAUUSD', 'APK hybrid scanner must extract XAUUSD');
-  assert.equal(synthScan.position, 'BUY', 'APK hybrid scanner must detect BUY from green-above-red position box');
-  assert.equal(synthScan.entryPrice, 4000, 'APK hybrid scanner must interpolate Entry = 4000 from Y-axis');
-  assert.equal(synthScan.takeProfit, 4020, 'APK hybrid scanner must interpolate TP = 4020 from Y-axis');
-  assert.equal(synthScan.stopLoss, 3990, 'APK hybrid scanner must interpolate SL = 3990 from Y-axis');
-  assert.equal(synthScan.plannedRiskReward, 2, 'APK hybrid scanner must compute R:R = 1:2');
-  console.log('✓ C4.8 APK Scan Cepat & TradingView S3 URL Resolver: Protected against <!doctype html> JSON parse error and verified accurate hybrid extraction');
+  assert.equal(synthTvBuy.source, 'TRADINGVIEW', 'Must classify TradingView screenshot as TRADINGVIEW');
+  assert.equal(synthTvBuy.instrument, 'XAUUSD', 'APK hybrid scanner must extract XAUUSD');
+  assert.equal(synthTvBuy.position, 'BUY', 'APK hybrid scanner must detect BUY from green-above-red position box');
+  assert.equal(synthTvBuy.entryPrice, 4000, 'APK hybrid scanner must extract Entry = 4000 (not top/bottom viewport ticks 4030/3980)');
+  assert.equal(synthTvBuy.takeProfit, 4020, 'APK hybrid scanner must extract TP = 4020 from green badge / Y-axis');
+  assert.equal(synthTvBuy.stopLoss, 3990, 'APK hybrid scanner must extract SL = 3990 from red badge / Y-axis');
+  assert.equal(synthTvBuy.plannedRiskReward, 2, 'APK hybrid scanner must compute R:R = 1:2');
+  assert.equal(synthTvBuy.lotSize, null, 'TradingView scan must return lotSize = null so Equity Auto-Lot is used instead of TV Qty');
+
+  // Verify standard Equity Auto-Lot calculation for TradingView scan ($1,000 Equity, 1% risk = $10, Entry 4000, SL 3990 -> 10 pips -> 0.10 lot)
+  const tvAutoLot = calculateXauusdLot(
+    buildUnifiedXauusdLotInput({
+      symbol: synthTvBuy.instrument,
+      equity: 1000,
+      riskPercent: 1,
+      entryPrice: synthTvBuy.entryPrice!,
+      stopLossPrice: synthTvBuy.stopLoss!,
+      takeProfitPrice: synthTvBuy.takeProfit ?? undefined,
+      position: synthTvBuy.position,
+    })
+  );
+  assert.equal(tvAutoLot.isValid, true, 'Standard Equity Auto-Lot for TradingView scan must be valid');
+  assert.equal(tvAutoLot.recommendedLot, 0.1, 'TradingView scan with $1,000 equity, 1% risk, 10-pip SL on XAUUSD must yield 0.10 Lot');
+
+  // 8b. TradingView SELL Position Scan (Red above Green)
+  const synthTvSell = synthesizeTradeScanFromSignals({
+    ocr: {
+      fullText: 'FX:EURUSD 1H\n1.09000\n1.08800\n1.08500\n1.08000\n1.07900\n1.07500',
+      lines: [
+        { text: 'FX:EURUSD 1H', centerY: 30, minX: 20, maxX: 200 },
+        { text: '1.09000', centerY: 60, minX: 900, maxX: 960 },
+        { text: '1.08800', centerY: 120, minX: 900, maxX: 960 },
+        { text: '1.08500', centerY: 210, minX: 900, maxX: 960 },
+        { text: '1.08000', centerY: 360, minX: 900, maxX: 960 },
+        { text: '1.07900', centerY: 390, minX: 900, maxX: 960 },
+        { text: '1.07500', centerY: 510, minX: 900, maxX: 960 },
+      ],
+      words: [],
+    },
+    canvasGeom: {
+      hasPositionBox: true,
+      inferredPosition: 'SELL',
+      inferredRR: 2.0,
+      entryYRatio: 210 / 600,
+      slYRatio: 120 / 600,
+      tpYRatio: 390 / 600,
+      boxTopYRatio: 120 / 600,
+      boxBottomYRatio: 390 / 600,
+      rightAxisRedBadgeYRatio: 120 / 600,
+      rightAxisGreenBadgeYRatio: 390 / 600,
+      rightAxisBlueOrDarkBadgeYRatio: 210 / 600,
+      horizontalLineYRatios: [],
+      imageWidth: 1000,
+      imageHeight: 600,
+    },
+    urlMeta: null,
+  });
+  assert.equal(synthTvSell.source, 'TRADINGVIEW', 'Must classify TradingView SELL chart as TRADINGVIEW');
+  assert.equal(synthTvSell.instrument, 'EURUSD', 'Must extract EURUSD');
+  assert.equal(synthTvSell.position, 'SELL', 'Must detect SELL from red-above-green position box');
+  assert.equal(synthTvSell.entryPrice, 1.085, 'Must extract SELL Entry = 1.08500');
+  assert.equal(synthTvSell.stopLoss, 1.088, 'Must extract SELL SL = 1.08800 (above Entry)');
+  assert.equal(synthTvSell.takeProfit, 1.079, 'Must extract SELL TP = 1.07900 (below Entry)');
+  assert.equal(synthTvSell.lotSize, null, 'TradingView SELL scan must return lotSize = null');
+
+  // 8c. MT5 BUY Position Scan (Must extract Entry, SL, TP AND directly identify & output MT5 Lot Size)
+  const synthMt5Buy = synthesizeTradeScanFromSignals({
+    ocr: {
+      fullText: 'XAUUSD, M15\n#84920123 buy 0.25 at 4000.00\nsl: 3990.00 tp: 4025.00\n4025.00\n4000.00\n3990.00',
+      lines: [
+        { text: 'XAUUSD, M15', centerY: 30, minX: 20, maxX: 220 },
+        { text: '#84920123 buy 0.25 at 4000.00', centerY: 200, minX: 40, maxX: 350 },
+        { text: 'sl: 3990.00 tp: 4025.00', centerY: 225, minX: 40, maxX: 300 },
+        { text: '4025.00', centerY: 100, minX: 900, maxX: 970 },
+        { text: '4000.00', centerY: 200, minX: 900, maxX: 970 },
+        { text: '3990.00', centerY: 240, minX: 900, maxX: 970 },
+      ],
+      words: [],
+    },
+    canvasGeom: null,
+    urlMeta: null,
+  });
+  assert.equal(synthMt5Buy.source, 'MT5', 'Must classify MT5 order screenshot as MT5');
+  assert.equal(synthMt5Buy.instrument, 'XAUUSD', 'Must extract XAUUSD from MT5');
+  assert.equal(synthMt5Buy.position, 'BUY', 'Must detect BUY from MT5 order ticket');
+  assert.equal(synthMt5Buy.lotSize, 0.25, 'MT5 scan MUST extract exact Lot Size 0.25 used on MT5');
+  assert.equal(synthMt5Buy.entryPrice, 4000, 'MT5 scan must extract Entry = 4000.00');
+  assert.equal(synthMt5Buy.stopLoss, 3990, 'MT5 scan must extract SL = 3990.00');
+  assert.equal(synthMt5Buy.takeProfit, 4025, 'MT5 scan must extract TP = 4025.00');
+
+  // 8d. MT5 SELL Position Scan via Horizontal Order Lines & Right-Axis Price Scale
+  const synthMt5Sell = synthesizeTradeScanFromSignals({
+    ocr: {
+      fullText: 'BTCUSD, H1\n#99102341 sell 0.10\nsl\ntp\n96800.00\n96250.00\n95150.00',
+      lines: [
+        { text: 'BTCUSD, H1', centerY: 28, minX: 20, maxX: 200 },
+        { text: 'sl', centerY: 118, minX: 40, maxX: 80 },
+        { text: '#99102341 sell 0.10', centerY: 228, minX: 40, maxX: 260 },
+        { text: 'tp', centerY: 448, minX: 40, maxX: 80 },
+        { text: '96800.00', centerY: 120, minX: 890, maxX: 970 },
+        { text: '96250.00', centerY: 230, minX: 890, maxX: 970 },
+        { text: '95150.00', centerY: 450, minX: 890, maxX: 970 },
+      ],
+      words: [],
+    },
+    canvasGeom: {
+      hasPositionBox: false,
+      inferredPosition: null,
+      inferredRR: null,
+      entryYRatio: null,
+      tpYRatio: null,
+      slYRatio: null,
+      boxTopYRatio: null,
+      boxBottomYRatio: null,
+      rightAxisGreenBadgeYRatio: null,
+      rightAxisRedBadgeYRatio: 120 / 600,
+      rightAxisBlueOrDarkBadgeYRatio: 230 / 600,
+      horizontalLineYRatios: [120 / 600, 230 / 600, 450 / 600],
+      imageWidth: 1000,
+      imageHeight: 600,
+    },
+    urlMeta: null,
+  });
+  assert.equal(synthMt5Sell.source, 'MT5', 'Must classify MT5 SELL chart as MT5');
+  assert.equal(synthMt5Sell.instrument, 'BTCUSD', 'Must extract BTCUSD from MT5');
+  assert.equal(synthMt5Sell.position, 'SELL', 'Must detect SELL from MT5 order line');
+  assert.equal(synthMt5Sell.lotSize, 0.1, 'MT5 SELL scan MUST extract exact Lot Size 0.10');
+  assert.equal(synthMt5Sell.entryPrice, 96250, 'MT5 SELL scan must extract Entry = 96250 from order line Y');
+  assert.equal(synthMt5Sell.stopLoss, 96800, 'MT5 SELL scan must extract SL = 96800 from sl line Y (above Entry)');
+  assert.equal(synthMt5Sell.takeProfit, 95150, 'MT5 SELL scan must extract TP = 95150 from tp line Y (below Entry)');
+  console.log('✓ C4.8 APK Scan Kilat (TradingView & MT5 BUY/SELL + Lot Policy): Verified Entry, SL, TP, MT5 Lot extraction, and TradingView Equity Auto-Lot');
 }
 
 console.log('\n====================================================================');
