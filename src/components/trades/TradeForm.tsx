@@ -157,15 +157,12 @@ export const compressAndResizeImage = (
         canvas.height = height;
         const ctx = canvas.getContext('2d');
         if (ctx) {
+          ctx.fillStyle = '#0f172a';
+          ctx.fillRect(0, 0, width, height);
           ctx.imageSmoothingEnabled = true;
           ctx.imageSmoothingQuality = 'high';
           ctx.drawImage(img, 0, 0, width, height);
-          const webpUrl = canvas.toDataURL('image/webp', quality);
-          if (webpUrl && webpUrl.startsWith('data:image/webp')) {
-            resolve(webpUrl);
-          } else {
-            resolve(canvas.toDataURL('image/jpeg', quality));
-          }
+          resolve(canvas.toDataURL('image/jpeg', quality));
         } else {
           resolve(event.target?.result as string);
         }

@@ -394,14 +394,12 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
         const ctx = canvas.getContext('2d');
         let compressedDataUrl = event.target?.result as string;
         if (ctx) {
+          ctx.fillStyle = '#0f172a';
+          ctx.fillRect(0, 0, width, height);
           ctx.imageSmoothingEnabled = true;
           ctx.imageSmoothingQuality = 'high';
           ctx.drawImage(img, 0, 0, width, height);
-          const webpUrl = canvas.toDataURL('image/webp', 0.78);
-          compressedDataUrl =
-            webpUrl && webpUrl.startsWith('data:image/webp')
-              ? webpUrl
-              : canvas.toDataURL('image/jpeg', 0.78);
+          compressedDataUrl = canvas.toDataURL('image/jpeg', 0.85);
         }
 
         setIsUploadingImage(true);

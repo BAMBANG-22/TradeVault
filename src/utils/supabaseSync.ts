@@ -1387,6 +1387,62 @@ export function decodeBase64DataUrlToBlob(
 }
 
 /**
+ * Transcodes any data:image/webp (or unsupported image format) Data URL into data:image/jpeg
+ * via HTML5 Canvas when running in browser/APK WebView, preventing Supabase Storage buckets
+ * configured only for JPEG/PNG from throwing "mime type image/webp is not supported".
+ */
+export async function ensureSupabaseCompatibleImageDataUrl(dataUrl: string): Promise<string> {
+  const trimmed = (dataUrl || '').trim();
+  if (!trimmed.startsWith('data:image/')) return trimmed;
+
+  const mimeMatch = trimmed.match(/^data:(image\/[a-zA-Z0-9+.-]+);base64,/i);
+  const rawMime = mimeMatch ? mimeMatch[1].toLowerCase() : '';
+  if (rawMime === 'image/jpeg' || rawMime === 'image/jpg' || rawMime === 'image/png') {
+    return trimmed;
+  }
+
+  if (typeof document !== 'undefined' && typeof Image !== 'undefined') {
+    try {
+      const converted = await new Promise<string>((resolve) => {
+        const img = new Image();
+        img.onload = () => {
+          try {
+            const canvas = document.createElement('canvas');
+            canvas.width = img.width || 1280;
+            canvas.height = img.height || 720;
+            const ctx = canvas.getContext('2d');
+            if (ctx) {
+              ctx.fillStyle = '#0f172a';
+              ctx.fillRect(0, 0, canvas.width, canvas.height);
+              ctx.imageSmoothingEnabled = true;
+              ctx.imageSmoothingQuality = 'high';
+              ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+              const jpegUrl = canvas.toDataURL('image/jpeg', 0.88);
+              if (jpegUrl && jpegUrl.startsWith('data:image/jpeg')) {
+                resolve(jpegUrl);
+                return;
+              }
+            }
+          } catch {
+            // Fall through to header rewrite fallback
+          }
+          resolve(trimmed.replace(/^data:image\/[a-zA-Z0-9+.-]+;base64,/i, 'data:image/jpeg;base64,'));
+        };
+        img.onerror = () => {
+          resolve(trimmed.replace(/^data:image\/[a-zA-Z0-9+.-]+;base64,/i, 'data:image/jpeg;base64,'));
+        };
+        img.src = trimmed;
+      });
+      return converted;
+    } catch {
+      return trimmed.replace(/^data:image\/[a-zA-Z0-9+.-]+;base64,/i, 'data:image/jpeg;base64,');
+    }
+  }
+
+  return trimmed.replace(/^data:image\/[a-zA-Z0-9+.-]+;base64,/i, 'data:image/jpeg;base64,');
+}
+
+/**
  * Uploads a Base64 screenshot to the private Supabase Storage bucket ('trade-screenshots')
  * and returns the relative object path: "<userId>/<tradeId>_<timestamp>_<suffix>.<ext>".
  * Does NOT return a public URL or Base64.
@@ -1432,21 +1488,47 @@ export async function uploadScreenshotToSupabase(
   }
 
   try {
-    const decoded = decodeBase64DataUrlToBlob(trimmedUrl);
+    // Ensure WebP or other non-standard MIME types are converted to JPEG before uploading
+    const compatibleDataUrl = await ensureSupabaseCompatibleImageDataUrl(trimmedUrl);
+    const decoded = decodeBase64DataUrlToBlob(compatibleDataUrl);
     if (!decoded.success || !decoded.blob || !decoded.contentType || !decoded.ext) {
       return { success: false, error: decoded.error || 'Gagal memproses data gambar Base64.' };
     }
 
     const cleanTradeId = String(tradeId).trim().replace(/[^a-zA-Z0-9_-]/g, '_') || 'trade';
     const randomSuffix = Math.random().toString(36).substring(2, 8);
-    const filePath = `${cleanUserId}/${cleanTradeId}_${Date.now()}_${randomSuffix}.${decoded.ext}`;
+    let finalExt = decoded.ext === 'webp' ? 'jpg' : decoded.ext;
+    let finalContentType = decoded.contentType === 'image/webp' ? 'image/jpeg' : decoded.contentType;
+    let finalBlob =
+      decoded.blob.type === finalContentType
+        ? decoded.blob
+        : new Blob([decoded.blob], { type: finalContentType });
+    let filePath = `${cleanUserId}/${cleanTradeId}_${Date.now()}_${randomSuffix}.${finalExt}`;
 
-    const { error: uploadError } = await client.storage
+    let { error: uploadError } = await client.storage
       .from('trade-screenshots')
-      .upload(filePath, decoded.blob, {
-        contentType: decoded.contentType,
+      .upload(filePath, finalBlob, {
+        contentType: finalContentType,
         upsert: false,
       });
+
+    // Fallback: if bucket rejects MIME type for any reason, retry explicitly as image/jpeg (.jpg)
+    if (
+      uploadError &&
+      /mime\s*type|not\s*supported/i.test(String(uploadError.message || uploadError))
+    ) {
+      finalExt = 'jpg';
+      finalContentType = 'image/jpeg';
+      finalBlob = new Blob([decoded.blob], { type: 'image/jpeg' });
+      filePath = `${cleanUserId}/${cleanTradeId}_${Date.now()}_${randomSuffix}_jpg.jpg`;
+      const retryRes = await client.storage
+        .from('trade-screenshots')
+        .upload(filePath, finalBlob, {
+          contentType: 'image/jpeg',
+          upsert: false,
+        });
+      uploadError = retryRes.error;
+    }
 
     if (uploadError) {
       console.error('Supabase Storage upload error:', uploadError);
@@ -1708,19 +1790,24 @@ export async function uploadScreenshotBlobToSupabase(
 
   try {
     const cleanTradeId = String(tradeId).trim().replace(/[^a-zA-Z0-9_-]/g, '_') || 'trade';
-    const cleanExt = (preferredExt || 'jpg').toLowerCase().replace(/[^a-z0-9]/g, '') || 'jpg';
+    const rawExt = (preferredExt || 'jpg').toLowerCase().replace(/[^a-z0-9]/g, '') || 'jpg';
+    const cleanExt = rawExt === 'webp' ? 'jpg' : rawExt;
     const randomSuffix = Math.random().toString(36).substring(2, 8);
     const filePath = `${userId.trim()}/${cleanTradeId}_${Date.now()}_${randomSuffix}.${cleanExt}`;
 
     let contentType = blob.type;
-    if (!contentType || contentType === 'application/octet-stream' || !contentType.startsWith('image/')) {
+    if (
+      !contentType ||
+      contentType === 'application/octet-stream' ||
+      contentType === 'image/webp' ||
+      !contentType.startsWith('image/')
+    ) {
       if (cleanExt === 'png') contentType = 'image/png';
-      else if (cleanExt === 'webp') contentType = 'image/webp';
       else contentType = 'image/jpeg';
     }
 
     // CRITICAL: Ensure the Blob instance itself has the detected image contentType
-    // to prevent Supabase Storage from rejecting it as application/octet-stream
+    // to prevent Supabase Storage from rejecting it as application/octet-stream or image/webp
     const typedBlob = blob.type === contentType ? blob : new Blob([blob], { type: contentType });
 
     const { error: uploadError } = await client.storage

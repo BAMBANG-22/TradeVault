@@ -897,10 +897,14 @@ console.log('\n--- [C3] Testing Domain Coordinate Anchoring & Premium UI Standar
     'TradingViewOandaWidget must only be active when both MarketChartView and Live Mode are active'
   );
 
-  // 3. Verify smart WebP compression & Base64 deduplication in TradeForm.tsx & supabaseSync.ts
+  // 3. Verify universal JPEG compression & WebP-to-JPEG transcoding in TradeForm.tsx & supabaseSync.ts
   assert.ok(
-    tradeFormSrc.includes("canvas.toDataURL('image/webp'"),
-    'TradeForm.tsx must use smart WebP compression with JPEG fallback to minimize Supabase Storage usage'
+    tradeFormSrc.includes("canvas.toDataURL('image/jpeg'"),
+    'TradeForm.tsx must use universal JPEG compression compatible with Supabase Storage buckets'
+  );
+  assert.ok(
+    supabaseSyncSrc.includes('ensureSupabaseCompatibleImageDataUrl'),
+    'supabaseSync.ts must transcode any WebP data URLs to JPEG before uploading to Supabase Storage'
   );
   assert.ok(
     supabaseSyncSrc.includes('syncLifecycleExecutionNotesScreenshots') &&
