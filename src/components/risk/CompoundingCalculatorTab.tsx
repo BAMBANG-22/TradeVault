@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { AppSettings, CurrencyCode } from '../../types/settings';
 import {
   calculateCompoundingGrowth,
@@ -8,37 +8,191 @@ import {
   MAX_GROWTH_RATE_PERCENT,
 } from '../../utils/compoundingCalculator';
 import { formatCurrency } from '../../utils/calculations';
-import { AlertTriangle } from 'lucide-react';
+import { useGlobalCurrency } from '../../utils/currencyRate';
+import { AlertTriangle, HelpCircle, ChevronDown, ArrowRightLeft } from 'lucide-react';
 
 interface CompoundingCalculatorTabProps {
   settings: AppSettings;
   currentEquity: number;
 }
 
+type TableViewMode = 'comparison' | 'compounding_only' | 'fixed_only';
+
 const DURATION_PRESETS = [
-  { label: '3 Months', interval: 'monthly' as CompoundingInterval, duration: '3' },
-  { label: '6 Months', interval: 'monthly' as CompoundingInterval, duration: '6' },
-  { label: '12 Months', interval: 'monthly' as CompoundingInterval, duration: '12' },
-  { label: '24 Months', interval: 'monthly' as CompoundingInterval, duration: '24' },
-  { label: '30 Days', interval: 'daily' as CompoundingInterval, duration: '30' },
+  { label: '3 Bulan', shortLabel: '3B', interval: 'monthly' as CompoundingInterval, duration: '3' },
+  { label: '6 Bulan', shortLabel: '6B', interval: 'monthly' as CompoundingInterval, duration: '6' },
+  { label: '12 Bulan', shortLabel: '12B', interval: 'monthly' as CompoundingInterval, duration: '12' },
+  { label: '24 Bulan', shortLabel: '24B', interval: 'monthly' as CompoundingInterval, duration: '24' },
+  { label: '30 Hari', shortLabel: '30H', interval: 'daily' as CompoundingInterval, duration: '30' },
 ];
+
+const CAPITAL_PRESETS_USD = [
+  { label: '$100', value: 100 },
+  { label: '$500', value: 500 },
+  { label: '$1,000', value: 1000 },
+  { label: '$2,500', value: 2500 },
+  { label: '$5,000', value: 5000 },
+  { label: '$10,000', value: 10000 },
+];
+
+const CAPITAL_PRESETS_IDR = [
+  { label: 'Rp 1 Jt', value: 1_000_000 },
+  { label: 'Rp 5 Jt', value: 5_000_000 },
+  { label: 'Rp 10 Jt', value: 10_000_000 },
+  { label: 'Rp 25 Jt', value: 25_000_000 },
+  { label: 'Rp 50 Jt', value: 50_000_000 },
+  { label: 'Rp 100 Jt', value: 100_000_000 },
+];
+
+/**
+ * Formats integer/decimal strings with Indonesian thousand dots when currency is IDR,
+ * e.g. "10000000" -> "10.000.000" so users can read and type Rupiah amounts effortlessly.
+ */
+function formatCapitalInputForDisplay(rawNumericStr: string, currency: CurrencyCode): string {
+  if (!rawNumericStr) return '';
+  if (currency === 'IDR') {
+    const digitsOnly = rawNumericStr.replace(/[^0-9]/g, '');
+    if (!digitsOnly) return '';
+    return digitsOnly.replace(/\B(?=(\d{3})+(?!\d))/g, '.');
+  }
+  return rawNumericStr;
+}
+
+/**
+ * Compact axis formatter so large IDR values (e.g. Rp 17.958.563) never clip on SVG Y-axis.
+ */
+function formatAxisValue(amount: number, currency: CurrencyCode): string {
+  if (!Number.isFinite(amount)) return '0';
+  const abs = Math.abs(amount);
+  const sign = amount < 0 ? '-' : '';
+
+  if (currency === 'IDR') {
+    if (abs >= 1_000_000_000_000) {
+      return `${sign}Rp ${(abs / 1_000_000_000_000).toFixed(1).replace(/\.0$/, '')} T`;
+    }
+    if (abs >= 1_000_000_000) {
+      return `${sign}Rp ${(abs / 1_000_000_000).toFixed(1).replace(/\.0$/, '')} M`;
+    }
+    if (abs >= 1_000_000) {
+      return `${sign}Rp ${(abs / 1_000_000).toFixed(1).replace(/\.0$/, '')} Jt`;
+    }
+    if (abs >= 1_000) {
+      return `${sign}Rp ${Math.round(abs / 1_000)} Rb`;
+    }
+    return `${sign}Rp ${Math.round(abs)}`;
+  }
+
+  const sym = currency === 'EUR' ? '€' : '$';
+  if (abs >= 1_000_000_000) {
+    return `${sign}${sym}${(abs / 1_000_000_000).toFixed(1).replace(/\.0$/, '')}B`;
+  }
+  if (abs >= 1_000_000) {
+    return `${sign}${sym}${(abs / 1_000_000).toFixed(1).replace(/\.0$/, '')}M`;
+  }
+  if (abs >= 10_000) {
+    return `${sign}${sym}${(abs / 1_000).toFixed(1).replace(/\.0$/, '')}K`;
+  }
+  return `${sign}${sym}${abs.toLocaleString('en-US', {
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 0,
+  })}`;
+}
 
 export const CompoundingCalculatorTab: React.FC<CompoundingCalculatorTabProps> = ({
   settings,
   currentEquity,
 }) => {
-  const [startingCapitalInput, setStartingCapitalInput] = useState<string>('1000');
-  const [currency, setCurrency] = useState<CurrencyCode>(settings.currency || 'USD');
+  const { preferredCurrency, effectiveRate } = useGlobalCurrency();
+
+  // Initialize currency from global preference (USD / IDR) or account settings
+  const initialCurrency: CurrencyCode =
+    preferredCurrency === 'IDR' || settings.currency === 'IDR'
+      ? 'IDR'
+      : settings.currency || 'USD';
+
+  const [currency, setCurrency] = useState<CurrencyCode>(initialCurrency);
+  const [startingCapitalInput, setStartingCapitalInput] = useState<string>(() => {
+    if (initialCurrency === 'IDR') {
+      const baseUsd = currentEquity > 0 ? currentEquity : settings.startingBalance || 1000;
+      const converted =
+        settings.currency === 'IDR'
+          ? Math.round(baseUsd)
+          : Math.round(baseUsd * (effectiveRate || 16250));
+      return String(converted >= 100_000 ? converted : 10_000_000);
+    }
+    return '1000';
+  });
+
   const [interval, setInterval] = useState<CompoundingInterval>('monthly');
   const [growthRateInput, setGrowthRateInput] = useState<string>('5');
   const [durationInput, setDurationInput] = useState<string>('12');
   const [depositInput, setDepositInput] = useState<string>('0');
   const [depositTiming, setDepositTiming] = useState<DepositTiming>('end_of_period');
   const [showAdvancedDeposit, setShowAdvancedDeposit] = useState<boolean>(false);
+  const [tableViewMode, setTableViewMode] = useState<TableViewMode>('comparison');
+  const [showReadingGuide, setShowReadingGuide] = useState<boolean>(true);
   const [tablePage, setTablePage] = useState<number>(1);
   const rowsPerPage = 12;
 
-  const startingCapital = Math.max(0, parseFloat(startingCapitalInput) || 0);
+  // Compute live account balance in whichever currency is selected in the simulator
+  const liveAccountBalanceInSelectedCurrency = useMemo(() => {
+    const rawLiveBalance = currentEquity > 0 ? currentEquity : settings.startingBalance || 1000;
+    const baseIsIdr = settings.currency === 'IDR';
+    const rate = effectiveRate > 0 ? effectiveRate : 16250;
+
+    if (currency === 'IDR') {
+      return baseIsIdr ? Math.round(rawLiveBalance) : Math.round(rawLiveBalance * rate);
+    }
+    if (currency === 'USD') {
+      return baseIsIdr
+        ? Number((rawLiveBalance / rate).toFixed(2))
+        : Number(rawLiveBalance.toFixed(2));
+    }
+    // EUR fallback
+    return baseIsIdr
+      ? Number((rawLiveBalance / rate).toFixed(2))
+      : Number(rawLiveBalance.toFixed(2));
+  }, [currentEquity, settings.startingBalance, settings.currency, currency, effectiveRate]);
+
+  // Synchronize currency when user switches global USD/IDR preference in header/dashboard
+  useEffect(() => {
+    if (preferredCurrency && preferredCurrency !== currency && (currency === 'USD' || currency === 'IDR')) {
+      handleCurrencySwitch(preferredCurrency);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [preferredCurrency]);
+
+  const handleCurrencySwitch = (nextCurrency: CurrencyCode) => {
+    if (nextCurrency === currency) return;
+    const rate = effectiveRate > 0 ? effectiveRate : 16250;
+    const currentCap = Math.max(0, parseFloat(startingCapitalInput) || 0);
+    const currentDep = Math.max(0, parseFloat(depositInput) || 0);
+
+    if (currency !== 'IDR' && nextCurrency === 'IDR') {
+      // Convert USD/EUR -> IDR using live exchange rate
+      const nextCap = currentCap > 0 ? Math.round(currentCap * rate) : 10_000_000;
+      const nextDep = currentDep > 0 ? Math.round(currentDep * rate) : 0;
+      setStartingCapitalInput(String(nextCap));
+      setDepositInput(String(nextDep));
+    } else if (currency === 'IDR' && nextCurrency !== 'IDR') {
+      // Convert IDR -> USD/EUR using live exchange rate
+      const nextCap = currentCap > 0 ? Number((currentCap / rate).toFixed(2)) : 1000;
+      const nextDep = currentDep > 0 ? Number((currentDep / rate).toFixed(2)) : 0;
+      setStartingCapitalInput(String(nextCap));
+      setDepositInput(String(nextDep));
+    }
+
+    setCurrency(nextCurrency);
+    setTablePage(1);
+  };
+
+  const startingCapital = Math.max(
+    0,
+    currency === 'IDR'
+      ? Math.round(parseFloat(startingCapitalInput) || 0)
+      : parseFloat(startingCapitalInput) || 0
+  );
+
   const rawParsedGrowthRate =
     growthRateInput === '' || growthRateInput === '-' || growthRateInput === '-.'
       ? 0
@@ -49,7 +203,12 @@ export const CompoundingCalculatorTab: React.FC<CompoundingCalculatorTabProps> =
     (rawParsedGrowthRate < MIN_GROWTH_RATE_PERCENT || rawParsedGrowthRate > MAX_GROWTH_RATE_PERCENT);
 
   const duration = Math.max(1, Math.min(365, parseInt(durationInput, 10) || 1));
-  const regularDeposit = Math.max(0, parseFloat(depositInput) || 0);
+  const regularDeposit = Math.max(
+    0,
+    currency === 'IDR'
+      ? Math.round(parseFloat(depositInput) || 0)
+      : parseFloat(depositInput) || 0
+  );
 
   const activeSettings: AppSettings = useMemo(() => {
     let symbol = '$';
@@ -62,7 +221,7 @@ export const CompoundingCalculatorTab: React.FC<CompoundingCalculatorTabProps> =
     };
   }, [settings, currency]);
 
-  // Compute BOTH Compounding and Fixed Profit / Withdrawal simultaneously for side-by-side comparison
+  // Compute BOTH Compounding and Fixed Balance (Profit Withdrawn) simultaneously
   const compoundingResult = useMemo(() => {
     return calculateCompoundingGrowth({
       startingCapital,
@@ -88,13 +247,34 @@ export const CompoundingCalculatorTab: React.FC<CompoundingCalculatorTabProps> =
   }, [startingCapital, growthRate, interval, duration, regularDeposit, depositTiming]);
 
   const intervalUnitLabel =
-    interval === 'daily' ? 'Day' : interval === 'weekly' ? 'Week' : 'Month';
+    interval === 'daily' ? 'Hari' : interval === 'weekly' ? 'Minggu' : 'Bulan';
   const intervalReturnLabel =
     interval === 'daily'
-      ? 'Daily Return (%)'
+      ? 'Target Return Harian (%)'
       : interval === 'weekly'
-      ? 'Weekly Return (%)'
-      : 'Monthly Return (%)';
+      ? 'Target Return Mingguan (%)'
+      : 'Target Return Bulanan (%)';
+
+  const handleCapitalOrDepositInput = (rawVal: string, setter: (s: string) => void) => {
+    if (rawVal === '') {
+      setter('');
+      return;
+    }
+    if (currency === 'IDR') {
+      // In IDR mode, dots and commas typed by users are thousand separators, strip all non-digits
+      const digits = rawVal.replace(/[^0-9]/g, '').replace(/^0+(?=\d)/, '');
+      setter(digits);
+      return;
+    }
+    // In USD/EUR mode, allow standard decimal numbers
+    let cleaned = rawVal.replace(/,/g, '.').replace(/^0+(?=\d)/, '');
+    cleaned = cleaned.replace(/[^0-9.]/g, '');
+    const parts = cleaned.split('.');
+    if (parts.length > 2) {
+      cleaned = `${parts[0]}.${parts.slice(1).join('')}`;
+    }
+    setter(cleaned);
+  };
 
   const handleCleanNumberInput = (
     val: string,
@@ -112,7 +292,7 @@ export const CompoundingCalculatorTab: React.FC<CompoundingCalculatorTabProps> =
     }
     const isNeg = allowNegative && val.startsWith('-');
     const unsigned = isNeg ? val.slice(1) : val;
-    let cleaned = unsigned.replace(/^0+(?=\d)/, '');
+    let cleaned = unsigned.replace(/,/g, '.').replace(/^0+(?=\d)/, '');
     if (!allowDecimal) {
       cleaned = cleaned.replace(/[^0-9]/g, '');
     } else {
@@ -136,15 +316,42 @@ export const CompoundingCalculatorTab: React.FC<CompoundingCalculatorTabProps> =
     return `${pct.toFixed(2)}%`;
   };
 
-  // Pagination for unified table
+  // Equivalent cross-currency hint (IDR <-> USD)
+  const crossCurrencyHint = useMemo(() => {
+    const rate = effectiveRate > 0 ? effectiveRate : 16250;
+    if (currency === 'IDR') {
+      const eqUsd = startingCapital / rate;
+      return `≈ $${eqUsd.toLocaleString('en-US', {
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2,
+      })} USD (Kurs Rp ${Math.round(rate).toLocaleString('id-ID')})`;
+    }
+    if (currency === 'USD') {
+      const eqIdr = Math.round(startingCapital * rate);
+      return `≈ Rp ${eqIdr.toLocaleString('id-ID')} (Kurs Rp ${Math.round(rate).toLocaleString('id-ID')})`;
+    }
+    return null;
+  }, [currency, startingCapital, effectiveRate]);
+
+  // Compounding vs Fixed Balance difference
+  const compoundingAdvantageAmount =
+    compoundingResult.combinedTotalWealth - withdrawnResult.combinedTotalWealth;
+  const compoundingAdvantagePercent =
+    compoundingResult.totalContributedCapital > 0
+      ? (compoundingAdvantageAmount / compoundingResult.totalContributedCapital) * 100
+      : 0;
+  const fixedPeriodProfit =
+    withdrawnResult.steps.length > 0 ? withdrawnResult.steps[0].growthProfit : 0;
+
+  // Pagination for table
   const totalPages = Math.max(1, Math.ceil(compoundingResult.steps.length / rowsPerPage));
   const startIdx = (tablePage - 1) * rowsPerPage;
   const paginatedCompSteps = compoundingResult.steps.slice(startIdx, startIdx + rowsPerPage);
 
-  // Chart geometry
-  const chartHeight = 220;
-  const chartWidth = 700;
-  const padding = { top: 20, right: 24, bottom: 28, left: 68 };
+  // Chart geometry (wider left padding so IDR labels never clip)
+  const chartHeight = 235;
+  const chartWidth = 720;
+  const padding = { top: 22, right: 24, bottom: 30, left: 86 };
   const innerWidth = chartWidth - padding.left - padding.right;
   const innerHeight = chartHeight - padding.top - padding.bottom;
 
@@ -201,83 +408,142 @@ export const CompoundingCalculatorTab: React.FC<CompoundingCalculatorTabProps> =
     .map((p, idx) => `${idx === 0 ? 'M' : 'L'} ${p.x.toFixed(1)} ${p.fixedWealthY.toFixed(1)}`)
     .join(' ');
 
+  const fixedBalanceLinePath = points
+    .map((p, idx) => `${idx === 0 ? 'M' : 'L'} ${p.x.toFixed(1)} ${p.fixedBalY.toFixed(1)}`)
+    .join(' ');
+
   const isNegativeGrowth = compoundingResult.clampedGrowthRatePercent < 0;
-  const primaryStrokeColor = isNegativeGrowth ? '#E05260' : '#3B82F6';
+  const primaryStrokeColor = isNegativeGrowth ? '#E05260' : '#3478DC';
+
+  const capitalPresets = currency === 'IDR' ? CAPITAL_PRESETS_IDR : CAPITAL_PRESETS_USD;
+  const step1Comp = compoundingResult.steps[0];
+  const step2Comp = compoundingResult.steps[1];
+  const step1Fixed = withdrawnResult.steps[0];
 
   return (
     <div className="space-y-6 pt-2">
-      {/* Header & Input Section */}
+      {/* ==========================================================================
+          1. HEADER & CURRENCY / BALANCE CONTROLS
+         ========================================================================== */}
       <div className="space-y-5">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 pb-4 border-b border-[#DDE3EA] dark:border-white/[0.06]">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-4 border-b border-[#DDE3EA] dark:border-[#20252D]">
           <div>
-            <h2 className="text-sm font-semibold uppercase tracking-wider text-[#151D2A] dark:text-[#F2F5F9]">
+            <h2 className="text-sm font-semibold uppercase tracking-wider text-[#151D2A] dark:text-[#F2F4F7]">
               Simulator Compounding
             </h2>
-            <p className="text-xs text-[#697586] dark:text-[#8E98A8] mt-0.5">
-              Capital growth projection
+            <p className="text-xs text-[#667085] dark:text-[#98A2B3] mt-0.5">
+              Proyeksi pertumbuhan modal (Compounding vs Fixed Balance / Tarik Profit) dalam USD & IDR
             </p>
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
+            {/* Currency Switcher (USD / IDR / EUR) */}
+            <div className="inline-flex items-center p-0.5 rounded-lg bg-[#EEF2F6] dark:bg-[#101318] border border-[#DDE3EA] dark:border-[#20252D]">
+              {(['USD', 'IDR', 'EUR'] as CurrencyCode[]).map((c) => (
+                <button
+                  key={c}
+                  type="button"
+                  onClick={() => handleCurrencySwitch(c)}
+                  className={`px-2.5 py-1 rounded-md text-[11px] font-semibold transition-colors ${
+                    currency === c
+                      ? 'bg-[#151D2A] text-white dark:bg-[#161A22] dark:text-[#F2F4F7] border border-black/10 dark:border-white/[0.14]'
+                      : 'text-[#667085] dark:text-[#98A2B3] hover:text-[#151D2A] dark:hover:text-[#F2F4F7]'
+                  }`}
+                >
+                  {c === 'IDR' ? 'IDR (Rp)' : c === 'USD' ? 'USD ($)' : 'EUR (€)'}
+                </button>
+              ))}
+            </div>
+
+            {/* Use Current Account Balance Button (automatically formatted in active currency) */}
             <button
               type="button"
               onClick={() => {
-                const liveBal = currentEquity > 0 ? currentEquity : settings.startingBalance;
-                setStartingCapitalInput(String(Math.round(liveBal)));
+                setStartingCapitalInput(String(liveAccountBalanceInSelectedCurrency));
                 setTablePage(1);
               }}
-              className="px-3.5 py-1.5 rounded-full border border-[#DDE3EA] dark:border-white/[0.08] bg-transparent hover:bg-black/[0.03] dark:hover:bg-white/[0.04] text-xs font-medium text-[#151D2A] dark:text-[#F2F5F9] transition-colors"
+              className="px-3 py-1.5 rounded-lg border border-[#DDE3EA] dark:border-[#20252D] bg-[#F5F7FA] dark:bg-[#101318] hover:border-[#151D2A]/30 dark:hover:border-white/[0.2] text-xs font-medium text-[#151D2A] dark:text-[#F2F4F7] transition-colors font-mono-numbers tabular-nums"
             >
-              Use Current Balance (
-              {formatCurrency(
-                currentEquity > 0 ? currentEquity : settings.startingBalance,
-                settings
-              )}
-              )
+              Gunakan Saldo Akun ({formatCurrency(liveAccountBalanceInSelectedCurrency, activeSettings)})
             </button>
           </div>
         </div>
 
-        {/* Main Input Form */}
+        {/* ========================================================================
+            2. MAIN INPUT PARAMETERS
+           ======================================================================== */}
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-          {/* Initial Capital */}
-          <div>
+          {/* Modal Awal (Initial Capital) */}
+          <div className="sm:col-span-2 lg:col-span-1">
             <div className="flex items-center justify-between mb-1.5">
-              <label className="text-[11px] font-semibold uppercase tracking-wider text-[#697586] dark:text-[#8E98A8]">
-                Initial Capital ({activeSettings.currencySymbol})
+              <label className="text-[11px] font-semibold uppercase tracking-wider text-[#667085] dark:text-[#98A2B3]">
+                Modal Awal ({activeSettings.currencySymbol})
               </label>
-              <div className="flex items-center gap-1">
-                {(['USD', 'IDR', 'EUR'] as CurrencyCode[]).map((c) => (
+              <button
+                type="button"
+                onClick={() => handleCurrencySwitch(currency === 'IDR' ? 'USD' : 'IDR')}
+                className="inline-flex items-center gap-1 text-[10px] font-semibold text-[#3478DC] hover:underline"
+                title="Ubah mata uang dan konversi otomatis"
+              >
+                <ArrowRightLeft className="w-3 h-3" />
+                <span>Ke {currency === 'IDR' ? 'USD' : 'IDR'}</span>
+              </button>
+            </div>
+
+            <div className="relative">
+              <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-xs font-semibold font-mono-numbers text-[#667085] dark:text-[#98A2B3] pointer-events-none">
+                {activeSettings.currencySymbol}
+              </span>
+              <input
+                type="text"
+                inputMode="decimal"
+                value={formatCapitalInputForDisplay(startingCapitalInput, currency)}
+                onChange={(e) => {
+                  handleCapitalOrDepositInput(e.target.value, setStartingCapitalInput);
+                  setTablePage(1);
+                }}
+                className={`w-full rounded-xl bg-[#F5F7FA] dark:bg-[#101318] border border-[#DDE3EA] dark:border-[#20252D] ${
+                  currency === 'IDR' ? 'pl-9' : 'pl-7'
+                } pr-3.5 py-2.5 text-sm font-semibold font-mono-numbers tabular-nums text-[#151D2A] dark:text-[#F2F4F7] focus:border-[#151D2A] dark:focus:border-white/[0.28] focus:outline-none transition-colors`}
+                placeholder={currency === 'IDR' ? '10.000.000' : '1000'}
+              />
+            </div>
+
+            {/* Quick Capital Presets for IDR / USD */}
+            <div className="flex flex-wrap items-center gap-1 mt-2">
+              {capitalPresets.map((preset) => {
+                const isSelected = Math.abs(startingCapital - preset.value) < 0.01;
+                return (
                   <button
-                    key={c}
+                    key={preset.label}
                     type="button"
-                    onClick={() => setCurrency(c)}
-                    className={`px-2 py-0.5 rounded-full text-[10px] font-semibold transition-colors ${
-                      currency === c
-                        ? 'bg-[#3B82F6]/15 text-[#3B82F6] border border-[#3B82F6]/30'
-                        : 'text-[#697586] dark:text-[#8E98A8] hover:text-[#151D2A] dark:hover:text-[#F2F5F9]'
+                    onClick={() => {
+                      setStartingCapitalInput(String(preset.value));
+                      setTablePage(1);
+                    }}
+                    className={`px-2 py-0.5 rounded-md text-[10px] font-mono-numbers tabular-nums transition-colors border ${
+                      isSelected
+                        ? 'bg-[#151D2A] text-white border-[#151D2A] dark:bg-[#161A22] dark:text-[#F2F4F7] dark:border-white/[0.2]'
+                        : 'bg-transparent text-[#667085] dark:text-[#98A2B3] border-[#DDE3EA] dark:border-[#20252D] hover:text-[#151D2A] dark:hover:text-[#F2F4F7]'
                     }`}
                   >
-                    {c}
+                    {preset.label}
                   </button>
-                ))}
-              </div>
+                );
+              })}
             </div>
-            <input
-              type="number"
-              step="any"
-              min="0"
-              value={startingCapitalInput}
-              onChange={(e) => handleCleanNumberInput(e.target.value, setStartingCapitalInput)}
-              className="w-full rounded-xl bg-[#F5F7FA] dark:bg-white/[0.03] border border-[#DDE3EA] dark:border-white/[0.08] px-3.5 py-2.5 text-sm font-mono-numbers tabular-nums text-[#151D2A] dark:text-[#F2F5F9] focus:border-[#3B82F6] focus:outline-none transition-colors"
-              placeholder="1000"
-            />
+
+            {crossCurrencyHint && (
+              <p className="text-[10px] font-mono-numbers tabular-nums text-[#667085] dark:text-[#98A2B3] mt-1.5">
+                {crossCurrencyHint}
+              </p>
+            )}
           </div>
 
-          {/* Return (%) */}
+          {/* Return (%) & Periode */}
           <div>
             <div className="flex items-center justify-between mb-1.5">
-              <label className="text-[11px] font-semibold uppercase tracking-wider text-[#697586] dark:text-[#8E98A8]">
+              <label className="text-[11px] font-semibold uppercase tracking-wider text-[#667085] dark:text-[#98A2B3]">
                 {intervalReturnLabel}
               </label>
               <select
@@ -286,34 +552,42 @@ export const CompoundingCalculatorTab: React.FC<CompoundingCalculatorTabProps> =
                   setInterval(e.target.value as CompoundingInterval);
                   setTablePage(1);
                 }}
-                className="bg-transparent text-[11px] font-semibold text-[#3B82F6] focus:outline-none cursor-pointer"
+                className="bg-transparent text-[11px] font-semibold text-[#151D2A] dark:text-[#F2F4F7] focus:outline-none cursor-pointer"
               >
-                <option value="monthly" className="bg-white dark:bg-[#0D1015] text-[#151D2A] dark:text-[#F2F5F9]">
-                  Monthly
+                <option value="monthly" className="bg-white dark:bg-[#0B0D11] text-[#151D2A] dark:text-[#F2F4F7]">
+                  Per Bulan
                 </option>
-                <option value="weekly" className="bg-white dark:bg-[#0D1015] text-[#151D2A] dark:text-[#F2F5F9]">
-                  Weekly
+                <option value="weekly" className="bg-white dark:bg-[#0B0D11] text-[#151D2A] dark:text-[#F2F4F7]">
+                  Per Minggu
                 </option>
-                <option value="daily" className="bg-white dark:bg-[#0D1015] text-[#151D2A] dark:text-[#F2F5F9]">
-                  Daily
+                <option value="daily" className="bg-white dark:bg-[#0B0D11] text-[#151D2A] dark:text-[#F2F4F7]">
+                  Per Hari
                 </option>
               </select>
             </div>
-            <input
-              type="text"
-              inputMode="decimal"
-              value={growthRateInput}
-              onChange={(e) => handleCleanNumberInput(e.target.value, setGrowthRateInput, true, true)}
-              className="w-full rounded-xl bg-[#F5F7FA] dark:bg-white/[0.03] border border-[#DDE3EA] dark:border-white/[0.08] px-3.5 py-2.5 text-sm font-mono-numbers tabular-nums text-[#151D2A] dark:text-[#F2F5F9] focus:border-[#3B82F6] focus:outline-none transition-colors"
-              placeholder="5"
-            />
+            <div className="relative">
+              <input
+                type="text"
+                inputMode="decimal"
+                value={growthRateInput}
+                onChange={(e) => handleCleanNumberInput(e.target.value, setGrowthRateInput, true, true)}
+                className="w-full rounded-xl bg-[#F5F7FA] dark:bg-[#101318] border border-[#DDE3EA] dark:border-[#20252D] px-3.5 pr-8 py-2.5 text-sm font-semibold font-mono-numbers tabular-nums text-[#151D2A] dark:text-[#F2F4F7] focus:border-[#151D2A] dark:focus:border-white/[0.28] focus:outline-none transition-colors"
+                placeholder="5"
+              />
+              <span className="absolute right-3.5 top-1/2 -translate-y-1/2 text-xs font-mono-numbers text-[#667085] dark:text-[#98A2B3] pointer-events-none">
+                %
+              </span>
+            </div>
+            <p className="text-[10px] font-mono-numbers tabular-nums text-[#667085] dark:text-[#98A2B3] mt-1.5">
+              Profit periode ke-1: {formatSignedCurrency(step1Comp ? step1Comp.growthProfit : 0)}
+            </p>
           </div>
 
-          {/* Duration Preset + Custom Input */}
+          {/* Durasi Periode */}
           <div>
             <div className="flex items-center justify-between mb-1.5">
-              <label className="text-[11px] font-semibold uppercase tracking-wider text-[#697586] dark:text-[#8E98A8]">
-                Duration ({intervalUnitLabel}s)
+              <label className="text-[11px] font-semibold uppercase tracking-wider text-[#667085] dark:text-[#98A2B3]">
+                Durasi ({intervalUnitLabel})
               </label>
               <div className="flex items-center gap-1">
                 {DURATION_PRESETS.slice(0, 4).map((p) => {
@@ -327,13 +601,13 @@ export const CompoundingCalculatorTab: React.FC<CompoundingCalculatorTabProps> =
                         setDurationInput(p.duration);
                         setTablePage(1);
                       }}
-                      className={`px-2 py-0.5 rounded-full text-[10px] font-mono-numbers tabular-nums transition-colors ${
+                      className={`px-2 py-0.5 rounded-md text-[10px] font-mono-numbers tabular-nums transition-colors border ${
                         isActive
-                          ? 'bg-[#3B82F6]/15 text-[#3B82F6] border border-[#3B82F6]/30 font-semibold'
-                          : 'text-[#697586] dark:text-[#8E98A8] hover:text-[#151D2A] dark:hover:text-[#F2F5F9]'
+                          ? 'bg-[#151D2A] text-white border-[#151D2A] dark:bg-[#161A22] dark:text-[#F2F4F7] dark:border-white/[0.2] font-semibold'
+                          : 'bg-transparent text-[#667085] dark:text-[#98A2B3] border-transparent hover:text-[#151D2A] dark:hover:text-[#F2F4F7]'
                       }`}
                     >
-                      {p.duration}M
+                      {p.shortLabel}
                     </button>
                   );
                 })}
@@ -349,77 +623,112 @@ export const CompoundingCalculatorTab: React.FC<CompoundingCalculatorTabProps> =
                 handleCleanNumberInput(e.target.value, setDurationInput, false);
                 setTablePage(1);
               }}
-              className="w-full rounded-xl bg-[#F5F7FA] dark:bg-white/[0.03] border border-[#DDE3EA] dark:border-white/[0.08] px-3.5 py-2.5 text-sm font-mono-numbers tabular-nums text-[#151D2A] dark:text-[#F2F5F9] focus:border-[#3B82F6] focus:outline-none transition-colors"
+              className="w-full rounded-xl bg-[#F5F7FA] dark:bg-[#101318] border border-[#DDE3EA] dark:border-[#20252D] px-3.5 py-2.5 text-sm font-semibold font-mono-numbers tabular-nums text-[#151D2A] dark:text-[#F2F4F7] focus:border-[#151D2A] dark:focus:border-white/[0.28] focus:outline-none transition-colors"
               placeholder="12"
             />
+            <p className="text-[10px] text-[#667085] dark:text-[#98A2B3] mt-1.5">
+              Simulasi selama {duration} {intervalUnitLabel.toLowerCase()} ke depan
+            </p>
           </div>
 
-          {/* Action Button & Optional Deposit Toggle */}
-          <div className="flex flex-col justify-end gap-1.5">
+          {/* Tambah Deposit Rutin & Reset */}
+          <div className="flex flex-col justify-between gap-2">
             <div className="flex items-center justify-between">
-              <button
-                type="button"
-                onClick={() => setShowAdvancedDeposit((prev) => !prev)}
-                className="text-[11px] font-medium text-[#697586] dark:text-[#8E98A8] hover:text-[#151D2A] dark:hover:text-[#F2F5F9] transition-colors"
-              >
-                {showAdvancedDeposit || regularDeposit > 0
-                  ? 'Hide Regular Deposit'
-                  : '+ Add Regular Deposit'}
-              </button>
+              <span className="text-[11px] font-semibold uppercase tracking-wider text-[#667085] dark:text-[#98A2B3]">
+                Setoran Tambahan
+              </span>
+              {regularDeposit > 0 && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setDepositInput('0');
+                    setShowAdvancedDeposit(false);
+                  }}
+                  className="text-[10px] text-[#E05260] hover:underline"
+                >
+                  Reset Deposit
+                </button>
+              )}
             </div>
+
             <button
               type="button"
-              onClick={() => setTablePage(1)}
-              className="w-full rounded-full bg-[#3B82F6] hover:bg-[#2563EB] text-white text-xs font-semibold py-2.5 px-4 transition-colors"
+              onClick={() => setShowAdvancedDeposit((prev) => !prev)}
+              className={`w-full rounded-xl border px-3.5 py-2.5 text-xs font-semibold transition-colors flex items-center justify-between ${
+                showAdvancedDeposit || regularDeposit > 0
+                  ? 'bg-[#EEF2F6] dark:bg-[#161A22] border-[#151D2A]/20 dark:border-white/[0.16] text-[#151D2A] dark:text-[#F2F4F7]'
+                  : 'bg-[#F5F7FA] dark:bg-[#101318] border-[#DDE3EA] dark:border-[#20252D] text-[#667085] dark:text-[#98A2B3] hover:text-[#151D2A] dark:hover:text-[#F2F4F7]'
+              }`}
             >
-              Calculate
+              <span className="truncate font-mono-numbers tabular-nums">
+                {regularDeposit > 0
+                  ? `+${formatCurrency(regularDeposit, activeSettings)} / ${intervalUnitLabel}`
+                  : '+ Tambah Deposit Rutin (Opsional)'}
+              </span>
+              <ChevronDown
+                className={`w-3.5 h-3.5 shrink-0 transition-transform ${
+                  showAdvancedDeposit ? 'rotate-180' : ''
+                }`}
+              />
             </button>
+
+            <p className="text-[10px] text-[#667085] dark:text-[#98A2B3]">
+              {regularDeposit > 0
+                ? `Total setoran: ${formatCurrency(compoundingResult.totalDeposits, activeSettings)}`
+                : 'Tanpa deposit tambahan per periode'}
+            </p>
           </div>
         </div>
 
         {/* Optional Regular Deposit Section */}
         {(showAdvancedDeposit || regularDeposit > 0) && (
-          <div className="pt-4 border-t border-[#DDE3EA] dark:border-white/[0.06] grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <div className="p-4 rounded-xl bg-[#F5F7FA] dark:bg-[#101318] border border-[#DDE3EA] dark:border-[#20252D] grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div>
-              <label className="block text-[11px] font-semibold uppercase tracking-wider text-[#697586] dark:text-[#8E98A8] mb-1.5">
-                Regular Deposit per {intervalUnitLabel} ({activeSettings.currencySymbol})
+              <label className="block text-[11px] font-semibold uppercase tracking-wider text-[#667085] dark:text-[#98A2B3] mb-1.5">
+                Deposit Rutin per {intervalUnitLabel} ({activeSettings.currencySymbol})
               </label>
-              <input
-                type="number"
-                step="any"
-                min="0"
-                value={depositInput}
-                onChange={(e) => handleCleanNumberInput(e.target.value, setDepositInput)}
-                className="w-full rounded-xl bg-[#F5F7FA] dark:bg-white/[0.03] border border-[#DDE3EA] dark:border-white/[0.08] px-3.5 py-2.5 text-sm font-mono-numbers tabular-nums text-[#151D2A] dark:text-[#F2F5F9] focus:border-[#3B82F6] focus:outline-none transition-colors"
-                placeholder="0"
-              />
+              <div className="relative">
+                <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-xs font-semibold font-mono-numbers text-[#667085] dark:text-[#98A2B3] pointer-events-none">
+                  {activeSettings.currencySymbol}
+                </span>
+                <input
+                  type="text"
+                  inputMode="decimal"
+                  value={formatCapitalInputForDisplay(depositInput, currency)}
+                  onChange={(e) => handleCapitalOrDepositInput(e.target.value, setDepositInput)}
+                  className={`w-full rounded-xl bg-white dark:bg-[#0B0D11] border border-[#DDE3EA] dark:border-[#20252D] ${
+                    currency === 'IDR' ? 'pl-9' : 'pl-7'
+                  } pr-3.5 py-2 text-sm font-mono-numbers tabular-nums text-[#151D2A] dark:text-[#F2F4F7] focus:border-[#151D2A] dark:focus:border-white/[0.28] focus:outline-none transition-colors`}
+                  placeholder="0"
+                />
+              </div>
             </div>
             <div>
-              <label className="block text-[11px] font-semibold uppercase tracking-wider text-[#697586] dark:text-[#8E98A8] mb-1.5">
-                Deposit Timing (Compounding Mode)
+              <label className="block text-[11px] font-semibold uppercase tracking-wider text-[#667085] dark:text-[#98A2B3] mb-1.5">
+                Waktu Setor Deposit (Mode Compounding)
               </label>
               <div className="grid grid-cols-2 gap-2">
                 <button
                   type="button"
                   onClick={() => setDepositTiming('end_of_period')}
-                  className={`py-2.5 px-3 rounded-full border text-xs font-semibold transition-colors ${
+                  className={`py-2 px-3 rounded-lg border text-xs font-semibold transition-colors ${
                     depositTiming === 'end_of_period'
-                      ? 'bg-[#3B82F6]/15 text-[#3B82F6] border-[#3B82F6]/40'
-                      : 'bg-transparent text-[#697586] dark:text-[#8E98A8] border-[#DDE3EA] dark:border-white/[0.08]'
+                      ? 'bg-[#151D2A] text-white border-[#151D2A] dark:bg-[#161A22] dark:text-[#F2F4F7] dark:border-white/[0.18]'
+                      : 'bg-white dark:bg-[#0B0D11] text-[#667085] dark:text-[#98A2B3] border-[#DDE3EA] dark:border-[#20252D]'
                   }`}
                 >
-                  End of Period
+                  Akhir Periode
                 </button>
                 <button
                   type="button"
                   onClick={() => setDepositTiming('start_of_period')}
-                  className={`py-2.5 px-3 rounded-full border text-xs font-semibold transition-colors ${
+                  className={`py-2 px-3 rounded-lg border text-xs font-semibold transition-colors ${
                     depositTiming === 'start_of_period'
-                      ? 'bg-[#3B82F6]/15 text-[#3B82F6] border-[#3B82F6]/40'
-                      : 'bg-transparent text-[#697586] dark:text-[#8E98A8] border-[#DDE3EA] dark:border-white/[0.08]'
+                      ? 'bg-[#151D2A] text-white border-[#151D2A] dark:bg-[#161A22] dark:text-[#F2F4F7] dark:border-white/[0.18]'
+                      : 'bg-white dark:bg-[#0B0D11] text-[#667085] dark:text-[#98A2B3] border-[#DDE3EA] dark:border-[#20252D]'
                   }`}
                 >
-                  Start of Period
+                  Awal Periode
                 </button>
               </div>
             </div>
@@ -430,140 +739,209 @@ export const CompoundingCalculatorTab: React.FC<CompoundingCalculatorTabProps> =
           <div className="p-3 rounded-xl bg-amber-500/10 border border-amber-500/25 text-amber-700 dark:text-amber-300 text-xs flex items-start gap-2">
             <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
             <span>
-              Return rate is clamped to the valid mathematical range ({MIN_GROWTH_RATE_PERCENT}% to +{MAX_GROWTH_RATE_PERCENT}%). Effective rate used: {compoundingResult.clampedGrowthRatePercent}%.
+              Persentase return dibatasi pada rentang matematis ({MIN_GROWTH_RATE_PERCENT}% s/d +{MAX_GROWTH_RATE_PERCENT}%). Nilai yang digunakan: {compoundingResult.clampedGrowthRatePercent}%.
             </span>
           </div>
         )}
       </div>
 
-      {/* Side-by-Side Comparison: COMPOUNDING vs FIXED PROFIT / WITHDRAWAL */}
-      <div className="pt-5 border-t border-[#DDE3EA] dark:border-white/[0.06] grid grid-cols-1 md:grid-cols-2 gap-6">
-        {/* Column 1: COMPOUNDING */}
-        <div className="space-y-3.5 md:pr-6 md:border-r md:border-[#DDE3EA] md:dark:border-white/[0.06]">
-          <div className="flex items-center justify-between pb-2.5 border-b border-[#DDE3EA] dark:border-white/[0.06]">
-            <span className="text-xs font-semibold uppercase tracking-wider text-[#151D2A] dark:text-[#F2F5F9]">
-              Compounding
-            </span>
-            <span className="text-[11px] text-[#697586] dark:text-[#8E98A8]">
-              Reinvested each {intervalUnitLabel.toLowerCase()}
-            </span>
-          </div>
-
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <span className="text-xs text-[#697586] dark:text-[#8E98A8] block mb-1">
-                Ending Balance
+      {/* ==========================================================================
+          3. SIDE-BY-SIDE SUMMARY: SKENARIO 1 (COMPOUNDING) vs SKENARIO 2 (FIXED BALANCE)
+         ========================================================================== */}
+      <div className="pt-5 border-t border-[#DDE3EA] dark:border-[#20252D] space-y-4">
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+          {/* SKENARIO 1: MODE COMPOUNDING (PROFIT DIGULUNG) */}
+          <div className="p-4 rounded-xl bg-[#F5F7FA] dark:bg-[#101318] border border-[#DDE3EA] dark:border-[#20252D] space-y-3.5">
+            <div className="flex items-start justify-between gap-2 pb-3 border-b border-[#DDE3EA] dark:border-[#20252D]">
+              <div>
+                <div className="flex items-center gap-2">
+                  <span className="h-2.5 w-2.5 rounded-full bg-[#3478DC]" />
+                  <span className="text-xs font-bold uppercase tracking-wider text-[#151D2A] dark:text-[#F2F4F7]">
+                    Skenario 1: Mode Compounding
+                  </span>
+                </div>
+                <p className="text-[11px] text-[#667085] dark:text-[#98A2B3] mt-1">
+                  Profit <strong>tidak ditarik</strong> — langsung digabung ke modal {intervalUnitLabel.toLowerCase()} berikutnya (bunga berbunga).
+                </p>
+              </div>
+              <span className="px-2 py-0.5 rounded text-[10px] font-semibold bg-[#3478DC]/15 text-[#3478DC] shrink-0">
+                Profit Digulung
               </span>
-              <div className="text-xl sm:text-2xl font-bold font-mono-numbers tabular-nums text-[#151D2A] dark:text-[#F2F5F9]">
-                {formatCurrency(compoundingResult.endingBalance, activeSettings)}
+            </div>
+
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <span className="text-[11px] text-[#667085] dark:text-[#98A2B3] block mb-1">
+                  Saldo Akhir Akun ({duration} {intervalUnitLabel})
+                </span>
+                <div className="text-lg sm:text-xl font-bold font-mono-numbers tabular-nums text-[#151D2A] dark:text-[#F2F4F7]">
+                  {formatCurrency(compoundingResult.endingBalance, activeSettings)}
+                </div>
+                <span className="text-[11px] font-mono-numbers tabular-nums text-[#667085] dark:text-[#98A2B3] block mt-0.5">
+                  Modal Awal: {formatCurrency(startingCapital, activeSettings)}
+                </span>
+              </div>
+
+              <div>
+                <span className="text-[11px] text-[#667085] dark:text-[#98A2B3] block mb-1">
+                  Total Profit Compound
+                </span>
+                <div
+                  className={`text-lg sm:text-xl font-bold font-mono-numbers tabular-nums ${
+                    compoundingResult.pureGrowthProfit >= 0
+                      ? 'text-[#059669] dark:text-[#00A878]'
+                      : 'text-[#E11D48] dark:text-[#E05260]'
+                  }`}
+                >
+                  {formatSignedCurrency(compoundingResult.pureGrowthProfit)}
+                </div>
+                <span className="text-[11px] font-mono-numbers tabular-nums text-[#667085] dark:text-[#98A2B3] block mt-0.5">
+                  Pertumbuhan: {formatSignedPercent(compoundingResult.profitToTotalContributedPercent)}
+                </span>
               </div>
             </div>
 
-            <div>
-              <span className="text-xs text-[#697586] dark:text-[#8E98A8] block mb-1">
-                Total Profit
-              </span>
-              <div
-                className={`text-xl sm:text-2xl font-bold font-mono-numbers tabular-nums ${
-                  compoundingResult.pureGrowthProfit >= 0
-                    ? 'text-[#00A878]'
-                    : 'text-[#E05260]'
-                }`}
-              >
-                {formatSignedCurrency(compoundingResult.pureGrowthProfit)}
-              </div>
-              <span className="text-[11px] font-mono-numbers tabular-nums text-[#697586] dark:text-[#8E98A8] block mt-0.5">
-                {formatSignedPercent(compoundingResult.profitToTotalContributedPercent)} of capital
+            <div className="pt-2.5 border-t border-[#DDE3EA] dark:border-[#20252D] flex items-center justify-between text-[11px] text-[#667085] dark:text-[#98A2B3]">
+              <span>Alur Profit per {intervalUnitLabel}:</span>
+              <span className="font-mono-numbers tabular-nums text-[#151D2A] dark:text-[#F2F4F7]">
+                {step1Comp ? formatSignedCurrency(step1Comp.growthProfit) : '0'}
+                {step2Comp ? ` → ${formatSignedCurrency(step2Comp.growthProfit)} → ...` : ''} (Makin Besar)
               </span>
             </div>
           </div>
 
-          {regularDeposit > 0 && (
-            <div className="pt-2.5 border-t border-[#DDE3EA] dark:border-white/[0.06] flex items-center justify-between text-xs text-[#697586] dark:text-[#8E98A8]">
-              <span>Total Contributed Capital</span>
-              <span className="font-mono-numbers tabular-nums font-medium text-[#151D2A] dark:text-[#F2F5F9]">
-                {formatCurrency(compoundingResult.totalContributedCapital, activeSettings)}
+          {/* SKENARIO 2: MODE FIXED BALANCE (PROFIT DITARIK TIAP PERIODE) */}
+          <div className="p-4 rounded-xl bg-[#F5F7FA] dark:bg-[#101318] border border-[#DDE3EA] dark:border-[#20252D] space-y-3.5">
+            <div className="flex items-start justify-between gap-2 pb-3 border-b border-[#DDE3EA] dark:border-[#20252D]">
+              <div>
+                <div className="flex items-center gap-2">
+                  <span className="h-2.5 w-2.5 rounded-full bg-[#00A878]" />
+                  <span className="text-xs font-bold uppercase tracking-wider text-[#151D2A] dark:text-[#F2F4F7]">
+                    Skenario 2: Mode Fixed Balance
+                  </span>
+                </div>
+                <p className="text-[11px] text-[#667085] dark:text-[#98A2B3] mt-1">
+                  Profit <strong>selalu ditarik keluar (withdraw)</strong> setiap akhir {intervalUnitLabel.toLowerCase()} — modal di akun dijaga tetap.
+                </p>
+              </div>
+              <span className="px-2 py-0.5 rounded text-[10px] font-semibold bg-[#00A878]/15 text-[#059669] dark:text-[#00A878] shrink-0">
+                Profit Ditarik
               </span>
             </div>
-          )}
+
+            <div className="grid grid-cols-3 gap-3">
+              <div>
+                <span className="text-[11px] text-[#667085] dark:text-[#98A2B3] block mb-1">
+                  Saldo Tetap di Akun
+                </span>
+                <div className="text-sm sm:text-base font-bold font-mono-numbers tabular-nums text-[#151D2A] dark:text-[#F2F4F7]">
+                  {formatCurrency(withdrawnResult.endingBalance, activeSettings)}
+                </div>
+                <span className="text-[10px] text-[#667085] dark:text-[#98A2B3] block mt-0.5">
+                  Modal tidak berubah
+                </span>
+              </div>
+
+              <div>
+                <span className="text-[11px] text-[#667085] dark:text-[#98A2B3] block mb-1">
+                  Total Profit Ditarik
+                </span>
+                <div
+                  className={`text-sm sm:text-base font-bold font-mono-numbers tabular-nums ${
+                    withdrawnResult.totalWithdrawnProfit >= 0
+                      ? 'text-[#059669] dark:text-[#00A878]'
+                      : 'text-[#E11D48] dark:text-[#E05260]'
+                  }`}
+                >
+                  {formatSignedCurrency(withdrawnResult.totalWithdrawnProfit)}
+                </div>
+                <span className="text-[10px] font-mono-numbers tabular-nums text-[#667085] dark:text-[#98A2B3] block mt-0.5">
+                  {duration}x tarik @ {formatCurrency(Math.max(0, fixedPeriodProfit), activeSettings)}
+                </span>
+              </div>
+
+              <div>
+                <span className="text-[11px] text-[#667085] dark:text-[#98A2B3] block mb-1">
+                  Total Hasil Gabungan
+                </span>
+                <div className="text-sm sm:text-base font-bold font-mono-numbers tabular-nums text-[#151D2A] dark:text-[#F2F4F7]">
+                  {formatCurrency(withdrawnResult.combinedTotalWealth, activeSettings)}
+                </div>
+                <span className="text-[10px] text-[#667085] dark:text-[#98A2B3] block mt-0.5">
+                  Saldo Akun + Tarik
+                </span>
+              </div>
+            </div>
+
+            <div className="pt-2.5 border-t border-[#DDE3EA] dark:border-[#20252D] flex items-center justify-between text-[11px] text-[#667085] dark:text-[#98A2B3]">
+              <span>Alur Profit per {intervalUnitLabel}:</span>
+              <span className="font-mono-numbers tabular-nums text-[#151D2A] dark:text-[#F2F4F7]">
+                Tetap {step1Fixed ? formatSignedCurrency(step1Fixed.growthProfit) : '0'} setiap {intervalUnitLabel.toLowerCase()}
+              </span>
+            </div>
+          </div>
         </div>
 
-        {/* Column 2: FIXED PROFIT / WITHDRAWAL */}
-        <div className="space-y-3.5">
-          <div className="flex items-center justify-between pb-2.5 border-b border-[#DDE3EA] dark:border-white/[0.06]">
-            <span className="text-xs font-semibold uppercase tracking-wider text-[#151D2A] dark:text-[#F2F5F9]">
-              Fixed Profit / Withdrawal
+        {/* Ringkasan Selisih Efek Compounding */}
+        {compoundingAdvantageAmount > 0 && (
+          <div className="px-4 py-3 rounded-xl bg-[#EEF2F6]/70 dark:bg-[#101318] border border-[#DDE3EA] dark:border-[#20252D] flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs">
+            <span className="text-[#667085] dark:text-[#98A2B3]">
+              Keunggulan <strong>Mode Compounding</strong> dibanding <strong>Fixed Balance</strong> setelah {duration} {intervalUnitLabel.toLowerCase()}:
             </span>
-            <span className="text-[11px] text-[#697586] dark:text-[#8E98A8]">
-              Profit withdrawn each {intervalUnitLabel.toLowerCase()}
+            <span className="font-mono-numbers tabular-nums font-bold text-[#059669] dark:text-[#00A878]">
+              +{formatCurrency(compoundingAdvantageAmount, activeSettings)} lebih besar ({formatSignedPercent(compoundingAdvantagePercent)})
             </span>
           </div>
-
-          <div className="grid grid-cols-3 gap-3">
-            <div>
-              <span className="text-xs text-[#697586] dark:text-[#8E98A8] block mb-1">
-                Account Balance
-              </span>
-              <div className="text-base sm:text-lg font-bold font-mono-numbers tabular-nums text-[#151D2A] dark:text-[#F2F5F9]">
-                {formatCurrency(withdrawnResult.endingBalance, activeSettings)}
-              </div>
-            </div>
-
-            <div>
-              <span className="text-xs text-[#697586] dark:text-[#8E98A8] block mb-1">
-                Total Withdrawn
-              </span>
-              <div
-                className={`text-base sm:text-lg font-bold font-mono-numbers tabular-nums ${
-                  withdrawnResult.totalWithdrawnProfit >= 0
-                    ? 'text-[#00A878]'
-                    : 'text-[#E05260]'
-                }`}
-              >
-                {formatSignedCurrency(withdrawnResult.totalWithdrawnProfit)}
-              </div>
-            </div>
-
-            <div>
-              <span className="text-xs text-[#697586] dark:text-[#8E98A8] block mb-1">
-                Total Wealth
-              </span>
-              <div className="text-base sm:text-lg font-bold font-mono-numbers tabular-nums text-[#151D2A] dark:text-[#F2F5F9]">
-                {formatCurrency(withdrawnResult.combinedTotalWealth, activeSettings)}
-              </div>
-            </div>
-          </div>
-        </div>
+        )}
       </div>
 
-      {/* GROWTH PROJECTION CHART */}
-      <div className="pt-5 border-t border-[#DDE3EA] dark:border-white/[0.06] space-y-4">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-          <h3 className="text-xs font-semibold uppercase tracking-wider text-[#151D2A] dark:text-[#F2F5F9]">
-            Growth Projection
-          </h3>
+      {/* ==========================================================================
+          4. GROWTH PROJECTION CHART (3 Jelas Garis: Compounding, Total Hasil Fixed, Saldo Akun Fixed)
+         ========================================================================== */}
+      <div className="pt-5 border-t border-[#DDE3EA] dark:border-[#20252D] space-y-4">
+        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-2">
+          <div>
+            <h3 className="text-xs font-semibold uppercase tracking-wider text-[#151D2A] dark:text-[#F2F4F7]">
+              Grafik Proyeksi Pertumbuhan (Growth Projection)
+            </h3>
+            <p className="text-[11px] text-[#667085] dark:text-[#98A2B3] mt-0.5">
+              Perbandingan kurva eksponensial Compounding vs garis lurus Fixed Balance
+            </p>
+          </div>
 
-          <div className="flex flex-wrap items-center gap-4 text-xs">
-            <span className="inline-flex items-center gap-1.5 text-[#151D2A] dark:text-[#F2F5F9]">
+          <div className="flex flex-wrap items-center gap-4 text-[11px]">
+            <span className="inline-flex items-center gap-1.5 text-[#151D2A] dark:text-[#F2F4F7] font-medium">
               <span
-                className="h-2 w-2 rounded-full"
+                className="h-2.5 w-2.5 rounded-full"
                 style={{ backgroundColor: primaryStrokeColor }}
               />
-              <span>Compounding ({formatCurrency(compoundingResult.endingBalance, activeSettings)})</span>
+              <span>
+                Saldo Compounding ({formatCurrency(compoundingResult.endingBalance, activeSettings)})
+              </span>
             </span>
-            <span className="inline-flex items-center gap-1.5 text-[#697586] dark:text-[#8E98A8]">
-              <span className="h-2 w-2 rounded-full bg-[#00A878]" />
-              <span>Fixed Total Wealth ({formatCurrency(withdrawnResult.combinedTotalWealth, activeSettings)})</span>
+
+            <span className="inline-flex items-center gap-1.5 text-[#667085] dark:text-[#98A2B3]">
+              <span className="h-0.5 w-3.5 bg-[#00A878] inline-block" />
+              <span>
+                Total Hasil Fixed: Modal + Profit Ditarik ({formatCurrency(withdrawnResult.combinedTotalWealth, activeSettings)})
+              </span>
+            </span>
+
+            <span className="inline-flex items-center gap-1.5 text-[#667085] dark:text-[#98A2B3]">
+              <span className="h-0.5 w-3.5 bg-[#667085] dark:bg-[#98A2B3] inline-block opacity-70" />
+              <span>
+                Saldo Tetap di Akun ({formatCurrency(withdrawnResult.endingBalance, activeSettings)})
+              </span>
             </span>
           </div>
         </div>
 
         <div className="w-full overflow-x-auto">
-          <div className="min-w-[540px] h-[220px]">
+          <div className="min-w-[540px] h-[235px]">
             <svg viewBox={`0 0 ${chartWidth} ${chartHeight}`} className="w-full h-full">
               <defs>
                 <linearGradient id="compGrowthGrad" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="0%" stopColor={primaryStrokeColor} stopOpacity="0.14" />
+                  <stop offset="0%" stopColor={primaryStrokeColor} stopOpacity="0.16" />
                   <stop offset="100%" stopColor={primaryStrokeColor} stopOpacity="0.0" />
                 </linearGradient>
               </defs>
@@ -584,12 +962,12 @@ export const CompoundingCalculatorTab: React.FC<CompoundingCalculatorTabProps> =
                     <text
                       x={padding.left - 8}
                       y={y + 4}
-                      fill="#8E98A8"
+                      fill="#98A2B3"
                       fontSize="10"
                       textAnchor="end"
                       fontFamily="Arial, Helvetica, sans-serif"
                     >
-                      {formatCurrency(val, activeSettings)}
+                      {formatAxisValue(val, currency)}
                     </text>
                   </g>
                 );
@@ -597,7 +975,17 @@ export const CompoundingCalculatorTab: React.FC<CompoundingCalculatorTabProps> =
 
               <path d={compAreaPath} fill="url(#compGrowthGrad)" />
 
-              {/* Fixed Profit Total Wealth Line (Dashed) */}
+              {/* Line 3: Fixed Account Balance (Flat Principal in Trading Account) */}
+              <path
+                d={fixedBalanceLinePath}
+                fill="none"
+                stroke="#667085"
+                strokeWidth="1.25"
+                strokeDasharray="2 3"
+                strokeOpacity="0.7"
+              />
+
+              {/* Line 2: Fixed Profit Total Wealth Line (Principal + Cumulative Withdrawn Profit) */}
               <path
                 d={fixedWealthLinePath}
                 fill="none"
@@ -608,12 +996,12 @@ export const CompoundingCalculatorTab: React.FC<CompoundingCalculatorTabProps> =
                 strokeLinejoin="round"
               />
 
-              {/* Compounding Line */}
+              {/* Line 1: Compounding Ending Balance Line */}
               <path
                 d={compLinePath}
                 fill="none"
                 stroke={primaryStrokeColor}
-                strokeWidth="2"
+                strokeWidth="2.25"
                 strokeLinecap="round"
                 strokeLinejoin="round"
               />
@@ -622,16 +1010,26 @@ export const CompoundingCalculatorTab: React.FC<CompoundingCalculatorTabProps> =
               <text
                 x={padding.left}
                 y={chartHeight - 6}
-                fill="#8E98A8"
+                fill="#98A2B3"
                 fontSize="10"
                 fontFamily="Arial, Helvetica, sans-serif"
               >
-                Start
+                Awal ({intervalUnitLabel} 0)
+              </text>
+              <text
+                x={padding.left + innerWidth / 2}
+                y={chartHeight - 6}
+                fill="#98A2B3"
+                fontSize="10"
+                textAnchor="middle"
+                fontFamily="Arial, Helvetica, sans-serif"
+              >
+                {intervalUnitLabel} {Math.max(1, Math.round(duration / 2))}
               </text>
               <text
                 x={chartWidth - padding.right}
                 y={chartHeight - 6}
-                fill="#8E98A8"
+                fill="#98A2B3"
                 fontSize="10"
                 textAnchor="end"
                 fontFamily="Arial, Helvetica, sans-serif"
@@ -643,100 +1041,366 @@ export const CompoundingCalculatorTab: React.FC<CompoundingCalculatorTabProps> =
         </div>
       </div>
 
-      {/* MONTHLY / PERIOD PROJECTION TABLE */}
-      <div className="pt-5 border-t border-[#DDE3EA] dark:border-white/[0.06] space-y-4">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-          <h3 className="text-xs font-semibold uppercase tracking-wider text-[#151D2A] dark:text-[#F2F5F9]">
-            {interval === 'monthly' ? 'Monthly Projection' : `${intervalUnitLabel}ly Projection`}
-          </h3>
-          <span className="text-xs font-mono-numbers tabular-nums text-[#697586] dark:text-[#8E98A8]">
-            Page {tablePage} of {totalPages} ({compoundingResult.steps.length} {intervalUnitLabel}s)
-          </span>
+      {/* ==========================================================================
+          5. CARA MEMBACA SIMULASI & TABEL PROJECTION PERIODE DEMI PERIODE
+         ========================================================================== */}
+      <div className="pt-5 border-t border-[#DDE3EA] dark:border-[#20252D] space-y-4">
+        {/* Interactive Guide Toggle & Table Mode Selector */}
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div className="flex items-center gap-2.5">
+            <h3 className="text-xs font-semibold uppercase tracking-wider text-[#151D2A] dark:text-[#F2F4F7]">
+              Tabel Rincian Proyeksi per {intervalUnitLabel}
+            </h3>
+            <button
+              type="button"
+              onClick={() => setShowReadingGuide((prev) => !prev)}
+              className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-medium bg-[#EEF2F6] dark:bg-[#101318] text-[#151D2A] dark:text-[#F2F4F7] border border-[#DDE3EA] dark:border-[#20252D]"
+            >
+              <HelpCircle className="w-3 h-3 text-[#3478DC]" />
+              <span>{showReadingGuide ? 'Tutup Panduan Baca' : 'Cara Membaca Tabel'}</span>
+            </button>
+          </div>
+
+          {/* Mode Tampilan Tabel */}
+          <div className="inline-flex items-center p-0.5 rounded-lg bg-[#EEF2F6] dark:bg-[#101318] border border-[#DDE3EA] dark:border-[#20252D] self-start sm:self-auto">
+            <button
+              type="button"
+              onClick={() => setTableViewMode('comparison')}
+              className={`px-2.5 py-1 rounded-md text-[11px] font-semibold transition-colors ${
+                tableViewMode === 'comparison'
+                  ? 'bg-[#151D2A] text-white dark:bg-[#161A22] dark:text-[#F2F4F7] border border-black/10 dark:border-white/[0.14]'
+                  : 'text-[#667085] dark:text-[#98A2B3] hover:text-[#151D2A] dark:hover:text-[#F2F4F7]'
+              }`}
+            >
+              Perbandingan
+            </button>
+            <button
+              type="button"
+              onClick={() => setTableViewMode('compounding_only')}
+              className={`px-2.5 py-1 rounded-md text-[11px] font-semibold transition-colors ${
+                tableViewMode === 'compounding_only'
+                  ? 'bg-[#151D2A] text-white dark:bg-[#161A22] dark:text-[#F2F4F7] border border-black/10 dark:border-white/[0.14]'
+                  : 'text-[#667085] dark:text-[#98A2B3] hover:text-[#151D2A] dark:hover:text-[#F2F4F7]'
+              }`}
+            >
+              Fokus Compound
+            </button>
+            <button
+              type="button"
+              onClick={() => setTableViewMode('fixed_only')}
+              className={`px-2.5 py-1 rounded-md text-[11px] font-semibold transition-colors ${
+                tableViewMode === 'fixed_only'
+                  ? 'bg-[#151D2A] text-white dark:bg-[#161A22] dark:text-[#F2F4F7] border border-black/10 dark:border-white/[0.14]'
+                  : 'text-[#667085] dark:text-[#98A2B3] hover:text-[#151D2A] dark:hover:text-[#F2F4F7]'
+              }`}
+            >
+              Fokus Fixed Balance
+            </button>
+          </div>
         </div>
 
-        <div className="overflow-x-auto">
-          <table className="w-full text-left text-xs text-[#151D2A] dark:text-[#F2F5F9]">
-            <thead className="border-b border-[#DDE3EA] dark:border-white/[0.06] text-[11px] uppercase tracking-wider text-[#697586] dark:text-[#8E98A8]">
-              <tr>
-                <th className="py-2.5 px-3">{intervalUnitLabel}</th>
-                <th className="py-2.5 px-3 font-mono-numbers">Compounding</th>
-                <th className="py-2.5 px-3 font-mono-numbers">Period Profit</th>
-                <th className="py-2.5 px-3 font-mono-numbers">Fixed Balance</th>
-                <th className="py-2.5 px-3 font-mono-numbers">Withdrawn</th>
-                <th className="py-2.5 px-3 font-mono-numbers">Total Wealth</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-[#DDE3EA] dark:divide-white/[0.05] font-mono-numbers tabular-nums">
-              {paginatedCompSteps.map((cStep, idx) => {
-                const globalIdx = startIdx + idx;
-                const wStep = withdrawnResult.steps[globalIdx];
-                return (
+        {/* Panduan Cara Membaca Simulasi (Menggunakan Angka Aktual Pengguna) */}
+        {showReadingGuide && step1Comp && (
+          <div className="p-4 rounded-xl bg-[#F5F7FA] dark:bg-[#101318] border border-[#DDE3EA] dark:border-[#20252D] space-y-2.5 text-xs">
+            <div className="font-semibold text-[#151D2A] dark:text-[#F2F4F7]">
+              Cara Membaca Perbandingan Simulasi Ini (Modal Awal {formatCurrency(startingCapital, activeSettings)}, Return {compoundingResult.clampedGrowthRatePercent}% per {intervalUnitLabel.toLowerCase()}):
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-[11px] text-[#667085] dark:text-[#98A2B3] leading-relaxed">
+              <div className="p-3 rounded-lg bg-white dark:bg-[#0B0D11] border border-[#DDE3EA] dark:border-[#20252D]">
+                <span className="font-semibold text-[#3478DC] block mb-1">
+                  1. Kolom Skenario Compounding (Gulung Modal)
+                </span>
+                Pada {intervalUnitLabel} 1, modal <strong>{formatCurrency(step1Comp.startBalance, activeSettings)}</strong> menghasilkan profit <strong>{formatSignedCurrency(step1Comp.growthProfit)}</strong> sehingga Saldo Akhir menjadi <strong>{formatCurrency(step1Comp.endBalance, activeSettings)}</strong>.
+                {step2Comp && (
+                  <>
+                    {' '}Pada {intervalUnitLabel} 2, profit {compoundingResult.clampedGrowthRatePercent}% dihitung dari saldo baru <strong>{formatCurrency(step2Comp.startBalance, activeSettings)}</strong> (bukan modal awal lagi), menghasilkan <strong>{formatSignedCurrency(step2Comp.growthProfit)}</strong> → Saldo naik ke <strong>{formatCurrency(step2Comp.endBalance, activeSettings)}</strong>.
+                  </>
+                )}
+              </div>
+
+              <div className="p-3 rounded-lg bg-white dark:bg-[#0B0D11] border border-[#DDE3EA] dark:border-[#20252D]">
+                <span className="font-semibold text-[#059669] dark:text-[#00A878] block mb-1">
+                  2. Kolom Skenario Fixed Balance (Tarik Profit)
+                </span>
+                Setiap akhir {intervalUnitLabel.toLowerCase()}, profit sebesar <strong>{formatSignedCurrency(step1Fixed ? step1Fixed.growthProfit : 0)}</strong> langsung <strong>ditarik ke rekening bank</strong>. Akibatnya:
+                <ul className="list-disc list-inside mt-1 space-y-0.5">
+                  <li><strong>Saldo di Akun</strong> tetap <strong>{formatCurrency(step1Fixed ? step1Fixed.endBalance : startingCapital, activeSettings)}</strong>.</li>
+                  <li><strong>Tarik Kumulatif</strong> adalah total uang profit yang sudah Anda kantongi sejak {intervalUnitLabel} 1.</li>
+                  <li><strong>Total Hasil</strong> = Saldo di Akun + Total Profit yang sudah ditarik.</li>
+                </ul>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* TABLE VIEW 1: SIDE-BY-SIDE COMPARISON WITH GROUP HEADERS */}
+        {tableViewMode === 'comparison' && (
+          <div className="overflow-x-auto rounded-xl border border-[#DDE3EA] dark:border-[#20252D]">
+            <table className="w-full text-left text-xs text-[#151D2A] dark:text-[#F2F4F7]">
+              <thead>
+                {/* Group Header Row */}
+                <tr className="border-b border-[#DDE3EA] dark:border-[#20252D] bg-[#EEF2F6]/70 dark:bg-[#101318] text-[10px] font-bold uppercase tracking-wider">
+                  <th className="py-2 px-3 text-[#667085] dark:text-[#98A2B3] border-r border-[#DDE3EA] dark:border-[#20252D]">
+                    Periode
+                  </th>
+                  <th
+                    colSpan={3}
+                    className="py-2 px-3 text-[#3478DC] border-r border-[#DDE3EA] dark:border-[#20252D]"
+                  >
+                    Skenario 1: Compounding (Profit Digulung)
+                  </th>
+                  <th
+                    colSpan={3}
+                    className="py-2 px-3 text-[#059669] dark:text-[#00A878] border-r border-[#DDE3EA] dark:border-[#20252D]"
+                  >
+                    Skenario 2: Fixed Balance (Profit Ditarik)
+                  </th>
+                  <th className="py-2 px-3 text-[#151D2A] dark:text-[#F2F4F7]">
+                    Selisih
+                  </th>
+                </tr>
+
+                {/* Sub-Column Header Row */}
+                <tr className="border-b border-[#DDE3EA] dark:border-[#20252D] bg-[#F5F7FA] dark:bg-[#0B0D11] text-[11px] uppercase tracking-wider text-[#667085] dark:text-[#98A2B3]">
+                  <th className="py-2.5 px-3 border-r border-[#DDE3EA] dark:border-[#20252D]">
+                    {intervalUnitLabel}
+                  </th>
+                  {/* Compounding columns */}
+                  <th className="py-2.5 px-3 font-mono-numbers">Modal Awal</th>
+                  <th className="py-2.5 px-3 font-mono-numbers">Profit {intervalUnitLabel} Ini</th>
+                  <th className="py-2.5 px-3 font-mono-numbers border-r border-[#DDE3EA] dark:border-[#20252D]">
+                    Saldo Akhir
+                  </th>
+                  {/* Fixed Balance columns */}
+                  <th className="py-2.5 px-3 font-mono-numbers">Saldo di Akun</th>
+                  <th className="py-2.5 px-3 font-mono-numbers">Tarik Kumulatif</th>
+                  <th className="py-2.5 px-3 font-mono-numbers border-r border-[#DDE3EA] dark:border-[#20252D]">
+                    Total Hasil
+                  </th>
+                  {/* Advantage column */}
+                  <th className="py-2.5 px-3 font-mono-numbers">Efek Compound</th>
+                </tr>
+              </thead>
+
+              <tbody className="divide-y divide-[#DDE3EA] dark:divide-[#20252D] font-mono-numbers tabular-nums">
+                {paginatedCompSteps.map((cStep, idx) => {
+                  const globalIdx = startIdx + idx;
+                  const wStep = withdrawnResult.steps[globalIdx];
+                  const fixedTotal = wStep ? wStep.combinedWealth : startingCapital;
+                  const diff = cStep.combinedWealth - fixedTotal;
+                  return (
+                    <tr
+                      key={cStep.period}
+                      className="hover:bg-black/[0.02] dark:hover:bg-white/[0.02] transition-colors"
+                    >
+                      <td className="py-2.5 px-3 font-sans font-semibold text-[#667085] dark:text-[#98A2B3] border-r border-[#DDE3EA] dark:border-[#20252D]">
+                        {intervalUnitLabel} {cStep.period}
+                      </td>
+                      {/* Compounding */}
+                      <td className="py-2.5 px-3 text-[#667085] dark:text-[#98A2B3]">
+                        {formatCurrency(cStep.startBalance, activeSettings)}
+                      </td>
+                      <td
+                        className={`py-2.5 px-3 ${
+                          cStep.growthProfit >= 0
+                            ? 'text-[#059669] dark:text-[#00A878]'
+                            : 'text-[#E11D48] dark:text-[#E05260]'
+                        }`}
+                      >
+                        {formatSignedCurrency(cStep.growthProfit)}
+                      </td>
+                      <td className="py-2.5 px-3 font-bold text-[#151D2A] dark:text-[#F2F4F7] border-r border-[#DDE3EA] dark:border-[#20252D]">
+                        {formatCurrency(cStep.endBalance, activeSettings)}
+                      </td>
+
+                      {/* Fixed Balance */}
+                      <td className="py-2.5 px-3 text-[#667085] dark:text-[#98A2B3]">
+                        {formatCurrency(wStep ? wStep.endBalance : startingCapital, activeSettings)}
+                      </td>
+                      <td
+                        className={`py-2.5 px-3 ${
+                          (wStep?.cumulativeWithdrawnProfit ?? 0) >= 0
+                            ? 'text-[#059669] dark:text-[#00A878]'
+                            : 'text-[#E11D48] dark:text-[#E05260]'
+                        }`}
+                      >
+                        {formatSignedCurrency(wStep ? wStep.cumulativeWithdrawnProfit : 0)}
+                      </td>
+                      <td className="py-2.5 px-3 font-semibold text-[#151D2A] dark:text-[#F2F4F7] border-r border-[#DDE3EA] dark:border-[#20252D]">
+                        {formatCurrency(fixedTotal, activeSettings)}
+                      </td>
+
+                      {/* Selisih Efek Compound */}
+                      <td
+                        className={`py-2.5 px-3 font-semibold ${
+                          diff > 0
+                            ? 'text-[#3478DC]'
+                            : diff < 0
+                            ? 'text-[#E11D48] dark:text-[#E05260]'
+                            : 'text-[#667085] dark:text-[#98A2B3]'
+                        }`}
+                      >
+                        {formatSignedCurrency(diff)}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+
+        {/* TABLE VIEW 2: FOKUS COMPOUNDING */}
+        {tableViewMode === 'compounding_only' && (
+          <div className="overflow-x-auto rounded-xl border border-[#DDE3EA] dark:border-[#20252D]">
+            <table className="w-full text-left text-xs text-[#151D2A] dark:text-[#F2F4F7]">
+              <thead className="border-b border-[#DDE3EA] dark:border-[#20252D] bg-[#F5F7FA] dark:bg-[#101318] text-[11px] uppercase tracking-wider text-[#667085] dark:text-[#98A2B3]">
+                <tr>
+                  <th className="py-2.5 px-3">{intervalUnitLabel}</th>
+                  <th className="py-2.5 px-3 font-mono-numbers">Modal Awal Periode</th>
+                  <th className="py-2.5 px-3 font-mono-numbers">
+                    Profit Periode ({compoundingResult.clampedGrowthRatePercent}%)
+                  </th>
+                  {regularDeposit > 0 && (
+                    <th className="py-2.5 px-3 font-mono-numbers">Deposit Rutin</th>
+                  )}
+                  <th className="py-2.5 px-3 font-mono-numbers">Saldo Akhir Compound</th>
+                  <th className="py-2.5 px-3 font-mono-numbers">Total Profit Kumulatif</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-[#DDE3EA] dark:divide-[#20252D] font-mono-numbers tabular-nums">
+                {paginatedCompSteps.map((cStep) => (
                   <tr
                     key={cStep.period}
                     className="hover:bg-black/[0.02] dark:hover:bg-white/[0.02] transition-colors"
                   >
-                    <td className="py-2.5 px-3 font-sans font-medium text-[#697586] dark:text-[#8E98A8]">
-                      {cStep.period}
+                    <td className="py-2.5 px-3 font-sans font-semibold text-[#667085] dark:text-[#98A2B3]">
+                      {intervalUnitLabel} {cStep.period}
                     </td>
-                    <td className="py-2.5 px-3 font-semibold text-[#151D2A] dark:text-[#F2F5F9]">
-                      {formatCurrency(cStep.endBalance, activeSettings)}
+                    <td className="py-2.5 px-3 text-[#667085] dark:text-[#98A2B3]">
+                      {formatCurrency(cStep.startBalance, activeSettings)}
                     </td>
                     <td
-                      className={`py-2.5 px-3 ${
-                        cStep.growthProfit >= 0 ? 'text-[#00A878]' : 'text-[#E05260]'
+                      className={`py-2.5 px-3 font-medium ${
+                        cStep.growthProfit >= 0
+                          ? 'text-[#059669] dark:text-[#00A878]'
+                          : 'text-[#E11D48] dark:text-[#E05260]'
                       }`}
                     >
                       {formatSignedCurrency(cStep.growthProfit)}
                     </td>
-                    <td className="py-2.5 px-3 text-[#697586] dark:text-[#8E98A8]">
-                      {formatCurrency(wStep ? wStep.endBalance : startingCapital, activeSettings)}
+                    {regularDeposit > 0 && (
+                      <td className="py-2.5 px-3 text-[#667085] dark:text-[#98A2B3]">
+                        +{formatCurrency(cStep.deposit, activeSettings)}
+                      </td>
+                    )}
+                    <td className="py-2.5 px-3 font-bold text-[#151D2A] dark:text-[#F2F4F7]">
+                      {formatCurrency(cStep.endBalance, activeSettings)}
                     </td>
                     <td
-                      className={`py-2.5 px-3 ${
-                        (wStep?.cumulativeWithdrawnProfit ?? 0) >= 0
-                          ? 'text-[#00A878]'
-                          : 'text-[#E05260]'
+                      className={`py-2.5 px-3 font-semibold ${
+                        cStep.cumulativeProfit >= 0
+                          ? 'text-[#059669] dark:text-[#00A878]'
+                          : 'text-[#E11D48] dark:text-[#E05260]'
                       }`}
                     >
-                      {formatCurrency(wStep ? wStep.cumulativeWithdrawnProfit : 0, activeSettings)}
-                    </td>
-                    <td className="py-2.5 px-3 font-medium text-[#151D2A] dark:text-[#F2F5F9]">
-                      {formatCurrency(wStep ? wStep.combinedWealth : startingCapital, activeSettings)}
+                      {formatSignedCurrency(cStep.cumulativeProfit)}
                     </td>
                   </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
 
+        {/* TABLE VIEW 3: FOKUS FIXED BALANCE (TARIK PROFIT) */}
+        {tableViewMode === 'fixed_only' && (
+          <div className="overflow-x-auto rounded-xl border border-[#DDE3EA] dark:border-[#20252D]">
+            <table className="w-full text-left text-xs text-[#151D2A] dark:text-[#F2F4F7]">
+              <thead className="border-b border-[#DDE3EA] dark:border-[#20252D] bg-[#F5F7FA] dark:bg-[#101318] text-[11px] uppercase tracking-wider text-[#667085] dark:text-[#98A2B3]">
+                <tr>
+                  <th className="py-2.5 px-3">{intervalUnitLabel}</th>
+                  <th className="py-2.5 px-3 font-mono-numbers">Saldo Tetap di Akun</th>
+                  <th className="py-2.5 px-3 font-mono-numbers">
+                    Profit Ditarik {intervalUnitLabel} Ini
+                  </th>
+                  <th className="py-2.5 px-3 font-mono-numbers">
+                    Akumulasi Profit Ditarik (Di Bank)
+                  </th>
+                  <th className="py-2.5 px-3 font-mono-numbers">
+                    Total Hasil (Saldo Akun + Profit Ditarik)
+                  </th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-[#DDE3EA] dark:divide-[#20252D] font-mono-numbers tabular-nums">
+                {paginatedCompSteps.map((cStep, idx) => {
+                  const globalIdx = startIdx + idx;
+                  const wStep = withdrawnResult.steps[globalIdx];
+                  if (!wStep) return null;
+                  return (
+                    <tr
+                      key={wStep.period}
+                      className="hover:bg-black/[0.02] dark:hover:bg-white/[0.02] transition-colors"
+                    >
+                      <td className="py-2.5 px-3 font-sans font-semibold text-[#667085] dark:text-[#98A2B3]">
+                        {intervalUnitLabel} {wStep.period}
+                      </td>
+                      <td className="py-2.5 px-3 text-[#667085] dark:text-[#98A2B3]">
+                        {formatCurrency(wStep.endBalance, activeSettings)}
+                      </td>
+                      <td
+                        className={`py-2.5 px-3 ${
+                          wStep.withdrawnProfit >= 0
+                            ? 'text-[#059669] dark:text-[#00A878]'
+                            : 'text-[#E11D48] dark:text-[#E05260]'
+                        }`}
+                      >
+                        {formatSignedCurrency(wStep.withdrawnProfit)}
+                      </td>
+                      <td
+                        className={`py-2.5 px-3 font-semibold ${
+                          wStep.cumulativeWithdrawnProfit >= 0
+                            ? 'text-[#059669] dark:text-[#00A878]'
+                            : 'text-[#E11D48] dark:text-[#E05260]'
+                        }`}
+                      >
+                        {formatSignedCurrency(wStep.cumulativeWithdrawnProfit)}
+                      </td>
+                      <td className="py-2.5 px-3 font-bold text-[#151D2A] dark:text-[#F2F4F7]">
+                        {formatCurrency(wStep.combinedWealth, activeSettings)}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+
+        {/* Pagination Controls */}
         {totalPages > 1 && (
-          <div className="flex items-center justify-between pt-3 border-t border-[#DDE3EA] dark:border-white/[0.06] text-xs">
+          <div className="flex items-center justify-between pt-3 border-t border-[#DDE3EA] dark:border-[#20252D] text-xs">
             <button
               type="button"
               onClick={() => setTablePage((p) => Math.max(1, p - 1))}
               disabled={tablePage <= 1}
-              className="px-3.5 py-1.5 rounded-full border border-[#DDE3EA] dark:border-white/[0.08] bg-transparent text-[#151D2A] dark:text-[#F2F5F9] disabled:opacity-40 transition-colors"
+              className="px-3.5 py-1.5 rounded-lg border border-[#DDE3EA] dark:border-[#20252D] bg-[#F5F7FA] dark:bg-[#101318] text-[#151D2A] dark:text-[#F2F4F7] disabled:opacity-40 transition-colors"
             >
-              Previous
+              Sebelumnya
             </button>
-            <span className="font-mono-numbers tabular-nums text-[#697586] dark:text-[#8E98A8]">
-              {tablePage} / {totalPages}
+            <span className="font-mono-numbers tabular-nums text-[#667085] dark:text-[#98A2B3]">
+              Halaman {tablePage} dari {totalPages} ({compoundingResult.steps.length} {intervalUnitLabel})
             </span>
             <button
               type="button"
               onClick={() => setTablePage((p) => Math.min(totalPages, p + 1))}
               disabled={tablePage >= totalPages}
-              className="px-3.5 py-1.5 rounded-full border border-[#DDE3EA] dark:border-white/[0.08] bg-transparent text-[#151D2A] dark:text-[#F2F5F9] disabled:opacity-40 transition-colors"
+              className="px-3.5 py-1.5 rounded-lg border border-[#DDE3EA] dark:border-[#20252D] bg-[#F5F7FA] dark:bg-[#101318] text-[#151D2A] dark:text-[#F2F4F7] disabled:opacity-40 transition-colors"
             >
-              Next
+              Berikutnya
             </button>
           </div>
         )}
-
-        <p className="text-[11px] text-[#697586] dark:text-[#8E98A8] pt-2 border-t border-[#DDE3EA] dark:border-white/[0.06]">
-          Note: Mathematical compounding projection assumes a constant return rate per period and does not guarantee future market performance. In Fixed Profit / Withdrawal mode, period profit is separated from the trading account balance.
-        </p>
       </div>
     </div>
   );
