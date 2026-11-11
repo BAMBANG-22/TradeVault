@@ -400,6 +400,8 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
           ctx.imageSmoothingQuality = 'high';
           ctx.drawImage(img, 0, 0, width, height);
           compressedDataUrl = canvas.toDataURL('image/jpeg', 0.85);
+          canvas.width = 0;
+          canvas.height = 0;
         }
 
         setIsUploadingImage(true);

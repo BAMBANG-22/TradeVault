@@ -1374,9 +1374,6 @@ export function decodeBase64DataUrlToBlob(
     if (rawMime.includes('png')) {
       ext = 'png';
       contentType = 'image/png';
-    } else if (rawMime.includes('webp')) {
-      ext = 'webp';
-      contentType = 'image/webp';
     }
 
     const blob = new Blob([bytes], { type: contentType });
@@ -1418,6 +1415,8 @@ export async function ensureSupabaseCompatibleImageDataUrl(dataUrl: string): Pro
               ctx.imageSmoothingQuality = 'high';
               ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
               const jpegUrl = canvas.toDataURL('image/jpeg', 0.88);
+              canvas.width = 0;
+              canvas.height = 0;
               if (jpegUrl && jpegUrl.startsWith('data:image/jpeg')) {
                 resolve(jpegUrl);
                 return;
@@ -1810,12 +1809,29 @@ export async function uploadScreenshotBlobToSupabase(
     // to prevent Supabase Storage from rejecting it as application/octet-stream or image/webp
     const typedBlob = blob.type === contentType ? blob : new Blob([blob], { type: contentType });
 
-    const { error: uploadError } = await client.storage
+    let finalFilePath = filePath;
+    let { error: uploadError } = await client.storage
       .from('trade-screenshots')
-      .upload(filePath, typedBlob, {
+      .upload(finalFilePath, typedBlob, {
         contentType,
         upsert: false,
       });
+
+    if (
+      uploadError &&
+      /mime\s*type|not\s*supported/i.test(String(uploadError.message || uploadError))
+    ) {
+      contentType = 'image/jpeg';
+      const retryBlob = new Blob([blob], { type: 'image/jpeg' });
+      finalFilePath = `${userId.trim()}/${cleanTradeId}_${Date.now()}_${randomSuffix}_jpg.jpg`;
+      const retryRes = await client.storage
+        .from('trade-screenshots')
+        .upload(finalFilePath, retryBlob, {
+          contentType: 'image/jpeg',
+          upsert: false,
+        });
+      uploadError = retryRes.error;
+    }
 
     if (uploadError) {
       console.error('Supabase Storage blob upload error:', uploadError);
@@ -1824,11 +1840,11 @@ export async function uploadScreenshotBlobToSupabase(
 
     encodeBlobToBase64DataUrl(typedBlob, contentType)
       .then((b64) => {
-        if (b64) setCachedBase64ForStoragePath(filePath, b64);
+        if (b64) setCachedBase64ForStoragePath(finalFilePath, b64);
       })
       .catch(() => {});
 
-    return { success: true, data: filePath };
+    return { success: true, data: finalFilePath };
   } catch (err: any) {
     console.error('Unexpected error in uploadScreenshotBlobToSupabase:', err);
     return { success: false, error: translateDatabaseError(err) };

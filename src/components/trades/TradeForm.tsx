@@ -162,7 +162,10 @@ export const compressAndResizeImage = (
           ctx.imageSmoothingEnabled = true;
           ctx.imageSmoothingQuality = 'high';
           ctx.drawImage(img, 0, 0, width, height);
-          resolve(canvas.toDataURL('image/jpeg', quality));
+          const jpegDataUrl = canvas.toDataURL('image/jpeg', quality);
+          canvas.width = 0;
+          canvas.height = 0;
+          resolve(jpegDataUrl);
         } else {
           resolve(event.target?.result as string);
         }

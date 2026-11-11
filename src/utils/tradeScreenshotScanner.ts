@@ -630,6 +630,8 @@ export async function analyzeChartCanvasGeometry(dataUrl: string): Promise<Canva
 
       ctx.drawImage(img, 0, 0, sampleW, sampleH);
       const imgData = ctx.getImageData(0, 0, sampleW, sampleH).data;
+      canvas.width = 0;
+      canvas.height = 0;
 
       const plotMinX = Math.floor(sampleW * 0.06);
       const plotMaxX = Math.floor(sampleW * 0.78);

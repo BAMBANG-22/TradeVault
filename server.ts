@@ -313,16 +313,29 @@ app.post('/api/extract-trade-screenshot', async (req, res) => {
     let base64Data = '';
 
     if (imageBase64) {
-      const match = imageBase64.match(/^data:([a-zA-Z0-9]+\/[a-zA-Z0-9-.+]+);base64,(.+)$/);
+      const trimmedInput = imageBase64.trim();
+      const match = trimmedInput.match(/^data:([a-zA-Z0-9]+\/[a-zA-Z0-9-.+]+);base64,([\s\S]+)$/i);
       if (match) {
-        mimeType = match[1];
-        base64Data = match[2];
+        const rawMime = match[1].toLowerCase();
+        mimeType =
+          rawMime === 'image/png'
+            ? 'image/png'
+            : rawMime === 'image/webp'
+            ? 'image/webp'
+            : 'image/jpeg';
+        base64Data = match[2].replace(/\s+/g, '');
       } else {
-        base64Data = imageBase64;
+        base64Data = trimmedInput.replace(/^data:[^,]+,/, '').replace(/\s+/g, '');
       }
     } else if (imageUrl) {
       const fetched = await fetchImageBufferFromUrl(imageUrl);
-      mimeType = fetched.mimeType;
+      const rawMime = (fetched.mimeType || 'image/jpeg').toLowerCase();
+      mimeType =
+        rawMime === 'image/png'
+          ? 'image/png'
+          : rawMime === 'image/webp'
+          ? 'image/webp'
+          : 'image/jpeg';
       base64Data = fetched.buffer.toString('base64');
     }
 
