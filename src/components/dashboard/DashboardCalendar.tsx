@@ -14,6 +14,7 @@ import {
   formatTradeFinancialValue,
   computeCumulativeProfitInDisplayCurrency,
 } from '../../utils/currencyRate';
+import { useLanguage } from '../../utils/language';
 import { ChevronDown, X, ArrowUpRight, Check } from 'lucide-react';
 
 interface DashboardCalendarProps {
@@ -25,7 +26,8 @@ interface DashboardCalendarProps {
   rateRecord?: UsdIdrRateRecord | null;
 }
 
-const DAYS_OF_WEEK = ['MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT', 'SUN'];
+const DAYS_OF_WEEK_ID = ['SEN', 'SEL', 'RAB', 'KAM', 'JUM', 'SAB', 'MIN'];
+const DAYS_OF_WEEK_EN = ['MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT', 'SUN'];
 
 export const DashboardCalendar: React.FC<DashboardCalendarProps> = ({
   trades,
@@ -35,10 +37,11 @@ export const DashboardCalendar: React.FC<DashboardCalendarProps> = ({
   preferredCurrency,
   rateRecord,
 }) => {
+  const { isEn, tr, locale } = useLanguage();
   const globalCur = useGlobalCurrency();
   const activeCurrency = preferredCurrency || globalCur.preferredCurrency;
   const activeRateRecord = rateRecord || globalCur.rateRecord;
-  // Strictly filter only closed trades with realized outcome
+
   const closedTrades = useMemo(() => {
     return (trades || []).filter((t) => {
       if (!isClosedLifecycleTrade(t)) return false;
@@ -47,8 +50,6 @@ export const DashboardCalendar: React.FC<DashboardCalendarProps> = ({
     });
   }, [trades]);
 
-  // Always initialize active month to the current runtime local month & year (e.g. November 2026)
-  // regardless of whether there are trades in the current month or the last trade was in an earlier month.
   const initialMonthKey = useMemo(() => {
     const now = new Date();
     const y = now.getFullYear();
@@ -61,7 +62,6 @@ export const DashboardCalendar: React.FC<DashboardCalendarProps> = ({
   const [isMonthDropdownOpen, setIsMonthDropdownOpen] = useState(false);
   const monthDropdownRef = useRef<HTMLDivElement | null>(null);
 
-  // Close month dropdown on outside click or Escape
   useEffect(() => {
     if (!isMonthDropdownOpen) return;
     const handleClickOutside = (e: MouseEvent) => {
@@ -80,12 +80,10 @@ export const DashboardCalendar: React.FC<DashboardCalendarProps> = ({
     };
   }, [isMonthDropdownOpen]);
 
-  // Today local date key (YYYY-MM-DD)
   const todayDateKey = useMemo(() => {
     return extractTradeLocalDateKey(new Date().toISOString());
   }, []);
 
-  // Parse active year and month
   const { year, month } = useMemo(() => {
     const [yStr, mStr] = activeMonth.split('-');
     return {
@@ -94,14 +92,12 @@ export const DashboardCalendar: React.FC<DashboardCalendarProps> = ({
     };
   }, [activeMonth]);
 
-  // Month label in Indonesian capitalized (e.g., "November 2026")
   const monthDisplayLabel = useMemo(() => {
     const d = new Date(year, month - 1, 1);
-    const raw = d.toLocaleDateString('id-ID', { month: 'long', year: 'numeric' });
+    const raw = d.toLocaleDateString(locale, { month: 'long', year: 'numeric' });
     return raw.charAt(0).toUpperCase() + raw.slice(1);
-  }, [year, month]);
+  }, [year, month, locale]);
 
-  // Available months list derived from trading data + surrounding months
   const availableMonths = useMemo(() => {
     const monthSet = new Set<string>();
     closedTrades.forEach((t) => {
@@ -117,7 +113,6 @@ export const DashboardCalendar: React.FC<DashboardCalendarProps> = ({
     if (activeMonth) {
       monthSet.add(activeMonth);
     }
-    // Include past 12 months for seamless browsing
     for (let i = 1; i <= 12; i++) {
       const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
       monthSet.add(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`);
@@ -125,7 +120,6 @@ export const DashboardCalendar: React.FC<DashboardCalendarProps> = ({
     return Array.from(monthSet).sort().reverse();
   }, [closedTrades, activeMonth]);
 
-  // Group closed trades by local date key 'YYYY-MM-DD'
   const tradesByDateMap = useMemo(() => {
     const map = new Map<string, Trade[]>();
     closedTrades.forEach((t) => {
@@ -139,11 +133,9 @@ export const DashboardCalendar: React.FC<DashboardCalendarProps> = ({
     return map;
   }, [closedTrades]);
 
-  // Generate 7-column calendar grid cells and summary statistics
   const { cells, summary } = useMemo(() => {
     const daysInMonth = new Date(year, month, 0).getDate();
-    const firstDayIndexRaw = new Date(year, month - 1, 1).getDay(); // 0 = Sun, 1 = Mon...
-    // Convert to Monday = 0 ... Sunday = 6
+    const firstDayIndexRaw = new Date(year, month - 1, 1).getDay();
     const firstDayIndex = (firstDayIndexRaw + 6) % 7;
 
     const cellList: Array<{
@@ -155,7 +147,6 @@ export const DashboardCalendar: React.FC<DashboardCalendarProps> = ({
       status: 'PROFIT' | 'LOSS' | 'BREAKEVEN' | 'NO_TRADE';
     }> = [];
 
-    // 1. Leading dates from previous month
     if (firstDayIndex > 0) {
       const prevYear = month === 1 ? year - 1 : year;
       const prevMonth = month === 1 ? 12 : month - 1;
@@ -185,7 +176,6 @@ export const DashboardCalendar: React.FC<DashboardCalendarProps> = ({
       }
     }
 
-    // 2. Current month dates
     let profitDays = 0;
     let lossDays = 0;
     let noTradeDays = 0;
@@ -231,7 +221,6 @@ export const DashboardCalendar: React.FC<DashboardCalendarProps> = ({
       }
     }
 
-    // 3. Following dates from next month to complete the row
     const remainder = (7 - (cellList.length % 7)) % 7;
     if (remainder > 0) {
       const nextYear = month === 12 ? year + 1 : year;
@@ -270,7 +259,6 @@ export const DashboardCalendar: React.FC<DashboardCalendarProps> = ({
     };
   }, [year, month, tradesByDateMap]);
 
-  // Selected date trades and statistics
   const selectedTrades = useMemo(() => {
     if (!selectedDate) return [];
     return tradesByDateMap.get(selectedDate) || [];
@@ -285,7 +273,7 @@ export const DashboardCalendar: React.FC<DashboardCalendarProps> = ({
     try {
       const [y, m, d] = selectedDate.split('-');
       const dateObj = new Date(parseInt(y, 10), parseInt(m, 10) - 1, parseInt(d, 10));
-      return dateObj.toLocaleDateString('id-ID', {
+      return dateObj.toLocaleDateString(locale, {
         weekday: 'long',
         day: 'numeric',
         month: 'long',
@@ -294,20 +282,21 @@ export const DashboardCalendar: React.FC<DashboardCalendarProps> = ({
     } catch {
       return selectedDate;
     }
-  }, [selectedDate]);
+  }, [selectedDate, locale]);
+
+  const daysOfWeek = isEn ? DAYS_OF_WEEK_EN : DAYS_OF_WEEK_ID;
 
   return (
     <div
-      aria-label="Performance Calendar"
+      aria-label={tr('Kalender Performa', 'Performance Calendar')}
       className="space-y-4 font-sans select-none"
     >
-      {/* 4.A Header: Title + Dropdown Bulan (Wireframe: [ November 2026 ⌄ ]) */}
+      {/* 4.A Header: Title + Dropdown Bulan */}
       <div className="flex items-center justify-between gap-3">
         <h2 className="text-[11px] font-semibold uppercase tracking-[0.08em] text-[#697586] dark:text-[#929BA9]">
-          PERFORMANCE CALENDAR
+          {tr('KALENDER PERFORMA', 'PERFORMANCE CALENDAR')}
         </h2>
 
-        {/* Minimal Month Dropdown (strictly dropdown only, no arrow buttons) */}
         <div ref={monthDropdownRef} className="relative">
           <button
             type="button"
@@ -325,11 +314,10 @@ export const DashboardCalendar: React.FC<DashboardCalendarProps> = ({
             />
           </button>
 
-          {/* Month Dropdown Menu */}
           {isMonthDropdownOpen && (
             <div
               role="listbox"
-              aria-label="Pilih Bulan Kalender"
+              aria-label={tr('Pilih Bulan Kalender', 'Select Calendar Month')}
               data-testid="calendar-month-dropdown-menu"
               className="absolute right-0 top-full mt-1.5 z-30 w-48 max-h-64 overflow-y-auto rounded-xl bg-white dark:bg-[#101318] border border-[#DDE3EA] dark:border-[#20252D] py-1 shadow-xl"
             >
@@ -338,7 +326,7 @@ export const DashboardCalendar: React.FC<DashboardCalendarProps> = ({
                 const yN = parseInt(yS, 10);
                 const mN = parseInt(mS, 10);
                 const d = new Date(yN, mN - 1, 1);
-                const rawLabel = d.toLocaleDateString('id-ID', { month: 'long', year: 'numeric' });
+                const rawLabel = d.toLocaleDateString(locale, { month: 'long', year: 'numeric' });
                 const label = rawLabel.charAt(0).toUpperCase() + rawLabel.slice(1);
                 const isSelected = activeMonth === mKey;
 
@@ -371,11 +359,11 @@ export const DashboardCalendar: React.FC<DashboardCalendarProps> = ({
         </div>
       </div>
 
-      {/* 4.B Ringkasan Statistik: Single 3-column row without panel cards (Wireframe) */}
+      {/* 4.B Ringkasan Statistik */}
       <div className="grid grid-cols-3 gap-2 py-1 text-center font-mono-numbers tabular-nums">
         <div>
           <div className="text-[10px] sm:text-[11px] font-sans font-semibold uppercase tracking-wider text-[#697586] dark:text-[#929BA9]">
-            PROFIT DAYS
+            {tr('HARI PROFIT', 'PROFIT DAYS')}
           </div>
           <div className="text-xl sm:text-2xl font-bold text-[#059669] dark:text-[#00A878] mt-0.5">
             {summary.profitDays}
@@ -384,7 +372,7 @@ export const DashboardCalendar: React.FC<DashboardCalendarProps> = ({
 
         <div>
           <div className="text-[10px] sm:text-[11px] font-sans font-semibold uppercase tracking-wider text-[#697586] dark:text-[#929BA9]">
-            LOSS DAYS
+            {tr('HARI LOSS', 'LOSS DAYS')}
           </div>
           <div className="text-xl sm:text-2xl font-bold text-[#E11D48] dark:text-[#E05260] mt-0.5">
             {summary.lossDays}
@@ -393,7 +381,7 @@ export const DashboardCalendar: React.FC<DashboardCalendarProps> = ({
 
         <div>
           <div className="text-[10px] sm:text-[11px] font-sans font-semibold uppercase tracking-wider text-[#697586] dark:text-[#929BA9]">
-            NO TRADE
+            {tr('TANPA TRADE', 'NO TRADE')}
           </div>
           <div className="text-xl sm:text-2xl font-bold text-[#151D2A] dark:text-[#F2F4F7] mt-0.5">
             {summary.noTradeDays}
@@ -401,17 +389,17 @@ export const DashboardCalendar: React.FC<DashboardCalendarProps> = ({
         </div>
       </div>
 
-      {/* 4.C Days of Week Header with Thin Divider */}
+      {/* 4.C Days of Week Header */}
       <div>
         <div className="grid grid-cols-7 gap-1 text-center text-[10px] sm:text-[11px] font-semibold text-[#697586] dark:text-[#929BA9] py-1.5">
-          {DAYS_OF_WEEK.map((dayName) => (
+          {daysOfWeek.map((dayName) => (
             <div key={dayName}>{dayName}</div>
           ))}
         </div>
         <div className="border-b border-[#DDE3EA] dark:border-[#20252D] my-1" />
       </div>
 
-      {/* 4.C Calendar Grid: Breathable, NO card background per date, NO cell border */}
+      {/* 4.C Calendar Grid */}
       <div className="grid grid-cols-7 gap-y-3 sm:gap-y-4 font-mono-numbers tabular-nums">
         {cells.map((cell, idx) => {
           const isSelected = selectedDate === cell.dateKey;
@@ -426,9 +414,12 @@ export const DashboardCalendar: React.FC<DashboardCalendarProps> = ({
               type="button"
               onClick={() => setSelectedDate(isSelected ? null : cell.dateKey)}
               className="group flex flex-col items-center justify-center py-1 transition-colors cursor-pointer relative"
-              title={`${cell.dateKey}${cell.tradesCount > 0 ? `: ${cell.tradesCount} Closed Trades` : ''}`}
+              title={`${cell.dateKey}${
+                cell.tradesCount > 0
+                  ? `: ${cell.tradesCount} ${tr('Trade Selesai', 'Closed Trades')}`
+                  : ''
+              }`}
             >
-              {/* Day Number */}
               <span
                 className={`text-xs sm:text-sm leading-tight transition-colors ${
                   isSelected
@@ -443,7 +434,6 @@ export const DashboardCalendar: React.FC<DashboardCalendarProps> = ({
                 {cell.dayNum}
               </span>
 
-              {/* Dot Indicator: Profit = green dot, Loss = red dot, Breakeven = neutral dot, No trade = no dot */}
               <div className="h-3 flex items-center justify-center mt-0.5">
                 {isProfit ? (
                   <span className="w-1.5 h-1.5 rounded-full bg-[#059669] dark:bg-[#00A878]" />
@@ -456,7 +446,6 @@ export const DashboardCalendar: React.FC<DashboardCalendarProps> = ({
                 )}
               </div>
 
-              {/* Selected Date Minimal Indicator Line */}
               {isSelected && (
                 <span className="absolute bottom-0 w-3 h-0.5 rounded-full bg-[#1769E8] dark:bg-[#3478DC]" />
               )}
@@ -465,19 +454,18 @@ export const DashboardCalendar: React.FC<DashboardCalendarProps> = ({
         })}
       </div>
 
-      {/* 4.D SMOKED GLASS DAILY PERFORMANCE CARD (Only when date is selected) */}
+      {/* 4.D SMOKED GLASS DAILY PERFORMANCE CARD */}
       {selectedDate && (
         <div
           data-testid="daily-performance-smoked-card"
           role="region"
-          aria-label="Detail Performa Harian"
+          aria-label={tr('Detail Performa Harian', 'Daily Performance Detail')}
           className="tv-smoked-glass-card mt-5 p-4 sm:p-5 rounded-[18px] border border-[#DDE3EA] dark:border-white/[0.09] transition-all duration-300 select-none"
         >
-          {/* Header row: Label kecil + Tanggal lengkap + Tombol X */}
           <div className="flex items-start justify-between gap-4 pb-3 border-b border-black/10 dark:border-white/[0.08]">
             <div className="space-y-0.5 min-w-0">
               <span className="block text-[10px] font-bold uppercase tracking-[0.1em] text-[#697586] dark:text-[#929BA9]">
-                DAILY PERFORMANCE
+                {tr('PERFORMA HARIAN', 'DAILY PERFORMANCE')}
               </span>
               <h3 className="text-xs sm:text-sm font-bold text-[#151D2A] dark:text-[#F2F4F7] truncate">
                 {selectedDateFormatted}
@@ -488,14 +476,13 @@ export const DashboardCalendar: React.FC<DashboardCalendarProps> = ({
               data-testid="daily-card-close-button"
               onClick={() => setSelectedDate(null)}
               className="p-1.5 rounded-full text-[#697586] dark:text-[#929BA9] hover:text-[#151D2A] dark:hover:text-[#F2F4F7] hover:bg-black/5 dark:hover:bg-white/10 transition-colors cursor-pointer shrink-0"
-              title="Tutup Detail Harian"
-              aria-label="Tutup Detail Harian"
+              title={tr('Tutup Detail Harian', 'Close Daily Detail')}
+              aria-label={tr('Tutup Detail Harian', 'Close Daily Detail')}
             >
               <X className="h-4 w-4 stroke-[2]" />
             </button>
           </div>
 
-          {/* Bagian nilai utama: Net P/L paling menonjol + keterangan DAILY NET PROFIT/LOSS + closed trades count */}
           <div className="py-3.5 flex flex-col sm:flex-row sm:items-baseline justify-between gap-2 font-mono-numbers tabular-nums">
             <div className="space-y-0.5">
               <div
@@ -537,32 +524,31 @@ export const DashboardCalendar: React.FC<DashboardCalendarProps> = ({
                     ? 'text-[#059669] dark:text-[#00A878]'
                     : selectedDateNetProfit < 0
                     ? 'text-[#E11D48] dark:text-[#E05260]'
-                    : selectedTrades.length > 0
-                    ? 'text-[#697586] dark:text-[#929BA9]'
                     : 'text-[#697586] dark:text-[#929BA9]'
                 }`}
               >
                 {selectedDateNetProfit > 0
-                  ? 'DAILY NET PROFIT'
+                  ? tr('PROFIT BERSIH HARIAN', 'DAILY NET PROFIT')
                   : selectedDateNetProfit < 0
-                  ? 'DAILY NET LOSS'
+                  ? tr('LOSS BERSIH HARIAN', 'DAILY NET LOSS')
                   : selectedTrades.length > 0
-                  ? 'DAILY BREAKEVEN'
-                  : 'NO TRADES'}
+                  ? tr('IMPAS HARIAN', 'DAILY BREAKEVEN')
+                  : tr('TIDAK ADA TRADE', 'NO TRADES')}
               </div>
             </div>
 
             <div className="text-xs text-[#697586] dark:text-[#929BA9] font-sans">
               {selectedTrades.length}{' '}
-              {selectedTrades.length === 1 ? 'Closed Trade' : 'Closed Trades'}
+              {selectedTrades.length === 1
+                ? tr('Trade Selesai', 'Closed Trade')
+                : tr('Trade Selesai', 'Closed Trades')}
             </div>
           </div>
 
-          {/* Bagian transaksi: Horizontal rows tanpa background hijau/merah */}
           <div className="pt-2 border-t border-black/10 dark:border-white/[0.08]">
             {selectedTrades.length === 0 ? (
               <div className="py-4 text-center text-xs text-[#697586] dark:text-[#929BA9]">
-                No trades on this date
+                {tr('Tidak ada transaksi pada tanggal ini', 'No trades on this date')}
               </div>
             ) : (
               <div className="divide-y divide-black/5 dark:divide-white/[0.06] max-h-60 overflow-y-auto pr-0.5">
@@ -579,7 +565,6 @@ export const DashboardCalendar: React.FC<DashboardCalendarProps> = ({
                       onClick={() => onViewTrade?.(t)}
                       className="w-full py-2.5 px-2 flex items-center justify-between text-left cursor-pointer text-xs font-mono-numbers tabular-nums group transition-colors hover:bg-black/5 dark:hover:bg-white/[0.05] rounded-lg"
                     >
-                      {/* Left: Instrument, Direction (BUY/SELL text only), Lot */}
                       <div className="flex items-center gap-3 min-w-0">
                         <span className="font-bold text-[#151D2A] dark:text-[#F2F4F7] group-hover:text-[#1769E8] dark:group-hover:text-white transition-colors truncate">
                           {t.instrument}
@@ -598,7 +583,6 @@ export const DashboardCalendar: React.FC<DashboardCalendarProps> = ({
                         </span>
                       </div>
 
-                      {/* Right: Realized P/L */}
                       <div className="flex items-center gap-2 shrink-0">
                         <span
                           className={`font-bold ${

@@ -53,6 +53,7 @@ import {
   scanTradeScreenshotOrUrl,
   resolveTradingViewSnapshotUrl,
 } from '../../utils/tradeScreenshotScanner';
+import { useLanguage } from '../../utils/language';
 import {
   X,
   Upload,
@@ -110,18 +111,34 @@ const COMMON_STRATEGIES = [
   'News Retest & Continuation',
 ];
 
-const PRIMARY_SESSIONS: { key: TradingSession; label: string; desc: string }[] = [
-  { key: 'Asian', label: 'Asia', desc: 'Tokyo / Sydney' },
-  { key: 'London', label: 'London', desc: 'European Session' },
-  { key: 'New York', label: 'New York', desc: 'US Market' },
-  { key: 'Overlap', label: 'Overlap', desc: 'London / NY' },
+const PRIMARY_SESSIONS: { key: TradingSession; labelId: string; labelEn: string; descId: string; descEn: string }[] = [
+  { key: 'Asian', labelId: 'Asia', labelEn: 'Asian', descId: 'Tokyo / Sydney', descEn: 'Tokyo / Sydney' },
+  { key: 'London', labelId: 'London', labelEn: 'London', descId: 'Sesi Eropa', descEn: 'European Session' },
+  { key: 'New York', labelId: 'New York', labelEn: 'New York', descId: 'Pasar AS', descEn: 'US Market' },
+  { key: 'Overlap', labelId: 'Overlap', labelEn: 'Overlap', descId: 'London / NY', descEn: 'London / NY' },
 ];
 
-const EXECUTION_ADHERENCE_OPTIONS: { value: ExecutionAdherenceTag; label: string }[] = [
-  { value: 'AUTO', label: 'Deteksi Otomatis dari Harga Entry, SL, TP & Exit' },
-  { value: 'PLAN_FOLLOWED', label: 'Patuh Rencana — Penutupan Terukur Sesuai Sistem' },
-  { value: 'SL_MOVED_VIOLATION', label: 'Pelanggaran — SL Digeser / Diperlebar Saat Floating Loss' },
-  { value: 'TP_MODIFIED_VIOLATION', label: 'Deviasi — TP Diubah / Ditutup Prematur Tanpa Aturan' },
+const EXECUTION_ADHERENCE_OPTIONS: { value: ExecutionAdherenceTag; labelId: string; labelEn: string }[] = [
+  {
+    value: 'AUTO',
+    labelId: 'Deteksi Otomatis dari Harga Entry, SL, TP & Exit',
+    labelEn: 'Auto-Detect from Entry, SL, TP & Exit Prices',
+  },
+  {
+    value: 'PLAN_FOLLOWED',
+    labelId: 'Patuh Rencana — Penutupan Terukur Sesuai Sistem',
+    labelEn: 'Plan Followed — Measured Close According to System',
+  },
+  {
+    value: 'SL_MOVED_VIOLATION',
+    labelId: 'Pelanggaran — SL Digeser / Diperlebar Saat Floating Loss',
+    labelEn: 'Violation — SL Moved / Widened During Floating Loss',
+  },
+  {
+    value: 'TP_MODIFIED_VIOLATION',
+    labelId: 'Deviasi — TP Diubah / Ditutup Prematur Tanpa Aturan',
+    labelEn: 'Deviation — TP Modified / Premature Close Without Rule',
+  },
 ];
 
 /**
@@ -185,6 +202,7 @@ export const TradeForm: React.FC<TradeFormProps> = ({
   onCancel,
   isPopupModal = true,
 }) => {
+  const { tr } = useLanguage();
   const { preferredCurrency, formatDynamic } = useGlobalCurrency();
   const fmtMoney = (val: number) =>
     preferredCurrency === 'IDR' ? formatDynamic(val) : formatCurrency(val, settings);
@@ -437,7 +455,9 @@ export const TradeForm: React.FC<TradeFormProps> = ({
               }
             })
             .catch(() => {
-              triggerValidationError('Gagal memproses gambar dari clipboard.');
+              triggerValidationError(
+                tr('Gagal memproses gambar dari clipboard.', 'Failed to process image from clipboard.')
+              );
             });
         }
       }
@@ -794,7 +814,9 @@ export const TradeForm: React.FC<TradeFormProps> = ({
     if (!file) return;
 
     if (file.size > 10 * 1024 * 1024) {
-      triggerValidationError('Ukuran file gambar maksimal 10 MB.');
+      triggerValidationError(
+        tr('Ukuran file gambar maksimal 10 MB.', 'Maximum image file size is 10 MB.')
+      );
       return;
     }
 
@@ -803,9 +825,13 @@ export const TradeForm: React.FC<TradeFormProps> = ({
       setScreenshotUrl(compressedDataUrl);
       setScanResultFeedback(null);
       // Auto-trigger ultra-fast AI scan immediately
-      handleScanScreenshotAI(compressedDataUrl);
+      handleScanScreenshotAIRef.current
+        ? handleScanScreenshotAIRef.current(compressedDataUrl)
+        : handleScanScreenshotAI(compressedDataUrl);
     } catch {
-      triggerValidationError('Gagal memproses file gambar.');
+      triggerValidationError(
+        tr('Gagal memproses file gambar.', 'Failed to process image file.')
+      );
     }
   };
 
@@ -813,7 +839,12 @@ export const TradeForm: React.FC<TradeFormProps> = ({
     if (isScanningScreenshot) return;
     const targetSource = (sourceUrlOverride || screenshotUrl || '').trim();
     if (!targetSource) {
-      triggerValidationError('Unggah gambar atau masukkan tautan screenshot terlebih dahulu.');
+      triggerValidationError(
+        tr(
+          'Unggah gambar atau masukkan tautan screenshot terlebih dahulu.',
+          'Please upload an image or enter a screenshot link first.'
+        )
+      );
       return;
     }
 
@@ -824,7 +855,12 @@ export const TradeForm: React.FC<TradeFormProps> = ({
     try {
       const data = await scanTradeScreenshotOrUrl(targetSource);
       if (!data) {
-        throw new Error('Tidak ada data setup yang terbaca pada gambar.');
+        throw new Error(
+          tr(
+            'Tidak ada data setup yang terbaca pada gambar.',
+            'No setup data could be read from the image.'
+          )
+        );
       }
 
       if (data.resolvedImageUrl && !targetSource.startsWith('data:image/')) {
@@ -953,7 +989,10 @@ export const TradeForm: React.FC<TradeFormProps> = ({
       const sourceLabel = data.source === 'MT5' ? 'MetaTrader 5 (MT5)' : 'TradingView / Chart';
       setScanResultFeedback({
         type: 'success',
-        message: `Berhasil mendeteksi dari ${sourceLabel}: ${data.instrument} ${data.position}!`,
+        message: tr(
+          `Berhasil mendeteksi dari ${sourceLabel}: ${data.instrument} ${data.position}!`,
+          `Successfully detected from ${sourceLabel}: ${data.instrument} ${data.position}!`
+        ),
         details: {
           source: data.source,
           instrument: data.instrument,
@@ -971,7 +1010,9 @@ export const TradeForm: React.FC<TradeFormProps> = ({
     } catch (err: any) {
       setScanResultFeedback({
         type: 'error',
-        message: err.message || 'Gagal memproses screenshot chart.',
+        message:
+          err.message ||
+          tr('Gagal memproses screenshot chart.', 'Failed to process chart screenshot.'),
       });
     } finally {
       setIsScanningScreenshot(false);
@@ -1065,7 +1106,9 @@ export const TradeForm: React.FC<TradeFormProps> = ({
 
     const cleanId = id.trim();
     if (!cleanId) {
-      triggerValidationError('ID Transaksi tidak boleh kosong.');
+      triggerValidationError(
+        tr('ID Transaksi tidak boleh kosong.', 'Trade ID cannot be empty.')
+      );
       return;
     }
 
@@ -1076,37 +1119,59 @@ export const TradeForm: React.FC<TradeFormProps> = ({
       );
       if (duplicateExists) {
         triggerValidationError(
-          `ID Transaksi "${cleanId}" sudah digunakan oleh trade lain. Gunakan ID unik.`
+          tr(
+            `ID Transaksi "${cleanId}" sudah digunakan oleh trade lain. Gunakan ID unik.`,
+            `Trade ID "${cleanId}" is already used by another trade. Use a unique ID.`
+          )
         );
         return;
       }
     }
 
     if (!tradeDate || !tradeTime) {
-      triggerValidationError('Tanggal dan jam transaksi wajib diisi.');
+      triggerValidationError(
+        tr('Tanggal dan jam transaksi wajib diisi.', 'Trade date and time are required.')
+      );
       return;
     }
 
     const cleanInstrument = instrument.trim().toUpperCase();
     if (!cleanInstrument) {
-      triggerValidationError('Simbol instrumen harus diisi (contoh: XAUUSD).');
+      triggerValidationError(
+        tr(
+          'Simbol instrumen harus diisi (contoh: XAUUSD).',
+          'Instrument symbol is required (example: XAUUSD).'
+        )
+      );
       return;
     }
 
     if (!position || (position !== 'BUY' && position !== 'SELL')) {
-      triggerValidationError('Arah transaksi (BUY / SELL) wajib dipilih.');
+      triggerValidationError(
+        tr('Arah transaksi (BUY / SELL) wajib dipilih.', 'Trade direction (BUY / SELL) is required.')
+      );
       return;
     }
 
     const parsedLot = parseFloat(lotSize);
     if (isNaN(parsedLot) || parsedLot <= 0) {
-      triggerValidationError('Lot harus berupa angka positif lebih dari 0.');
+      triggerValidationError(
+        tr(
+          'Lot harus berupa angka positif lebih dari 0.',
+          'Lot size must be a positive number greater than 0.'
+        )
+      );
       return;
     }
 
     const parsedEntry = parseFloat(entryPrice);
     if (isNaN(parsedEntry) || parsedEntry <= 0) {
-      triggerValidationError('Entry price harus berupa angka positif yang valid.');
+      triggerValidationError(
+        tr(
+          'Harga entry harus berupa angka positif yang valid.',
+          'Entry price must be a valid positive number.'
+        )
+      );
       return;
     }
 
@@ -1114,7 +1179,12 @@ export const TradeForm: React.FC<TradeFormProps> = ({
     if (stopLoss.trim() !== '') {
       const num = parseFloat(stopLoss);
       if (isNaN(num) || num <= 0) {
-        triggerValidationError('Stop Loss harus berupa angka positif jika diisi.');
+        triggerValidationError(
+          tr(
+            'Stop Loss harus berupa angka positif jika diisi.',
+            'Stop Loss must be a positive number if provided.'
+          )
+        );
         return;
       }
       parsedSL = num;
@@ -1124,7 +1194,12 @@ export const TradeForm: React.FC<TradeFormProps> = ({
     if (takeProfit.trim() !== '') {
       const num = parseFloat(takeProfit);
       if (isNaN(num) || num <= 0) {
-        triggerValidationError('Take Profit harus berupa angka positif jika diisi.');
+        triggerValidationError(
+          tr(
+            'Take Profit harus berupa angka positif jika diisi.',
+            'Take Profit must be a positive number if provided.'
+          )
+        );
         return;
       }
       parsedTP = num;
@@ -1133,7 +1208,11 @@ export const TradeForm: React.FC<TradeFormProps> = ({
     const directionCheck = validateSlTpDirection(position, parsedEntry, parsedSL, parsedTP);
     if (!directionCheck.isValid) {
       triggerValidationError(
-        directionCheck.errorMessage || 'Arah Stop Loss / Take Profit tidak sesuai posisi order.'
+        directionCheck.errorMessage ||
+          tr(
+            'Arah Stop Loss / Take Profit tidak sesuai posisi order.',
+            'Stop Loss / Take Profit direction does not match order position.'
+          )
       );
       return;
     }
@@ -1142,7 +1221,12 @@ export const TradeForm: React.FC<TradeFormProps> = ({
     if (exitPrice.trim() !== '') {
       const num = parseFloat(exitPrice);
       if (isNaN(num) || num <= 0) {
-        triggerValidationError('Exit Price harus berupa angka positif jika diisi.');
+        triggerValidationError(
+          tr(
+            'Harga Exit harus berupa angka positif jika diisi.',
+            'Exit Price must be a positive number if provided.'
+          )
+        );
         return;
       }
       parsedExit = num;
@@ -1173,7 +1257,12 @@ export const TradeForm: React.FC<TradeFormProps> = ({
             )
           : 0;
       if (isNaN(rawNet)) {
-        triggerValidationError('Hasil bersih (Net Profit) harus berupa angka yang valid.');
+        triggerValidationError(
+          tr(
+            'Hasil bersih (Net Profit) harus berupa angka yang valid.',
+            'Net Profit must be a valid number.'
+          )
+        );
         return;
       }
       normalizedNet = Number(rawNet.toFixed(2));
@@ -1395,13 +1484,21 @@ export const TradeForm: React.FC<TradeFormProps> = ({
         }
         if (!saveResult.success && !saveResult.ignored) {
           triggerValidationError(
-            saveResult.error || 'Gagal menyimpan transaksi. Data formulir Anda tetap tersimpan.'
+            saveResult.error ||
+              tr(
+                'Gagal menyimpan transaksi. Data formulir Anda tetap tersimpan.',
+                'Failed to save trade. Your form data remains intact.'
+              )
           );
         }
       }
     } catch (err: any) {
       triggerValidationError(
-        err?.message || 'Gagal menyimpan transaksi. Silakan periksa koneksi Anda dan coba lagi.'
+        err?.message ||
+          tr(
+            'Gagal menyimpan transaksi. Silakan periksa koneksi Anda dan coba lagi.',
+            'Failed to save trade. Please check your connection and try again.'
+          )
       );
     } finally {
       isSubmittingRef.current = false;
@@ -1446,11 +1543,13 @@ export const TradeForm: React.FC<TradeFormProps> = ({
         <div className="flex items-center justify-between px-5 pt-4 pb-3 border-b border-[#DDE3EA] dark:border-[#1E232B] shrink-0">
           <div className="flex items-center gap-2.5 min-w-0">
             <h2 className="text-[15px] font-bold tracking-tight text-[#151D2A] dark:text-[#F2F4F7] truncate">
-              {initialTrade ? 'Edit Transaksi' : 'Tambah Transaksi'}
+              {initialTrade
+                ? tr('Edit Transaksi', 'Edit Trade')
+                : tr('Tambah Transaksi', 'Add Trade')}
             </h2>
             {lifecycleStatus === 'CLOSED' && (
               <span className="text-[10px] font-semibold tracking-wider uppercase text-[#697586] dark:text-[#929BA9]">
-                · CLOSED
+                · {tr('SELESAI', 'CLOSED')}
               </span>
             )}
           </div>
@@ -1459,8 +1558,8 @@ export const TradeForm: React.FC<TradeFormProps> = ({
             onClick={onCancel}
             disabled={isSubmitting}
             className="rounded-full p-1.5 text-[#697586] dark:text-[#929BA9] hover:text-[#151D2A] dark:hover:text-[#F2F4F7] hover:bg-[#F5F7FA] dark:hover:bg-[#151921] active:scale-95 transition-all disabled:opacity-50 cursor-pointer"
-            title="Tutup Form"
-            aria-label="Tutup form transaksi"
+            title={tr('Tutup Formulir', 'Close Form')}
+            aria-label={tr('Tutup formulir transaksi', 'Close trade form')}
           >
             <X className="h-4 w-4 stroke-[2]" />
           </button>
@@ -1482,7 +1581,9 @@ export const TradeForm: React.FC<TradeFormProps> = ({
           <div className="px-5 py-2.5 flex items-center justify-between gap-3">
             {/* 2. Pair / Instrument Dropdown */}
             <div className="relative flex-1 min-w-0">
-              <span className="block text-[10px] text-[#697586] dark:text-[#929BA9] mb-0.5">Pair / Instrument</span>
+              <span className="block text-[10px] text-[#697586] dark:text-[#929BA9] mb-0.5">
+                {tr('Pasangan / Instrumen', 'Pair / Instrument')}
+              </span>
               <button
                 type="button"
                 onClick={() => setIsInstrumentDropdownOpen(!isInstrumentDropdownOpen)}
@@ -1504,7 +1605,7 @@ export const TradeForm: React.FC<TradeFormProps> = ({
                       type="text"
                       value={instrumentSearch}
                       onChange={(e) => setInstrumentSearch(e.target.value.toUpperCase())}
-                      placeholder="Cari simbol..."
+                      placeholder={tr('Cari simbol...', 'Search symbol...')}
                       className="w-full bg-transparent text-xs font-bold uppercase tracking-wider text-[#151D2A] dark:text-[#F2F4F7] placeholder-[#94A3B8] dark:placeholder-[#606875] focus:outline-none"
                       onKeyDown={(e) => {
                         if (e.key === 'Enter' && instrumentSearch.trim()) {
@@ -1552,7 +1653,7 @@ export const TradeForm: React.FC<TradeFormProps> = ({
                         }}
                         className="w-full text-left px-2.5 py-1.5 rounded-xl text-xs font-bold text-[#151D2A] dark:text-[#F2F4F7] hover:bg-[#F5F7FA] dark:hover:bg-[#1A202A] cursor-pointer"
                       >
-                        Gunakan &quot;{instrumentSearch.trim()}&quot;
+                        {tr('Gunakan', 'Use')} &quot;{instrumentSearch.trim()}&quot;
                       </button>
                     )}
                   </div>
@@ -1592,7 +1693,9 @@ export const TradeForm: React.FC<TradeFormProps> = ({
                 </button>
               </div>
               {orderType === 'Pending' && (
-                <div className="text-[9px] text-[#697586] dark:text-[#929BA9] mt-0.5">Pending Order</div>
+                <div className="text-[9px] text-[#697586] dark:text-[#929BA9] mt-0.5">
+                  {tr('Order Tertunda', 'Pending Order')}
+                </div>
               )}
             </div>
           </div>
@@ -1644,7 +1747,7 @@ export const TradeForm: React.FC<TradeFormProps> = ({
               htmlFor="trade-entry-price-input"
               className="text-xs text-[#697586] dark:text-[#929BA9] shrink-0"
             >
-              Entry Price
+              {tr('Harga Entry', 'Entry Price')}
             </label>
             <input
               id="trade-entry-price-input"
@@ -1738,7 +1841,7 @@ export const TradeForm: React.FC<TradeFormProps> = ({
                   htmlFor="trade-lot-input"
                   className="text-[11px] text-[#697586] dark:text-[#929BA9]"
                 >
-                  Lot Size
+                  {tr('Ukuran Lot', 'Lot Size')}
                 </label>
                 {xauLotCalcResult.isValid && xauLotCalcResult.recommendedLot > 0 && (
                   <button
@@ -1749,9 +1852,12 @@ export const TradeForm: React.FC<TradeFormProps> = ({
                       setLotSize(String(xauLotCalcResult.recommendedLot));
                     }}
                     className="text-[9px] font-semibold text-[#697586] dark:text-[#929BA9] hover:text-[#151D2A] dark:hover:text-[#F2F4F7] underline cursor-pointer"
-                    title="Gunakan rekomendasi lot otomatis sesuai Equity"
+                    title={tr(
+                      'Gunakan rekomendasi lot otomatis sesuai Ekuitas',
+                      'Use automatic recommended lot based on Equity'
+                    )}
                   >
-                    Rec {xauLotCalcResult.recommendedLot}
+                    {tr('Rek', 'Rec')} {xauLotCalcResult.recommendedLot}
                   </button>
                 )}
               </div>
@@ -1775,8 +1881,12 @@ export const TradeForm: React.FC<TradeFormProps> = ({
 
             <div className="px-5 py-2.5">
               <div className="flex items-center justify-between mb-0.5">
-                <span className="text-[11px] text-[#697586] dark:text-[#929BA9]">Risk</span>
-                <span className="text-[9px] text-[#94A3B8] dark:text-[#606875]">Otomatis dari lot</span>
+                <span className="text-[11px] text-[#697586] dark:text-[#929BA9]">
+                  {tr('Risiko', 'Risk')}
+                </span>
+                <span className="text-[9px] text-[#94A3B8] dark:text-[#606875]">
+                  {tr('Otomatis dari lot', 'Auto from lot')}
+                </span>
               </div>
               <div className="text-xs font-bold tabular-nums text-[#151D2A] dark:text-[#F2F4F7] truncate">
                 {displayedRiskAmount > 0
@@ -1791,7 +1901,9 @@ export const TradeForm: React.FC<TradeFormProps> = ({
             {/* 8. Potential Loss & Potential Profit */}
             <div className="grid grid-cols-2 gap-4">
               <div className="flex items-center justify-between">
-                <span className="text-[11px] text-[#697586] dark:text-[#929BA9]">Potential Loss</span>
+                <span className="text-[11px] text-[#697586] dark:text-[#929BA9]">
+                  {tr('Potensi Rugi', 'Potential Loss')}
+                </span>
                 <span className="text-xs font-bold tabular-nums text-[#E11D48] dark:text-[#E05260]">
                   {lotOrderMetrics.riskAmount !== null && lotOrderMetrics.riskAmount > 0
                     ? `-${fmtMoney(lotOrderMetrics.riskAmount)}`
@@ -1799,7 +1911,9 @@ export const TradeForm: React.FC<TradeFormProps> = ({
                 </span>
               </div>
               <div className="flex items-center justify-between">
-                <span className="text-[11px] text-[#697586] dark:text-[#929BA9]">Potential Profit</span>
+                <span className="text-[11px] text-[#697586] dark:text-[#929BA9]">
+                  {tr('Potensi Profit', 'Potential Profit')}
+                </span>
                 <span className="text-xs font-bold tabular-nums text-[#059669] dark:text-[#00A878]">
                   {lotOrderMetrics.potentialProfit !== null && lotOrderMetrics.potentialProfit > 0
                     ? `+${fmtMoney(lotOrderMetrics.potentialProfit)}`
@@ -1810,7 +1924,9 @@ export const TradeForm: React.FC<TradeFormProps> = ({
 
             {/* 9. Risk / Reward */}
             <div className="flex items-center justify-between pt-1 border-t border-[#DDE3EA]/70 dark:border-[#1E232B]/60">
-              <span className="text-[11px] text-[#697586] dark:text-[#929BA9]">Risk / Reward</span>
+              <span className="text-[11px] text-[#697586] dark:text-[#929BA9]">
+                {tr('Risiko / Imbalan (R:R)', 'Risk / Reward')}
+              </span>
               <span className="text-xs font-bold tabular-nums text-[#151D2A] dark:text-[#F2F4F7]">
                 {formatPlannedRR(plannedRR)}
               </span>
@@ -1825,10 +1941,15 @@ export const TradeForm: React.FC<TradeFormProps> = ({
               data-testid="open-detail-view-button"
               className="w-full flex items-center justify-between py-1 text-xs font-semibold text-[#697586] dark:text-[#929BA9] hover:text-[#151D2A] dark:hover:text-[#F2F4F7] active:scale-[0.99] transition-all cursor-pointer"
             >
-              <span>Detail lainnya</span>
+              <span>{tr('Detail lainnya', 'More details')}</span>
               <span className="inline-flex items-center gap-1.5 text-[11px] text-[#151D2A] dark:text-[#F2F4F7]">
                 <span className="truncate max-w-[170px] text-[#697586] dark:text-[#929BA9] font-normal">
-                  {strategy || activeSessionObj.label} · {lifecycleStatus}
+                  {strategy || tr(activeSessionObj.labelId, activeSessionObj.labelEn)} ·{' '}
+                  {lifecycleStatus === 'PLANNED'
+                    ? tr('DIRENCANAKAN', 'PLANNED')
+                    : lifecycleStatus === 'OPEN'
+                    ? tr('AKTIF', 'OPEN')
+                    : tr('SELESAI', 'CLOSED')}
                 </span>
                 <ChevronRight className="h-3.5 w-3.5 text-[#697586] dark:text-[#929BA9]" />
               </span>
@@ -1844,7 +1965,7 @@ export const TradeForm: React.FC<TradeFormProps> = ({
             disabled={isSubmitting}
             className="flex-1 py-2.5 rounded-full bg-[#F5F7FA] dark:bg-[#151921] hover:bg-[#EEF2F6] dark:hover:bg-[#1C222D] active:scale-[0.98] text-xs font-semibold text-[#697586] dark:text-[#929BA9] hover:text-[#151D2A] dark:hover:text-[#F2F4F7] transition-all disabled:opacity-50 cursor-pointer"
           >
-            Batal
+            {tr('Batal', 'Cancel')}
           </button>
           <button
             type="submit"
@@ -1856,10 +1977,10 @@ export const TradeForm: React.FC<TradeFormProps> = ({
             {isSubmitting ? (
               <>
                 <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                <span>Menyimpan...</span>
+                <span>{tr('Menyimpan...', 'Saving...')}</span>
               </>
             ) : (
-              <span>Simpan</span>
+              <span>{tr('Simpan', 'Save')}</span>
             )}
           </button>
         </div>
@@ -1880,15 +2001,15 @@ export const TradeForm: React.FC<TradeFormProps> = ({
         {/* Detail View Header: "Detail Transaksi" & Close Button */}
         <div className="flex items-center justify-between px-5 pt-4 pb-3 border-b border-[#DDE3EA] dark:border-[#1E232B] shrink-0">
           <h2 className="text-[15px] font-bold tracking-tight text-[#151D2A] dark:text-[#F2F4F7]">
-            Detail Transaksi
+            {tr('Detail Transaksi', 'Trade Details')}
           </h2>
           <button
             type="button"
             onClick={onCancel}
             disabled={isSubmitting}
             className="rounded-full p-1.5 text-[#697586] dark:text-[#929BA9] hover:text-[#151D2A] dark:hover:text-[#F2F4F7] hover:bg-[#F5F7FA] dark:hover:bg-[#151921] active:scale-95 transition-all disabled:opacity-50 cursor-pointer"
-            title="Tutup Form"
-            aria-label="Tutup form transaksi"
+            title={tr('Tutup Formulir', 'Close Form')}
+            aria-label={tr('Tutup formulir transaksi', 'Close trade form')}
           >
             <X className="h-4 w-4 stroke-[2]" />
           </button>
@@ -1909,13 +2030,15 @@ export const TradeForm: React.FC<TradeFormProps> = ({
           {/* Status Transaksi (PLANNED / OPEN / CLOSED) & Preset Risiko */}
           <div className="px-5 py-2.5 space-y-2">
             <div className="flex items-center justify-between">
-              <span className="text-[11px] text-[#697586] dark:text-[#929BA9]">Status Transaksi</span>
+              <span className="text-[11px] text-[#697586] dark:text-[#929BA9]">
+                {tr('Status Transaksi', 'Trade Status')}
+              </span>
               <div className="inline-flex items-center rounded-full bg-[#F5F7FA] dark:bg-[#12161D] p-0.5 border border-[#DDE3EA] dark:border-[#1E232B]">
                 {(
                   [
-                    { key: 'PLANNED', label: 'Planned' },
-                    { key: 'OPEN', label: 'Open' },
-                    { key: 'CLOSED', label: 'Closed' },
+                    { key: 'PLANNED', labelId: 'Rencana', labelEn: 'Planned' },
+                    { key: 'OPEN', labelId: 'Aktif', labelEn: 'Open' },
+                    { key: 'CLOSED', labelId: 'Selesai', labelEn: 'Closed' },
                   ] as const
                 ).map((st) => {
                   const isActive = lifecycleStatus === st.key;
@@ -1930,7 +2053,7 @@ export const TradeForm: React.FC<TradeFormProps> = ({
                           : 'text-[#697586] dark:text-[#929BA9] hover:text-[#151D2A] dark:hover:text-[#F2F4F7]'
                       }`}
                     >
-                      {st.label}
+                      {tr(st.labelId, st.labelEn)}
                     </button>
                   );
                 })}
@@ -1939,7 +2062,9 @@ export const TradeForm: React.FC<TradeFormProps> = ({
 
             {isXauInstrument && (
               <div className="flex items-center justify-between gap-2 pt-1">
-                <span className="text-[10px] text-[#697586] dark:text-[#929BA9]">Preset Risiko Lot</span>
+                <span className="text-[10px] text-[#697586] dark:text-[#929BA9]">
+                  {tr('Preset Risiko Lot', 'Lot Risk Preset')}
+                </span>
                 <div className="flex items-center gap-1">
                   {POSITION_SIZING_RISK_PRESETS.map((pct) => (
                     <button
@@ -1967,14 +2092,16 @@ export const TradeForm: React.FC<TradeFormProps> = ({
           {/* 1. Strategy Dropdown */}
           <div className="px-5 py-2.5">
             <div className="flex items-center justify-between mb-1">
-              <span className="text-[11px] text-[#697586] dark:text-[#929BA9]">Strategy</span>
+              <span className="text-[11px] text-[#697586] dark:text-[#929BA9]">
+                {tr('Strategi', 'Strategy')}
+              </span>
               {strategy && (
                 <button
                   type="button"
                   onClick={() => setStrategy('')}
                   className="text-[10px] text-[#697586] dark:text-[#929BA9] hover:text-[#E11D48] dark:hover:text-[#E05260] cursor-pointer"
                 >
-                  Reset
+                  {tr('Atur Ulang', 'Reset')}
                 </button>
               )}
             </div>
@@ -1985,7 +2112,7 @@ export const TradeForm: React.FC<TradeFormProps> = ({
                 className="w-full flex items-center justify-between py-1 text-xs font-semibold text-left text-[#151D2A] dark:text-[#F2F4F7] cursor-pointer"
               >
                 <span className={strategy ? 'text-[#151D2A] dark:text-[#F2F4F7]' : 'text-[#94A3B8] dark:text-[#606875]'}>
-                  {strategy || 'Pilih atau ketik strategi...'}
+                  {strategy || tr('Pilih atau ketik strategi...', 'Select or type strategy...')}
                 </span>
                 <ChevronDown
                   className={`h-3.5 w-3.5 text-[#697586] dark:text-[#929BA9] transition-transform duration-200 ${
@@ -2001,7 +2128,7 @@ export const TradeForm: React.FC<TradeFormProps> = ({
                       type="text"
                       value={customStrategyInput}
                       onChange={(e) => setCustomStrategyInput(e.target.value)}
-                      placeholder="Ketik strategi kustom..."
+                      placeholder={tr('Ketik strategi kustom...', 'Type custom strategy...')}
                       className="flex-1 rounded-xl bg-white dark:bg-[#0B0D11] border border-[#DDE3EA] dark:border-[#1E232B] px-2.5 py-1.5 text-xs text-[#151D2A] dark:text-[#F2F4F7] placeholder-[#94A3B8] dark:placeholder-[#606875] focus:outline-none"
                       onKeyDown={(e) => {
                         if (e.key === 'Enter' && customStrategyInput.trim()) {
@@ -2023,7 +2150,7 @@ export const TradeForm: React.FC<TradeFormProps> = ({
                       }}
                       className="px-3 py-1.5 rounded-xl bg-[#151D2A] text-white dark:bg-[#F2F4F7] dark:text-[#050607] text-xs font-bold cursor-pointer"
                     >
-                      Pilih
+                      {tr('Pilih', 'Select')}
                     </button>
                   </div>
                   <div className="max-h-36 overflow-y-auto space-y-0.5 pr-0.5">
@@ -2056,7 +2183,9 @@ export const TradeForm: React.FC<TradeFormProps> = ({
 
           {/* 2. Trading Session Dropdown */}
           <div className="px-5 py-2.5">
-            <span className="block text-[11px] text-[#697586] dark:text-[#929BA9] mb-1">Trading Session</span>
+            <span className="block text-[11px] text-[#697586] dark:text-[#929BA9] mb-1">
+              {tr('Sesi Trading', 'Trading Session')}
+            </span>
             <div className="relative">
               <button
                 type="button"
@@ -2064,8 +2193,10 @@ export const TradeForm: React.FC<TradeFormProps> = ({
                 className="w-full flex items-center justify-between py-1 text-xs font-semibold text-left text-[#151D2A] dark:text-[#F2F4F7] cursor-pointer"
               >
                 <span>
-                  {activeSessionObj.label}{' '}
-                  <span className="text-[#697586] dark:text-[#929BA9] font-normal">({activeSessionObj.desc})</span>
+                  {tr(activeSessionObj.labelId, activeSessionObj.labelEn)}{' '}
+                  <span className="text-[#697586] dark:text-[#929BA9] font-normal">
+                    ({tr(activeSessionObj.descId, activeSessionObj.descEn)})
+                  </span>
                 </span>
                 <ChevronDown
                   className={`h-3.5 w-3.5 text-[#697586] dark:text-[#929BA9] transition-transform duration-200 ${
@@ -2093,7 +2224,8 @@ export const TradeForm: React.FC<TradeFormProps> = ({
                         }`}
                       >
                         <span>
-                          {s.label} · <span className="opacity-75">{s.desc}</span>
+                          {tr(s.labelId, s.labelEn)} ·{' '}
+                          <span className="opacity-75">{tr(s.descId, s.descEn)}</span>
                         </span>
                         {isSelected && <Check className="h-3.5 w-3.5 text-white dark:text-[#050607]" />}
                       </button>
@@ -2107,7 +2239,9 @@ export const TradeForm: React.FC<TradeFormProps> = ({
           {/* 3 & 4. Date and Time */}
           <div className="grid grid-cols-2 divide-x divide-[#DDE3EA] dark:divide-[#1E232B]">
             <div className="px-5 py-2.5">
-              <label className="block text-[11px] text-[#697586] dark:text-[#929BA9] mb-0.5">Date</label>
+              <label className="block text-[11px] text-[#697586] dark:text-[#929BA9] mb-0.5">
+                {tr('Tanggal', 'Date')}
+              </label>
               <input
                 type="date"
                 value={tradeDate}
@@ -2117,7 +2251,9 @@ export const TradeForm: React.FC<TradeFormProps> = ({
               />
             </div>
             <div className="px-5 py-2.5">
-              <label className="block text-[11px] text-[#697586] dark:text-[#929BA9] mb-0.5">Time</label>
+              <label className="block text-[11px] text-[#697586] dark:text-[#929BA9] mb-0.5">
+                {tr('Waktu', 'Time')}
+              </label>
               <input
                 type="time"
                 value={tradeTime}
@@ -2132,7 +2268,9 @@ export const TradeForm: React.FC<TradeFormProps> = ({
           {lifecycleStatus === 'CLOSED' && (
             <div className="px-5 py-2.5 space-y-2.5">
               <div className="flex items-center justify-between">
-                <span className="text-[11px] text-[#697586] dark:text-[#929BA9]">Outcome</span>
+                <span className="text-[11px] text-[#697586] dark:text-[#929BA9]">
+                  {tr('Hasil', 'Outcome')}
+                </span>
                 <div className="inline-flex items-center gap-1 rounded-full bg-[#F5F7FA] dark:bg-[#12161D] p-0.5 border border-[#DDE3EA] dark:border-[#1E232B]">
                   {(['WIN', 'LOSS', 'BREAKEVEN'] as const).map((oc) => (
                     <button
@@ -2153,7 +2291,9 @@ export const TradeForm: React.FC<TradeFormProps> = ({
 
               <div className="grid grid-cols-2 gap-3 pt-1 border-t border-[#DDE3EA]/70 dark:border-[#1E232B]/60">
                 <div>
-                  <label className="block text-[10px] text-[#697586] dark:text-[#929BA9] mb-0.5">Exit Price</label>
+                  <label className="block text-[10px] text-[#697586] dark:text-[#929BA9] mb-0.5">
+                    {tr('Harga Exit', 'Exit Price')}
+                  </label>
                   <input
                     type="number"
                     step="any"
@@ -2166,7 +2306,7 @@ export const TradeForm: React.FC<TradeFormProps> = ({
                 </div>
                 <div>
                   <label className="block text-[10px] text-[#697586] dark:text-[#929BA9] mb-0.5">
-                    Gross P/L ({settings.currencySymbol})
+                    {tr('L/R Kotor', 'Gross P/L')} ({settings.currencySymbol})
                   </label>
                   <input
                     type="number"
@@ -2180,7 +2320,7 @@ export const TradeForm: React.FC<TradeFormProps> = ({
                 </div>
                 <div>
                   <label className="block text-[10px] text-[#697586] dark:text-[#929BA9] mb-0.5">
-                    Commission ({settings.currencySymbol})
+                    {tr('Komisi', 'Commission')} ({settings.currencySymbol})
                   </label>
                   <input
                     type="number"
@@ -2194,7 +2334,7 @@ export const TradeForm: React.FC<TradeFormProps> = ({
                 </div>
                 <div>
                   <label className="block text-[10px] text-[#697586] dark:text-[#929BA9] mb-0.5">
-                    Net P/L ({settings.currencySymbol})
+                    {tr('L/R Bersih', 'Net P/L')} ({settings.currencySymbol})
                   </label>
                   <input
                     type="number"
@@ -2230,7 +2370,9 @@ export const TradeForm: React.FC<TradeFormProps> = ({
                   />
                 </div>
                 <div>
-                  <label className="block text-[10px] text-[#697586] dark:text-[#929BA9] mb-0.5">Tipe Penutupan</label>
+                  <label className="block text-[10px] text-[#697586] dark:text-[#929BA9] mb-0.5">
+                    {tr('Tipe Penutupan', 'Close Type')}
+                  </label>
                   <select
                     value={closeType}
                     onChange={(e) => setCloseType(e.target.value as TradeCloseType)}
@@ -2238,14 +2380,14 @@ export const TradeForm: React.FC<TradeFormProps> = ({
                   >
                     <option value="TP">Take Profit (TP)</option>
                     <option value="SL">Stop Loss (SL)</option>
-                    <option value="Manual">Manual Close</option>
+                    <option value="Manual">{tr('Penutupan Manual', 'Manual Close')}</option>
                   </select>
                 </div>
               </div>
 
               <div>
                 <label className="block text-[10px] text-[#697586] dark:text-[#929BA9] mb-0.5">
-                  Kepatuhan Eksekusi
+                  {tr('Kepatuhan Eksekusi', 'Execution Adherence')}
                 </label>
                 <select
                   value={adherenceTag}
@@ -2254,7 +2396,7 @@ export const TradeForm: React.FC<TradeFormProps> = ({
                 >
                   {EXECUTION_ADHERENCE_OPTIONS.map((opt) => (
                     <option key={opt.value} value={opt.value}>
-                      {opt.label}
+                      {tr(opt.labelId, opt.labelEn)}
                     </option>
                   ))}
                 </select>
@@ -2273,7 +2415,7 @@ export const TradeForm: React.FC<TradeFormProps> = ({
                   type="button"
                   onClick={handleRegenerateId}
                   className="text-[#697586] dark:text-[#929BA9] hover:text-[#151D2A] dark:hover:text-[#F2F4F7] inline-flex items-center cursor-pointer"
-                  title="Acak ID Transaksi"
+                  title={tr('Acak ID Transaksi', 'Regenerate Trade ID')}
                 >
                   <RefreshCw className="h-3 w-3 stroke-[1.75]" />
                 </button>
@@ -2289,7 +2431,7 @@ export const TradeForm: React.FC<TradeFormProps> = ({
                 }`}
               >
                 <Upload className="h-3 w-3 stroke-[2]" />
-                <span>Upload</span>
+                <span>{tr('Unggah', 'Upload')}</span>
                 <input
                   type="file"
                   accept="image/*"
@@ -2311,17 +2453,20 @@ export const TradeForm: React.FC<TradeFormProps> = ({
                     ? 'bg-amber-500/15 hover:bg-amber-500/25 text-amber-600 dark:text-amber-400 border border-amber-500/30 shadow-xs'
                     : 'bg-[#F5F7FA] dark:bg-[#12161D] border border-[#DDE3EA] dark:border-[#1E232B] text-[#94A3B8] dark:text-[#606875] opacity-50 cursor-not-allowed'
                 }`}
-                title="Ekstrak data posisi (Pair, BUY/SELL, Entry, SL, TP) otomatis dalam 1-2 detik"
+                title={tr(
+                  'Ekstrak data posisi (Pair, BUY/SELL, Entry, SL, TP) otomatis dalam 1-2 detik',
+                  'Extract position data (Pair, BUY/SELL, Entry, SL, TP) automatically in 1-2 seconds'
+                )}
               >
                 {isScanningScreenshot ? (
                   <>
                     <Loader2 className="h-3 w-3 animate-spin text-amber-500" />
-                    <span>Memindai...</span>
+                    <span>{tr('Memindai...', 'Scanning...')}</span>
                   </>
                 ) : (
                   <>
                     <Sparkles className="h-3 w-3 text-amber-500" />
-                    <span>Scan Cepat</span>
+                    <span>{tr('Scan Cepat', 'Quick Scan')}</span>
                   </>
                 )}
               </button>
@@ -2334,7 +2479,10 @@ export const TradeForm: React.FC<TradeFormProps> = ({
                   setScreenshotUrl(e.target.value);
                   setScanResultFeedback(null);
                 }}
-                placeholder="Tempel URL snapshot TradingView / tekan Ctrl+V gambar..."
+                placeholder={tr(
+                  'Tempel URL snapshot TradingView / tekan Ctrl+V gambar...',
+                  'Paste TradingView snapshot URL / press Ctrl+V image...'
+                )}
                 className="flex-1 bg-transparent border-b border-[#DDE3EA] dark:border-[#1E232B] py-1 text-xs text-[#151D2A] dark:text-[#F2F4F7] placeholder-[#94A3B8] dark:placeholder-[#606875] focus:outline-none focus:border-[#697586] dark:focus:border-[#929BA9] disabled:opacity-50"
               />
             </div>
@@ -2345,7 +2493,10 @@ export const TradeForm: React.FC<TradeFormProps> = ({
                   type="text"
                   value={afterScreenshotUrl}
                   onChange={(e) => setAfterScreenshotUrl(e.target.value)}
-                  placeholder="URL Screenshot After-Trade (opsional)..."
+                  placeholder={tr(
+                    'URL Screenshot Sesudah-Trade (opsional)...',
+                    'After-Trade Screenshot URL (optional)...'
+                  )}
                   className="w-full bg-transparent border-b border-[#DDE3EA] dark:border-[#1E232B] py-1 text-xs text-[#151D2A] dark:text-[#F2F4F7] placeholder-[#94A3B8] dark:placeholder-[#606875] focus:outline-none focus:border-[#697586] dark:focus:border-[#929BA9]"
                 />
               </div>
@@ -2363,13 +2514,15 @@ export const TradeForm: React.FC<TradeFormProps> = ({
                       className="w-full h-28 object-cover"
                     />
                   ) : (
-                    <span className="text-[11px] text-[#697586] dark:text-[#929BA9]">Pratinjau tersimpan</span>
+                    <span className="text-[11px] text-[#697586] dark:text-[#929BA9]">
+                      {tr('Pratinjau tersimpan', 'Saved preview')}
+                    </span>
                   )}
                   {isScanningScreenshot && (
                     <div className="absolute inset-0 bg-black/55 backdrop-blur-[1px] flex flex-col items-center justify-center gap-1.5 text-white px-3 text-center">
                       <Loader2 className="h-4 w-4 animate-spin text-amber-400" />
                       <span className="text-[11px] font-semibold tracking-tight">
-                        Memindai Entry, SL, TP & Lot...
+                        {tr('Memindai Entry, SL, TP & Lot...', 'Scanning Entry, SL, TP & Lot...')}
                       </span>
                     </div>
                   )}
@@ -2400,12 +2553,17 @@ export const TradeForm: React.FC<TradeFormProps> = ({
                   {isScanningScreenshot ? (
                     <>
                       <Loader2 className="h-3.5 w-3.5 animate-spin text-amber-500 shrink-0" />
-                      <span>Sedang Memindai Screenshot...</span>
+                      <span>{tr('Sedang Memindai Screenshot...', 'Scanning Screenshot...')}</span>
                     </>
                   ) : (
                     <>
                       <Sparkles className="h-3.5 w-3.5 text-amber-500 shrink-0" />
-                      <span>⚡ Scan Kilat & Isi Otomatis (AI Flash Lite)</span>
+                      <span>
+                        {tr(
+                          '⚡ Scan Kilat & Isi Otomatis (AI Flash Lite)',
+                          '⚡ Instant Scan & Auto-Fill (AI Flash Lite)'
+                        )}
+                      </span>
                     </>
                   )}
                 </button>
@@ -2439,7 +2597,7 @@ export const TradeForm: React.FC<TradeFormProps> = ({
                         className="px-2.5 py-1 rounded-lg bg-red-500/15 hover:bg-red-500/25 text-red-700 dark:text-red-300 font-semibold text-[11px] inline-flex items-center gap-1 cursor-pointer transition-colors"
                       >
                         <RefreshCw className={`h-3 w-3 ${isScanningScreenshot ? 'animate-spin' : ''}`} />
-                        <span>Coba Scan Lagi</span>
+                        <span>{tr('Coba Scan Lagi', 'Try Scan Again')}</span>
                       </button>
                     </div>
                   )}
@@ -2455,8 +2613,13 @@ export const TradeForm: React.FC<TradeFormProps> = ({
                           {scanResultFeedback.details.source === 'MT5' ? 'MetaTrader 5' : 'TradingView'}
                         </span>
                       )}
-                      <span>Instrumen: <b>{scanResultFeedback.details.instrument}</b></span>
-                      <span>Arah: <b>{scanResultFeedback.details.position}</b></span>
+                      <span>
+                        {tr('Instrumen:', 'Instrument:')}{' '}
+                        <b>{scanResultFeedback.details.instrument}</b>
+                      </span>
+                      <span>
+                        {tr('Arah:', 'Direction:')} <b>{scanResultFeedback.details.position}</b>
+                      </span>
                       {scanResultFeedback.details.lotSize !== null && scanResultFeedback.details.lotSize !== undefined && (
                         <span>Lot: <b>{scanResultFeedback.details.lotSize}</b></span>
                       )}
@@ -2498,13 +2661,26 @@ export const TradeForm: React.FC<TradeFormProps> = ({
             <div className="text-[11px] text-[#697586] dark:text-[#929BA9] bg-[#F5F7FA] dark:bg-[#12161D] rounded-xl p-2.5 border border-[#DDE3EA] dark:border-[#1E232B] space-y-1.5">
               <div className="font-semibold text-[#151D2A] dark:text-[#F2F4F7] flex items-center gap-1.5">
                 <span>💡</span>
-                <span>Mendukung Screenshot MetaTrader 5 (MT5) & TradingView:</span>
+                <span>
+                  {tr(
+                    'Mendukung Screenshot MetaTrader 5 (MT5) & TradingView:',
+                    'Supports MetaTrader 5 (MT5) & TradingView Screenshots:'
+                  )}
+                </span>
               </div>
               <p className="leading-relaxed">
-                <b>• MetaTrader 5 (MT5 Mobile / PC):</b> Ambil screenshot pada tab <b>Trade</b> (posisi berjalan), tab <b>History</b> (riwayat selesai), atau <b>Chart MT5</b> dengan garis order. AI otomatis membaca Pair, Buy/Sell, Ukuran Lot, Entry, SL, TP, hingga Profit!
+                <b>• MetaTrader 5 (MT5 Mobile / PC):</b>{' '}
+                {tr(
+                  'Ambil screenshot pada tab Trade (posisi berjalan), tab History (riwayat selesai), atau Chart MT5 dengan garis order. AI otomatis membaca Pair, Buy/Sell, Ukuran Lot, Entry, SL, TP, hingga Profit!',
+                  'Take a screenshot on the Trade tab (active positions), History tab (closed trades), or MT5 Chart with order lines. AI automatically reads Pair, Buy/Sell, Lot Size, Entry, SL, TP, and Profit!'
+                )}
               </p>
               <p className="leading-relaxed">
-                <b>• TradingView / Advance Chart:</b> Tekan <kbd className="px-1 py-0.5 rounded bg-black/10 dark:bg-white/10 font-mono text-[10px]">Win + Shift + S</kbd> (Windows) atau <kbd className="px-1 py-0.5 rounded bg-black/10 dark:bg-white/10 font-mono text-[10px]">Cmd + Shift + 4</kbd> (Mac), lalu langsung tekan <kbd className="px-1 py-0.5 rounded bg-black/10 dark:bg-white/10 font-mono text-[10px]">Ctrl + V</kbd> di sini untuk memindai instan!
+                <b>• TradingView / Advance Chart:</b>{' '}
+                {tr(
+                  'Tekan Win + Shift + S (Windows) atau Cmd + Shift + 4 (Mac), lalu langsung tekan Ctrl + V di sini untuk memindai instan!',
+                  'Press Win + Shift + S (Windows) or Cmd + Shift + 4 (Mac), then press Ctrl + V directly here to scan instantly!'
+                )}
               </p>
             </div>
           </div>
@@ -2513,26 +2689,32 @@ export const TradeForm: React.FC<TradeFormProps> = ({
           <div className="px-5 py-2.5 space-y-2">
             <div>
               <label className="block text-[11px] text-[#697586] dark:text-[#929BA9] mb-1">
-                Notes / Reflection
+                {tr('Catatan / Refleksi', 'Notes / Reflection')}
               </label>
               <textarea
                 rows={2}
                 value={notes}
                 onChange={(e) => setNotes(e.target.value)}
-                placeholder="Catatan analisa teknikal, setup, atau alasan entry..."
+                placeholder={tr(
+                  'Catatan analisis teknikal, setup, atau alasan entry...',
+                  'Technical analysis notes, setup, or entry reason...'
+                )}
                 className="w-full bg-transparent text-xs text-[#151D2A] dark:text-[#F2F4F7] placeholder-[#94A3B8] dark:placeholder-[#606875] focus:outline-none resize-none"
               />
             </div>
 
             <div className="pt-1.5 border-t border-[#DDE3EA]/70 dark:border-[#1E232B]/60">
               <label className="block text-[11px] text-[#697586] dark:text-[#929BA9] mb-1">
-                Alasan Entry (Opsional)
+                {tr('Alasan Entry (Opsional)', 'Entry Reason (Optional)')}
               </label>
               <input
                 type="text"
                 value={entryReason}
                 onChange={(e) => setEntryReason(e.target.value)}
-                placeholder="Konfirmasi teknikal / konteks market..."
+                placeholder={tr(
+                  'Konfirmasi teknikal / konteks pasar...',
+                  'Technical confirmation / market context...'
+                )}
                 className="w-full bg-transparent text-xs text-[#151D2A] dark:text-[#F2F4F7] placeholder-[#94A3B8] dark:placeholder-[#606875] focus:outline-none"
               />
             </div>
@@ -2540,13 +2722,16 @@ export const TradeForm: React.FC<TradeFormProps> = ({
             {lifecycleStatus === 'CLOSED' && (
               <div className="pt-1.5 border-t border-[#DDE3EA]/70 dark:border-[#1E232B]/60">
                 <label className="block text-[11px] text-[#697586] dark:text-[#929BA9] mb-1">
-                  Evaluasi Pasca-Trade
+                  {tr('Evaluasi Pasca-Trade', 'Post-Trade Evaluation')}
                 </label>
                 <textarea
                   rows={2}
                   value={postTradeEvaluation}
                   onChange={(e) => setPostTradeEvaluation(e.target.value)}
-                  placeholder="Evaluasi eksekusi, psikologi, dan kedisiplinan..."
+                  placeholder={tr(
+                    'Evaluasi eksekusi, psikologi, dan kedisiplinan...',
+                    'Execution, psychology, and discipline evaluation...'
+                  )}
                   className="w-full bg-transparent text-xs text-[#151D2A] dark:text-[#F2F4F7] placeholder-[#94A3B8] dark:placeholder-[#606875] focus:outline-none resize-none"
                 />
               </div>
@@ -2564,7 +2749,7 @@ export const TradeForm: React.FC<TradeFormProps> = ({
             className="flex-1 inline-flex items-center justify-center gap-1.5 py-2.5 rounded-full bg-[#F5F7FA] dark:bg-[#151921] hover:bg-[#EEF2F6] dark:hover:bg-[#1C222D] active:scale-[0.98] text-xs font-semibold text-[#151D2A] dark:text-[#F2F4F7] transition-all disabled:opacity-50 cursor-pointer"
           >
             <ArrowLeft className="h-3.5 w-3.5" />
-            <span>Kembali</span>
+            <span>{tr('Kembali', 'Back')}</span>
           </button>
           <button
             type="submit"
@@ -2576,15 +2761,15 @@ export const TradeForm: React.FC<TradeFormProps> = ({
             {isSubmitting ? (
               <>
                 <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                <span>Menyimpan...</span>
+                <span>{tr('Menyimpan...', 'Saving...')}</span>
               </>
             ) : isScanningScreenshot ? (
               <>
                 <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                <span>Memindai...</span>
+                <span>{tr('Memindai...', 'Scanning...')}</span>
               </>
             ) : (
-              <span>Simpan</span>
+              <span>{tr('Simpan', 'Save')}</span>
             )}
           </button>
         </div>

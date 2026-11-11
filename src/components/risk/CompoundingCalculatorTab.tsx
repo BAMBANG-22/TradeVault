@@ -9,6 +9,7 @@ import {
 } from '../../utils/compoundingCalculator';
 import { formatCurrency } from '../../utils/calculations';
 import { useGlobalCurrency } from '../../utils/currencyRate';
+import { useLanguage } from '../../utils/language';
 import { AlertTriangle, HelpCircle, ChevronDown, ArrowRightLeft } from 'lucide-react';
 
 interface CompoundingCalculatorTabProps {
@@ -19,11 +20,11 @@ interface CompoundingCalculatorTabProps {
 type TableViewMode = 'comparison' | 'compounding_only' | 'fixed_only';
 
 const DURATION_PRESETS = [
-  { label: '3 Bulan', shortLabel: '3B', interval: 'monthly' as CompoundingInterval, duration: '3' },
-  { label: '6 Bulan', shortLabel: '6B', interval: 'monthly' as CompoundingInterval, duration: '6' },
-  { label: '12 Bulan', shortLabel: '12B', interval: 'monthly' as CompoundingInterval, duration: '12' },
-  { label: '24 Bulan', shortLabel: '24B', interval: 'monthly' as CompoundingInterval, duration: '24' },
-  { label: '30 Hari', shortLabel: '30H', interval: 'daily' as CompoundingInterval, duration: '30' },
+  { labelId: '3 Bulan', labelEn: '3 Months', shortLabelId: '3B', shortLabelEn: '3M', interval: 'monthly' as CompoundingInterval, duration: '3' },
+  { labelId: '6 Bulan', labelEn: '6 Months', shortLabelId: '6B', shortLabelEn: '6M', interval: 'monthly' as CompoundingInterval, duration: '6' },
+  { labelId: '12 Bulan', labelEn: '12 Months', shortLabelId: '12B', shortLabelEn: '12M', interval: 'monthly' as CompoundingInterval, duration: '12' },
+  { labelId: '24 Bulan', labelEn: '24 Months', shortLabelId: '24B', shortLabelEn: '24M', interval: 'monthly' as CompoundingInterval, duration: '24' },
+  { labelId: '30 Hari', labelEn: '30 Days', shortLabelId: '30H', shortLabelEn: '30D', interval: 'daily' as CompoundingInterval, duration: '30' },
 ];
 
 const CAPITAL_PRESETS_USD = [
@@ -103,6 +104,7 @@ export const CompoundingCalculatorTab: React.FC<CompoundingCalculatorTabProps> =
   currentEquity,
 }) => {
   const { preferredCurrency, effectiveRate } = useGlobalCurrency();
+  const { tr } = useLanguage();
 
   // Initialize currency from global preference (USD / IDR) or account settings
   const initialCurrency: CurrencyCode =
@@ -247,13 +249,17 @@ export const CompoundingCalculatorTab: React.FC<CompoundingCalculatorTabProps> =
   }, [startingCapital, growthRate, interval, duration, regularDeposit, depositTiming]);
 
   const intervalUnitLabel =
-    interval === 'daily' ? 'Hari' : interval === 'weekly' ? 'Minggu' : 'Bulan';
+    interval === 'daily'
+      ? tr('Hari', 'Day')
+      : interval === 'weekly'
+      ? tr('Minggu', 'Week')
+      : tr('Bulan', 'Month');
   const intervalReturnLabel =
     interval === 'daily'
-      ? 'Target Return Harian (%)'
+      ? tr('Target Return Harian (%)', 'Daily Target Return (%)')
       : interval === 'weekly'
-      ? 'Target Return Mingguan (%)'
-      : 'Target Return Bulanan (%)';
+      ? tr('Target Return Mingguan (%)', 'Weekly Target Return (%)')
+      : tr('Target Return Bulanan (%)', 'Monthly Target Return (%)');
 
   const handleCapitalOrDepositInput = (rawVal: string, setter: (s: string) => void) => {
     if (rawVal === '') {
@@ -324,14 +330,14 @@ export const CompoundingCalculatorTab: React.FC<CompoundingCalculatorTabProps> =
       return `≈ $${eqUsd.toLocaleString('en-US', {
         minimumFractionDigits: 2,
         maximumFractionDigits: 2,
-      })} USD (Kurs Rp ${Math.round(rate).toLocaleString('id-ID')})`;
+      })} USD (${tr('Kurs', 'Rate')} Rp ${Math.round(rate).toLocaleString('id-ID')})`;
     }
     if (currency === 'USD') {
       const eqIdr = Math.round(startingCapital * rate);
-      return `≈ Rp ${eqIdr.toLocaleString('id-ID')} (Kurs Rp ${Math.round(rate).toLocaleString('id-ID')})`;
+      return `≈ Rp ${eqIdr.toLocaleString('id-ID')} (${tr('Kurs', 'Rate')} Rp ${Math.round(rate).toLocaleString('id-ID')})`;
     }
     return null;
-  }, [currency, startingCapital, effectiveRate]);
+  }, [currency, startingCapital, effectiveRate, tr]);
 
   // Compounding vs Fixed Balance difference
   const compoundingAdvantageAmount =
@@ -429,10 +435,13 @@ export const CompoundingCalculatorTab: React.FC<CompoundingCalculatorTabProps> =
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-4 border-b border-[#DDE3EA] dark:border-[#20252D]">
           <div>
             <h2 className="text-sm font-semibold uppercase tracking-wider text-[#151D2A] dark:text-[#F2F4F7]">
-              Simulator Compounding
+              {tr('Simulator Compounding', 'Compounding Simulator')}
             </h2>
             <p className="text-xs text-[#667085] dark:text-[#98A2B3] mt-0.5">
-              Proyeksi pertumbuhan modal (Compounding vs Fixed Balance / Tarik Profit) dalam USD & IDR
+              {tr(
+                'Proyeksi pertumbuhan modal (Compounding vs Saldo Tetap / Tarik Profit) dalam USD & IDR',
+                'Capital growth projection (Compounding vs Fixed Balance / Profit Withdrawal) in USD & IDR'
+              )}
             </p>
           </div>
 
@@ -464,7 +473,7 @@ export const CompoundingCalculatorTab: React.FC<CompoundingCalculatorTabProps> =
               }}
               className="px-3 py-1.5 rounded-lg border border-[#DDE3EA] dark:border-[#20252D] bg-[#F5F7FA] dark:bg-[#101318] hover:border-[#151D2A]/30 dark:hover:border-white/[0.2] text-xs font-medium text-[#151D2A] dark:text-[#F2F4F7] transition-colors font-mono-numbers tabular-nums"
             >
-              Gunakan Saldo Akun ({formatCurrency(liveAccountBalanceInSelectedCurrency, activeSettings)})
+              {tr('Gunakan Saldo Akun', 'Use Account Balance')} ({formatCurrency(liveAccountBalanceInSelectedCurrency, activeSettings)})
             </button>
           </div>
         </div>
@@ -477,16 +486,16 @@ export const CompoundingCalculatorTab: React.FC<CompoundingCalculatorTabProps> =
           <div className="sm:col-span-2 lg:col-span-1">
             <div className="flex items-center justify-between mb-1.5">
               <label className="text-[11px] font-semibold uppercase tracking-wider text-[#667085] dark:text-[#98A2B3]">
-                Modal Awal ({activeSettings.currencySymbol})
+                {tr('Modal Awal', 'Initial Capital')} ({activeSettings.currencySymbol})
               </label>
               <button
                 type="button"
                 onClick={() => handleCurrencySwitch(currency === 'IDR' ? 'USD' : 'IDR')}
                 className="inline-flex items-center gap-1 text-[10px] font-semibold text-[#3478DC] hover:underline"
-                title="Ubah mata uang dan konversi otomatis"
+                title={tr('Ubah mata uang dan konversi otomatis', 'Switch currency and convert automatically')}
               >
                 <ArrowRightLeft className="w-3 h-3" />
-                <span>Ke {currency === 'IDR' ? 'USD' : 'IDR'}</span>
+                <span>{tr('Ke', 'To')} {currency === 'IDR' ? 'USD' : 'IDR'}</span>
               </button>
             </div>
 
@@ -555,13 +564,13 @@ export const CompoundingCalculatorTab: React.FC<CompoundingCalculatorTabProps> =
                 className="bg-transparent text-[11px] font-semibold text-[#151D2A] dark:text-[#F2F4F7] focus:outline-none cursor-pointer"
               >
                 <option value="monthly" className="bg-white dark:bg-[#0B0D11] text-[#151D2A] dark:text-[#F2F4F7]">
-                  Per Bulan
+                  {tr('Per Bulan', 'Monthly')}
                 </option>
                 <option value="weekly" className="bg-white dark:bg-[#0B0D11] text-[#151D2A] dark:text-[#F2F4F7]">
-                  Per Minggu
+                  {tr('Per Minggu', 'Weekly')}
                 </option>
                 <option value="daily" className="bg-white dark:bg-[#0B0D11] text-[#151D2A] dark:text-[#F2F4F7]">
-                  Per Hari
+                  {tr('Per Hari', 'Daily')}
                 </option>
               </select>
             </div>
@@ -579,7 +588,7 @@ export const CompoundingCalculatorTab: React.FC<CompoundingCalculatorTabProps> =
               </span>
             </div>
             <p className="text-[10px] font-mono-numbers tabular-nums text-[#667085] dark:text-[#98A2B3] mt-1.5">
-              Profit periode ke-1: {formatSignedCurrency(step1Comp ? step1Comp.growthProfit : 0)}
+              {tr('Profit periode ke-1', '1st period profit')}: {formatSignedCurrency(step1Comp ? step1Comp.growthProfit : 0)}
             </p>
           </div>
 
@@ -587,14 +596,14 @@ export const CompoundingCalculatorTab: React.FC<CompoundingCalculatorTabProps> =
           <div>
             <div className="flex items-center justify-between mb-1.5">
               <label className="text-[11px] font-semibold uppercase tracking-wider text-[#667085] dark:text-[#98A2B3]">
-                Durasi ({intervalUnitLabel})
+                {tr('Durasi', 'Duration')} ({intervalUnitLabel})
               </label>
               <div className="flex items-center gap-1">
                 {DURATION_PRESETS.slice(0, 4).map((p) => {
                   const isActive = interval === p.interval && durationInput === p.duration;
                   return (
                     <button
-                      key={p.label}
+                      key={p.labelId}
                       type="button"
                       onClick={() => {
                         setInterval(p.interval);
@@ -607,7 +616,7 @@ export const CompoundingCalculatorTab: React.FC<CompoundingCalculatorTabProps> =
                           : 'bg-transparent text-[#667085] dark:text-[#98A2B3] border-transparent hover:text-[#151D2A] dark:hover:text-[#F2F4F7]'
                       }`}
                     >
-                      {p.shortLabel}
+                      {tr(p.shortLabelId, p.shortLabelEn)}
                     </button>
                   );
                 })}
@@ -627,7 +636,10 @@ export const CompoundingCalculatorTab: React.FC<CompoundingCalculatorTabProps> =
               placeholder="12"
             />
             <p className="text-[10px] text-[#667085] dark:text-[#98A2B3] mt-1.5">
-              Simulasi selama {duration} {intervalUnitLabel.toLowerCase()} ke depan
+              {tr(
+                `Simulasi selama ${duration} ${intervalUnitLabel.toLowerCase()} ke depan`,
+                `Simulated over the next ${duration} ${intervalUnitLabel.toLowerCase()}${duration > 1 ? 's' : ''}`
+              )}
             </p>
           </div>
 
@@ -635,7 +647,7 @@ export const CompoundingCalculatorTab: React.FC<CompoundingCalculatorTabProps> =
           <div className="flex flex-col justify-between gap-2">
             <div className="flex items-center justify-between">
               <span className="text-[11px] font-semibold uppercase tracking-wider text-[#667085] dark:text-[#98A2B3]">
-                Setoran Tambahan
+                {tr('Setoran Tambahan', 'Recurring Deposit')}
               </span>
               {regularDeposit > 0 && (
                 <button
@@ -646,7 +658,7 @@ export const CompoundingCalculatorTab: React.FC<CompoundingCalculatorTabProps> =
                   }}
                   className="text-[10px] text-[#E05260] hover:underline"
                 >
-                  Reset Deposit
+                  {tr('Reset Deposit', 'Reset Deposit')}
                 </button>
               )}
             </div>
@@ -663,7 +675,7 @@ export const CompoundingCalculatorTab: React.FC<CompoundingCalculatorTabProps> =
               <span className="truncate font-mono-numbers tabular-nums">
                 {regularDeposit > 0
                   ? `+${formatCurrency(regularDeposit, activeSettings)} / ${intervalUnitLabel}`
-                  : '+ Tambah Deposit Rutin (Opsional)'}
+                  : tr('+ Tambah Deposit Rutin (Opsional)', '+ Add Recurring Deposit (Optional)')}
               </span>
               <ChevronDown
                 className={`w-3.5 h-3.5 shrink-0 transition-transform ${
@@ -674,8 +686,8 @@ export const CompoundingCalculatorTab: React.FC<CompoundingCalculatorTabProps> =
 
             <p className="text-[10px] text-[#667085] dark:text-[#98A2B3]">
               {regularDeposit > 0
-                ? `Total setoran: ${formatCurrency(compoundingResult.totalDeposits, activeSettings)}`
-                : 'Tanpa deposit tambahan per periode'}
+                ? `${tr('Total setoran', 'Total deposits')}: ${formatCurrency(compoundingResult.totalDeposits, activeSettings)}`
+                : tr('Tanpa deposit tambahan per periode', 'No additional deposit per period')}
             </p>
           </div>
         </div>
@@ -685,7 +697,7 @@ export const CompoundingCalculatorTab: React.FC<CompoundingCalculatorTabProps> =
           <div className="p-4 rounded-xl bg-[#F5F7FA] dark:bg-[#101318] border border-[#DDE3EA] dark:border-[#20252D] grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div>
               <label className="block text-[11px] font-semibold uppercase tracking-wider text-[#667085] dark:text-[#98A2B3] mb-1.5">
-                Deposit Rutin per {intervalUnitLabel} ({activeSettings.currencySymbol})
+                {tr(`Deposit Rutin per ${intervalUnitLabel}`, `Recurring Deposit per ${intervalUnitLabel}`)} ({activeSettings.currencySymbol})
               </label>
               <div className="relative">
                 <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-xs font-semibold font-mono-numbers text-[#667085] dark:text-[#98A2B3] pointer-events-none">
@@ -705,7 +717,7 @@ export const CompoundingCalculatorTab: React.FC<CompoundingCalculatorTabProps> =
             </div>
             <div>
               <label className="block text-[11px] font-semibold uppercase tracking-wider text-[#667085] dark:text-[#98A2B3] mb-1.5">
-                Waktu Setor Deposit (Mode Compounding)
+                {tr('Waktu Setor Deposit (Mode Compounding)', 'Deposit Timing (Compounding Mode)')}
               </label>
               <div className="grid grid-cols-2 gap-2">
                 <button
@@ -717,7 +729,7 @@ export const CompoundingCalculatorTab: React.FC<CompoundingCalculatorTabProps> =
                       : 'bg-white dark:bg-[#0B0D11] text-[#667085] dark:text-[#98A2B3] border-[#DDE3EA] dark:border-[#20252D]'
                   }`}
                 >
-                  Akhir Periode
+                  {tr('Akhir Periode', 'End of Period')}
                 </button>
                 <button
                   type="button"
@@ -728,7 +740,7 @@ export const CompoundingCalculatorTab: React.FC<CompoundingCalculatorTabProps> =
                       : 'bg-white dark:bg-[#0B0D11] text-[#667085] dark:text-[#98A2B3] border-[#DDE3EA] dark:border-[#20252D]'
                   }`}
                 >
-                  Awal Periode
+                  {tr('Awal Periode', 'Start of Period')}
                 </button>
               </div>
             </div>
@@ -739,7 +751,10 @@ export const CompoundingCalculatorTab: React.FC<CompoundingCalculatorTabProps> =
           <div className="p-3 rounded-xl bg-amber-500/10 border border-amber-500/25 text-amber-700 dark:text-amber-300 text-xs flex items-start gap-2">
             <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
             <span>
-              Persentase return dibatasi pada rentang matematis ({MIN_GROWTH_RATE_PERCENT}% s/d +{MAX_GROWTH_RATE_PERCENT}%). Nilai yang digunakan: {compoundingResult.clampedGrowthRatePercent}%.
+              {tr(
+                `Persentase return dibatasi pada rentang matematis (${MIN_GROWTH_RATE_PERCENT}% s/d +${MAX_GROWTH_RATE_PERCENT}%). Nilai yang digunakan: ${compoundingResult.clampedGrowthRatePercent}%.`,
+                `Return percentage is bounded within mathematical limits (${MIN_GROWTH_RATE_PERCENT}% to +${MAX_GROWTH_RATE_PERCENT}%). Applied value: ${compoundingResult.clampedGrowthRatePercent}%.`
+              )}
             </span>
           </div>
         )}
@@ -757,34 +772,37 @@ export const CompoundingCalculatorTab: React.FC<CompoundingCalculatorTabProps> =
                 <div className="flex items-center gap-2">
                   <span className="h-2.5 w-2.5 rounded-full bg-[#3478DC]" />
                   <span className="text-xs font-bold uppercase tracking-wider text-[#151D2A] dark:text-[#F2F4F7]">
-                    Skenario 1: Mode Compounding
+                    {tr('Skenario 1: Mode Compounding', 'Scenario 1: Compounding Mode')}
                   </span>
                 </div>
                 <p className="text-[11px] text-[#667085] dark:text-[#98A2B3] mt-1">
-                  Profit <strong>tidak ditarik</strong> — langsung digabung ke modal {intervalUnitLabel.toLowerCase()} berikutnya (bunga berbunga).
+                  {tr(
+                    `Profit tidak ditarik — langsung digabung ke modal ${intervalUnitLabel.toLowerCase()} berikutnya (bunga berbunga).`,
+                    `Profits are not withdrawn — reinvested directly into the next ${intervalUnitLabel.toLowerCase()}'s principal.`
+                  )}
                 </p>
               </div>
               <span className="px-2 py-0.5 rounded text-[10px] font-semibold bg-[#3478DC]/15 text-[#3478DC] shrink-0">
-                Profit Digulung
+                {tr('Profit Digulung', 'Reinvested')}
               </span>
             </div>
 
             <div className="grid grid-cols-2 gap-4">
               <div>
                 <span className="text-[11px] text-[#667085] dark:text-[#98A2B3] block mb-1">
-                  Saldo Akhir Akun ({duration} {intervalUnitLabel})
+                  {tr('Saldo Akhir Akun', 'Ending Account Balance')} ({duration} {intervalUnitLabel})
                 </span>
                 <div className="text-lg sm:text-xl font-bold font-mono-numbers tabular-nums text-[#151D2A] dark:text-[#F2F4F7]">
                   {formatCurrency(compoundingResult.endingBalance, activeSettings)}
                 </div>
                 <span className="text-[11px] font-mono-numbers tabular-nums text-[#667085] dark:text-[#98A2B3] block mt-0.5">
-                  Modal Awal: {formatCurrency(startingCapital, activeSettings)}
+                  {tr('Modal Awal', 'Initial Capital')}: {formatCurrency(startingCapital, activeSettings)}
                 </span>
               </div>
 
               <div>
                 <span className="text-[11px] text-[#667085] dark:text-[#98A2B3] block mb-1">
-                  Total Profit Compound
+                  {tr('Total Profit Compound', 'Total Compounded Profit')}
                 </span>
                 <div
                   className={`text-lg sm:text-xl font-bold font-mono-numbers tabular-nums ${
@@ -796,16 +814,16 @@ export const CompoundingCalculatorTab: React.FC<CompoundingCalculatorTabProps> =
                   {formatSignedCurrency(compoundingResult.pureGrowthProfit)}
                 </div>
                 <span className="text-[11px] font-mono-numbers tabular-nums text-[#667085] dark:text-[#98A2B3] block mt-0.5">
-                  Pertumbuhan: {formatSignedPercent(compoundingResult.profitToTotalContributedPercent)}
+                  {tr('Pertumbuhan', 'Total Growth')}: {formatSignedPercent(compoundingResult.profitToTotalContributedPercent)}
                 </span>
               </div>
             </div>
 
             <div className="pt-2.5 border-t border-[#DDE3EA] dark:border-[#20252D] flex items-center justify-between text-[11px] text-[#667085] dark:text-[#98A2B3]">
-              <span>Alur Profit per {intervalUnitLabel}:</span>
+              <span>{tr(`Alur Profit per ${intervalUnitLabel}:`, `Profit Flow per ${intervalUnitLabel}:`)}</span>
               <span className="font-mono-numbers tabular-nums text-[#151D2A] dark:text-[#F2F4F7]">
                 {step1Comp ? formatSignedCurrency(step1Comp.growthProfit) : '0'}
-                {step2Comp ? ` → ${formatSignedCurrency(step2Comp.growthProfit)} → ...` : ''} (Makin Besar)
+                {step2Comp ? ` → ${formatSignedCurrency(step2Comp.growthProfit)} → ...` : ''} ({tr('Makin Besar', 'Growing')})
               </span>
             </div>
           </div>
@@ -817,34 +835,37 @@ export const CompoundingCalculatorTab: React.FC<CompoundingCalculatorTabProps> =
                 <div className="flex items-center gap-2">
                   <span className="h-2.5 w-2.5 rounded-full bg-[#00A878]" />
                   <span className="text-xs font-bold uppercase tracking-wider text-[#151D2A] dark:text-[#F2F4F7]">
-                    Skenario 2: Mode Fixed Balance
+                    {tr('Skenario 2: Mode Saldo Tetap', 'Scenario 2: Fixed Balance Mode')}
                   </span>
                 </div>
                 <p className="text-[11px] text-[#667085] dark:text-[#98A2B3] mt-1">
-                  Profit <strong>selalu ditarik keluar (withdraw)</strong> setiap akhir {intervalUnitLabel.toLowerCase()} — modal di akun dijaga tetap.
+                  {tr(
+                    `Profit selalu ditarik keluar setiap akhir ${intervalUnitLabel.toLowerCase()} — modal di akun dijaga tetap.`,
+                    `Profits are withdrawn at the end of every ${intervalUnitLabel.toLowerCase()} — principal in account stays constant.`
+                  )}
                 </p>
               </div>
               <span className="px-2 py-0.5 rounded text-[10px] font-semibold bg-[#00A878]/15 text-[#059669] dark:text-[#00A878] shrink-0">
-                Profit Ditarik
+                {tr('Profit Ditarik', 'Withdrawn')}
               </span>
             </div>
 
             <div className="grid grid-cols-3 gap-3">
               <div>
                 <span className="text-[11px] text-[#667085] dark:text-[#98A2B3] block mb-1">
-                  Saldo Tetap di Akun
+                  {tr('Saldo Tetap di Akun', 'Fixed Account Balance')}
                 </span>
                 <div className="text-sm sm:text-base font-bold font-mono-numbers tabular-nums text-[#151D2A] dark:text-[#F2F4F7]">
                   {formatCurrency(withdrawnResult.endingBalance, activeSettings)}
                 </div>
                 <span className="text-[10px] text-[#667085] dark:text-[#98A2B3] block mt-0.5">
-                  Modal tidak berubah
+                  {tr('Modal tidak berubah', 'Principal unchanged')}
                 </span>
               </div>
 
               <div>
                 <span className="text-[11px] text-[#667085] dark:text-[#98A2B3] block mb-1">
-                  Total Profit Ditarik
+                  {tr('Total Profit Ditarik', 'Total Withdrawn Profit')}
                 </span>
                 <div
                   className={`text-sm sm:text-base font-bold font-mono-numbers tabular-nums ${
@@ -856,27 +877,30 @@ export const CompoundingCalculatorTab: React.FC<CompoundingCalculatorTabProps> =
                   {formatSignedCurrency(withdrawnResult.totalWithdrawnProfit)}
                 </div>
                 <span className="text-[10px] font-mono-numbers tabular-nums text-[#667085] dark:text-[#98A2B3] block mt-0.5">
-                  {duration}x tarik @ {formatCurrency(Math.max(0, fixedPeriodProfit), activeSettings)}
+                  {duration}x {tr('tarik', 'withdrawals')} @ {formatCurrency(Math.max(0, fixedPeriodProfit), activeSettings)}
                 </span>
               </div>
 
               <div>
                 <span className="text-[11px] text-[#667085] dark:text-[#98A2B3] block mb-1">
-                  Total Hasil Gabungan
+                  {tr('Total Hasil Gabungan', 'Combined Total Wealth')}
                 </span>
                 <div className="text-sm sm:text-base font-bold font-mono-numbers tabular-nums text-[#151D2A] dark:text-[#F2F4F7]">
                   {formatCurrency(withdrawnResult.combinedTotalWealth, activeSettings)}
                 </div>
                 <span className="text-[10px] text-[#667085] dark:text-[#98A2B3] block mt-0.5">
-                  Saldo Akun + Tarik
+                  {tr('Saldo Akun + Tarik', 'Account + Withdrawn')}
                 </span>
               </div>
             </div>
 
             <div className="pt-2.5 border-t border-[#DDE3EA] dark:border-[#20252D] flex items-center justify-between text-[11px] text-[#667085] dark:text-[#98A2B3]">
-              <span>Alur Profit per {intervalUnitLabel}:</span>
+              <span>{tr(`Alur Profit per ${intervalUnitLabel}:`, `Profit Flow per ${intervalUnitLabel}:`)}</span>
               <span className="font-mono-numbers tabular-nums text-[#151D2A] dark:text-[#F2F4F7]">
-                Tetap {step1Fixed ? formatSignedCurrency(step1Fixed.growthProfit) : '0'} setiap {intervalUnitLabel.toLowerCase()}
+                {tr(
+                  `Tetap ${step1Fixed ? formatSignedCurrency(step1Fixed.growthProfit) : '0'} setiap ${intervalUnitLabel.toLowerCase()}`,
+                  `Constant ${step1Fixed ? formatSignedCurrency(step1Fixed.growthProfit) : '0'} each ${intervalUnitLabel.toLowerCase()}`
+                )}
               </span>
             </div>
           </div>
@@ -886,10 +910,13 @@ export const CompoundingCalculatorTab: React.FC<CompoundingCalculatorTabProps> =
         {compoundingAdvantageAmount > 0 && (
           <div className="px-4 py-3 rounded-xl bg-[#EEF2F6]/70 dark:bg-[#101318] border border-[#DDE3EA] dark:border-[#20252D] flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs">
             <span className="text-[#667085] dark:text-[#98A2B3]">
-              Keunggulan <strong>Mode Compounding</strong> dibanding <strong>Fixed Balance</strong> setelah {duration} {intervalUnitLabel.toLowerCase()}:
+              {tr(
+                `Keunggulan Mode Compounding dibanding Saldo Tetap setelah ${duration} ${intervalUnitLabel.toLowerCase()}:`,
+                `Compounding Mode advantage over Fixed Balance after ${duration} ${intervalUnitLabel.toLowerCase()}${duration > 1 ? 's' : ''}:`
+              )}
             </span>
             <span className="font-mono-numbers tabular-nums font-bold text-[#059669] dark:text-[#00A878]">
-              +{formatCurrency(compoundingAdvantageAmount, activeSettings)} lebih besar ({formatSignedPercent(compoundingAdvantagePercent)})
+              +{formatCurrency(compoundingAdvantageAmount, activeSettings)} {tr('lebih besar', 'higher')} ({formatSignedPercent(compoundingAdvantagePercent)})
             </span>
           </div>
         )}
@@ -902,10 +929,13 @@ export const CompoundingCalculatorTab: React.FC<CompoundingCalculatorTabProps> =
         <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-2">
           <div>
             <h3 className="text-xs font-semibold uppercase tracking-wider text-[#151D2A] dark:text-[#F2F4F7]">
-              Grafik Proyeksi Pertumbuhan (Growth Projection)
+              {tr('Grafik Proyeksi Pertumbuhan', 'Growth Projection Chart')}
             </h3>
             <p className="text-[11px] text-[#667085] dark:text-[#98A2B3] mt-0.5">
-              Perbandingan kurva eksponensial Compounding vs garis lurus Fixed Balance
+              {tr(
+                'Perbandingan kurva eksponensial Compounding vs garis lurus Saldo Tetap',
+                'Comparison of exponential Compounding curve vs linear Fixed Balance growth'
+              )}
             </p>
           </div>
 
@@ -916,21 +946,21 @@ export const CompoundingCalculatorTab: React.FC<CompoundingCalculatorTabProps> =
                 style={{ backgroundColor: primaryStrokeColor }}
               />
               <span>
-                Saldo Compounding ({formatCurrency(compoundingResult.endingBalance, activeSettings)})
+                {tr('Saldo Compounding', 'Compounding Balance')} ({formatCurrency(compoundingResult.endingBalance, activeSettings)})
               </span>
             </span>
 
             <span className="inline-flex items-center gap-1.5 text-[#667085] dark:text-[#98A2B3]">
               <span className="h-0.5 w-3.5 bg-[#00A878] inline-block" />
               <span>
-                Total Hasil Fixed: Modal + Profit Ditarik ({formatCurrency(withdrawnResult.combinedTotalWealth, activeSettings)})
+                {tr('Total Hasil Tetap: Modal + Profit Ditarik', 'Fixed Total Wealth: Principal + Withdrawn')} ({formatCurrency(withdrawnResult.combinedTotalWealth, activeSettings)})
               </span>
             </span>
 
             <span className="inline-flex items-center gap-1.5 text-[#667085] dark:text-[#98A2B3]">
               <span className="h-0.5 w-3.5 bg-[#667085] dark:bg-[#98A2B3] inline-block opacity-70" />
               <span>
-                Saldo Tetap di Akun ({formatCurrency(withdrawnResult.endingBalance, activeSettings)})
+                {tr('Saldo Tetap di Akun', 'Fixed Account Balance')} ({formatCurrency(withdrawnResult.endingBalance, activeSettings)})
               </span>
             </span>
           </div>
@@ -1014,7 +1044,7 @@ export const CompoundingCalculatorTab: React.FC<CompoundingCalculatorTabProps> =
                 fontSize="10"
                 fontFamily="Arial, Helvetica, sans-serif"
               >
-                Awal ({intervalUnitLabel} 0)
+                {tr('Awal', 'Start')} ({intervalUnitLabel} 0)
               </text>
               <text
                 x={padding.left + innerWidth / 2}
@@ -1049,7 +1079,7 @@ export const CompoundingCalculatorTab: React.FC<CompoundingCalculatorTabProps> =
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
           <div className="flex items-center gap-2.5">
             <h3 className="text-xs font-semibold uppercase tracking-wider text-[#151D2A] dark:text-[#F2F4F7]">
-              Tabel Rincian Proyeksi per {intervalUnitLabel}
+              {tr(`Tabel Rincian Proyeksi per ${intervalUnitLabel}`, `Projection Breakdown per ${intervalUnitLabel}`)}
             </h3>
             <button
               type="button"
@@ -1057,7 +1087,7 @@ export const CompoundingCalculatorTab: React.FC<CompoundingCalculatorTabProps> =
               className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-medium bg-[#EEF2F6] dark:bg-[#101318] text-[#151D2A] dark:text-[#F2F4F7] border border-[#DDE3EA] dark:border-[#20252D]"
             >
               <HelpCircle className="w-3 h-3 text-[#3478DC]" />
-              <span>{showReadingGuide ? 'Tutup Panduan Baca' : 'Cara Membaca Tabel'}</span>
+              <span>{showReadingGuide ? tr('Tutup Panduan Baca', 'Hide Reading Guide') : tr('Cara Membaca Tabel', 'How to Read Table')}</span>
             </button>
           </div>
 
@@ -1072,7 +1102,7 @@ export const CompoundingCalculatorTab: React.FC<CompoundingCalculatorTabProps> =
                   : 'text-[#667085] dark:text-[#98A2B3] hover:text-[#151D2A] dark:hover:text-[#F2F4F7]'
               }`}
             >
-              Perbandingan
+              {tr('Perbandingan', 'Comparison')}
             </button>
             <button
               type="button"
@@ -1083,7 +1113,7 @@ export const CompoundingCalculatorTab: React.FC<CompoundingCalculatorTabProps> =
                   : 'text-[#667085] dark:text-[#98A2B3] hover:text-[#151D2A] dark:hover:text-[#F2F4F7]'
               }`}
             >
-              Fokus Compound
+              {tr('Fokus Compound', 'Compounding Only')}
             </button>
             <button
               type="button"
@@ -1094,7 +1124,7 @@ export const CompoundingCalculatorTab: React.FC<CompoundingCalculatorTabProps> =
                   : 'text-[#667085] dark:text-[#98A2B3] hover:text-[#151D2A] dark:hover:text-[#F2F4F7]'
               }`}
             >
-              Fokus Fixed Balance
+              {tr('Fokus Saldo Tetap', 'Fixed Balance Only')}
             </button>
           </div>
         </div>
@@ -1103,30 +1133,58 @@ export const CompoundingCalculatorTab: React.FC<CompoundingCalculatorTabProps> =
         {showReadingGuide && step1Comp && (
           <div className="p-4 rounded-xl bg-[#F5F7FA] dark:bg-[#101318] border border-[#DDE3EA] dark:border-[#20252D] space-y-2.5 text-xs">
             <div className="font-semibold text-[#151D2A] dark:text-[#F2F4F7]">
-              Cara Membaca Perbandingan Simulasi Ini (Modal Awal {formatCurrency(startingCapital, activeSettings)}, Return {compoundingResult.clampedGrowthRatePercent}% per {intervalUnitLabel.toLowerCase()}):
+              {tr(
+                `Cara Membaca Perbandingan Simulasi Ini (Modal Awal ${formatCurrency(startingCapital, activeSettings)}, Return ${compoundingResult.clampedGrowthRatePercent}% per ${intervalUnitLabel.toLowerCase()}):`,
+                `How to Read This Simulation Comparison (Initial Capital ${formatCurrency(startingCapital, activeSettings)}, Return ${compoundingResult.clampedGrowthRatePercent}% per ${intervalUnitLabel.toLowerCase()}):`
+              )}
             </div>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-[11px] text-[#667085] dark:text-[#98A2B3] leading-relaxed">
               <div className="p-3 rounded-lg bg-white dark:bg-[#0B0D11] border border-[#DDE3EA] dark:border-[#20252D]">
                 <span className="font-semibold text-[#3478DC] block mb-1">
-                  1. Kolom Skenario Compounding (Gulung Modal)
+                  {tr('1. Kolom Skenario Compounding (Gulung Modal)', '1. Compounding Scenario Columns (Reinvested Profit)')}
                 </span>
-                Pada {intervalUnitLabel} 1, modal <strong>{formatCurrency(step1Comp.startBalance, activeSettings)}</strong> menghasilkan profit <strong>{formatSignedCurrency(step1Comp.growthProfit)}</strong> sehingga Saldo Akhir menjadi <strong>{formatCurrency(step1Comp.endBalance, activeSettings)}</strong>.
+                {tr(
+                  `Pada ${intervalUnitLabel} 1, modal ${formatCurrency(step1Comp.startBalance, activeSettings)} menghasilkan profit ${formatSignedCurrency(step1Comp.growthProfit)} sehingga Saldo Akhir menjadi ${formatCurrency(step1Comp.endBalance, activeSettings)}.`,
+                  `In ${intervalUnitLabel} 1, principal ${formatCurrency(step1Comp.startBalance, activeSettings)} generates ${formatSignedCurrency(step1Comp.growthProfit)} profit, bringing Ending Balance to ${formatCurrency(step1Comp.endBalance, activeSettings)}.`
+                )}
                 {step2Comp && (
                   <>
-                    {' '}Pada {intervalUnitLabel} 2, profit {compoundingResult.clampedGrowthRatePercent}% dihitung dari saldo baru <strong>{formatCurrency(step2Comp.startBalance, activeSettings)}</strong> (bukan modal awal lagi), menghasilkan <strong>{formatSignedCurrency(step2Comp.growthProfit)}</strong> → Saldo naik ke <strong>{formatCurrency(step2Comp.endBalance, activeSettings)}</strong>.
+                    {' '}
+                    {tr(
+                      `Pada ${intervalUnitLabel} 2, profit ${compoundingResult.clampedGrowthRatePercent}% dihitung dari saldo baru ${formatCurrency(step2Comp.startBalance, activeSettings)} (bukan modal awal lagi), menghasilkan ${formatSignedCurrency(step2Comp.growthProfit)} → Saldo naik ke ${formatCurrency(step2Comp.endBalance, activeSettings)}.`,
+                      `In ${intervalUnitLabel} 2, the ${compoundingResult.clampedGrowthRatePercent}% return is calculated from the new balance ${formatCurrency(step2Comp.startBalance, activeSettings)} (not the initial principal), generating ${formatSignedCurrency(step2Comp.growthProfit)} → Balance rises to ${formatCurrency(step2Comp.endBalance, activeSettings)}.`
+                    )}
                   </>
                 )}
               </div>
 
               <div className="p-3 rounded-lg bg-white dark:bg-[#0B0D11] border border-[#DDE3EA] dark:border-[#20252D]">
                 <span className="font-semibold text-[#059669] dark:text-[#00A878] block mb-1">
-                  2. Kolom Skenario Fixed Balance (Tarik Profit)
+                  {tr('2. Kolom Skenario Saldo Tetap (Tarik Profit)', '2. Fixed Balance Scenario Columns (Withdrawn Profit)')}
                 </span>
-                Setiap akhir {intervalUnitLabel.toLowerCase()}, profit sebesar <strong>{formatSignedCurrency(step1Fixed ? step1Fixed.growthProfit : 0)}</strong> langsung <strong>ditarik ke rekening bank</strong>. Akibatnya:
+                {tr(
+                  `Setiap akhir ${intervalUnitLabel.toLowerCase()}, profit sebesar ${formatSignedCurrency(step1Fixed ? step1Fixed.growthProfit : 0)} langsung ditarik ke rekening bank. Akibatnya:`,
+                  `At the end of every ${intervalUnitLabel.toLowerCase()}, the ${formatSignedCurrency(step1Fixed ? step1Fixed.growthProfit : 0)} profit is withdrawn to your bank account. As a result:`
+                )}
                 <ul className="list-disc list-inside mt-1 space-y-0.5">
-                  <li><strong>Saldo di Akun</strong> tetap <strong>{formatCurrency(step1Fixed ? step1Fixed.endBalance : startingCapital, activeSettings)}</strong>.</li>
-                  <li><strong>Tarik Kumulatif</strong> adalah total uang profit yang sudah Anda kantongi sejak {intervalUnitLabel} 1.</li>
-                  <li><strong>Total Hasil</strong> = Saldo di Akun + Total Profit yang sudah ditarik.</li>
+                  <li>
+                    {tr(
+                      `Saldo di Akun tetap ${formatCurrency(step1Fixed ? step1Fixed.endBalance : startingCapital, activeSettings)}.`,
+                      `Account Balance remains fixed at ${formatCurrency(step1Fixed ? step1Fixed.endBalance : startingCapital, activeSettings)}.`
+                    )}
+                  </li>
+                  <li>
+                    {tr(
+                      `Tarik Kumulatif adalah total uang profit yang sudah Anda kantongi sejak ${intervalUnitLabel} 1.`,
+                      `Cumulative Withdrawn is the total profit pocketed since ${intervalUnitLabel} 1.`
+                    )}
+                  </li>
+                  <li>
+                    {tr(
+                      'Total Hasil = Saldo di Akun + Total Profit yang sudah ditarik.',
+                      'Combined Total = Account Balance + Total Withdrawn Profit.'
+                    )}
+                  </li>
                 </ul>
               </div>
             </div>
@@ -1141,22 +1199,22 @@ export const CompoundingCalculatorTab: React.FC<CompoundingCalculatorTabProps> =
                 {/* Group Header Row */}
                 <tr className="border-b border-[#DDE3EA] dark:border-[#20252D] bg-[#EEF2F6]/70 dark:bg-[#101318] text-[10px] font-bold uppercase tracking-wider">
                   <th className="py-2 px-3 text-[#667085] dark:text-[#98A2B3] border-r border-[#DDE3EA] dark:border-[#20252D]">
-                    Periode
+                    {tr('Periode', 'Period')}
                   </th>
                   <th
                     colSpan={3}
                     className="py-2 px-3 text-[#3478DC] border-r border-[#DDE3EA] dark:border-[#20252D]"
                   >
-                    Skenario 1: Compounding (Profit Digulung)
+                    {tr('Skenario 1: Compounding (Profit Digulung)', 'Scenario 1: Compounding (Reinvested Profit)')}
                   </th>
                   <th
                     colSpan={3}
                     className="py-2 px-3 text-[#059669] dark:text-[#00A878] border-r border-[#DDE3EA] dark:border-[#20252D]"
                   >
-                    Skenario 2: Fixed Balance (Profit Ditarik)
+                    {tr('Skenario 2: Saldo Tetap (Profit Ditarik)', 'Scenario 2: Fixed Balance (Withdrawn Profit)')}
                   </th>
                   <th className="py-2 px-3 text-[#151D2A] dark:text-[#F2F4F7]">
-                    Selisih
+                    {tr('Selisih', 'Difference')}
                   </th>
                 </tr>
 
@@ -1166,19 +1224,19 @@ export const CompoundingCalculatorTab: React.FC<CompoundingCalculatorTabProps> =
                     {intervalUnitLabel}
                   </th>
                   {/* Compounding columns */}
-                  <th className="py-2.5 px-3 font-mono-numbers">Modal Awal</th>
-                  <th className="py-2.5 px-3 font-mono-numbers">Profit {intervalUnitLabel} Ini</th>
+                  <th className="py-2.5 px-3 font-mono-numbers">{tr('Modal Awal', 'Start Balance')}</th>
+                  <th className="py-2.5 px-3 font-mono-numbers">{tr(`Profit ${intervalUnitLabel} Ini`, `Period Profit`)}</th>
                   <th className="py-2.5 px-3 font-mono-numbers border-r border-[#DDE3EA] dark:border-[#20252D]">
-                    Saldo Akhir
+                    {tr('Saldo Akhir', 'End Balance')}
                   </th>
                   {/* Fixed Balance columns */}
-                  <th className="py-2.5 px-3 font-mono-numbers">Saldo di Akun</th>
-                  <th className="py-2.5 px-3 font-mono-numbers">Tarik Kumulatif</th>
+                  <th className="py-2.5 px-3 font-mono-numbers">{tr('Saldo di Akun', 'Account Balance')}</th>
+                  <th className="py-2.5 px-3 font-mono-numbers">{tr('Tarik Kumulatif', 'Cum. Withdrawn')}</th>
                   <th className="py-2.5 px-3 font-mono-numbers border-r border-[#DDE3EA] dark:border-[#20252D]">
-                    Total Hasil
+                    {tr('Total Hasil', 'Combined Total')}
                   </th>
                   {/* Advantage column */}
-                  <th className="py-2.5 px-3 font-mono-numbers">Efek Compound</th>
+                  <th className="py-2.5 px-3 font-mono-numbers">{tr('Efek Compound', 'Compound Advantage')}</th>
                 </tr>
               </thead>
 
@@ -1257,15 +1315,15 @@ export const CompoundingCalculatorTab: React.FC<CompoundingCalculatorTabProps> =
               <thead className="border-b border-[#DDE3EA] dark:border-[#20252D] bg-[#F5F7FA] dark:bg-[#101318] text-[11px] uppercase tracking-wider text-[#667085] dark:text-[#98A2B3]">
                 <tr>
                   <th className="py-2.5 px-3">{intervalUnitLabel}</th>
-                  <th className="py-2.5 px-3 font-mono-numbers">Modal Awal Periode</th>
+                  <th className="py-2.5 px-3 font-mono-numbers">{tr('Modal Awal Periode', 'Period Start Balance')}</th>
                   <th className="py-2.5 px-3 font-mono-numbers">
-                    Profit Periode ({compoundingResult.clampedGrowthRatePercent}%)
+                    {tr('Profit Periode', 'Period Profit')} ({compoundingResult.clampedGrowthRatePercent}%)
                   </th>
                   {regularDeposit > 0 && (
-                    <th className="py-2.5 px-3 font-mono-numbers">Deposit Rutin</th>
+                    <th className="py-2.5 px-3 font-mono-numbers">{tr('Deposit Rutin', 'Recurring Deposit')}</th>
                   )}
-                  <th className="py-2.5 px-3 font-mono-numbers">Saldo Akhir Compound</th>
-                  <th className="py-2.5 px-3 font-mono-numbers">Total Profit Kumulatif</th>
+                  <th className="py-2.5 px-3 font-mono-numbers">{tr('Saldo Akhir Compound', 'Compounded End Balance')}</th>
+                  <th className="py-2.5 px-3 font-mono-numbers">{tr('Total Profit Kumulatif', 'Cumulative Profit')}</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-[#DDE3EA] dark:divide-[#20252D] font-mono-numbers tabular-nums">
@@ -1320,15 +1378,15 @@ export const CompoundingCalculatorTab: React.FC<CompoundingCalculatorTabProps> =
               <thead className="border-b border-[#DDE3EA] dark:border-[#20252D] bg-[#F5F7FA] dark:bg-[#101318] text-[11px] uppercase tracking-wider text-[#667085] dark:text-[#98A2B3]">
                 <tr>
                   <th className="py-2.5 px-3">{intervalUnitLabel}</th>
-                  <th className="py-2.5 px-3 font-mono-numbers">Saldo Tetap di Akun</th>
+                  <th className="py-2.5 px-3 font-mono-numbers">{tr('Saldo Tetap di Akun', 'Fixed Account Balance')}</th>
                   <th className="py-2.5 px-3 font-mono-numbers">
-                    Profit Ditarik {intervalUnitLabel} Ini
+                    {tr(`Profit Ditarik ${intervalUnitLabel} Ini`, `Profit Withdrawn This ${intervalUnitLabel}`)}
                   </th>
                   <th className="py-2.5 px-3 font-mono-numbers">
-                    Akumulasi Profit Ditarik (Di Bank)
+                    {tr('Akumulasi Profit Ditarik (Di Bank)', 'Cumulative Withdrawn Profit (Bank)')}
                   </th>
                   <th className="py-2.5 px-3 font-mono-numbers">
-                    Total Hasil (Saldo Akun + Profit Ditarik)
+                    {tr('Total Hasil (Saldo Akun + Profit Ditarik)', 'Combined Total (Account + Withdrawn)')}
                   </th>
                 </tr>
               </thead>
@@ -1386,10 +1444,10 @@ export const CompoundingCalculatorTab: React.FC<CompoundingCalculatorTabProps> =
               disabled={tablePage <= 1}
               className="px-3.5 py-1.5 rounded-lg border border-[#DDE3EA] dark:border-[#20252D] bg-[#F5F7FA] dark:bg-[#101318] text-[#151D2A] dark:text-[#F2F4F7] disabled:opacity-40 transition-colors"
             >
-              Sebelumnya
+              {tr('Sebelumnya', 'Previous')}
             </button>
             <span className="font-mono-numbers tabular-nums text-[#667085] dark:text-[#98A2B3]">
-              Halaman {tablePage} dari {totalPages} ({compoundingResult.steps.length} {intervalUnitLabel})
+              {tr('Halaman', 'Page')} {tablePage} {tr('dari', 'of')} {totalPages} ({compoundingResult.steps.length} {intervalUnitLabel})
             </span>
             <button
               type="button"
@@ -1397,7 +1455,7 @@ export const CompoundingCalculatorTab: React.FC<CompoundingCalculatorTabProps> =
               disabled={tablePage >= totalPages}
               className="px-3.5 py-1.5 rounded-lg border border-[#DDE3EA] dark:border-[#20252D] bg-[#F5F7FA] dark:bg-[#101318] text-[#151D2A] dark:text-[#F2F4F7] disabled:opacity-40 transition-colors"
             >
-              Berikutnya
+              {tr('Berikutnya', 'Next')}
             </button>
           </div>
         )}

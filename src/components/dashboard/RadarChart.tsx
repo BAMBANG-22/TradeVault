@@ -5,6 +5,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { RadarIndicators } from '../../utils/calculations';
+import { useLanguage } from '../../utils/language';
 import { HelpCircle, X, ShieldAlert } from 'lucide-react';
 
 interface RadarChartProps {
@@ -13,6 +14,7 @@ interface RadarChartProps {
 }
 
 export const RadarChart: React.FC<RadarChartProps> = ({ indicators, size = 290 }) => {
+  const { tr } = useLanguage();
   const [showFormulaModal, setShowFormulaModal] = useState(false);
 
   useEffect(() => {
@@ -29,39 +31,57 @@ export const RadarChart: React.FC<RadarChartProps> = ({ indicators, size = 290 }
   const axes = [
     {
       key: 'winRateScore',
-      label: 'Win Rate',
+      label: tr('Rasio Menang', 'Win Rate'),
       val: indicators.isDataSufficient ? indicators.winRateScore : 0,
-      description: 'Persentase kemenangan transaksi (Target: > 50% = 65, >= 70% = 100)',
+      description: tr(
+        'Persentase kemenangan transaksi (Target: > 50% = 65, >= 70% = 100)',
+        'Win rate percentage across closed trades (Target: > 50% = 65, >= 70% = 100)'
+      ),
     },
     {
       key: 'profitFactorScore',
-      label: 'Profit Factor',
+      label: tr('Faktor Profit', 'Profit Factor'),
       val: indicators.isDataSufficient ? indicators.profitFactorScore : 0,
-      description: 'Rasio Gross Profit terhadap Gross Loss (Target: >= 1.5 = 70, >= 2.0 = 85, >= 3.0 / ∞ = 100)',
+      description: tr(
+        'Rasio Gross Profit terhadap Gross Loss (Target: >= 1.5 = 70, >= 2.0 = 85, >= 3.0 / ∞ = 100)',
+        'Gross Profit to Gross Loss ratio (Target: >= 1.5 = 70, >= 2.0 = 85, >= 3.0 / ∞ = 100)'
+      ),
     },
     {
       key: 'rewardRiskScore',
-      label: 'Avg RR',
+      label: tr('Rata-rata RR', 'Avg RR'),
       val: indicators.isDataSufficient ? indicators.rewardRiskScore : 0,
-      description: 'Rata-rata Realized Risk/Reward aktual (Target: 0R = 50, +0.5R = 70, +1R = 85, >= +2R = 100)',
+      description: tr(
+        'Rata-rata Realized Risk/Reward aktual (Target: 0R = 50, +0.5R = 70, +1R = 85, >= +2R = 100)',
+        'Average realized Risk/Reward multiple (Target: 0R = 50, +0.5R = 70, +1R = 85, >= +2R = 100)'
+      ),
     },
     {
       key: 'expectancyScore',
-      label: 'Expectancy',
+      label: tr('Ekspektansi', 'Expectancy'),
       val: indicators.isDataSufficient ? indicators.expectancyScore : 0,
-      description: 'Nilai harapan rata-rata keuntungan per transaksi (Target: Positif > 0, >= 1% modal = 100)',
+      description: tr(
+        'Nilai harapan rata-rata keuntungan per transaksi (Target: Positif > 0, >= 1% modal = 100)',
+        'Expected net return per trade (Target: Positive > 0, >= 1% of balance = 100)'
+      ),
     },
     {
       key: 'riskControlScore',
-      label: 'Risk Control',
+      label: tr('Kontrol Risiko', 'Risk Control'),
       val: indicators.isDataSufficient ? (indicators.riskControlScore ?? indicators.drawdownControlScore) : 0,
-      description: 'Pengendalian risiko dan toleransi drawdown (Target: Max DD <= 2% = 100, <= 5% = 85, <= 10% = 70)',
+      description: tr(
+        'Pengendalian risiko dan toleransi drawdown (Target: Max DD <= 2% = 100, <= 5% = 85, <= 10% = 70)',
+        'Risk control and drawdown tolerance (Target: Max DD <= 2% = 100, <= 5% = 85, <= 10% = 70)'
+      ),
     },
     {
       key: 'consistencyScore',
-      label: 'Consistency',
+      label: tr('Konsistensi', 'Consistency'),
       val: indicators.isDataSufficient ? indicators.consistencyScore : 0,
-      description: 'Konsistensi performa harian dan rasio hari profit (Target: >= 60% hari profit = 80+)',
+      description: tr(
+        'Konsistensi performa harian dan rasio hari profit (Target: >= 60% hari profit = 80+)',
+        'Daily performance consistency and profit day ratio (Target: >= 60% profit days = 80+)'
+      ),
     },
   ];
 
@@ -95,17 +115,17 @@ export const RadarChart: React.FC<RadarChartProps> = ({ indicators, size = 290 }
       {/* Subtle Top Action for Methodology Info */}
       <div className="flex items-center justify-between mb-2">
         <span className="text-[11px] uppercase tracking-[0.08em] text-[#697586] dark:text-[#7D8796]">
-          6-Pillar Radar Geometry
+          {tr('Geometri Radar 6 Pilar', '6-Pillar Radar Geometry')}
         </span>
         <button
           type="button"
           onClick={() => setShowFormulaModal(true)}
           className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-[11px] text-[#697586] dark:text-[#8E98A8] hover:text-[#151D2A] dark:hover:text-[#F2F5F9] bg-black/[0.03] dark:bg-white/[0.04] border border-[#DDE3EA] dark:border-white/[0.07] transition-colors cursor-pointer"
-          title="Penjelasan formula & kriteria penilaian radar"
-          aria-label="Penjelasan formula & kriteria penilaian radar"
+          title={tr('Penjelasan formula & kriteria penilaian radar', 'Radar formula & scoring criteria explanation')}
+          aria-label={tr('Penjelasan formula & kriteria penilaian radar', 'Radar formula & scoring criteria explanation')}
         >
           <HelpCircle className="h-3 w-3 stroke-[1.75]" />
-          <span>Metodologi</span>
+          <span>{tr('Metodologi', 'Methodology')}</span>
         </button>
       </div>
 
@@ -225,10 +245,13 @@ export const RadarChart: React.FC<RadarChartProps> = ({ indicators, size = 290 }
           <div className="mt-2 py-2 px-3 rounded-lg bg-black/[0.02] dark:bg-white/[0.02] border border-[#DDE3EA] dark:border-white/[0.06] text-center max-w-xs">
             <div className="flex items-center justify-center gap-1.5 text-amber-600 dark:text-amber-400 text-[11px] font-semibold">
               <ShieldAlert className="h-3.5 w-3.5 stroke-[1.75]" />
-              <span>Data Belum Cukup (Min. 3 Trade)</span>
+              <span>{tr('Data Belum Cukup (Min. 3 Trade)', 'Insufficient Data (Min. 3 Trades)')}</span>
             </div>
             <p className="text-[11px] text-[#697586] dark:text-[#8E98A8] mt-0.5 leading-relaxed">
-              Dibutuhkan minimal 3 transaksi tertutup untuk menghitung profil 6 pilar secara objektif (saat ini:{' '}
+              {tr(
+                'Dibutuhkan minimal 3 transaksi tertutup untuk menghitung profil 6 pilar secara objektif (saat ini: ',
+                'At least 3 closed trades are required to objectively calculate the 6-pillar profile (current: '
+              )}
               <strong className="text-[#151D2A] dark:text-[#F2F5F9] tabular-nums">{indicators.totalTrades || 0}</strong>).
             </p>
           </div>
@@ -247,13 +270,13 @@ export const RadarChart: React.FC<RadarChartProps> = ({ indicators, size = 290 }
           >
             <div className="flex items-center justify-between pb-3 border-b border-[#DDE3EA] dark:border-white/[0.07]">
               <h3 className="text-sm font-bold text-[#151D2A] dark:text-[#F2F5F9]">
-                Metodologi &amp; Target 6 Pilar Performance Profile
+                {tr('Metodologi & Target 6 Pilar Profil Performa', '6-Pillar Performance Profile Methodology & Targets')}
               </h3>
               <button
                 type="button"
                 onClick={() => setShowFormulaModal(false)}
                 className="p-1 rounded-lg text-[#697586] dark:text-[#8E98A8] hover:text-[#151D2A] dark:hover:text-[#F2F5F9] transition-colors cursor-pointer"
-                aria-label="Tutup metodologi"
+                aria-label={tr('Tutup metodologi', 'Close methodology')}
               >
                 <X className="h-4 w-4 stroke-[1.75]" />
               </button>
@@ -261,67 +284,88 @@ export const RadarChart: React.FC<RadarChartProps> = ({ indicators, size = 290 }
 
             <div className="space-y-3 text-xs text-[#151D2A] dark:text-[#F2F5F9]">
               <p className="text-[#697586] dark:text-[#8E98A8] leading-relaxed">
-                Skala normalisasi skor 0–100 dirancang secara objektif berdasarkan standar evaluasi manajemen risiko prop-firm dan hedge fund profesional:
+                {tr(
+                  'Skala normalisasi skor 0–100 dirancang secara objektif berdasarkan standar evaluasi manajemen risiko prop-firm dan hedge fund profesional:',
+                  'The 0–100 normalized scoring scale is objectively designed based on professional prop-firm and hedge fund risk management benchmarks:'
+                )}
               </p>
 
               <div className="divide-y divide-[#DDE3EA] dark:divide-white/[0.06]">
                 <div className="py-2.5">
                   <div className="flex items-center justify-between font-semibold">
-                    <span>1. Win Rate (Tingkat Kemenangan)</span>
-                    <span className="text-[#3B82F6] tabular-nums">Skala: 0 - 100</span>
+                    <span>{tr('1. Rasio Menang (Tingkat Kemenangan)', '1. Win Rate (Winning Percentage)')}</span>
+                    <span className="text-[#3B82F6] tabular-nums">{tr('Skala: 0 - 100', 'Scale: 0 - 100')}</span>
                   </div>
                   <p className="text-[#697586] dark:text-[#8E98A8] text-[11px] mt-0.5">
-                    Normalisasi persentase transaksi menang. Target: 50% = skor 65, sedangkan 70%+ = skor 100.
+                    {tr(
+                      'Normalisasi persentase transaksi menang. Target: 50% = skor 65, sedangkan 70%+ = skor 100.',
+                      'Normalized percentage of winning trades. Target: 50% = score 65, while 70%+ = score 100.'
+                    )}
                   </p>
                 </div>
 
                 <div className="py-2.5">
                   <div className="flex items-center justify-between font-semibold">
-                    <span>2. Profit Factor (Faktor Keuntungan)</span>
-                    <span className="text-[#3B82F6] tabular-nums">Gross Profit / Gross Loss</span>
+                    <span>{tr('2. Faktor Profit (Faktor Keuntungan)', '2. Profit Factor')}</span>
+                    <span className="text-[#3B82F6] tabular-nums">{tr('Profit Kotor / Rugi Kotor', 'Gross Profit / Gross Loss')}</span>
                   </div>
                   <p className="text-[#697586] dark:text-[#8E98A8] text-[11px] mt-0.5">
-                    Target: 1.0 = skor 50 (breakeven), 1.5 = skor 70, 2.0 = skor 85, dan ≥ 3.0 atau nol loss (∞) = skor 100.
+                    {tr(
+                      'Target: 1.0 = skor 50 (impas), 1.5 = skor 70, 2.0 = skor 85, dan ≥ 3.0 atau nol rugi (∞) = skor 100.',
+                      'Target: 1.0 = score 50 (breakeven), 1.5 = score 70, 2.0 = score 85, and ≥ 3.0 or zero loss (∞) = score 100.'
+                    )}
                   </p>
                 </div>
 
                 <div className="py-2.5">
                   <div className="flex items-center justify-between font-semibold">
-                    <span>3. Average RR (Risk / Reward Aktual)</span>
-                    <span className="text-[#3B82F6] tabular-nums">Rata-rata (Net Profit / Risiko)</span>
+                    <span>{tr('3. Rata-rata RR (Risiko / Imbalan Aktual)', '3. Average RR (Realized Risk / Reward)')}</span>
+                    <span className="text-[#3B82F6] tabular-nums">{tr('Rata-rata (Profit Bersih / Risiko)', 'Average (Net Profit / Risk)')}</span>
                   </div>
                   <p className="text-[#697586] dark:text-[#8E98A8] text-[11px] mt-0.5">
-                    Rata-rata Realized Risk/Reward aktual dari seluruh transaksi tertutup: 0R = skor 50, +0.5R = skor 70, +1.0R = skor 85, ≥ +2.0R = skor 100.
+                    {tr(
+                      'Rata-rata Realized Risk/Reward aktual dari seluruh transaksi tertutup: 0R = skor 50, +0.5R = skor 70, +1.0R = skor 85, ≥ +2.0R = skor 100.',
+                      'Average realized Risk/Reward across closed trades: 0R = score 50, +0.5R = score 70, +1.0R = score 85, ≥ +2.0R = score 100.'
+                    )}
                   </p>
                 </div>
 
                 <div className="py-2.5">
                   <div className="flex items-center justify-between font-semibold">
-                    <span>4. Expectancy (Nilai Harapan per Trade)</span>
-                    <span className="text-[#3B82F6] tabular-nums">Total Net PnL / Total Trades</span>
+                    <span>{tr('4. Ekspektansi (Nilai Harapan per Trade)', '4. Expectancy (Expected Value per Trade)')}</span>
+                    <span className="text-[#3B82F6] tabular-nums">{tr('Total P/L Bersih / Total Trade', 'Total Net P/L / Total Trades')}</span>
                   </div>
                   <p className="text-[#697586] dark:text-[#8E98A8] text-[11px] mt-0.5">
-                    Rata-rata keuntungan bersih setiap posisi dieksekusi terhadap modal. Positif bernilai &gt; 50, mencapai 100 jika ≥ 1% modal.
+                    {tr(
+                      'Rata-rata keuntungan bersih setiap posisi dieksekusi terhadap modal. Positif bernilai > 50, mencapai 100 jika ≥ 1% modal.',
+                      'Average net return per executed trade relative to balance. Positive scores > 50, reaching 100 at ≥ 1% of balance.'
+                    )}
                   </p>
                 </div>
 
                 <div className="py-2.5">
                   <div className="flex items-center justify-between font-semibold">
-                    <span>5. Risk Control (Pengendalian Risiko)</span>
-                    <span className="text-[#3B82F6] tabular-nums">Toleransi Max Drawdown</span>
+                    <span>{tr('5. Kontrol Risiko (Pengendalian Risiko)', '5. Risk Control (Drawdown Discipline)')}</span>
+                    <span className="text-[#3B82F6] tabular-nums">{tr('Toleransi Drawdown Maks.', 'Max Drawdown Tolerance')}</span>
                   </div>
                   <p className="text-[#697586] dark:text-[#8E98A8] text-[11px] mt-0.5">
-                    Toleransi penurunan modal dari puncak ekuitas: Max DD ≤ 2% = 100, ≤ 5% = 85, ≤ 10% = 70, ≤ 20% = 40.
+                    {tr(
+                      'Toleransi penurunan modal dari puncak ekuitas: Max DD ≤ 2% = 100, ≤ 5% = 85, ≤ 10% = 70, ≤ 20% = 40.',
+                      'Equity drawdown tolerance from peak: Max DD ≤ 2% = 100, ≤ 5% = 85, ≤ 10% = 70, ≤ 20% = 40.'
+                    )}
                   </p>
                 </div>
 
                 <div className="py-2.5">
                   <div className="flex items-center justify-between font-semibold">
-                    <span>6. Consistency (Konsistensi Harian)</span>
-                    <span className="text-[#3B82F6] tabular-nums">Rasio Hari Profit</span>
+                    <span>{tr('6. Konsistensi (Konsistensi Harian)', '6. Consistency (Daily Consistency)')}</span>
+                    <span className="text-[#3B82F6] tabular-nums">{tr('Rasio Hari Profit', 'Profit Day Ratio')}</span>
                   </div>
                   <p className="text-[#697586] dark:text-[#8E98A8] text-[11px] mt-0.5">
-                    Rasio hari trading profit dibanding total hari trading aktif: ≥ 60% hari profit = 80+, 50% = 65.
+                    {tr(
+                      'Rasio hari trading profit dibanding total hari trading aktif: ≥ 60% hari profit = 80+, 50% = 65.',
+                      'Ratio of profitable trading days to total active trading days: ≥ 60% profit days = 80+, 50% = 65.'
+                    )}
                   </p>
                 </div>
               </div>
@@ -333,7 +377,7 @@ export const RadarChart: React.FC<RadarChartProps> = ({ indicators, size = 290 }
                 onClick={() => setShowFormulaModal(false)}
                 className="px-4 py-1.5 rounded-full bg-[#1769E8] hover:bg-[#1458C4] text-white font-semibold text-xs transition-colors cursor-pointer"
               >
-                Tutup
+                {tr('Tutup', 'Close')}
               </button>
             </div>
           </div>

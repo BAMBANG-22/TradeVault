@@ -15,6 +15,7 @@ import {
 } from '../../utils/riskCalculator';
 import { formatCurrency, computeTradeNetProfit, isClosedLifecycleTrade } from '../../utils/calculations';
 import { useGlobalCurrency } from '../../utils/currencyRate';
+import { useLanguage } from '../../utils/language';
 import { CompoundingCalculatorTab } from './CompoundingCalculatorTab';
 import { TradeSimulationTab } from './TradeSimulationTab';
 import { AlertTriangle, Check, ChevronDown } from 'lucide-react';
@@ -66,38 +67,52 @@ const INSTRUMENT_DEFAULTS: Record<
 
 const RISK_TOOLS_META: {
   id: RiskToolTab;
-  title: string;
-  subtitle: string;
+  titleId: string;
+  titleEn: string;
+  subtitleId: string;
+  subtitleEn: string;
 }[] = [
   {
     id: 'lot-calc',
-    title: 'Kalkulator Lot',
-    subtitle: 'Lot Calculator & Position Sizing',
+    titleId: 'Kalkulator Lot',
+    titleEn: 'Lot Calculator',
+    subtitleId: 'Kalkulator Lot & Ukuran Posisi',
+    subtitleEn: 'Lot Calculator & Position Sizing',
   },
   {
     id: 'protection-rules',
-    title: 'Proteksi & Aturan Risiko',
-    subtitle: 'Daily limits & risk settings',
+    titleId: 'Proteksi & Aturan Risiko',
+    titleEn: 'Risk Protection & Rules',
+    subtitleId: 'Batas harian & pengaturan risiko',
+    subtitleEn: 'Daily limits & risk settings',
   },
   {
     id: 'consecutive-loss',
-    title: 'Simulasi Loss Beruntun',
-    subtitle: 'Consecutive loss simulation',
+    titleId: 'Simulasi Loss Beruntun',
+    titleEn: 'Consecutive Loss Simulation',
+    subtitleId: 'Simulasi kerugian beruntun',
+    subtitleEn: 'Consecutive loss simulation',
   },
   {
     id: 'discipline-eval',
-    title: 'Evaluasi Disiplin',
-    subtitle: 'Trading rule compliance',
+    titleId: 'Evaluasi Disiplin',
+    titleEn: 'Discipline Evaluation',
+    subtitleId: 'Kepatuhan aturan trading',
+    subtitleEn: 'Trading rule compliance',
   },
   {
     id: 'compounding-calc',
-    title: 'Simulator Compounding',
-    subtitle: 'Capital growth projection',
+    titleId: 'Simulator Compounding',
+    titleEn: 'Compounding Simulator',
+    subtitleId: 'Proyeksi pertumbuhan modal',
+    subtitleEn: 'Capital growth projection',
   },
   {
     id: 'trade-sim',
-    title: 'Simulasi Berbasis Trade',
-    subtitle: 'Trading performance scenarios',
+    titleId: 'Simulasi Berbasis Trade',
+    titleEn: 'Trade-Based Simulation',
+    subtitleId: 'Skenario performa trading',
+    subtitleEn: 'Trading performance scenarios',
   },
 ];
 
@@ -108,6 +123,7 @@ export const RiskCalculatorView: React.FC<RiskCalculatorViewProps> = ({
   dailyLossToday,
   trades,
 }) => {
+  const { tr } = useLanguage();
   const { preferredCurrency, formatDynamic, formatTradeFinancial } = useGlobalCurrency();
   const fmtMoney = (val: number) =>
     preferredCurrency === 'IDR' ? formatDynamic(val) : formatCurrency(val, settings);
@@ -471,15 +487,15 @@ export const RiskCalculatorView: React.FC<RiskCalculatorViewProps> = ({
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-4 border-b border-[#DDE3EA] dark:border-white/[0.06]">
           <div>
             <h1 className="text-base sm:text-lg font-bold uppercase tracking-wider text-[#151D2A] dark:text-[#F2F5F9]">
-              Risk Management
+              {tr('Manajemen Risiko', 'Risk Management')}
             </h1>
             <p className="text-xs text-[#697586] dark:text-[#8E98A8] mt-0.5">
-              Manage your trading risk
+              {tr('Kelola risiko trading Anda secara terukur', 'Manage your trading risk')}
             </p>
           </div>
 
           <div className="text-xs font-mono-numbers tabular-nums text-[#697586] dark:text-[#8E98A8]">
-            Active Balance:{' '}
+            {tr('Saldo Aktif:', 'Active Balance:')}{' '}
             <strong className="text-[#151D2A] dark:text-[#F2F5F9]">
               {fmtMoney(activeBalance)}
             </strong>
@@ -492,7 +508,7 @@ export const RiskCalculatorView: React.FC<RiskCalculatorViewProps> = ({
           <div className="space-y-4 pr-3 sm:pr-6 border-r border-[#DDE3EA] dark:border-white/[0.06]">
             <div>
               <span className="text-[11px] font-semibold uppercase tracking-wider text-[#697586] dark:text-[#8E98A8] block mb-1">
-                Balance
+                {tr('Saldo', 'Balance')}
               </span>
               <div className="text-xl sm:text-2xl font-bold font-mono-numbers tabular-nums text-[#151D2A] dark:text-[#F2F5F9]">
                 {fmtMoney(activeBalance)}
@@ -501,13 +517,13 @@ export const RiskCalculatorView: React.FC<RiskCalculatorViewProps> = ({
 
             <div className="pt-3 border-t border-[#DDE3EA] dark:border-white/[0.06]">
               <span className="text-[11px] font-semibold uppercase tracking-wider text-[#697586] dark:text-[#8E98A8] block mb-1">
-                Loss Limit
+                {tr('Batas Rugi Harian', 'Loss Limit')}
               </span>
               <div className="text-lg sm:text-xl font-bold font-mono-numbers tabular-nums text-[#151D2A] dark:text-[#F2F5F9]">
                 {fmtMoney(configuredDailyLimitAmount)}
               </div>
               <span className="text-[11px] font-mono-numbers tabular-nums text-[#697586] dark:text-[#8E98A8] block mt-0.5">
-                {configuredDailyLimitPercent.toFixed(2)}% of balance
+                {configuredDailyLimitPercent.toFixed(2)}% {tr('dari saldo', 'of balance')}
               </span>
             </div>
           </div>
@@ -516,7 +532,7 @@ export const RiskCalculatorView: React.FC<RiskCalculatorViewProps> = ({
           <div className="space-y-4 pl-1 sm:pl-2">
             <div>
               <span className="text-[11px] font-semibold uppercase tracking-wider text-[#697586] dark:text-[#8E98A8] block mb-1">
-                Daily Loss
+                {tr('Rugi Hari Ini', 'Daily Loss')}
               </span>
               <div
                 className={`text-xl sm:text-2xl font-bold font-mono-numbers tabular-nums ${
@@ -530,13 +546,13 @@ export const RiskCalculatorView: React.FC<RiskCalculatorViewProps> = ({
                   : fmtMoney(0)}
               </div>
               <span className="text-[11px] font-mono-numbers tabular-nums text-[#697586] dark:text-[#8E98A8] block mt-0.5">
-                {dailyLossPercentOfBalance.toFixed(2)}% of balance
+                {dailyLossPercentOfBalance.toFixed(2)}% {tr('dari saldo', 'of balance')}
               </span>
             </div>
 
             <div className="pt-3 border-t border-[#DDE3EA] dark:border-white/[0.06]">
               <span className="text-[11px] font-semibold uppercase tracking-wider text-[#697586] dark:text-[#8E98A8] block mb-1">
-                Loss Usage
+                {tr('Pemakaian Batas Rugi', 'Loss Usage')}
               </span>
               <div
                 className={`text-lg sm:text-xl font-bold font-mono-numbers tabular-nums ${
@@ -561,7 +577,7 @@ export const RiskCalculatorView: React.FC<RiskCalculatorViewProps> = ({
           <div className="flex items-center justify-between gap-2">
             <div className="flex items-center gap-2">
               <span className="text-[11px] font-semibold uppercase tracking-wider text-[#697586] dark:text-[#8E98A8]">
-                Loss Usage
+                {tr('Pemakaian Batas Rugi', 'Loss Usage')}
               </span>
               <span className="text-xs font-semibold font-mono-numbers tabular-nums text-[#151D2A] dark:text-[#F2F5F9]">
                 {fmtMoney(actualDailyLossAmount)} / {fmtMoney(configuredDailyLimitAmount)}
@@ -576,7 +592,7 @@ export const RiskCalculatorView: React.FC<RiskCalculatorViewProps> = ({
                   : 'text-[#151D2A] dark:text-[#F2F5F9]'
               }`}
             >
-              {riskUsagePercent.toFixed(1)}% USED
+              {riskUsagePercent.toFixed(1)}% {tr('TERPAKAI', 'USED')}
             </span>
           </div>
 
@@ -597,19 +613,22 @@ export const RiskCalculatorView: React.FC<RiskCalculatorViewProps> = ({
             {isDailyLimitExceeded ? (
               <span className="text-[#E05260] font-semibold">
                 {excessDailyLossAmount > 0
-                  ? `Loss Limit Exceeded (+${fmtMoney(excessDailyLossAmount)})`
-                  : 'Loss Limit Reached (100% used)'}
+                  ? tr(
+                      `Batas Rugi Terlampaui (+${fmtMoney(excessDailyLossAmount)})`,
+                      `Loss Limit Exceeded (+${fmtMoney(excessDailyLossAmount)})`
+                    )
+                  : tr('Batas Rugi Tercapai (100% terpakai)', 'Loss Limit Reached (100% used)')}
               </span>
             ) : (
               <span>
                 <strong className="text-[#151D2A] dark:text-[#F2F5F9]">
                   {fmtMoney(remainingDailyRiskAmount)}
                 </strong>{' '}
-                remaining
+                {tr('tersisa', 'remaining')}
               </span>
             )}
             <span>
-              Used:{' '}
+              {tr('Terpakai:', 'Used:')}{' '}
               <strong className="text-[#151D2A] dark:text-[#F2F5F9]">
                 {fmtMoney(actualDailyLossAmount)}
               </strong>
@@ -623,12 +642,16 @@ export const RiskCalculatorView: React.FC<RiskCalculatorViewProps> = ({
             <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
             <div>
               <span className="font-semibold block">
-                Stop Trading Alert: Daily Loss Limit Reached
+                {tr(
+                  'Peringatan Berhenti Trading: Batas Rugi Harian Tercapai',
+                  'Stop Trading Alert: Daily Loss Limit Reached'
+                )}
               </span>
               <span className="text-[11px] opacity-90">
-                Today's realized loss ({fmtMoney(actualDailyLossAmount)}) has reached your daily limit (
-                {fmtMoney(configuredDailyLimitAmount)}). Pause trading until daily reset (
-                {settings.resetTimezone || '00:00 WIB'}).
+                {tr(
+                  `Kerugian terealisasi hari ini (${fmtMoney(actualDailyLossAmount)}) telah mencapai batas harian Anda (${fmtMoney(configuredDailyLimitAmount)}). Hentikan trading hingga reset harian (${settings.resetTimezone || '00:00 WIB'}).`,
+                  `Today's realized loss (${fmtMoney(actualDailyLossAmount)}) has reached your daily limit (${fmtMoney(configuredDailyLimitAmount)}). Pause trading until daily reset (${settings.resetTimezone || '00:00 WIB'}).`
+                )}
               </span>
             </div>
           </div>
@@ -639,10 +662,16 @@ export const RiskCalculatorView: React.FC<RiskCalculatorViewProps> = ({
             <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
             <div>
               <span className="font-semibold block">
-                Daily Loss Alert: {riskUsagePercent.toFixed(1)}% of Limit Used
+                {tr(
+                  `Peringatan Rugi Harian: ${riskUsagePercent.toFixed(1)}% dari Batas Terpakai`,
+                  `Daily Loss Alert: ${riskUsagePercent.toFixed(1)}% of Limit Used`
+                )}
               </span>
               <span className="text-[11px] opacity-90">
-                Remaining daily risk allowance is {fmtMoney(remainingDailyRiskAmount)}. Reduce position size or stop trading if setup quality is low.
+                {tr(
+                  `Sisa kuota risiko harian adalah ${fmtMoney(remainingDailyRiskAmount)}. Kurangi ukuran posisi atau hentikan trading jika kualitas setup rendah.`,
+                  `Remaining daily risk allowance is ${fmtMoney(remainingDailyRiskAmount)}. Reduce position size or stop trading if setup quality is low.`
+                )}
               </span>
             </div>
           </div>
@@ -654,11 +683,11 @@ export const RiskCalculatorView: React.FC<RiskCalculatorViewProps> = ({
         <div className="space-y-3 pt-1">
           <div className="flex items-center justify-between">
             <span className="text-[11px] font-semibold uppercase tracking-wider text-[#697586] dark:text-[#8E98A8]">
-              Pilih Fitur
+              {tr('Pilih Fitur', 'Select Feature')}
             </span>
             {activeTool && (
               <span className="text-[11px] text-[#697586] dark:text-[#8E98A8]">
-                Klik fitur aktif untuk menutup
+                {tr('Klik fitur aktif untuk menutup', 'Click active feature to collapse')}
               </span>
             )}
           </div>
@@ -680,10 +709,10 @@ export const RiskCalculatorView: React.FC<RiskCalculatorViewProps> = ({
                 >
                   <div className="min-w-0">
                     <span className="text-xs font-semibold block truncate">
-                      {tool.title}
+                      {tr(tool.titleId, tool.titleEn)}
                     </span>
                     <span className="text-[10px] text-[#697586] dark:text-[#8E98A8] block truncate mt-0.5">
-                      {tool.subtitle}
+                      {tr(tool.subtitleId, tool.subtitleEn)}
                     </span>
                   </div>
                   <ChevronDown
@@ -709,12 +738,20 @@ export const RiskCalculatorView: React.FC<RiskCalculatorViewProps> = ({
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-4 border-b border-[#DDE3EA] dark:border-white/[0.06]">
             <div>
               <h2 className="text-sm font-semibold uppercase tracking-wider text-[#151D2A] dark:text-[#F2F5F9]">
-                {lotSubMode === 'LOT_CALCULATOR' ? 'Lot Calculator' : 'Position Sizing'}
+                {lotSubMode === 'LOT_CALCULATOR'
+                  ? tr('Kalkulator Lot', 'Lot Calculator')
+                  : tr('Ukuran Posisi Otomatis', 'Position Sizing')}
               </h2>
               <p className="text-xs text-[#697586] dark:text-[#8E98A8] mt-0.5">
                 {lotSubMode === 'LOT_CALCULATOR'
-                  ? 'Manual Position Planner — Simulasi perencanaan posisi trading dengan ukuran lot manual'
-                  : 'Automatic Position Sizing — Penentuan ukuran lot otomatis berdasarkan batas risiko akun'}
+                  ? tr(
+                      'Perencana Posisi Manual — Simulasi perencanaan posisi trading dengan ukuran lot manual',
+                      'Manual Position Planner — Simulate trading position planning with manual lot size'
+                    )
+                  : tr(
+                      'Penentuan Lot Otomatis — Penentuan ukuran lot otomatis berdasarkan batas risiko akun',
+                      'Automatic Position Sizing — Calculate automatic lot size based on account risk limit'
+                    )}
               </p>
             </div>
 
@@ -728,7 +765,7 @@ export const RiskCalculatorView: React.FC<RiskCalculatorViewProps> = ({
                     : 'text-[#697586] dark:text-[#8E98A8] hover:text-[#151D2A] dark:hover:text-[#F2F5F9]'
                 }`}
               >
-                Lot Calculator
+                {tr('Kalkulator Lot', 'Lot Calculator')}
               </button>
               <button
                 type="button"
@@ -739,7 +776,7 @@ export const RiskCalculatorView: React.FC<RiskCalculatorViewProps> = ({
                     : 'text-[#697586] dark:text-[#8E98A8] hover:text-[#151D2A] dark:hover:text-[#F2F5F9]'
                 }`}
               >
-                Position Sizing
+                {tr('Ukuran Posisi', 'Position Sizing')}
               </button>
             </div>
           </div>
@@ -755,7 +792,7 @@ export const RiskCalculatorView: React.FC<RiskCalculatorViewProps> = ({
                 <div className="space-y-2">
                   <div className="flex items-center justify-between">
                     <label className="text-[11px] font-semibold uppercase tracking-wider text-[#697586] dark:text-[#8E98A8]">
-                      Account Balance
+                      {tr('Saldo Akun', 'Account Balance')}
                     </label>
                     <select
                       value={manualBalanceSource}
@@ -764,8 +801,12 @@ export const RiskCalculatorView: React.FC<RiskCalculatorViewProps> = ({
                       }
                       className="rounded-full bg-[#F5F7FA] dark:bg-[#0D1015] border border-[#DDE3EA] dark:border-white/[0.08] px-3 py-1 text-xs font-semibold text-[#151D2A] dark:text-[#F2F5F9] focus:border-[#3B82F6] focus:outline-none"
                     >
-                      <option value="APP_BALANCE">App Balance</option>
-                      <option value="CUSTOM_BALANCE">Custom Balance</option>
+                      <option value="APP_BALANCE">
+                        {tr('Saldo Aplikasi', 'App Balance')}
+                      </option>
+                      <option value="CUSTOM_BALANCE">
+                        {tr('Saldo Kustom', 'Custom Balance')}
+                      </option>
                     </select>
                   </div>
 
@@ -775,7 +816,7 @@ export const RiskCalculatorView: React.FC<RiskCalculatorViewProps> = ({
                         {fmtMoney(activeBalance)}
                       </span>
                       <span className="text-[11px] text-[#697586] dark:text-[#8E98A8]">
-                        App Balance
+                        {tr('Saldo Aplikasi', 'App Balance')}
                       </span>
                     </div>
                   ) : (
@@ -795,7 +836,7 @@ export const RiskCalculatorView: React.FC<RiskCalculatorViewProps> = ({
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   <div>
                     <label className="block text-[11px] font-semibold uppercase tracking-wider text-[#697586] dark:text-[#8E98A8] mb-1.5">
-                      Instrument
+                      {tr('Instrumen', 'Instrument')}
                     </label>
                     <select
                       value={instrument}
@@ -812,7 +853,7 @@ export const RiskCalculatorView: React.FC<RiskCalculatorViewProps> = ({
 
                   <div>
                     <label className="block text-[11px] font-semibold uppercase tracking-wider text-[#697586] dark:text-[#8E98A8] mb-1.5">
-                      Direction
+                      {tr('Arah Posisi', 'Direction')}
                     </label>
                     <div className="grid grid-cols-2 gap-2">
                       <button
@@ -846,7 +887,7 @@ export const RiskCalculatorView: React.FC<RiskCalculatorViewProps> = ({
                   <div>
                     <div className="flex items-center justify-between mb-1.5">
                       <label className="text-[11px] font-semibold uppercase tracking-wider text-[#697586] dark:text-[#8E98A8]">
-                        Lot Size
+                        {tr('Ukuran Lot', 'Lot Size')}
                       </label>
                       <div className="flex items-center gap-1">
                         {MANUAL_LOT_QUICK_OPTIONS.map((opt) => (
@@ -879,7 +920,7 @@ export const RiskCalculatorView: React.FC<RiskCalculatorViewProps> = ({
 
                   <div>
                     <label className="block text-[11px] font-semibold uppercase tracking-wider text-[#697586] dark:text-[#8E98A8] mb-1.5">
-                      Entry Price
+                      {tr('Harga Entry', 'Entry Price')}
                     </label>
                     <input
                       type="number"
@@ -942,7 +983,7 @@ export const RiskCalculatorView: React.FC<RiskCalculatorViewProps> = ({
                 <div className="space-y-4">
                   <div className="flex items-center justify-between pb-3 border-b border-[#DDE3EA] dark:border-white/[0.06]">
                     <span className="text-xs font-semibold uppercase tracking-wider text-[#151D2A] dark:text-[#F2F5F9]">
-                      Position Analysis
+                      {tr('Analisis Posisi', 'Position Analysis')}
                     </span>
                     <span className="text-xs font-mono-numbers tabular-nums text-[#697586] dark:text-[#8E98A8]">
                       {instrument} · {manualDirection} · {manualPositionPlanResult.lotSize || 0} Lot
@@ -953,7 +994,7 @@ export const RiskCalculatorView: React.FC<RiskCalculatorViewProps> = ({
                   <div className="space-y-2 pb-4 border-b border-[#DDE3EA] dark:border-white/[0.06]">
                     <div className="flex items-center justify-between">
                       <span className="text-xs text-[#697586] dark:text-[#8E98A8]">
-                        Stop Loss Distance
+                        {tr('Jarak Stop Loss', 'Stop Loss Distance')}
                       </span>
                       <span className="text-xs font-mono-numbers tabular-nums font-semibold text-[#151D2A] dark:text-[#F2F5F9]">
                         {manualPositionPlanResult.isLotValid &&
@@ -965,7 +1006,7 @@ export const RiskCalculatorView: React.FC<RiskCalculatorViewProps> = ({
 
                     <div className="flex items-center justify-between">
                       <span className="text-xs text-[#697586] dark:text-[#8E98A8]">
-                        Potential Loss
+                        {tr('Potensi Rugi', 'Potential Loss')}
                       </span>
                       <span className="text-base font-bold font-mono-numbers tabular-nums text-[#E05260]">
                         {manualPositionPlanResult.isLotValid &&
@@ -977,7 +1018,7 @@ export const RiskCalculatorView: React.FC<RiskCalculatorViewProps> = ({
 
                     <div className="flex items-center justify-between">
                       <span className="text-xs text-[#697586] dark:text-[#8E98A8]">
-                        Risk (% of Balance)
+                        {tr('Risiko (% dari Saldo)', 'Risk (% of Balance)')}
                       </span>
                       <span className="text-xs font-semibold font-mono-numbers tabular-nums text-[#E05260]">
                         {manualPositionPlanResult.isLotValid &&
@@ -992,7 +1033,7 @@ export const RiskCalculatorView: React.FC<RiskCalculatorViewProps> = ({
                   <div className="space-y-2 pb-4 border-b border-[#DDE3EA] dark:border-white/[0.06]">
                     <div className="flex items-center justify-between">
                       <span className="text-xs text-[#697586] dark:text-[#8E98A8]">
-                        Take Profit Distance
+                        {tr('Jarak Take Profit', 'Take Profit Distance')}
                       </span>
                       <span className="text-xs font-mono-numbers tabular-nums font-semibold text-[#151D2A] dark:text-[#F2F5F9]">
                         {manualPositionPlanResult.isLotValid &&
@@ -1004,7 +1045,7 @@ export const RiskCalculatorView: React.FC<RiskCalculatorViewProps> = ({
 
                     <div className="flex items-center justify-between">
                       <span className="text-xs text-[#697586] dark:text-[#8E98A8]">
-                        Potential Profit
+                        {tr('Potensi Profit', 'Potential Profit')}
                       </span>
                       <span className="text-base font-bold font-mono-numbers tabular-nums text-[#00A878]">
                         {manualPositionPlanResult.isLotValid &&
@@ -1018,7 +1059,7 @@ export const RiskCalculatorView: React.FC<RiskCalculatorViewProps> = ({
                   {/* RISK / REWARD */}
                   <div className="flex items-center justify-between py-1">
                     <span className="text-xs font-semibold uppercase tracking-wider text-[#697586] dark:text-[#8E98A8]">
-                      Risk / Reward
+                      {tr('Risiko / Imbalan (R:R)', 'Risk / Reward')}
                     </span>
                     <span className="text-base font-bold font-mono-numbers tabular-nums text-[#151D2A] dark:text-[#F2F5F9]">
                       {manualPositionPlanResult.isLotValid &&
@@ -1031,10 +1072,16 @@ export const RiskCalculatorView: React.FC<RiskCalculatorViewProps> = ({
 
                 {/* Pre-commission & contract specification footnote */}
                 <div className="pt-3 border-t border-[#DDE3EA] dark:border-white/[0.06] space-y-1 text-[11px] text-[#697586] dark:text-[#8E98A8]">
-                  <p>Hasil merupakan estimasi sebelum biaya komisi dan swap.</p>
+                  <p>
+                    {tr(
+                      'Hasil merupakan estimasi sebelum biaya komisi dan swap.',
+                      'Results are estimates before broker commission and swap fees.'
+                    )}
+                  </p>
                   <p className="font-mono-numbers tabular-nums">
-                    Contract: {manualPositionPlanResult.contractSpec.contractSize.toLocaleString()} · 1 pip ={' '}
-                    {manualPositionPlanResult.contractSpec.pipSize} · Min Lot:{' '}
+                    {tr('Kontrak:', 'Contract:')}{' '}
+                    {manualPositionPlanResult.contractSpec.contractSize.toLocaleString()} · 1 pip ={' '}
+                    {manualPositionPlanResult.contractSpec.pipSize} · {tr('Lot Min:', 'Min Lot:')}{' '}
                     {manualPositionPlanResult.contractSpec.minLot} (Step{' '}
                     {manualPositionPlanResult.contractSpec.lotStep})
                   </p>
@@ -1052,7 +1099,7 @@ export const RiskCalculatorView: React.FC<RiskCalculatorViewProps> = ({
                 <div className="space-y-2">
                   <div className="flex items-center justify-between">
                     <label className="text-[11px] font-semibold uppercase tracking-wider text-[#697586] dark:text-[#8E98A8]">
-                      Account Balance
+                      {tr('Basis Modal Akun', 'Account Balance')}
                     </label>
                     <select
                       value={sizingCapitalSource}
@@ -1061,9 +1108,9 @@ export const RiskCalculatorView: React.FC<RiskCalculatorViewProps> = ({
                       }
                       className="rounded-full bg-[#F5F7FA] dark:bg-[#0D1015] border border-[#DDE3EA] dark:border-white/[0.08] px-3 py-1 text-xs font-semibold text-[#151D2A] dark:text-[#F2F5F9] focus:border-[#3B82F6] focus:outline-none"
                     >
-                      <option value="APP_EQUITY">App Equity</option>
-                      <option value="APP_BALANCE">App Balance</option>
-                      <option value="CUSTOM_BALANCE">Custom Balance</option>
+                      <option value="APP_EQUITY">{tr('Ekuitas Aplikasi', 'App Equity')}</option>
+                      <option value="APP_BALANCE">{tr('Saldo Aplikasi', 'App Balance')}</option>
+                      <option value="CUSTOM_BALANCE">{tr('Saldo Kustom', 'Custom Balance')}</option>
                     </select>
                   </div>
 
@@ -1073,7 +1120,9 @@ export const RiskCalculatorView: React.FC<RiskCalculatorViewProps> = ({
                         {fmtMoney(activeBalance)}
                       </span>
                       <span className="text-[11px] text-[#697586] dark:text-[#8E98A8]">
-                        {sizingCapitalSource === 'APP_EQUITY' ? 'App Equity' : 'App Balance'}
+                        {sizingCapitalSource === 'APP_EQUITY'
+                          ? tr('Ekuitas Aplikasi', 'App Equity')
+                          : tr('Saldo Aplikasi', 'App Balance')}
                       </span>
                     </div>
                   ) : (
@@ -1093,7 +1142,7 @@ export const RiskCalculatorView: React.FC<RiskCalculatorViewProps> = ({
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   <div>
                     <label className="block text-[11px] font-semibold uppercase tracking-wider text-[#697586] dark:text-[#8E98A8] mb-1.5">
-                      Instrument
+                      {tr('Instrumen', 'Instrument')}
                     </label>
                     <select
                       value={instrument}
@@ -1111,7 +1160,7 @@ export const RiskCalculatorView: React.FC<RiskCalculatorViewProps> = ({
                   <div>
                     <div className="flex items-center justify-between mb-1.5">
                       <label className="text-[11px] font-semibold uppercase tracking-wider text-[#697586] dark:text-[#8E98A8]">
-                        Risk per Trade (%)
+                        {tr('Risiko per Trade (%)', 'Risk per Trade (%)')}
                       </label>
                       <div className="flex items-center gap-1">
                         {POSITION_SIZING_RISK_PRESETS.map((pct) => (
@@ -1146,7 +1195,7 @@ export const RiskCalculatorView: React.FC<RiskCalculatorViewProps> = ({
                 {/* 4. DIRECTION */}
                 <div>
                   <label className="block text-[11px] font-semibold uppercase tracking-wider text-[#697586] dark:text-[#8E98A8] mb-1.5">
-                    Direction
+                    {tr('Arah Posisi', 'Direction')}
                   </label>
                   <div className="grid grid-cols-2 gap-2">
                     <button
@@ -1178,7 +1227,7 @@ export const RiskCalculatorView: React.FC<RiskCalculatorViewProps> = ({
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   <div>
                     <label className="block text-[11px] font-semibold uppercase tracking-wider text-[#697586] dark:text-[#8E98A8] mb-1.5">
-                      Entry Price
+                      {tr('Harga Entry', 'Entry Price')}
                     </label>
                     <input
                       type="number"
@@ -1225,7 +1274,7 @@ export const RiskCalculatorView: React.FC<RiskCalculatorViewProps> = ({
                 <div className="space-y-4">
                   <div className="flex items-center justify-between pb-3 border-b border-[#DDE3EA] dark:border-white/[0.06]">
                     <span className="text-xs font-semibold uppercase tracking-wider text-[#151D2A] dark:text-[#F2F5F9]">
-                      Result
+                      {tr('Hasil Perhitungan', 'Result')}
                     </span>
                     <span className="text-xs font-mono-numbers tabular-nums text-[#697586] dark:text-[#8E98A8]">
                       {instrument} · {sizingDirection}
@@ -1235,7 +1284,7 @@ export const RiskCalculatorView: React.FC<RiskCalculatorViewProps> = ({
                   {/* Recommended Lot */}
                   <div className="pb-4 border-b border-[#DDE3EA] dark:border-white/[0.06]">
                     <span className="text-xs text-[#697586] dark:text-[#8E98A8] block mb-1">
-                      Recommended Lot
+                      {tr('Rekomendasi Lot', 'Recommended Lot')}
                     </span>
                     <div
                       className={`text-2xl sm:text-3xl font-bold font-mono-numbers tabular-nums ${
@@ -1247,12 +1296,15 @@ export const RiskCalculatorView: React.FC<RiskCalculatorViewProps> = ({
                       {automaticSizingResult.isValid
                         ? automaticSizingResult.isExecutable
                           ? `${automaticSizingResult.recommendedLot.toFixed(2)} Lot`
-                          : '0.00 (Tidak dapat dieksekusi < Min Lot)'
+                          : tr(
+                              '0.00 (Tidak dapat dieksekusi < Lot Min)',
+                              '0.00 (Not executable < Min Lot)'
+                            )
                         : '0.00'}
                     </div>
                     {automaticSizingResult.isValid && (
                       <span className="text-[11px] font-mono-numbers tabular-nums text-[#697586] dark:text-[#8E98A8] block mt-1">
-                        Raw Lot: {automaticSizingResult.rawLot.toFixed(4)} · Step:{' '}
+                        {tr('Lot Mentah:', 'Raw Lot:')} {automaticSizingResult.rawLot.toFixed(4)} · Step:{' '}
                         {automaticSizingResult.contractSpec.lotStep} (Floored)
                       </span>
                     )}
@@ -1261,14 +1313,18 @@ export const RiskCalculatorView: React.FC<RiskCalculatorViewProps> = ({
                   {/* Breakdown Rows */}
                   <div className="space-y-2.5 text-xs">
                     <div className="flex items-center justify-between py-1.5 border-b border-[#DDE3EA] dark:border-white/[0.06]">
-                      <span className="text-[#697586] dark:text-[#8E98A8]">Risk Amount</span>
+                      <span className="text-[#697586] dark:text-[#8E98A8]">
+                        {tr('Nominal Risiko', 'Risk Amount')}
+                      </span>
                       <span className="font-mono-numbers tabular-nums font-semibold text-[#151D2A] dark:text-[#F2F5F9]">
                         {fmtMoney(automaticSizingResult.riskAmountUsd)}
                       </span>
                     </div>
 
                     <div className="flex items-center justify-between py-1.5 border-b border-[#DDE3EA] dark:border-white/[0.06]">
-                      <span className="text-[#697586] dark:text-[#8E98A8]">Actual Risk</span>
+                      <span className="text-[#697586] dark:text-[#8E98A8]">
+                        {tr('Risiko Aktual', 'Actual Risk')}
+                      </span>
                       <span className="font-mono-numbers tabular-nums font-semibold text-[#E05260]">
                         {automaticSizingResult.isValid
                           ? `${automaticSizingResult.actualRiskPercent.toFixed(2)}% (${fmtMoney(automaticSizingResult.actualLossUsd)})`
@@ -1278,7 +1334,7 @@ export const RiskCalculatorView: React.FC<RiskCalculatorViewProps> = ({
 
                     <div className="flex items-center justify-between py-1.5 border-b border-[#DDE3EA] dark:border-white/[0.06]">
                       <span className="text-[#697586] dark:text-[#8E98A8]">
-                        Stop Loss Distance
+                        {tr('Jarak Stop Loss', 'Stop Loss Distance')}
                       </span>
                       <span className="font-mono-numbers tabular-nums font-semibold text-[#151D2A] dark:text-[#F2F5F9]">
                         {automaticSizingResult.isValid
@@ -1289,7 +1345,7 @@ export const RiskCalculatorView: React.FC<RiskCalculatorViewProps> = ({
 
                     <div className="flex items-center justify-between py-1.5">
                       <span className="text-[#697586] dark:text-[#8E98A8]">
-                        Maximum Allowed Risk
+                        {tr('Batas Risiko Maksimum', 'Maximum Allowed Risk')}
                       </span>
                       <span className="font-mono-numbers tabular-nums font-semibold text-[#151D2A] dark:text-[#F2F5F9]">
                         {automaticSizingResult.maximumAllowedRiskPercent.toFixed(2)}% (
@@ -1300,8 +1356,10 @@ export const RiskCalculatorView: React.FC<RiskCalculatorViewProps> = ({
                 </div>
 
                 <p className="text-[11px] text-[#697586] dark:text-[#8E98A8] pt-3 border-t border-[#DDE3EA] dark:border-white/[0.06]">
-                  Recommended Lot selalu dibulatkan ke bawah (floor) sesuai Lot Step (
-                  {automaticSizingResult.contractSpec.lotStep}) agar Actual Risk tidak pernah melampaui batas risiko yang dipilih.
+                  {tr(
+                    `Rekomendasi Lot selalu dibulatkan ke bawah (floor) sesuai Lot Step (${automaticSizingResult.contractSpec.lotStep}) agar Risiko Aktual tidak pernah melampaui batas risiko yang dipilih.`,
+                    `Recommended Lot is always rounded down (floored) to the Lot Step (${automaticSizingResult.contractSpec.lotStep}) so Actual Risk never exceeds your selected risk limit.`
+                  )}
                 </p>
               </div>
             </div>
@@ -1316,10 +1374,10 @@ export const RiskCalculatorView: React.FC<RiskCalculatorViewProps> = ({
         <div className="pt-5 border-t border-[#DDE3EA] dark:border-white/[0.06] space-y-6 animate-in fade-in slide-in-from-top-1 duration-200 motion-reduce:animate-none">
           <div className="pb-4 border-b border-[#DDE3EA] dark:border-white/[0.06]">
             <h2 className="text-sm font-semibold uppercase tracking-wider text-[#151D2A] dark:text-[#F2F5F9]">
-              Proteksi & Aturan Risiko
+              {tr('Proteksi & Aturan Risiko', 'Risk Protection & Rules')}
             </h2>
             <p className="text-xs text-[#697586] dark:text-[#8E98A8] mt-0.5">
-              Daily limits and risk settings
+              {tr('Batas kerugian harian dan pengaturan risiko akun', 'Daily limits and risk settings')}
             </p>
           </div>
 
@@ -1329,7 +1387,7 @@ export const RiskCalculatorView: React.FC<RiskCalculatorViewProps> = ({
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>
                   <label className="block text-[11px] font-semibold uppercase tracking-wider text-[#697586] dark:text-[#8E98A8] mb-1.5">
-                    Daily Loss Limit (%)
+                    {tr('Batas Rugi Harian (%)', 'Daily Loss Limit (%)')}
                   </label>
                   <input
                     type="number"
@@ -1344,7 +1402,10 @@ export const RiskCalculatorView: React.FC<RiskCalculatorViewProps> = ({
 
                 <div>
                   <label className="block text-[11px] font-semibold uppercase tracking-wider text-[#697586] dark:text-[#8E98A8] mb-1.5">
-                    Maximum Daily Loss ({settings.currencySymbol})
+                    {tr(
+                      `Maksimum Rugi Harian (${settings.currencySymbol})`,
+                      `Maximum Daily Loss (${settings.currencySymbol})`
+                    )}
                   </label>
                   <input
                     type="number"
@@ -1358,7 +1419,7 @@ export const RiskCalculatorView: React.FC<RiskCalculatorViewProps> = ({
 
                 <div>
                   <label className="block text-[11px] font-semibold uppercase tracking-wider text-[#697586] dark:text-[#8E98A8] mb-1.5">
-                    Consecutive Loss Limit (Trades)
+                    {tr('Batas Loss Beruntun (Trade)', 'Consecutive Loss Limit (Trades)')}
                   </label>
                   <input
                     type="number"
@@ -1373,7 +1434,7 @@ export const RiskCalculatorView: React.FC<RiskCalculatorViewProps> = ({
 
                 <div>
                   <label className="block text-[11px] font-semibold uppercase tracking-wider text-[#697586] dark:text-[#8E98A8] mb-1.5">
-                    Maximum Drawdown (%)
+                    {tr('Maksimum Drawdown (%)', 'Maximum Drawdown (%)')}
                   </label>
                   <input
                     type="number"
@@ -1388,7 +1449,7 @@ export const RiskCalculatorView: React.FC<RiskCalculatorViewProps> = ({
 
                 <div>
                   <label className="block text-[11px] font-semibold uppercase tracking-wider text-[#697586] dark:text-[#8E98A8] mb-1.5">
-                    Max Risk per Trade (%)
+                    {tr('Maks Risiko per Trade (%)', 'Max Risk per Trade (%)')}
                   </label>
                   <input
                     type="number"
@@ -1403,7 +1464,7 @@ export const RiskCalculatorView: React.FC<RiskCalculatorViewProps> = ({
 
                 <div>
                   <label className="block text-[11px] font-semibold uppercase tracking-wider text-[#697586] dark:text-[#8E98A8] mb-1.5">
-                    Daily Reset
+                    {tr('Waktu Reset Harian', 'Daily Reset')}
                   </label>
                   <select
                     value={ruleResetTimezone}
@@ -1423,17 +1484,20 @@ export const RiskCalculatorView: React.FC<RiskCalculatorViewProps> = ({
             <div className="md:pl-6 md:border-l md:border-[#DDE3EA] md:dark:border-white/[0.06] flex flex-col justify-between space-y-5">
               <div className="space-y-4">
                 <span className="text-xs font-semibold uppercase tracking-wider text-[#151D2A] dark:text-[#F2F5F9] block pb-2.5 border-b border-[#DDE3EA] dark:border-white/[0.06]">
-                  Alert Settings
+                  {tr('Pengaturan Peringatan', 'Alert Settings')}
                 </span>
 
                 {/* Daily Loss Alert Toggle */}
                 <div className="flex items-center justify-between py-1">
                   <div>
                     <span className="text-xs font-medium text-[#151D2A] dark:text-[#F2F5F9] block">
-                      Daily Loss Alert
+                      {tr('Peringatan Rugi Harian', 'Daily Loss Alert')}
                     </span>
                     <span className="text-[11px] text-[#697586] dark:text-[#8E98A8]">
-                      Warning banner when daily loss reaches 75% of daily limit
+                      {tr(
+                        'Banner peringatan saat kerugian harian mencapai 75% dari batas harian',
+                        'Warning banner when daily loss reaches 75% of daily limit'
+                      )}
                     </span>
                   </div>
                   <button
@@ -1445,7 +1509,7 @@ export const RiskCalculatorView: React.FC<RiskCalculatorViewProps> = ({
                         : 'bg-transparent text-[#697586] dark:text-[#8E98A8] border-[#DDE3EA] dark:border-white/[0.08]'
                     }`}
                   >
-                    {ruleDailyAlertOn ? 'ON' : 'OFF'}
+                    {ruleDailyAlertOn ? tr('AKTIF', 'ON') : tr('NONAKTIF', 'OFF')}
                   </button>
                 </div>
 
@@ -1453,10 +1517,13 @@ export const RiskCalculatorView: React.FC<RiskCalculatorViewProps> = ({
                 <div className="flex items-center justify-between py-1">
                   <div>
                     <span className="text-xs font-medium text-[#151D2A] dark:text-[#F2F5F9] block">
-                      Stop Trading Alert
+                      {tr('Peringatan Berhenti Trading', 'Stop Trading Alert')}
                     </span>
                     <span className="text-[11px] text-[#697586] dark:text-[#8E98A8]">
-                      Alert banner when daily loss reaches 100% of daily limit
+                      {tr(
+                        'Banner peringatan saat kerugian harian mencapai 100% dari batas harian',
+                        'Alert banner when daily loss reaches 100% of daily limit'
+                      )}
                     </span>
                   </div>
                   <button
@@ -1468,7 +1535,7 @@ export const RiskCalculatorView: React.FC<RiskCalculatorViewProps> = ({
                         : 'bg-transparent text-[#697586] dark:text-[#8E98A8] border-[#DDE3EA] dark:border-white/[0.08]'
                     }`}
                   >
-                    {ruleStopAlertOn ? 'ON' : 'OFF'}
+                    {ruleStopAlertOn ? tr('AKTIF', 'ON') : tr('NONAKTIF', 'OFF')}
                   </button>
                 </div>
               </div>
@@ -1482,15 +1549,18 @@ export const RiskCalculatorView: React.FC<RiskCalculatorViewProps> = ({
                   {rulesSavedFeedback ? (
                     <>
                       <Check className="h-4 w-4" />
-                      <span>Settings Saved</span>
+                      <span>{tr('Pengaturan Tersimpan', 'Settings Saved')}</span>
                     </>
                   ) : (
-                    <span>Save Settings</span>
+                    <span>{tr('Simpan Pengaturan', 'Save Settings')}</span>
                   )}
                 </button>
 
                 <p className="text-[11px] text-[#697586] dark:text-[#8E98A8]">
-                  Note: Risk protection alerts operate as in-app warnings and discipline evaluation benchmarks inside TradeVault. They do not automatically block orders at your broker terminal.
+                  {tr(
+                    'Catatan: Peringatan proteksi risiko berfungsi sebagai pengingat di dalam aplikasi dan tolok ukur evaluasi disiplin di TradeVault. Fitur ini tidak memblokir order secara otomatis di terminal broker Anda.',
+                    'Note: Risk protection alerts operate as in-app warnings and discipline evaluation benchmarks inside TradeVault. They do not automatically block orders at your broker terminal.'
+                  )}
                 </p>
               </div>
             </div>
@@ -1505,10 +1575,10 @@ export const RiskCalculatorView: React.FC<RiskCalculatorViewProps> = ({
         <div className="pt-5 border-t border-[#DDE3EA] dark:border-white/[0.06] space-y-6 animate-in fade-in slide-in-from-top-1 duration-200 motion-reduce:animate-none">
           <div className="pb-4 border-b border-[#DDE3EA] dark:border-white/[0.06]">
             <h2 className="text-sm font-semibold uppercase tracking-wider text-[#151D2A] dark:text-[#F2F5F9]">
-              Simulasi Loss Beruntun
+              {tr('Simulasi Loss Beruntun', 'Consecutive Loss Simulation')}
             </h2>
             <p className="text-xs text-[#697586] dark:text-[#8E98A8] mt-0.5">
-              Consecutive loss simulation
+              {tr('Simulasi ketahanan modal terhadap kerugian beruntun', 'Consecutive loss simulation')}
             </p>
           </div>
 
@@ -1516,7 +1586,7 @@ export const RiskCalculatorView: React.FC<RiskCalculatorViewProps> = ({
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4 items-end">
             <div>
               <label className="block text-[11px] font-semibold uppercase tracking-wider text-[#697586] dark:text-[#8E98A8] mb-1.5">
-                Initial Balance ({settings.currencySymbol})
+                {tr(`Saldo Awal (${settings.currencySymbol})`, `Initial Balance (${settings.currencySymbol})`)}
               </label>
               <input
                 type="number"
@@ -1531,7 +1601,7 @@ export const RiskCalculatorView: React.FC<RiskCalculatorViewProps> = ({
 
             <div>
               <label className="block text-[11px] font-semibold uppercase tracking-wider text-[#697586] dark:text-[#8E98A8] mb-1.5">
-                Risk per Trade (%)
+                {tr('Risiko per Trade (%)', 'Risk per Trade (%)')}
               </label>
               <input
                 type="number"
@@ -1547,21 +1617,25 @@ export const RiskCalculatorView: React.FC<RiskCalculatorViewProps> = ({
 
             <div>
               <label className="block text-[11px] font-semibold uppercase tracking-wider text-[#697586] dark:text-[#8E98A8] mb-1.5">
-                Risk Method
+                {tr('Metode Risiko', 'Risk Method')}
               </label>
               <select
                 value={consecMethod}
                 onChange={(e) => setConsecMethod(e.target.value as ConsecutiveLossMethod)}
                 className="w-full rounded-xl bg-[#F5F7FA] dark:bg-[#0D1015] border border-[#DDE3EA] dark:border-white/[0.08] px-3.5 py-2.5 text-xs text-[#151D2A] dark:text-[#F2F5F9] focus:border-[#3B82F6] focus:outline-none"
               >
-                <option value="PERCENT_RUNNING_EQUITY">Percentage of Remaining Balance</option>
-                <option value="FIXED_NOMINAL">Fixed Risk Amount</option>
+                <option value="PERCENT_RUNNING_EQUITY">
+                  {tr('Persentase dari Sisa Saldo', 'Percentage of Remaining Balance')}
+                </option>
+                <option value="FIXED_NOMINAL">
+                  {tr('Nominal Risiko Tetap', 'Fixed Risk Amount')}
+                </option>
               </select>
             </div>
 
             <div>
               <label className="block text-[11px] font-semibold uppercase tracking-wider text-[#697586] dark:text-[#8E98A8] mb-1.5">
-                Number of Losses
+                {tr('Jumlah Loss Beruntun', 'Number of Losses')}
               </label>
               <input
                 type="number"
@@ -1581,7 +1655,7 @@ export const RiskCalculatorView: React.FC<RiskCalculatorViewProps> = ({
                 onClick={() => setConsecCountInput(String(consecLossesCount))}
                 className="w-full rounded-full bg-[#3B82F6] hover:bg-[#2563EB] text-white text-xs font-semibold py-2.5 px-4 transition-colors"
               >
-                Simulate
+                {tr('Simulasikan', 'Simulate')}
               </button>
             </div>
           </div>
@@ -1589,13 +1663,13 @@ export const RiskCalculatorView: React.FC<RiskCalculatorViewProps> = ({
           {/* RESULT SUMMARY */}
           <div className="pt-4 border-t border-[#DDE3EA] dark:border-white/[0.06] space-y-3">
             <span className="text-xs font-semibold uppercase tracking-wider text-[#151D2A] dark:text-[#F2F5F9] block">
-              Result
+              {tr('Hasil Simulasi', 'Result')}
             </span>
 
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 py-1">
               <div>
                 <span className="text-xs text-[#697586] dark:text-[#8E98A8] block mb-1">
-                  Initial Balance
+                  {tr('Saldo Awal', 'Initial Balance')}
                 </span>
                 <div className="text-lg font-bold font-mono-numbers tabular-nums text-[#151D2A] dark:text-[#F2F5F9]">
                   {fmtMoney(consecInitialBalance)}
@@ -1604,7 +1678,7 @@ export const RiskCalculatorView: React.FC<RiskCalculatorViewProps> = ({
 
               <div>
                 <span className="text-xs text-[#697586] dark:text-[#8E98A8] block mb-1">
-                  Remaining Balance
+                  {tr('Sisa Saldo', 'Remaining Balance')}
                 </span>
                 <div className="text-lg font-bold font-mono-numbers tabular-nums text-[#151D2A] dark:text-[#F2F5F9]">
                   {fmtMoney(consecRemainingBalance)}
@@ -1613,7 +1687,7 @@ export const RiskCalculatorView: React.FC<RiskCalculatorViewProps> = ({
 
               <div>
                 <span className="text-xs text-[#697586] dark:text-[#8E98A8] block mb-1">
-                  Total Loss
+                  {tr('Total Kerugian', 'Total Loss')}
                 </span>
                 <div className="text-lg font-bold font-mono-numbers tabular-nums text-[#E05260]">
                   -{fmtMoney(consecTotalLoss)}
@@ -1634,23 +1708,29 @@ export const RiskCalculatorView: React.FC<RiskCalculatorViewProps> = ({
           {/* BALANCE PROJECTION */}
           <div className="pt-4 border-t border-[#DDE3EA] dark:border-white/[0.06] space-y-3">
             <span className="text-xs font-semibold uppercase tracking-wider text-[#151D2A] dark:text-[#F2F5F9] block">
-              Balance Projection
+              {tr('Proyeksi Saldo', 'Balance Projection')}
             </span>
 
             <div className="overflow-x-auto">
               <table className="w-full text-left text-xs text-[#151D2A] dark:text-[#F2F5F9]">
                 <thead className="border-b border-[#DDE3EA] dark:border-white/[0.06] text-[11px] uppercase tracking-wider text-[#697586] dark:text-[#8E98A8]">
                   <tr>
-                    <th className="py-2.5 px-3">Step</th>
-                    <th className="py-2.5 px-3 font-mono-numbers">Loss per Trade</th>
-                    <th className="py-2.5 px-3 font-mono-numbers">Remaining Balance</th>
-                    <th className="py-2.5 px-3 font-mono-numbers">Cumulative Drawdown</th>
+                    <th className="py-2.5 px-3">{tr('Tahap', 'Step')}</th>
+                    <th className="py-2.5 px-3 font-mono-numbers">
+                      {tr('Rugi per Trade', 'Loss per Trade')}
+                    </th>
+                    <th className="py-2.5 px-3 font-mono-numbers">
+                      {tr('Sisa Saldo', 'Remaining Balance')}
+                    </th>
+                    <th className="py-2.5 px-3 font-mono-numbers">
+                      {tr('Drawdown Kumulatif', 'Cumulative Drawdown')}
+                    </th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-[#DDE3EA] dark:divide-white/[0.05] font-mono-numbers tabular-nums">
                   <tr>
                     <td className="py-2.5 px-3 font-sans font-medium text-[#697586] dark:text-[#8E98A8]">
-                      Initial
+                      {tr('Awal', 'Initial')}
                     </td>
                     <td className="py-2.5 px-3 text-[#697586] dark:text-[#8E98A8]">--</td>
                     <td className="py-2.5 px-3 font-semibold text-[#151D2A] dark:text-[#F2F5F9]">
@@ -1664,7 +1744,7 @@ export const RiskCalculatorView: React.FC<RiskCalculatorViewProps> = ({
                       className="hover:bg-black/[0.02] dark:hover:bg-white/[0.02] transition-colors"
                     >
                       <td className="py-2.5 px-3 font-sans font-medium text-[#151D2A] dark:text-[#F2F5F9]">
-                        Loss {step.lossNumber}
+                        {tr('Rugi', 'Loss')} {step.lossNumber}
                       </td>
                       <td className="py-2.5 px-3 text-[#E05260]">
                         -{fmtMoney(step.dollarLost)}
@@ -1692,25 +1772,25 @@ export const RiskCalculatorView: React.FC<RiskCalculatorViewProps> = ({
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-4 border-b border-[#DDE3EA] dark:border-white/[0.06]">
             <div>
               <h2 className="text-sm font-semibold uppercase tracking-wider text-[#151D2A] dark:text-[#F2F5F9]">
-                Evaluasi Disiplin
+                {tr('Evaluasi Disiplin', 'Discipline Evaluation')}
               </h2>
               <p className="text-xs text-[#697586] dark:text-[#8E98A8] mt-0.5">
-                Trading rule compliance
+                {tr('Audit kepatuhan aturan manajemen risiko', 'Trading rule compliance')}
               </p>
             </div>
 
             <div className="flex items-center gap-2">
               <label className="text-xs font-medium text-[#697586] dark:text-[#8E98A8]">
-                Evaluation Period
+                {tr('Periode Evaluasi', 'Evaluation Period')}
               </label>
               <select
                 value={disciplinePeriod}
                 onChange={(e) => setDisciplinePeriod(e.target.value as DisciplinePeriod)}
                 className="rounded-full bg-[#F5F7FA] dark:bg-[#0D1015] border border-[#DDE3EA] dark:border-white/[0.08] px-3.5 py-1.5 text-xs font-medium text-[#151D2A] dark:text-[#F2F5F9] focus:border-[#3B82F6] focus:outline-none"
               >
-                <option value="LAST_20">Last 20 Trades</option>
-                <option value="LAST_50">Last 50 Trades</option>
-                <option value="ALL">All Trades</option>
+                <option value="LAST_20">{tr('20 Trade Terakhir', 'Last 20 Trades')}</option>
+                <option value="LAST_50">{tr('50 Trade Terakhir', 'Last 50 Trades')}</option>
+                <option value="ALL">{tr('Semua Trade', 'All Trades')}</option>
               </select>
             </div>
           </div>
@@ -1720,7 +1800,7 @@ export const RiskCalculatorView: React.FC<RiskCalculatorViewProps> = ({
             <div className="md:pr-6 md:border-r md:border-[#DDE3EA] md:dark:border-white/[0.06] flex flex-col justify-between space-y-4">
               <div>
                 <span className="text-xs font-semibold uppercase tracking-wider text-[#697586] dark:text-[#8E98A8] block mb-2">
-                  Discipline Score
+                  {tr('Skor Disiplin', 'Discipline Score')}
                 </span>
                 <div className="flex items-baseline gap-2">
                   <span
@@ -1739,14 +1819,20 @@ export const RiskCalculatorView: React.FC<RiskCalculatorViewProps> = ({
                   </span>
                 </div>
                 <span className="text-xs text-[#697586] dark:text-[#8E98A8] block mt-1">
-                  Evaluated from {disciplineEval.totalTradesEvaluated} trades in Trade Log (Grade {disciplineEval.disciplineGrade})
+                  {tr(
+                    `Dievaluasi dari ${disciplineEval.totalTradesEvaluated} transaksi di Jurnal Trade (Nilai ${disciplineEval.disciplineGrade})`,
+                    `Evaluated from ${disciplineEval.totalTradesEvaluated} trades in Trade Log (Grade ${disciplineEval.disciplineGrade})`
+                  )}
                 </span>
               </div>
 
               <div className="pt-3 border-t border-[#DDE3EA] dark:border-white/[0.06] flex items-center justify-between text-xs">
-                <span className="text-[#697586] dark:text-[#8E98A8]">Max Loss Streak</span>
+                <span className="text-[#697586] dark:text-[#8E98A8]">
+                  {tr('Runtutan Rugi Maks', 'Max Loss Streak')}
+                </span>
                 <span className="font-mono-numbers tabular-nums font-semibold text-[#151D2A] dark:text-[#F2F5F9]">
-                  {disciplineEval.maxConsecutiveLossesEncountered} trades (Limit: {settings.maxConsecutiveLossLimit || 3})
+                  {disciplineEval.maxConsecutiveLossesEncountered} {tr('trade', 'trades')} (
+                  {tr('Batas:', 'Limit:')} {settings.maxConsecutiveLossLimit || 3})
                 </span>
               </div>
             </div>
@@ -1754,33 +1840,41 @@ export const RiskCalculatorView: React.FC<RiskCalculatorViewProps> = ({
             {/* RULE COMPLIANCE */}
             <div className="md:pr-6 md:border-r md:border-[#DDE3EA] md:dark:border-white/[0.06] space-y-3">
               <span className="text-xs font-semibold uppercase tracking-wider text-[#151D2A] dark:text-[#F2F5F9] block pb-2 border-b border-[#DDE3EA] dark:border-white/[0.06]">
-                Rule Compliance
+                {tr('Kepatuhan Aturan', 'Rule Compliance')}
               </span>
 
               <div className="space-y-2.5 text-xs">
                 <div className="flex items-center justify-between py-1.5 border-b border-[#DDE3EA] dark:border-white/[0.06]">
-                  <span className="text-[#697586] dark:text-[#8E98A8]">Risk per Trade</span>
+                  <span className="text-[#697586] dark:text-[#8E98A8]">
+                    {tr('Risiko per Trade', 'Risk per Trade')}
+                  </span>
                   <span className="font-mono-numbers tabular-nums font-semibold text-[#151D2A] dark:text-[#F2F5F9]">
                     {disciplineEval.riskPerTradeCompliantCount ?? 0} / {disciplineEval.totalTradesEvaluated}
                   </span>
                 </div>
 
                 <div className="flex items-center justify-between py-1.5 border-b border-[#DDE3EA] dark:border-white/[0.06]">
-                  <span className="text-[#697586] dark:text-[#8E98A8]">Stop Loss Compliance</span>
+                  <span className="text-[#697586] dark:text-[#8E98A8]">
+                    {tr('Kepatuhan Stop Loss', 'Stop Loss Compliance')}
+                  </span>
                   <span className="font-mono-numbers tabular-nums font-semibold text-[#151D2A] dark:text-[#F2F5F9]">
                     {disciplineEval.stopLossCompliantCount ?? 0} / {disciplineEval.totalTradesEvaluated}
                   </span>
                 </div>
 
                 <div className="flex items-center justify-between py-1.5 border-b border-[#DDE3EA] dark:border-white/[0.06]">
-                  <span className="text-[#697586] dark:text-[#8E98A8]">Trading Plan</span>
+                  <span className="text-[#697586] dark:text-[#8E98A8]">
+                    {tr('Rencana Trading', 'Trading Plan')}
+                  </span>
                   <span className="font-mono-numbers tabular-nums font-semibold text-[#151D2A] dark:text-[#F2F5F9]">
                     {disciplineEval.tradingPlanCompliantCount ?? 0} / {disciplineEval.totalTradesEvaluated}
                   </span>
                 </div>
 
                 <div className="flex items-center justify-between py-1.5">
-                  <span className="text-[#697586] dark:text-[#8E98A8]">Daily Limit Compliance</span>
+                  <span className="text-[#697586] dark:text-[#8E98A8]">
+                    {tr('Kepatuhan Batas Harian', 'Daily Limit Compliance')}
+                  </span>
                   <span className="font-mono-numbers tabular-nums font-semibold text-[#151D2A] dark:text-[#F2F5F9]">
                     {disciplineEval.dailyLimitCompliantCount ?? 0} / {disciplineEval.totalTradesEvaluated}
                   </span>
@@ -1792,11 +1886,13 @@ export const RiskCalculatorView: React.FC<RiskCalculatorViewProps> = ({
             <div className="flex flex-col justify-between space-y-4">
               <div className="space-y-3">
                 <span className="text-xs font-semibold uppercase tracking-wider text-[#151D2A] dark:text-[#F2F5F9] block pb-2 border-b border-[#DDE3EA] dark:border-white/[0.06]">
-                  Rule Violations
+                  {tr('Pelanggaran Aturan', 'Rule Violations')}
                 </span>
 
                 <div className="flex items-center justify-between">
-                  <span className="text-xs text-[#697586] dark:text-[#8E98A8]">Total Violations</span>
+                  <span className="text-xs text-[#697586] dark:text-[#8E98A8]">
+                    {tr('Total Pelanggaran', 'Total Violations')}
+                  </span>
                   <span
                     className={`text-xl font-bold font-mono-numbers tabular-nums ${
                       (disciplineEval.totalViolationsCount ?? 0) > 0
@@ -1810,19 +1906,19 @@ export const RiskCalculatorView: React.FC<RiskCalculatorViewProps> = ({
 
                 <div className="space-y-1.5 text-xs text-[#697586] dark:text-[#8E98A8]">
                   <div className="flex justify-between">
-                    <span>Over-Risk on Losses</span>
+                    <span>{tr('Melebihi Risiko saat Loss', 'Over-Risk on Losses')}</span>
                     <span className="font-mono-numbers tabular-nums text-[#151D2A] dark:text-[#F2F5F9]">
                       {disciplineEval.overRiskTradesCount}
                     </span>
                   </div>
                   <div className="flex justify-between">
-                    <span>Excessive Planned Risk</span>
+                    <span>{tr('Risiko Rencana Berlebih', 'Excessive Planned Risk')}</span>
                     <span className="font-mono-numbers tabular-nums text-[#151D2A] dark:text-[#F2F5F9]">
                       {disciplineEval.excessiveRiskTradesCount}
                     </span>
                   </div>
                   <div className="flex justify-between">
-                    <span>Daily Limit Breaches</span>
+                    <span>{tr('Pelanggaran Batas Harian', 'Daily Limit Breaches')}</span>
                     <span className="font-mono-numbers tabular-nums text-[#151D2A] dark:text-[#F2F5F9]">
                       {disciplineEval.dailyLossViolationsCount}
                     </span>
@@ -1835,7 +1931,9 @@ export const RiskCalculatorView: React.FC<RiskCalculatorViewProps> = ({
                 onClick={() => setShowDisciplineDetails((v) => !v)}
                 className="w-full rounded-full border border-[#DDE3EA] dark:border-white/[0.08] bg-transparent hover:border-[#3B82F6] text-xs font-semibold text-[#151D2A] dark:text-[#F2F5F9] py-2 px-4 transition-colors"
               >
-                {showDisciplineDetails ? 'Hide Details' : 'View Details'}
+                {showDisciplineDetails
+                  ? tr('Sembunyikan Detail', 'Hide Details')
+                  : tr('Lihat Detail', 'View Details')}
               </button>
             </div>
           </div>
@@ -1877,11 +1975,15 @@ export const RiskCalculatorView: React.FC<RiskCalculatorViewProps> = ({
                   <table className="w-full text-left text-xs text-[#151D2A] dark:text-[#F2F5F9]">
                     <thead className="border-b border-[#DDE3EA] dark:border-white/[0.06] text-[11px] uppercase tracking-wider text-[#697586] dark:text-[#8E98A8]">
                       <tr>
-                        <th className="py-2.5 px-3">Date</th>
-                        <th className="py-2.5 px-3">Pair</th>
+                        <th className="py-2.5 px-3">{tr('Tanggal', 'Date')}</th>
+                        <th className="py-2.5 px-3">{tr('Instrumen', 'Pair')}</th>
                         <th className="py-2.5 px-3 font-mono-numbers">Stop Loss</th>
-                        <th className="py-2.5 px-3 font-mono-numbers">Planned Risk</th>
-                        <th className="py-2.5 px-3 font-mono-numbers">Realized P/L</th>
+                        <th className="py-2.5 px-3 font-mono-numbers">
+                          {tr('Rencana Risiko', 'Planned Risk')}
+                        </th>
+                        <th className="py-2.5 px-3 font-mono-numbers">
+                          {tr('L/R Terealisasi', 'Realized P/L')}
+                        </th>
                         <th className="py-2.5 px-3">Status</th>
                       </tr>
                     </thead>
@@ -1902,7 +2004,7 @@ export const RiskCalculatorView: React.FC<RiskCalculatorViewProps> = ({
                               {t.instrument} · {t.position}
                             </td>
                             <td className="py-2 px-3">
-                              {hasSL ? t.stopLoss : 'Missing'}
+                              {hasSL ? t.stopLoss : tr('Tanpa SL', 'Missing')}
                             </td>
                             <td className="py-2 px-3">
                               {hasRisk ? fmtMoney(t.riskAmount!) : '--'}
@@ -1921,7 +2023,11 @@ export const RiskCalculatorView: React.FC<RiskCalculatorViewProps> = ({
                                 isCompliant ? 'text-[#00A878]' : 'text-[#E05260]'
                               }`}
                             >
-                              {isCompliant ? 'Compliant' : isOverRisk ? 'Over-Risk' : 'No SL'}
+                              {isCompliant
+                                ? tr('Patuh', 'Compliant')
+                                : isOverRisk
+                                ? tr('Melebihi Risiko', 'Over-Risk')
+                                : tr('Tanpa SL', 'No SL')}
                             </td>
                           </tr>
                         );

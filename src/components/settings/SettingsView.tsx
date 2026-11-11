@@ -10,6 +10,7 @@ import { formatCurrency } from '../../utils/calculations';
 import { isDemoTrade, DEMO_TRADES } from '../../utils/demoData';
 import { mergeTradesDatasets } from '../../utils/supabaseSync';
 import { useTheme } from '../../utils/theme';
+import { useLanguage } from '../../utils/language';
 import { CsvImportModal } from './CsvImportModal';
 import { FinancialAuditModal } from './FinancialAuditModal';
 import { TradingPreferencesModal, PreferenceCategory } from './TradingPreferencesModal';
@@ -54,6 +55,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   onReloadFromCloud,
 }) => {
   const { theme, setTheme } = useTheme();
+  const { language, setLanguage, tr } = useLanguage();
 
   // Modals state
   const [activePrefModal, setActivePrefModal] = useState<PreferenceCategory | null>(null);
@@ -72,7 +74,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
 
   const handleSavePreferences = (newSettings: AppSettings) => {
     onSaveSettings(newSettings);
-    showFeedback('Pengaturan berhasil diperbarui!');
+    showFeedback(tr('Pengaturan berhasil diperbarui!', 'Settings updated successfully!'));
   };
 
   const handleLoadDemo = async () => {
@@ -82,7 +84,12 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
       const nonDemo = trades.filter((t) => !isDemoTrade(t));
       onUpdateTrades([...nonDemo, ...DEMO_TRADES]);
     }
-    showFeedback(`Berhasil memuat ${DEMO_TRADES.length} transaksi contoh DEMO.`);
+    showFeedback(
+      tr(
+        `Berhasil memuat ${DEMO_TRADES.length} transaksi contoh DEMO.`,
+        `Successfully loaded ${DEMO_TRADES.length} DEMO sample trades.`
+      )
+    );
   };
 
   const handleConfirmClearAllTrades = async () => {
@@ -92,7 +99,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
     } else {
       onUpdateTrades([]);
     }
-    showFeedback('Seluruh riwayat transaksi telah dihapus.');
+    showFeedback(tr('Seluruh riwayat transaksi telah dihapus.', 'All trade history has been cleared.'));
   };
 
   const handleImportCsvSuccess = async (newTrades: Trade[], mode: 'merge' | 'replace') => {
@@ -102,7 +109,12 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
       const { finalTrades } = mergeTradesDatasets(trades, newTrades, mode);
       onUpdateTrades(finalTrades);
     }
-    showFeedback(`Berhasil mengimpor ${newTrades.length} transaksi dari CSV!`);
+    showFeedback(
+      tr(
+        `Berhasil mengimpor ${newTrades.length} transaksi dari CSV!`,
+        `Successfully imported ${newTrades.length} trades from CSV!`
+      )
+    );
   };
 
   return (
@@ -110,10 +122,13 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
       {/* Top Header */}
       <div className="pb-3 border-b border-[#DDE3EA] dark:border-[#252B34]">
         <h2 className="text-xl font-bold tracking-tight text-[#151D2A] dark:text-[#F2F5F9]">
-          Pengaturan &amp; Cadangan
+          {tr('Pengaturan & Cadangan', 'Settings & Backup')}
         </h2>
         <p className="text-xs text-[#697586] dark:text-[#929BA9] mt-0.5">
-          Workspace minimalis untuk mengelola tampilan antarmuka, akun trading, sinkronisasi cloud, cadangan data, dan dataset.
+          {tr(
+            'Ruang kerja minimalis untuk mengelola bahasa, tampilan antarmuka, akun trading, sinkronisasi cloud, cadangan data, dan dataset.',
+            'Minimalist workspace to manage language, interface appearance, trading account, cloud sync, data backup, and datasets.'
+          )}
         </p>
       </div>
 
@@ -131,45 +146,105 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
       )}
 
       {/* ========================================================================= */}
-      {/* A. TAMPILAN */}
+      {/* A. TAMPILAN & BAHASA */}
       {/* ========================================================================= */}
       <div className="space-y-2">
         <span className="text-[11px] font-semibold uppercase tracking-[0.08em] text-[#697586] dark:text-[#929BA9] block px-1">
-          Tampilan
+          {tr('Tampilan & Bahasa', 'Appearance & Language')}
         </span>
-        <div className="bg-white dark:bg-[#11151B] border border-[#DDE3EA] dark:border-[#252B34] rounded-xl px-4 py-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-          <div>
-            <span className="text-xs font-semibold text-[#151D2A] dark:text-[#F2F5F9] block">
-              Tema Tampilan
-            </span>
-            <span className="text-[11px] text-[#697586] dark:text-[#929BA9] block mt-0.5">
-              Pilihan mode visual aplikasi TradeVault disimpan di browser Anda
-            </span>
+        <div className="bg-white dark:bg-[#11151B] border border-[#DDE3EA] dark:border-[#252B34] rounded-xl divide-y divide-[#DDE3EA] dark:divide-[#252B34]">
+          {/* Row 1: Tema Tampilan */}
+          <div className="px-4 py-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div>
+              <span className="text-xs font-semibold text-[#151D2A] dark:text-[#F2F5F9] block">
+                {tr('Tema Tampilan', 'Appearance Theme')}
+              </span>
+              <span className="text-[11px] text-[#697586] dark:text-[#929BA9] block mt-0.5">
+                {tr(
+                  'Pilihan mode visual aplikasi TradeVault disimpan di perangkat Anda',
+                  'Visual theme preference for TradeVault saved on your device'
+                )}
+              </span>
+            </div>
+
+            <div className="flex items-center rounded-lg bg-[#F5F7FA] dark:bg-[#080A0E] p-1 border border-[#DDE3EA] dark:border-[#252B34] shrink-0 self-start sm:self-auto">
+              <button
+                type="button"
+                onClick={() => setTheme('light')}
+                className={`px-3 py-1 text-xs rounded-md transition-colors cursor-pointer ${
+                  theme === 'light'
+                    ? 'bg-white text-[#1458C4] font-semibold shadow-xs'
+                    : 'text-[#697586] dark:text-[#929BA9] hover:text-[#151D2A] dark:hover:text-[#F2F5F9]'
+                }`}
+              >
+                {tr('Terang', 'Light')}
+              </button>
+              <button
+                type="button"
+                onClick={() => setTheme('dark')}
+                className={`px-3 py-1 text-xs rounded-md transition-colors cursor-pointer ${
+                  theme === 'dark'
+                    ? 'bg-[#171D26] text-[#38BDF8] font-semibold shadow-xs'
+                    : 'text-[#697586] dark:text-[#929BA9] hover:text-[#151D2A] dark:hover:text-[#F2F5F9]'
+                }`}
+              >
+                {tr('Gelap', 'Dark')}
+              </button>
+            </div>
           </div>
 
-          <div className="flex items-center rounded-lg bg-[#F5F7FA] dark:bg-[#080A0E] p-1 border border-[#DDE3EA] dark:border-[#252B34] shrink-0 self-start sm:self-auto">
-            <button
-              type="button"
-              onClick={() => setTheme('light')}
-              className={`px-3 py-1 text-xs rounded-md transition-colors cursor-pointer ${
-                theme === 'light'
-                  ? 'bg-white text-[#1458C4] font-semibold shadow-xs'
-                  : 'text-[#697586] dark:text-[#929BA9] hover:text-[#151D2A] dark:hover:text-[#F2F5F9]'
-              }`}
+          {/* Row 2: Bahasa Aplikasi */}
+          <div
+            data-testid="settings-language-row"
+            className="px-4 py-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-3"
+          >
+            <div>
+              <span className="text-xs font-semibold text-[#151D2A] dark:text-[#F2F5F9] block">
+                {tr('Bahasa Aplikasi', 'Application Language')}
+              </span>
+              <span className="text-[11px] text-[#697586] dark:text-[#929BA9] block mt-0.5">
+                {tr(
+                  'Terapkan Bahasa Indonesia atau Bahasa Inggris ke seluruh tampilan aplikasi',
+                  'Apply Bahasa Indonesia or English across the entire application interface'
+                )}
+              </span>
+            </div>
+
+            <div
+              data-testid="settings-language-selector"
+              className="flex items-center rounded-lg bg-[#F5F7FA] dark:bg-[#080A0E] p-1 border border-[#DDE3EA] dark:border-[#252B34] shrink-0 self-start sm:self-auto"
             >
-              Terang
-            </button>
-            <button
-              type="button"
-              onClick={() => setTheme('dark')}
-              className={`px-3 py-1 text-xs rounded-md transition-colors cursor-pointer ${
-                theme === 'dark'
-                  ? 'bg-[#171D26] text-[#38BDF8] font-semibold shadow-xs'
-                  : 'text-[#697586] dark:text-[#929BA9] hover:text-[#151D2A] dark:hover:text-[#F2F5F9]'
-              }`}
-            >
-              Gelap
-            </button>
+              <button
+                type="button"
+                data-testid="lang-option-id"
+                onClick={() => {
+                  setLanguage('id');
+                  showFeedback('Bahasa aplikasi diubah ke Bahasa Indonesia.');
+                }}
+                className={`px-3 py-1 text-xs rounded-md transition-colors cursor-pointer ${
+                  language === 'id'
+                    ? 'bg-white dark:bg-[#171D26] text-[#1458C4] dark:text-[#38BDF8] font-semibold shadow-xs'
+                    : 'text-[#697586] dark:text-[#929BA9] hover:text-[#151D2A] dark:hover:text-[#F2F5F9]'
+                }`}
+              >
+                Bahasa Indonesia
+              </button>
+              <button
+                type="button"
+                data-testid="lang-option-en"
+                onClick={() => {
+                  setLanguage('en');
+                  showFeedback('Application language changed to English.');
+                }}
+                className={`px-3 py-1 text-xs rounded-md transition-colors cursor-pointer ${
+                  language === 'en'
+                    ? 'bg-white dark:bg-[#171D26] text-[#1458C4] dark:text-[#38BDF8] font-semibold shadow-xs'
+                    : 'text-[#697586] dark:text-[#929BA9] hover:text-[#151D2A] dark:hover:text-[#F2F5F9]'
+                }`}
+              >
+                English
+              </button>
+            </div>
           </div>
         </div>
       </div>
@@ -179,17 +254,17 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
       {/* ========================================================================= */}
       <div className="space-y-2">
         <span className="text-[11px] font-semibold uppercase tracking-[0.08em] text-[#697586] dark:text-[#929BA9] block px-1">
-          Akun &amp; Preferensi Trading
+          {tr('Akun & Preferensi Trading', 'Account & Trading Preferences')}
         </span>
         <div className="bg-white dark:bg-[#11151B] border border-[#DDE3EA] dark:border-[#252B34] rounded-xl divide-y divide-[#DDE3EA] dark:divide-[#252B34]">
           {/* Row 1: Saldo Akun */}
           <div className="px-4 py-3 flex items-center justify-between gap-4">
             <div className="min-w-0">
               <span className="text-xs font-semibold text-[#151D2A] dark:text-[#F2F5F9] block">
-                Saldo Akun (Modal Awal)
+                {tr('Saldo Akun (Modal Awal)', 'Account Balance (Initial Capital)')}
               </span>
               <span className="text-[11px] text-[#697586] dark:text-[#929BA9] block mt-0.5">
-                Dasar kalkulasi pertumbuhan dan risiko
+                {tr('Dasar kalkulasi pertumbuhan dan risiko', 'Base for growth and risk calculations')}
               </span>
             </div>
             <div className="flex items-center gap-3 shrink-0">
@@ -201,7 +276,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                 onClick={() => setActivePrefModal('balance')}
                 className="text-xs font-semibold text-[#1458C4] dark:text-[#38BDF8] hover:underline cursor-pointer"
               >
-                Ubah ›
+                {tr('Ubah ›', 'Edit ›')}
               </button>
             </div>
           </div>
@@ -210,10 +285,10 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
           <div className="px-4 py-3 flex items-center justify-between gap-4">
             <div className="min-w-0">
               <span className="text-xs font-semibold text-[#151D2A] dark:text-[#F2F5F9] block">
-                Mata Uang Akun
+                {tr('Mata Uang Akun', 'Account Currency')}
               </span>
               <span className="text-[11px] text-[#697586] dark:text-[#929BA9] block mt-0.5">
-                Format simbol moneter jurnal
+                {tr('Format simbol moneter jurnal', 'Journal monetary symbol format')}
               </span>
             </div>
             <div className="flex items-center gap-3 shrink-0">
@@ -225,7 +300,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                 onClick={() => setActivePrefModal('currency')}
                 className="text-xs font-semibold text-[#1458C4] dark:text-[#38BDF8] hover:underline cursor-pointer"
               >
-                Ubah ›
+                {tr('Ubah ›', 'Edit ›')}
               </button>
             </div>
           </div>
@@ -234,13 +309,13 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
           <div className="px-4 py-3 flex items-center justify-between gap-4">
             <div className="min-w-0">
               <span className="text-xs font-semibold text-[#151D2A] dark:text-[#F2F5F9] block">
-                Spesifikasi Broker (XAUUSD)
+                {tr('Spesifikasi Broker (XAUUSD)', 'Broker Specification (XAUUSD)')}
               </span>
               <span className="text-[11px] text-[#697586] dark:text-[#929BA9] block mt-0.5 truncate">
                 {settings.xauusdPipSize === 0.1
-                  ? 'Mode A (1 Pip = $0.10 Harga)'
-                  : 'Mode B (1 Pip = $1.00 Harga)'}{' '}
-                • {settings.xauusdContractSize} oz • Komisi ${settings.brokerCommissionPerLot}/lot
+                  ? tr('Mode A (1 Pip = $0.10 Harga)', 'Mode A (1 Pip = $0.10 Price)')
+                  : tr('Mode B (1 Pip = $1.00 Harga)', 'Mode B (1 Pip = $1.00 Price)')}{' '}
+                • {settings.xauusdContractSize} oz • {tr('Komisi', 'Commission')} ${settings.brokerCommissionPerLot}/lot
               </span>
             </div>
             <div className="shrink-0">
@@ -249,7 +324,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                 onClick={() => setActivePrefModal('broker')}
                 className="text-xs font-semibold text-[#1458C4] dark:text-[#38BDF8] hover:underline cursor-pointer"
               >
-                Atur ›
+                {tr('Atur ›', 'Configure ›')}
               </button>
             </div>
           </div>
@@ -258,10 +333,14 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
           <div className="px-4 py-3 flex items-center justify-between gap-4">
             <div className="min-w-0">
               <span className="text-xs font-semibold text-[#151D2A] dark:text-[#F2F5F9] block">
-                Parameter Risiko &amp; Target
+                {tr('Parameter Risiko & Target', 'Risk & Target Parameters')}
               </span>
               <span className="text-[11px] text-[#697586] dark:text-[#929BA9] block mt-0.5 truncate">
-                Risiko {settings.defaultRiskPercent}% per trade ({settings.riskCapitalBasis === 'BALANCE' ? 'Saldo Awal' : 'Ekuitas'}) • Target {settings.targetMonthlyReturnPercent}%/bln
+                {tr('Risiko', 'Risk')} {settings.defaultRiskPercent}% {tr('per trade', 'per trade')} (
+                {settings.riskCapitalBasis === 'BALANCE'
+                  ? tr('Saldo Awal', 'Initial Balance')
+                  : tr('Ekuitas', 'Equity')}
+                ) • {tr('Target', 'Target')} {settings.targetMonthlyReturnPercent}%/{tr('bln', 'mo')}
               </span>
             </div>
             <div className="shrink-0">
@@ -270,7 +349,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                 onClick={() => setActivePrefModal('risk')}
                 className="text-xs font-semibold text-[#1458C4] dark:text-[#38BDF8] hover:underline cursor-pointer"
               >
-                Atur ›
+                {tr('Atur ›', 'Configure ›')}
               </button>
             </div>
           </div>
@@ -279,10 +358,11 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
           <div className="px-4 py-3 flex items-center justify-between gap-4">
             <div className="min-w-0">
               <span className="text-xs font-semibold text-[#151D2A] dark:text-[#F2F5F9] block">
-                Penyesuaian Modal
+                {tr('Penyesuaian Modal', 'Capital Adjustments')}
               </span>
               <span className="text-[11px] text-[#697586] dark:text-[#929BA9] block mt-0.5 truncate">
-                Deposit +{formatCurrency(settings.totalDeposits ?? 0, settings)} • Penarikan -{formatCurrency(settings.totalWithdrawals ?? 0, settings)}
+                {tr('Deposit', 'Deposits')} +{formatCurrency(settings.totalDeposits ?? 0, settings)} •{' '}
+                {tr('Penarikan', 'Withdrawals')} -{formatCurrency(settings.totalWithdrawals ?? 0, settings)}
               </span>
             </div>
             <div className="shrink-0">
@@ -291,7 +371,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                 onClick={() => setActivePrefModal('adjustments')}
                 className="text-xs font-semibold text-[#1458C4] dark:text-[#38BDF8] hover:underline cursor-pointer"
               >
-                Atur ›
+                {tr('Atur ›', 'Configure ›')}
               </button>
             </div>
           </div>
@@ -303,17 +383,19 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
       {/* ========================================================================= */}
       <div className="space-y-2">
         <span className="text-[11px] font-semibold uppercase tracking-[0.08em] text-[#697586] dark:text-[#929BA9] block px-1">
-          Akun &amp; Koneksi
+          {tr('Akun & Koneksi', 'Account & Connection')}
         </span>
         <div className="bg-white dark:bg-[#11151B] border border-[#DDE3EA] dark:border-[#252B34] rounded-xl divide-y divide-[#DDE3EA] dark:divide-[#252B34]">
           {/* Row 1: Informasi Akun TradeVault */}
           <div className="px-4 py-3 flex items-center justify-between gap-4">
             <div className="min-w-0">
               <span className="text-xs font-semibold text-[#151D2A] dark:text-[#F2F5F9] block">
-                Akun TradeVault
+                {tr('Akun TradeVault', 'TradeVault Account')}
               </span>
               <span className="text-[11px] text-[#697586] dark:text-[#929BA9] block mt-0.5 truncate">
-                {currentUser ? currentUser.email : 'Mode Offline / Lokal (Belum Masuk)'}
+                {currentUser
+                  ? currentUser.email
+                  : tr('Mode Offline / Lokal (Belum Masuk)', 'Offline / Local Mode (Not Signed In)')}
               </span>
             </div>
             <div className="shrink-0">
@@ -323,7 +405,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                   onClick={onOpenAccount}
                   className="text-xs font-semibold text-[#1458C4] dark:text-[#38BDF8] hover:underline cursor-pointer"
                 >
-                  Kelola ›
+                  {tr('Kelola ›', 'Manage ›')}
                 </button>
               ) : (
                 <button
@@ -331,7 +413,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                   onClick={onOpenAuth}
                   className="text-xs font-semibold text-[#1458C4] dark:text-[#38BDF8] hover:underline cursor-pointer"
                 >
-                  Masuk ›
+                  {tr('Masuk ›', 'Sign In ›')}
                 </button>
               )}
             </div>
@@ -342,12 +424,15 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
             <div className="flex items-center justify-between gap-4">
               <div className="min-w-0">
                 <span className="text-xs font-semibold text-[#151D2A] dark:text-[#F2F5F9] block">
-                  Sinkronisasi Cloud Supabase
+                  {tr('Sinkronisasi Cloud Supabase', 'Supabase Cloud Synchronization')}
                 </span>
                 <span className="text-[11px] text-[#697586] dark:text-[#929BA9] block mt-0.5">
                   {currentUser
-                    ? 'Tabel public.trades aktif • RLS terlindungi'
-                    : 'Sinkronisasi nonaktif. Masuk akun untuk mengaktifkan sinkronisasi.'}
+                    ? tr('Tabel public.trades aktif • RLS terlindungi', 'Table public.trades active • RLS protected')
+                    : tr(
+                        'Sinkronisasi nonaktif. Masuk akun untuk mengaktifkan sinkronisasi.',
+                        'Sync inactive. Sign in to enable cloud synchronization.'
+                      )}
                 </span>
               </div>
               <div className="shrink-0">
@@ -356,7 +441,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                   onClick={onOpenConfig}
                   className="text-xs font-semibold text-[#1458C4] dark:text-[#38BDF8] hover:underline cursor-pointer"
                 >
-                  Konfigurasi ›
+                  {tr('Konfigurasi ›', 'Configure ›')}
                 </button>
               </div>
             </div>
@@ -371,7 +456,9 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                     onClick={onSyncLocalToCloud}
                     className="px-3 py-1.5 rounded-lg bg-[#1458C4] hover:bg-[#11469e] text-white text-[11px] font-semibold transition-colors disabled:opacity-50 cursor-pointer"
                   >
-                    {isCloudSyncing ? 'Menyinkronkan...' : `Unggah ${trades.length} Trade ke Cloud`}
+                    {isCloudSyncing
+                      ? tr('Menyinkronkan...', 'Syncing...')
+                      : tr(`Unggah ${trades.length} Trade ke Cloud`, `Upload ${trades.length} Trades to Cloud`)}
                   </button>
                 )}
                 {onReloadFromCloud && (
@@ -381,7 +468,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                     onClick={onReloadFromCloud}
                     className="px-3 py-1.5 rounded-lg border border-[#DDE3EA] dark:border-[#252B34] text-[#151D2A] dark:text-[#F2F5F9] hover:bg-[#EEF2F6] dark:hover:bg-[#171D26] text-[11px] font-medium transition-colors disabled:opacity-50 cursor-pointer"
                   >
-                    Ambil dari Cloud
+                    {tr('Ambil dari Cloud', 'Fetch from Cloud')}
                   </button>
                 )}
               </div>
@@ -392,10 +479,13 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
           <div className="px-4 py-3 flex items-center justify-between gap-4">
             <div className="min-w-0">
               <span className="text-xs font-semibold text-[#151D2A] dark:text-[#F2F5F9] block">
-                Penyimpanan Lokal Browser
+                {tr('Penyimpanan Lokal Browser', 'Browser Local Storage')}
               </span>
               <span className="text-[11px] text-[#697586] dark:text-[#929BA9] block mt-0.5">
-                {trades.length} Transaksi tersimpan di browser (localStorage)
+                {tr(
+                  `${trades.length} Transaksi tersimpan di browser (localStorage)`,
+                  `${trades.length} Trades stored in browser (localStorage)`
+                )}
               </span>
             </div>
             <div className="shrink-0">
@@ -404,7 +494,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                 onClick={onOpenLocalInfo}
                 className="text-xs font-semibold text-[#1458C4] dark:text-[#38BDF8] hover:underline cursor-pointer"
               >
-                Detail ›
+                {tr('Detail ›', 'Details ›')}
               </button>
             </div>
           </div>
@@ -416,15 +506,18 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
       {/* ========================================================================= */}
       <div className="space-y-2">
         <span className="text-[11px] font-semibold uppercase tracking-[0.08em] text-[#697586] dark:text-[#929BA9] block px-1">
-          Backup &amp; Pemulihan
+          {tr('Cadangan & Pemulihan', 'Backup & Recovery')}
         </span>
         <div className="bg-white dark:bg-[#11151B] border border-[#DDE3EA] dark:border-[#252B34] rounded-xl px-4 py-3.5 flex items-center justify-between gap-4">
           <div className="min-w-0">
             <span className="text-xs font-semibold text-[#151D2A] dark:text-[#F2F5F9] block">
-              Cadangan Data (Backup &amp; Restore)
+              {tr('Cadangan Data (Backup & Restore)', 'Data Backup (Backup & Restore)')}
             </span>
             <span className="text-[11px] text-[#697586] dark:text-[#929BA9] block mt-0.5">
-              Simpan atau pulihkan transaksi dan data pendukung TradeVault dalam format ZIP lengkap, JSON, atau CSV.
+              {tr(
+                'Simpan atau pulihkan transaksi dan data pendukung TradeVault dalam format ZIP lengkap, JSON, atau CSV.',
+                'Save or restore TradeVault trades and supporting data in full ZIP, JSON, or CSV format.'
+              )}
             </span>
           </div>
           <div className="shrink-0">
@@ -433,7 +526,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
               onClick={onOpenBackupModal}
               className="text-xs font-semibold text-[#1458C4] dark:text-[#38BDF8] hover:underline cursor-pointer"
             >
-              Buka ›
+              {tr('Buka ›', 'Open ›')}
             </button>
           </div>
         </div>
@@ -444,17 +537,20 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
       {/* ========================================================================= */}
       <div className="space-y-2">
         <span className="text-[11px] font-semibold uppercase tracking-[0.08em] text-[#697586] dark:text-[#929BA9] block px-1">
-          Manajemen Data
+          {tr('Manajemen Data', 'Data Management')}
         </span>
         <div className="bg-white dark:bg-[#11151B] border border-[#DDE3EA] dark:border-[#252B34] rounded-xl divide-y divide-[#DDE3EA] dark:divide-[#252B34]">
           {/* Row 1: Transaksi Demo */}
           <div className="px-4 py-3 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
             <div className="min-w-0">
               <span className="text-xs font-semibold text-[#151D2A] dark:text-[#F2F5F9] block">
-                Dataset Transaksi Demo
+                {tr('Dataset Transaksi Demo', 'Demo Trades Dataset')}
               </span>
               <span className="text-[11px] text-[#697586] dark:text-[#929BA9] block mt-0.5">
-                {demoCount} transaksi contoh • {realCount} transaksi asli
+                {tr(
+                  `${demoCount} transaksi contoh • ${realCount} transaksi asli`,
+                  `${demoCount} sample trades • ${realCount} real trades`
+                )}
               </span>
             </div>
             <div className="flex items-center gap-2 shrink-0 self-start sm:self-auto">
@@ -463,7 +559,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                 onClick={handleLoadDemo}
                 className="px-3 py-1.5 rounded-lg border border-[#DDE3EA] dark:border-[#252B34] hover:bg-[#EEF2F6] dark:hover:bg-[#171D26] text-[#151D2A] dark:text-[#F2F5F9] text-xs font-medium transition-colors cursor-pointer"
               >
-                Muat Demo
+                {tr('Muat Demo', 'Load Demo')}
               </button>
               {demoCount > 0 && (
                 <button
@@ -471,7 +567,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                   onClick={onRequestClearDemo}
                   className="px-3 py-1.5 rounded-lg border border-[#DDE3EA] dark:border-[#252B34] text-amber-600 dark:text-amber-400 hover:bg-[#EEF2F6] dark:hover:bg-[#171D26] text-xs font-semibold transition-colors cursor-pointer"
                 >
-                  Hapus Demo ({demoCount})
+                  {tr(`Hapus Demo (${demoCount})`, `Clear Demo (${demoCount})`)}
                 </button>
               )}
             </div>
@@ -481,10 +577,13 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
           <div className="px-4 py-3 flex items-center justify-between gap-4">
             <div className="min-w-0">
               <span className="text-xs font-semibold text-[#151D2A] dark:text-[#F2F5F9] block">
-                Audit Rumus Finansial
+                {tr('Audit Rumus Finansial', 'Financial Formula Audit')}
               </span>
               <span className="text-[11px] text-[#697586] dark:text-[#929BA9] block mt-0.5 truncate">
-                Uji 46 formula matematis (Win Rate, Profit Factor, Expectancy, Drawdown, Lot Sizing)
+                {tr(
+                  'Uji 46 formula matematis (Tingkat Menang, Faktor Profit, Ekspektasi, Penurunan, Ukuran Lot)',
+                  'Test 46 mathematical formulas (Win Rate, Profit Factor, Expectancy, Drawdown, Lot Sizing)'
+                )}
               </span>
             </div>
             <div className="shrink-0">
@@ -493,7 +592,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                 onClick={() => setIsAuditModalOpen(true)}
                 className="text-xs font-semibold text-[#1458C4] dark:text-[#38BDF8] hover:underline cursor-pointer"
               >
-                Jalankan ›
+                {tr('Jalankan ›', 'Run ›')}
               </button>
             </div>
           </div>
@@ -502,10 +601,13 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
           <div className="px-4 py-3 flex items-center justify-between gap-4">
             <div className="min-w-0">
               <span className="text-xs font-semibold text-[#151D2A] dark:text-[#F2F5F9] block">
-                Impor Transaksi Spreadsheet (CSV)
+                {tr('Impor Transaksi Spreadsheet (CSV)', 'Import Spreadsheet Trades (CSV)')}
               </span>
               <span className="text-[11px] text-[#697586] dark:text-[#929BA9] block mt-0.5">
-                Unggah riwayat transaksi dari format tabel CSV/Excel
+                {tr(
+                  'Unggah riwayat transaksi dari format tabel CSV/Excel',
+                  'Upload trade history from CSV/Excel table format'
+                )}
               </span>
             </div>
             <div className="shrink-0">
@@ -514,7 +616,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                 onClick={() => setIsCsvModalOpen(true)}
                 className="text-xs font-semibold text-[#1458C4] dark:text-[#38BDF8] hover:underline cursor-pointer"
               >
-                Impor ›
+                {tr('Impor ›', 'Import ›')}
               </button>
             </div>
           </div>
@@ -523,10 +625,13 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
           <div className="px-4 py-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
             <div className="min-w-0">
               <span className="text-xs font-semibold text-rose-600 dark:text-rose-400 block">
-                Reset Total Jurnal
+                {tr('Reset Total Jurnal', 'Full Journal Reset')}
               </span>
               <span className="text-[11px] text-[#697586] dark:text-[#929BA9] block mt-0.5">
-                Hapus seluruh transaksi untuk memulai jurnal baru dari nol. Tindakan ini tidak dapat dibatalkan.
+                {tr(
+                  'Hapus seluruh transaksi untuk memulai jurnal baru dari nol. Tindakan ini tidak dapat dibatalkan.',
+                  'Delete all trades to start a fresh journal from scratch. This action cannot be undone.'
+                )}
               </span>
             </div>
 
@@ -538,7 +643,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                   onClick={() => setIsConfirmingClearAll(true)}
                   className="px-3.5 py-1.5 rounded-lg border border-[#DDE3EA] dark:border-[#252B34] text-[#697586] dark:text-[#929BA9] hover:text-rose-600 dark:hover:text-rose-400 hover:border-rose-300 dark:hover:border-rose-900 text-xs font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
                 >
-                  Reset Semua
+                  {tr('Reset Semua', 'Reset All')}
                 </button>
               ) : (
                 <div className="flex items-center gap-2">
@@ -548,7 +653,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                     onClick={() => setIsConfirmingClearAll(false)}
                     className="px-3 py-1.5 rounded-lg border border-[#DDE3EA] dark:border-[#252B34] text-[#151D2A] dark:text-[#F2F5F9] text-xs font-medium hover:bg-[#EEF2F6] dark:hover:bg-[#171D26] transition-colors cursor-pointer"
                   >
-                    Batal
+                    {tr('Batal', 'Cancel')}
                   </button>
                   <button
                     type="button"
@@ -556,7 +661,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                     onClick={handleConfirmClearAllTrades}
                     className="px-3.5 py-1.5 rounded-lg bg-rose-600 text-white text-xs font-bold hover:bg-rose-700 transition-colors cursor-pointer"
                   >
-                    Ya, Hapus Semua
+                    {tr('Ya, Hapus Semua', 'Yes, Delete All')}
                   </button>
                 </div>
               )}

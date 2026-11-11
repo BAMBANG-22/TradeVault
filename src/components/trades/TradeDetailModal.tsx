@@ -36,6 +36,7 @@ import {
   getCurrentUsdIdrSnapshot,
   useGlobalCurrency,
 } from '../../utils/currencyRate';
+import { useLanguage } from '../../utils/language';
 import { resolveTradingViewSnapshotUrl } from '../../utils/tradeScreenshotScanner';
 import {
   ArrowLeft,
@@ -221,6 +222,7 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
   onSaveTradeUpdate,
 }) => {
   const { preferredCurrency, formatDynamic, formatTradeFinancial } = useGlobalCurrency();
+  const { tr } = useLanguage();
 
   // Horizontal 5-Section Active Tab State
   const [activeSectionTab, setActiveSectionTab] = useState<DetailSectionTab>('plan');
@@ -297,12 +299,12 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
         id: 'legacy-created',
         type: 'TRADE_CREATED',
         timestamp: trade.createdAt || trade.dateTime,
-        label: 'Trade dibuat',
+        label: tr('Trade dibuat', 'Trade created'),
         newValue: `${trade.instrument} ${trade.position} ${trade.lotSize.toFixed(2)} Lot @ ${formatActualPrice(
           trade.entryPrice,
           trade.instrument
         )}`,
-        note: 'Catatan awal disimpan',
+        note: tr('Catatan awal disimpan', 'Initial record saved'),
       },
     ];
     if (resolved.status === 'OPEN' || resolved.status === 'CLOSED') {
@@ -310,12 +312,12 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
         id: 'legacy-entry',
         type: 'POSITION_OPENED',
         timestamp: resolved.entryTime || trade.dateTime,
-        label: 'Entry dicatat',
+        label: tr('Entry dicatat', 'Entry recorded'),
         newValue: `${trade.position} ${(resolved.actualLot ?? trade.lotSize).toFixed(2)} Lot @ ${formatActualPrice(
           resolved.actualEntry ?? trade.entryPrice,
           trade.instrument
         )}`,
-        note: 'Posisi dibuka',
+        note: tr('Posisi dibuka', 'Position opened'),
       });
     }
     if (resolved.beforeScreenshotUrl || trade.screenshotUrl || resolved.afterScreenshotUrl) {
@@ -323,8 +325,8 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
         id: 'legacy-screenshot',
         type: 'TRADE_CREATED',
         timestamp: trade.updatedAt || trade.dateTime,
-        label: 'Screenshot ditambahkan',
-        note: 'Gambar chart disimpan',
+        label: tr('Screenshot ditambahkan', 'Screenshot added'),
+        note: tr('Gambar chart disimpan', 'Chart image saved'),
       });
     }
     if (resolved.status === 'CLOSED') {
@@ -332,13 +334,13 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
         id: 'legacy-closed',
         type: 'POSITION_CLOSED',
         timestamp: resolved.exitTime || trade.updatedAt || trade.dateTime,
-        label: 'Trade ditutup',
-        newValue: `Outcome: ${trade.outcome} · Net P/L: ${
+        label: tr('Trade ditutup', 'Trade closed'),
+        newValue: `${tr('Hasil:', 'Outcome:')} ${trade.outcome} · Net P/L: ${
           preferredCurrency === 'IDR'
             ? formatTradeFinancial(trade, 'netProfit', false, true)
             : formatCurrency(trade.netProfit, settings)
         }`,
-        note: 'Status trade diperbarui',
+        note: tr('Status trade diperbarui', 'Trade status updated'),
       });
     }
     if (trade.postTradeEvaluation) {
@@ -346,12 +348,12 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
         id: 'legacy-eval',
         type: 'EVALUATION_ADDED',
         timestamp: trade.updatedAt || trade.dateTime,
-        label: 'Evaluasi disimpan',
-        note: 'Review selesai',
+        label: tr('Evaluasi disimpan', 'Evaluation saved'),
+        note: tr('Tinjauan selesai', 'Review completed'),
       });
     }
     return fallbackEvents;
-  }, [resolved, trade, settings, preferredCurrency, formatTradeFinancial]);
+  }, [resolved, trade, settings, preferredCurrency, formatTradeFinancial, tr]);
 
   // Synchronize form inputs only when switching to a different trade ID or when external trade updates
   useEffect(() => {
@@ -548,10 +550,13 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
         className="rounded-xl border border-[#DDE3EA] dark:border-[#20252D] bg-white dark:bg-[#0B0D11] p-8 text-center space-y-3 max-w-2xl mx-auto"
       >
         <h2 className="text-base font-semibold text-[#151D2A] dark:text-[#F2F4F7]">
-          Belum Ada Transaksi Dipilih
+          {tr('Belum Ada Transaksi Dipilih', 'No Trade Selected')}
         </h2>
         <p className="text-xs text-[#697586] dark:text-[#929BA9] max-w-md mx-auto leading-relaxed">
-          Pilih salah satu transaksi dari halaman Trade Log untuk melihat detail rencana, eksekusi, chart screenshot, evaluasi, dan riwayat aktivitas.
+          {tr(
+            'Pilih salah satu transaksi dari halaman Jurnal Trade untuk melihat detail rencana, eksekusi, chart screenshot, evaluasi, dan riwayat aktivitas.',
+            'Select a trade from the Trade Log page to view its plan, execution, chart screenshots, evaluation, and activity history.'
+          )}
         </p>
         <button
           type="button"
@@ -559,7 +564,7 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
           className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-[#151D2A] hover:bg-[#1E293B] text-white dark:bg-[#161A22] dark:hover:bg-[#1E2430] dark:text-[#F2F4F7] border border-black/10 dark:border-white/[0.14] text-xs font-medium transition-colors cursor-pointer"
         >
           <ArrowLeft className="h-3.5 w-3.5 stroke-[1.75]" />
-          <span>Kembali ke Trade Log</span>
+          <span>{tr('Kembali ke Jurnal Trade', 'Back to Trade Log')}</span>
         </button>
       </div>
     );
@@ -601,9 +606,9 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
 
   // Derive concise semantic status label for Header ("TP HIT", "SL HIT", "ACTIVE", "PLANNED", "CLOSED", "CANCELLED")
   const headerStatusLabel = (() => {
-    if (isPlanned) return 'PLANNED';
-    if (isOpenPos) return 'ACTIVE';
-    if (isCancelled) return 'CANCELLED';
+    if (isPlanned) return tr('RENCANA', 'PLANNED');
+    if (isOpenPos) return tr('AKTIF', 'ACTIVE');
+    if (isCancelled) return tr('DIBATALKAN', 'CANCELLED');
     if (
       resolved.closeType === 'TP' ||
       compliance.status === 'COMPLIANT_TP' ||
@@ -627,9 +632,9 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
     ) {
       return 'SL HIT';
     }
-    if (isProfit) return 'CLOSED · WIN';
-    if (isLoss) return 'CLOSED · LOSS';
-    return 'CLOSED · BE';
+    if (isProfit) return tr('SELESAI · MENANG', 'CLOSED · WIN');
+    if (isLoss) return tr('SELESAI · RUGI', 'CLOSED · LOSS');
+    return tr('SELESAI · IMPAS', 'CLOSED · BE');
   })();
 
   // Header summary primary metric (R-Multiple or Planned R:R or Net P/L)
@@ -655,9 +660,9 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
         : `${isProfit ? '+' : ''}${formatCurrency(trade.netProfit, settings)}`;
     }
     if (isCancelled) {
-      return 'Order Dibatalkan';
+      return tr('Order Dibatalkan', 'Order Cancelled');
     }
-    return isPlanned ? 'Target R:R Rencana' : 'Target R:R Aktif';
+    return isPlanned ? tr('Target R:R Rencana', 'Planned R:R Target') : tr('Target R:R Aktif', 'Active R:R Target');
   })();
 
   const summaryEntryPrice =
@@ -681,7 +686,7 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
     if (file.size > 10 * 1024 * 1024) {
       setSaveFeedback({
         type: 'error',
-        message: 'Ukuran file gambar maksimal 10 MB.',
+        message: tr('Ukuran file gambar maksimal 10 MB.', 'Maximum image file size is 10 MB.'),
       });
       return;
     }
@@ -731,10 +736,10 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
 
           const nextLog = [
             ...resolved.activityLog,
-            createActivityEvent('TRADE_CREATED', 'Screenshot ditambahkan', {
+            createActivityEvent('TRADE_CREATED', tr('Screenshot ditambahkan', 'Screenshot added'), {
               timestamp: nowIso,
               newValue: slot === 'BEFORE' ? 'Before Trade Chart' : 'After Trade Chart',
-              note: 'Gambar chart disimpan',
+              note: tr('Gambar chart disimpan', 'Chart image saved'),
             }),
           ];
 
@@ -774,12 +779,15 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
             setActivePrimarySlot(slot);
             setSaveFeedback({
               type: 'success',
-              message: `Screenshot ${slot === 'BEFORE' ? 'Before' : 'After'} Trade berhasil disimpan.`,
+              message: tr(
+                `Screenshot ${slot === 'BEFORE' ? 'Before' : 'After'} Trade berhasil disimpan.`,
+                `${slot === 'BEFORE' ? 'Before' : 'After'} Trade screenshot saved successfully.`
+              ),
             });
           } else {
             setSaveFeedback({
               type: 'error',
-              message: res.error || 'Gagal mengunggah screenshot.',
+              message: res.error || tr('Gagal mengunggah screenshot.', 'Failed to upload screenshot.'),
             });
           }
         } finally {
@@ -838,7 +846,10 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
       if (!res || res.success !== false) {
         setSaveFeedback({
           type: 'success',
-          message: `Screenshot ${slot === 'BEFORE' ? 'Before' : 'After'} Trade dihapus.`,
+          message: tr(
+            `Screenshot ${slot === 'BEFORE' ? 'Before' : 'After'} Trade dihapus.`,
+            `${slot === 'BEFORE' ? 'Before' : 'After'} Trade screenshot removed.`
+          ),
         });
       }
     } finally {
@@ -866,12 +877,12 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
         setIsEditingPlanNotes(false);
         setSaveFeedback({
           type: 'success',
-          message: 'Catatan rencana trading berhasil diperbarui.',
+          message: tr('Catatan rencana trading berhasil diperbarui.', 'Trading plan notes updated successfully.'),
         });
       } else {
         setSaveFeedback({
           type: 'error',
-          message: res.error || 'Gagal menyimpan perubahan rencana.',
+          message: res.error || tr('Gagal menyimpan perubahan rencana.', 'Failed to save plan changes.'),
         });
       }
     } finally {
@@ -895,11 +906,11 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
 
       const nextLog = [
         ...resolved.activityLog,
-        createActivityEvent('EVALUATION_ADDED', 'Evaluasi disimpan', {
+        createActivityEvent('EVALUATION_ADDED', tr('Evaluasi disimpan', 'Evaluation saved'), {
           timestamp: nowIso,
           note: serializedPostEval
-            ? 'Review dan refleksi pasca-trade diperbarui'
-            : 'Catatan evaluasi diperbarui',
+            ? tr('Review dan refleksi pasca-trade diperbarui', 'Post-trade review and reflection updated')
+            : tr('Catatan evaluasi diperbarui', 'Evaluation notes updated'),
         }),
       ];
       const nextMeta: TradeLifecycleMeta = {
@@ -940,12 +951,12 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
         setIsEditingEval(false);
         setSaveFeedback({
           type: 'success',
-          message: 'Evaluasi trade berhasil disimpan.',
+          message: tr('Evaluasi trade berhasil disimpan.', 'Trade evaluation saved successfully.'),
         });
       } else {
         setSaveFeedback({
           type: 'error',
-          message: res.error || 'Gagal menyimpan evaluasi.',
+          message: res.error || tr('Gagal menyimpan evaluasi.', 'Failed to save evaluation.'),
         });
       }
     } finally {
@@ -962,17 +973,26 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
       let updatedTrade: Trade;
       if (activeTransitionPanel === 'OPEN') {
         if (!mt5Confirmed) {
-          setTransitionError('Harap centang konfirmasi bahwa order telah tereksekusi di MT5.');
+          setTransitionError(
+            tr(
+              'Harap centang konfirmasi bahwa order telah tereksekusi di MT5.',
+              'Please check the confirmation that the order was executed in MT5.'
+            )
+          );
           return;
         }
         const entryNum = parseFloat(actualEntryInput);
         const lotNum = parseFloat(actualLotInput);
         if (isNaN(entryNum) || entryNum <= 0) {
-          setTransitionError('Actual Entry wajib berupa angka positif.');
+          setTransitionError(
+            tr('Entry Aktual wajib berupa angka positif.', 'Actual Entry must be a positive number.')
+          );
           return;
         }
         if (isNaN(lotNum) || lotNum <= 0) {
-          setTransitionError('Actual Lot wajib berupa angka lebih dari 0.');
+          setTransitionError(
+            tr('Lot Aktual wajib berupa angka lebih dari 0.', 'Actual Lot must be greater than 0.')
+          );
           return;
         }
         updatedTrade = transitionPlannedTradeToOpen(trade, {
@@ -989,7 +1009,9 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
       } else {
         const exitNum = parseFloat(actualExitInput);
         if (isNaN(exitNum) || exitNum <= 0) {
-          setTransitionError('Actual Exit wajib berupa angka positif.');
+          setTransitionError(
+            tr('Exit Aktual wajib berupa angka positif.', 'Actual Exit must be a positive number.')
+          );
           return;
         }
         const overrideNet =
@@ -1014,13 +1036,15 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
         setActiveTransitionPanel(null);
         setSaveFeedback({
           type: 'success',
-          message: 'Status eksekusi trade berhasil diperbarui.',
+          message: tr('Status eksekusi trade berhasil diperbarui.', 'Trade execution status updated successfully.'),
         });
       } else {
-        setTransitionError(res.error || 'Gagal memperbarui status transaksi.');
+        setTransitionError(
+          res.error || tr('Gagal memperbarui status transaksi.', 'Failed to update trade status.')
+        );
       }
     } catch (err: any) {
-      setTransitionError(err?.message || 'Gagal memperbarui status.');
+      setTransitionError(err?.message || tr('Gagal memperbarui status.', 'Failed to update status.'));
     } finally {
       setIsTransitionSaving(false);
     }
@@ -1032,18 +1056,18 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
     testId: string;
     badge?: string | number;
   }> = [
-    { id: 'plan', label: 'Rencana', testId: 'tab-trade-plan' },
-    { id: 'execution', label: 'Eksekusi', testId: 'tab-execution' },
+    { id: 'plan', label: tr('Rencana', 'Plan'), testId: 'tab-trade-plan' },
+    { id: 'execution', label: tr('Eksekusi', 'Execution'), testId: 'tab-execution' },
     {
       id: 'screenshots',
-      label: 'Chart',
+      label: tr('Chart', 'Chart'),
       testId: 'tab-screenshots',
       badge: screenshotCount > 0 ? screenshotCount : undefined,
     },
-    { id: 'evaluation', label: 'Evaluasi', testId: 'tab-evaluation' },
+    { id: 'evaluation', label: tr('Evaluasi', 'Evaluation'), testId: 'tab-evaluation' },
     {
       id: 'activity',
-      label: 'Aktivitas',
+      label: tr('Aktivitas', 'Activity'),
       testId: 'tab-activity-history',
       badge: timelineEvents.length > 0 ? timelineEvents.length : undefined,
     },
@@ -1087,7 +1111,7 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
             onClick={() => setSaveFeedback(null)}
             className="text-[#697586] dark:text-[#929BA9] hover:text-[#151D2A] dark:hover:text-[#F2F4F7] text-[11px]"
           >
-            Tutup
+            {tr('Tutup', 'Close')}
           </button>
         </div>
       )}
@@ -1100,13 +1124,13 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
             <button
               type="button"
               onClick={onClose}
-              aria-label="Kembali ke Trade Log"
+              aria-label={tr('Kembali ke Jurnal Trade', 'Back to Trade Log')}
               className="inline-flex items-center justify-center h-8 w-8 rounded-lg border border-[#DDE3EA] dark:border-white/[0.14] bg-[#F5F7FA] dark:bg-[#101318] hover:bg-[#EEF2F6] dark:hover:bg-[#161A22] text-[#151D2A] dark:text-[#F2F4F7] transition-colors shrink-0 cursor-pointer"
             >
               <ArrowLeft className="h-4 w-4 stroke-[1.75]" />
             </button>
             <span className="text-xs font-bold uppercase tracking-[0.12em] text-[#151D2A] dark:text-[#F2F4F7] truncate">
-              DETAIL TRADE
+              {tr('DETAIL TRADE', 'TRADE DETAIL')}
             </span>
           </div>
 
@@ -1118,7 +1142,7 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
                   const found = allTrades.find((item) => item.id === e.target.value);
                   if (found) onSelectTrade(found);
                 }}
-                aria-label="Pilih transaksi lain"
+                aria-label={tr('Pilih transaksi lain', 'Select another trade')}
                 className="hidden sm:block rounded-lg bg-[#F5F7FA] dark:bg-[#101318] border border-[#DDE3EA] dark:border-[#20252D] hover:border-black/20 dark:hover:border-white/20 px-2.5 py-1.5 text-xs text-[#151D2A] dark:text-[#F2F4F7] font-mono-numbers tabular-nums focus:outline-none max-w-[190px] truncate"
               >
                 {allTrades.map((item) => (
@@ -1133,10 +1157,10 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
               type="button"
               onClick={() => onEdit(trade)}
               className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#F5F7FA] dark:bg-[#101318] hover:bg-[#EEF2F6] dark:hover:bg-[#161A22] border border-[#DDE3EA] dark:border-white/[0.14] text-xs font-semibold text-[#151D2A] dark:text-[#F2F4F7] transition-colors whitespace-nowrap shrink-0 cursor-pointer"
-              title="Edit Transaksi"
+              title={tr('Edit Transaksi', 'Edit Trade')}
             >
               <Edit2 className="h-3.5 w-3.5 stroke-[1.75]" />
-              <span>Edit</span>
+              <span>{tr('Edit', 'Edit')}</span>
             </button>
 
             {/* Menu Tambahan [⋯] */}
@@ -1144,7 +1168,7 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
               <button
                 type="button"
                 onClick={() => setIsMoreMenuOpen((prev) => !prev)}
-                aria-label="Menu tambahan"
+                aria-label={tr('Menu tambahan', 'More actions')}
                 aria-expanded={isMoreMenuOpen}
                 className="inline-flex items-center justify-center h-8 w-8 rounded-lg bg-[#F5F7FA] dark:bg-[#101318] hover:bg-[#EEF2F6] dark:hover:bg-[#161A22] border border-[#DDE3EA] dark:border-white/[0.14] text-[#151D2A] dark:text-[#F2F4F7] transition-colors cursor-pointer"
               >
@@ -1156,7 +1180,7 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
                   {allTrades.length > 1 && onSelectTrade && (
                     <div className="px-3 py-1.5 border-b border-[#DDE3EA] dark:border-[#20252D] sm:hidden">
                       <label className="block text-[10px] text-[#697586] dark:text-[#929BA9] mb-1">
-                        Pindah Catatan Trade
+                        {tr('Pindah Catatan Trade', 'Switch Trade Record')}
                       </label>
                       <select
                         value={trade.id}
@@ -1189,7 +1213,7 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
                         className="w-full px-3.5 py-2 text-left flex items-center gap-2 hover:bg-[#F5F7FA] dark:hover:bg-[#161A22] text-[#151D2A] dark:text-[#F2F4F7]"
                       >
                         <CheckCircle2 className="h-3.5 w-3.5 stroke-[1.75] text-[#3478DC]" />
-                        <span>Konfirmasi Posisi Dibuka</span>
+                        <span>{tr('Konfirmasi Posisi Dibuka', 'Confirm Position Opened')}</span>
                       </button>
                       <button
                         type="button"
@@ -1200,7 +1224,7 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
                         className="w-full px-3.5 py-2 text-left flex items-center gap-2 hover:bg-[#F5F7FA] dark:hover:bg-[#161A22] text-[#697586] dark:text-[#929BA9]"
                       >
                         <XCircle className="h-3.5 w-3.5 stroke-[1.75]" />
-                        <span>Batalkan Rencana Order</span>
+                        <span>{tr('Batalkan Rencana Order', 'Cancel Planned Order')}</span>
                       </button>
                     </>
                   )}
@@ -1215,7 +1239,7 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
                       className="w-full px-3.5 py-2 text-left flex items-center gap-2 hover:bg-[#F5F7FA] dark:hover:bg-[#161A22] text-[#151D2A] dark:text-[#F2F4F7]"
                     >
                       <Lock className="h-3.5 w-3.5 stroke-[1.75] text-[#3478DC]" />
-                      <span>Tutup Posisi (Close Trade)</span>
+                      <span>{tr('Tutup Posisi', 'Close Position')}</span>
                     </button>
                   )}
 
@@ -1228,7 +1252,7 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
                     className="w-full px-3.5 py-2 text-left flex items-center gap-2 hover:bg-[#F5F7FA] dark:hover:bg-[#161A22] text-[#E11D48] dark:text-[#E05260]"
                   >
                     <Trash2 className="h-3.5 w-3.5 stroke-[1.75]" />
-                    <span>Hapus Catatan Trade</span>
+                    <span>{tr('Hapus Catatan Trade', 'Delete Trade Record')}</span>
                   </button>
                 </div>
               )}
@@ -1289,13 +1313,13 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
               <div
                 data-testid="trade-detail-status-badge"
                 className={`text-xs font-bold uppercase tracking-[0.06em] ${
-                  headerStatusLabel === 'TP HIT' || headerStatusLabel === 'CLOSED · WIN'
+                  isClosed && isProfit
                     ? 'text-[#059669] dark:text-[#00A878]'
-                    : headerStatusLabel === 'SL HIT' || headerStatusLabel === 'CLOSED · LOSS'
+                    : isClosed && isLoss
                     ? 'text-[#E11D48] dark:text-[#E05260]'
-                    : headerStatusLabel === 'ACTIVE'
+                    : isOpenPos
                     ? 'text-[#D97706] dark:text-[#F59E0B]'
-                    : headerStatusLabel === 'PLANNED'
+                    : isPlanned
                     ? 'text-[#3478DC]'
                     : 'text-[#697586] dark:text-[#929BA9]'
                 }`}
@@ -1358,8 +1382,8 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
             <div className="pt-3.5 border-t border-[#DDE3EA] dark:border-[#20252D] flex flex-wrap items-center justify-between gap-2.5">
               <span className="text-xs text-[#697586] dark:text-[#929BA9]">
                 {isPlanned
-                  ? 'Order masih berstatus rencana (Planned).'
-                  : 'Posisi sedang aktif berjalan di pasar.'}
+                  ? tr('Order masih berstatus rencana.', 'Order is still in planned status.')
+                  : tr('Posisi sedang aktif berjalan di pasar.', 'Position is currently active in the market.')}
               </span>
               <div className="flex items-center gap-2">
                 {isPlanned && (
@@ -1374,7 +1398,7 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
                       className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#151D2A] hover:bg-[#1E293B] text-white dark:bg-[#161A22] dark:hover:bg-[#1E2430] dark:text-[#F2F4F7] border border-black/10 dark:border-white/[0.14] text-xs font-semibold transition-colors whitespace-nowrap shrink-0 cursor-pointer"
                     >
                       <CheckCircle2 className="h-3.5 w-3.5 stroke-[1.75]" />
-                      <span>Konfirmasi Entry</span>
+                      <span>{tr('Konfirmasi Entry', 'Confirm Entry')}</span>
                     </button>
                     <button
                       type="button"
@@ -1386,7 +1410,7 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
                       className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#F5F7FA] dark:bg-[#101318] hover:bg-[#EEF2F6] dark:hover:bg-[#161A22] border border-[#DDE3EA] dark:border-[#20252D] text-xs font-medium text-[#697586] dark:text-[#929BA9] transition-colors whitespace-nowrap shrink-0 cursor-pointer"
                     >
                       <XCircle className="h-3.5 w-3.5 stroke-[1.75]" />
-                      <span>Batalkan</span>
+                      <span>{tr('Batalkan', 'Cancel')}</span>
                     </button>
                   </>
                 )}
@@ -1402,7 +1426,7 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
                     className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg bg-[#151D2A] hover:bg-[#1E293B] text-white dark:bg-[#161A22] dark:hover:bg-[#1E2430] dark:text-[#F2F4F7] border border-black/10 dark:border-white/[0.14] text-xs font-semibold transition-colors whitespace-nowrap shrink-0 cursor-pointer"
                   >
                     <Lock className="h-3.5 w-3.5 stroke-[1.75]" />
-                    <span>Tutup Posisi</span>
+                    <span>{tr('Tutup Posisi', 'Close Position')}</span>
                   </button>
                 )}
               </div>
@@ -1429,12 +1453,17 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
                       checked={mt5Confirmed}
                       onChange={(e) => setMt5Confirmed(e.target.checked)}
                     />
-                    <span>Konfirmasi posisi benar-benar telah dibuka di pasar / MT5</span>
+                    <span>
+                      {tr(
+                        'Konfirmasi posisi benar-benar telah dibuka di pasar / MT5',
+                        'Confirm the position has actually been opened in the market / MT5'
+                      )}
+                    </span>
                   </label>
                   <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
                     <div>
                       <label className="block text-[11px] text-[#697586] dark:text-[#929BA9] mb-1">
-                        Actual Entry
+                        {tr('Entry Aktual', 'Actual Entry')}
                       </label>
                       <input
                         type="number"
@@ -1447,7 +1476,7 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
                     </div>
                     <div>
                       <label className="block text-[11px] text-[#697586] dark:text-[#929BA9] mb-1">
-                        Actual Lot
+                        {tr('Lot Aktual', 'Actual Lot')}
                       </label>
                       <input
                         type="number"
@@ -1461,7 +1490,7 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
                     </div>
                     <div>
                       <label className="block text-[11px] text-[#697586] dark:text-[#929BA9] mb-1">
-                        Tanggal Entry
+                        {tr('Tanggal Entry', 'Entry Date')}
                       </label>
                       <input
                         type="date"
@@ -1473,7 +1502,7 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
                     </div>
                     <div>
                       <label className="block text-[11px] text-[#697586] dark:text-[#929BA9] mb-1">
-                        Jam Entry
+                        {tr('Jam Entry', 'Entry Time')}
                       </label>
                       <input
                         type="time"
@@ -1490,13 +1519,16 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
               {activeTransitionPanel === 'CANCEL' && (
                 <div>
                   <label className="block text-[11px] text-[#697586] dark:text-[#929BA9] mb-1">
-                    Alasan Pembatalan (Opsional)
+                    {tr('Alasan Pembatalan (Opsional)', 'Cancellation Reason (Optional)')}
                   </label>
                   <input
                     type="text"
                     value={cancelReasonInput}
                     onChange={(e) => setCancelReasonInput(e.target.value)}
-                    placeholder="Contoh: Setup tidak valid / harga melewati zona entry..."
+                    placeholder={tr(
+                      'Contoh: Setup tidak valid / harga melewati zona entry...',
+                      'E.g., Setup invalidated / price missed entry zone...'
+                    )}
                     className="w-full rounded-lg bg-white dark:bg-[#0B0D11] border border-[#DDE3EA] dark:border-[#20252D] px-3 py-1.5 text-[#151D2A] dark:text-[#F2F4F7]"
                   />
                 </div>
@@ -1506,7 +1538,7 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
                 <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
                   <div>
                     <label className="block text-[11px] text-[#697586] dark:text-[#929BA9] mb-1">
-                      Jenis Penutupan
+                      {tr('Jenis Penutupan', 'Close Type')}
                     </label>
                     <select
                       value={closeTypeInput}
@@ -1520,12 +1552,12 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
                     >
                       <option value="TP">TP (Take Profit)</option>
                       <option value="SL">SL (Stop Loss)</option>
-                      <option value="Manual">Manual Close</option>
+                      <option value="Manual">{tr('Tutup Manual', 'Manual Close')}</option>
                     </select>
                   </div>
                   <div>
                     <label className="block text-[11px] text-[#697586] dark:text-[#929BA9] mb-1">
-                      Actual Exit
+                      {tr('Exit Aktual', 'Actual Exit')}
                     </label>
                     <input
                       type="number"
@@ -1538,7 +1570,7 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
                   </div>
                   <div>
                     <label className="block text-[11px] text-[#697586] dark:text-[#929BA9] mb-1">
-                      Tanggal Exit
+                      {tr('Tanggal Exit', 'Exit Date')}
                     </label>
                     <input
                       type="date"
@@ -1550,7 +1582,7 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
                   </div>
                   <div>
                     <label className="block text-[11px] text-[#697586] dark:text-[#929BA9] mb-1">
-                      Jam Exit
+                      {tr('Jam Exit', 'Exit Time')}
                     </label>
                     <input
                       type="time"
@@ -1562,14 +1594,14 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
                   </div>
                   <div>
                     <label className="block text-[11px] text-[#697586] dark:text-[#929BA9] mb-1">
-                      Net P/L (Opsional)
+                      {tr('P/L Bersih (Opsional)', 'Net P/L (Optional)')}
                     </label>
                     <input
                       type="number"
                       step="0.01"
                       value={closeNetOverrideInput}
                       onChange={(e) => setCloseNetOverrideInput(e.target.value)}
-                      placeholder="Otomatis"
+                      placeholder={tr('Otomatis', 'Auto')}
                       className="w-full rounded-lg bg-white dark:bg-[#0B0D11] border border-[#DDE3EA] dark:border-[#20252D] px-3 py-1.5 font-mono-numbers tabular-nums text-[#151D2A] dark:text-[#F2F4F7]"
                     />
                   </div>
@@ -1582,14 +1614,14 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
                   onClick={() => setActiveTransitionPanel(null)}
                   className="px-3 py-1.5 rounded-lg border border-[#DDE3EA] dark:border-[#20252D] bg-white dark:bg-[#0B0D11] font-medium text-[#697586] dark:text-[#929BA9] hover:text-[#151D2A] dark:hover:text-[#F2F4F7] cursor-pointer"
                 >
-                  Batal
+                  {tr('Batal', 'Cancel')}
                 </button>
                 <button
                   type="submit"
                   disabled={isTransitionSaving}
                   className="px-4 py-1.5 rounded-lg bg-[#151D2A] hover:bg-[#1E293B] text-white dark:bg-[#161A22] dark:hover:bg-[#1E2430] dark:text-[#F2F4F7] border border-black/10 dark:border-white/[0.14] font-semibold cursor-pointer"
                 >
-                  {isTransitionSaving ? 'Menyimpan...' : 'Simpan Status'}
+                  {isTransitionSaving ? tr('Menyimpan...', 'Saving...') : tr('Simpan Status', 'Save Status')}
                 </button>
               </div>
             </form>
@@ -1599,7 +1631,7 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
         {/* BAGIAN 3 — NAVIGASI LIMA BAGIAN (Monochrome / Subtle White Underline Indicator) */}
         <div
           role="tablist"
-          aria-label="Bagian Detail Trade"
+          aria-label={tr('Bagian Detail Trade', 'Trade Detail Sections')}
           className="flex items-center gap-1 sm:gap-2 px-4 sm:px-6 border-t border-[#DDE3EA] dark:border-[#20252D] overflow-x-auto"
         >
           {sectionTabs.map((tab) => {
@@ -1642,10 +1674,13 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
           <div className="flex items-center justify-between gap-3">
             <div>
               <h2 className="text-sm font-bold text-[#151D2A] dark:text-[#F2F4F7]">
-                Rencana Trading
+                {tr('Rencana Trading', 'Trading Plan')}
               </h2>
               <p className="text-xs text-[#697586] dark:text-[#929BA9]">
-                Thesis analisis, parameter order rencana, dan konteks market sebelum posisi dibuka
+                {tr(
+                  'Tesis analisis, parameter order rencana, dan konteks pasar sebelum posisi dibuka',
+                  'Analysis thesis, planned order parameters, and market context before opening position'
+                )}
               </p>
             </div>
             {onSaveTradeUpdate && !isEditingPlanNotes && (
@@ -1654,7 +1689,7 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
                 onClick={() => setIsEditingPlanNotes(true)}
                 className="px-3 py-1.5 rounded-lg bg-[#F5F7FA] dark:bg-[#101318] hover:bg-[#EEF2F6] dark:hover:bg-[#161A22] border border-[#DDE3EA] dark:border-white/[0.14] text-xs font-semibold text-[#151D2A] dark:text-[#F2F4F7] whitespace-nowrap shrink-0 transition-colors cursor-pointer"
               >
-                Ubah Rencana
+                {tr('Ubah Rencana', 'Edit Plan')}
               </button>
             )}
           </div>
@@ -1663,7 +1698,7 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-y-4 gap-x-6 pt-4 border-t border-[#DDE3EA] dark:border-[#20252D]">
             <div>
               <span className="block text-[11px] text-[#697586] dark:text-[#929BA9]">
-                Market Bias
+                {tr('Bias Pasar', 'Market Bias')}
               </span>
               <span
                 className={`mt-1 block text-sm font-semibold ${
@@ -1672,13 +1707,15 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
                     : 'text-[#E11D48] dark:text-[#E05260]'
                 }`}
               >
-                {trade.position === 'BUY' ? 'Bullish (Buy)' : 'Bearish (Sell)'}
+                {trade.position === 'BUY'
+                  ? tr('Bullish (Beli)', 'Bullish (Buy)')
+                  : tr('Bearish (Jual)', 'Bearish (Sell)')}
               </span>
             </div>
 
             <div>
               <span className="block text-[11px] text-[#697586] dark:text-[#929BA9]">
-                Setup / Strategi
+                {tr('Setup / Strategi', 'Setup / Strategy')}
               </span>
               <span className="mt-1 block text-sm font-semibold text-[#151D2A] dark:text-[#F2F4F7]">
                 {trade.strategy || '—'}
@@ -1687,7 +1724,7 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
 
             <div>
               <span className="block text-[11px] text-[#697586] dark:text-[#929BA9]">
-                Kondisi Market / Sesi
+                {tr('Kondisi Pasar / Sesi', 'Market Condition / Session')}
               </span>
               <span className="mt-1 block text-sm font-semibold text-[#151D2A] dark:text-[#F2F4F7]">
                 {trade.session || 'London'}
@@ -1697,7 +1734,7 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
 
             <div>
               <span className="block text-[11px] text-[#697586] dark:text-[#929BA9]">
-                Tipe &amp; Jadwal Rencana
+                {tr('Tipe & Jadwal Rencana', 'Order Type & Planned Schedule')}
               </span>
               <span className="mt-1 block text-sm font-medium font-mono-numbers tabular-nums text-[#151D2A] dark:text-[#F2F4F7]">
                 {resolved.orderType} · {(resolved.plannedDateTime || '').slice(0, 16).replace('T', ' ')}
@@ -1709,47 +1746,47 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
           <div className="pt-5 border-t border-[#DDE3EA] dark:border-[#20252D] grid grid-cols-2 sm:grid-cols-3 gap-y-5 gap-x-6">
             <div>
               <span className="block text-[11px] text-[#697586] dark:text-[#929BA9]">
-                Entry Plan
+                {tr('Rencana Entry', 'Entry Plan')}
               </span>
               <span className="mt-1 block text-base font-semibold font-mono-numbers tabular-nums text-[#151D2A] dark:text-[#F2F4F7]">
                 {formatActualPrice(resolved.plannedEntry, trade.instrument)}
               </span>
               <span className="mt-0.5 block text-[11px] font-mono-numbers tabular-nums text-[#697586] dark:text-[#929BA9]">
-                Ukuran: {resolved.plannedLot.toFixed(2)} Lot
+                {tr('Ukuran:', 'Size:')} {resolved.plannedLot.toFixed(2)} Lot
               </span>
             </div>
 
             <div>
               <span className="block text-[11px] text-[#697586] dark:text-[#929BA9]">
-                Stop Loss Plan
+                {tr('Rencana Stop Loss', 'Stop Loss Plan')}
               </span>
               <span className="mt-1 block text-base font-semibold font-mono-numbers tabular-nums text-[#E11D48] dark:text-[#E05260]">
                 {formatActualPrice(resolved.plannedStopLoss, trade.instrument)}
               </span>
               {planLotMetrics.slDistancePips !== null && (
                 <span className="mt-0.5 block text-[11px] font-mono-numbers tabular-nums text-[#697586] dark:text-[#929BA9]">
-                  Jarak: {planLotMetrics.slDistancePips} pips
+                  {tr('Jarak:', 'Distance:')} {planLotMetrics.slDistancePips} pips
                 </span>
               )}
             </div>
 
             <div>
               <span className="block text-[11px] text-[#697586] dark:text-[#929BA9]">
-                Take Profit Plan
+                {tr('Rencana Take Profit', 'Take Profit Plan')}
               </span>
               <span className="mt-1 block text-base font-semibold font-mono-numbers tabular-nums text-[#059669] dark:text-[#00A878]">
                 {formatActualPrice(resolved.plannedTakeProfit, trade.instrument)}
               </span>
               {planLotMetrics.tpDistancePips !== null && (
                 <span className="mt-0.5 block text-[11px] font-mono-numbers tabular-nums text-[#697586] dark:text-[#929BA9]">
-                  Target: {planLotMetrics.tpDistancePips} pips
+                  {tr('Target:', 'Target:')} {planLotMetrics.tpDistancePips} pips
                 </span>
               )}
             </div>
 
             <div>
               <span className="block text-[11px] text-[#697586] dark:text-[#929BA9]">
-                Risk:Reward
+                {tr('Rasio Risiko:Imbalan (R:R)', 'Risk:Reward')}
               </span>
               <span className="mt-1 block text-base font-semibold font-mono-numbers tabular-nums text-[#3478DC]">
                 {formatPlannedRR(plannedRR)}
@@ -1758,7 +1795,7 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
 
             <div>
               <span className="block text-[11px] text-[#697586] dark:text-[#929BA9]">
-                Estimasi Risiko
+                {tr('Estimasi Risiko', 'Estimated Risk')}
               </span>
               <span className="mt-1 block text-sm font-semibold font-mono-numbers tabular-nums text-[#E11D48] dark:text-[#E05260]">
                 {planLotMetrics.riskAmount !== null
@@ -1774,7 +1811,7 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
 
             <div>
               <span className="block text-[11px] text-[#697586] dark:text-[#929BA9]">
-                Potensi Target Profit
+                {tr('Potensi Target Profit', 'Potential Target Profit')}
               </span>
               <span className="mt-1 block text-sm font-semibold font-mono-numbers tabular-nums text-[#059669] dark:text-[#00A878]">
                 {planLotMetrics.potentialProfit !== null
@@ -1793,56 +1830,62 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   <div>
                     <label className="block text-[11px] text-[#697586] dark:text-[#929BA9] mb-1">
-                      Setup / Strategi
+                      {tr('Setup / Strategi', 'Setup / Strategy')}
                     </label>
                     <input
                       type="text"
                       value={planStrategyInput}
                       onChange={(e) => setPlanStrategyInput(e.target.value)}
-                      placeholder="Contoh: Order Block + FVG"
+                      placeholder={tr('Contoh: Order Block + FVG', 'Example: Order Block + FVG')}
                       className="w-full rounded-lg bg-[#F5F7FA] dark:bg-[#101318] border border-[#DDE3EA] dark:border-[#20252D] px-3 py-2 text-xs text-[#151D2A] dark:text-[#F2F4F7] focus:border-[#3478DC] focus:outline-none"
                     />
                   </div>
                   <div>
                     <label className="block text-[11px] text-[#697586] dark:text-[#929BA9] mb-1">
-                      Sesi / Kondisi Market
+                      {tr('Sesi / Kondisi Pasar', 'Session / Market Condition')}
                     </label>
                     <select
                       value={planSessionInput}
                       onChange={(e) => setPlanSessionInput(e.target.value)}
                       className="w-full rounded-lg bg-[#F5F7FA] dark:bg-[#101318] border border-[#DDE3EA] dark:border-[#20252D] px-3 py-2 text-xs text-[#151D2A] dark:text-[#F2F4F7] focus:border-[#3478DC] focus:outline-none"
                     >
-                      <option value="Asian">Asian Session</option>
-                      <option value="London">London Session</option>
-                      <option value="New York">New York Session</option>
-                      <option value="Overlap">London / NY Overlap</option>
-                      <option value="Other">Lainnya</option>
+                      <option value="Asian">{tr('Sesi Asia', 'Asian Session')}</option>
+                      <option value="London">{tr('Sesi London', 'London Session')}</option>
+                      <option value="New York">{tr('Sesi New York', 'New York Session')}</option>
+                      <option value="Overlap">{tr('Overlap London / NY', 'London / NY Overlap')}</option>
+                      <option value="Other">{tr('Lainnya', 'Other')}</option>
                     </select>
                   </div>
                 </div>
 
                 <div>
                   <label className="block text-[11px] text-[#697586] dark:text-[#929BA9] mb-1">
-                    Alasan Entry &amp; Thesis Analisis
+                    {tr('Alasan Entry & Tesis Analisis', 'Entry Reason & Analysis Thesis')}
                   </label>
                   <textarea
                     rows={3}
                     value={planEntryReasonInput}
                     onChange={(e) => setPlanEntryReasonInput(e.target.value)}
-                    placeholder="Jelaskan konfluensi teknikal, struktur market, dan alasan mengambil setup ini..."
+                    placeholder={tr(
+                      'Jelaskan konfluensi teknikal, struktur pasar, dan alasan mengambil setup ini...',
+                      'Explain technical confluences, market structure, and why you took this setup...'
+                    )}
                     className="w-full rounded-lg bg-[#F5F7FA] dark:bg-[#101318] border border-[#DDE3EA] dark:border-[#20252D] p-3 text-xs text-[#151D2A] dark:text-[#F2F4F7] leading-relaxed focus:border-[#3478DC] focus:outline-none"
                   />
                 </div>
 
                 <div>
                   <label className="block text-[11px] text-[#697586] dark:text-[#929BA9] mb-1">
-                    Catatan Tambahan
+                    {tr('Catatan Tambahan', 'Additional Notes')}
                   </label>
                   <textarea
                     rows={2}
                     value={planNotesInput}
                     onChange={(e) => setPlanNotesInput(e.target.value)}
-                    placeholder="Catatan manajemen posisi atau kondisi berita makro..."
+                    placeholder={tr(
+                      'Catatan manajemen posisi atau kondisi berita makro...',
+                      'Position management notes or macro news conditions...'
+                    )}
                     className="w-full rounded-lg bg-[#F5F7FA] dark:bg-[#101318] border border-[#DDE3EA] dark:border-[#20252D] p-3 text-xs text-[#151D2A] dark:text-[#F2F4F7] leading-relaxed focus:border-[#3478DC] focus:outline-none"
                   />
                 </div>
@@ -1853,7 +1896,7 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
                     onClick={() => setIsEditingPlanNotes(false)}
                     className="px-3.5 py-1.5 rounded-lg border border-[#DDE3EA] dark:border-[#20252D] bg-[#F5F7FA] dark:bg-[#101318] text-xs font-medium text-[#697586] dark:text-[#929BA9] cursor-pointer"
                   >
-                    Batal
+                    {tr('Batal', 'Cancel')}
                   </button>
                   <button
                     type="submit"
@@ -1861,7 +1904,11 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
                     className="inline-flex items-center gap-1.5 px-4 py-1.5 rounded-lg bg-[#151D2A] hover:bg-[#1E293B] text-white dark:bg-[#161A22] dark:hover:bg-[#1E2430] dark:text-[#F2F4F7] border border-black/10 dark:border-white/[0.14] text-xs font-semibold cursor-pointer"
                   >
                     <Save className="h-3.5 w-3.5 stroke-[1.75]" />
-                    <span>{isSavingPlanNotes ? 'Menyimpan...' : 'Simpan Rencana'}</span>
+                    <span>
+                      {isSavingPlanNotes
+                        ? tr('Menyimpan...', 'Saving...')
+                        : tr('Simpan Rencana', 'Save Plan')}
+                    </span>
                   </button>
                 </div>
               </form>
@@ -1869,7 +1916,7 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
               <div className="space-y-4">
                 <div>
                   <span className="block text-[11px] text-[#697586] dark:text-[#929BA9] mb-1">
-                    Alasan Entry
+                    {tr('Alasan Entry', 'Entry Reason')}
                   </span>
                   {trade.entryReason ? (
                     <p className="text-xs sm:text-sm text-[#151D2A] dark:text-[#F2F4F7] whitespace-pre-line leading-relaxed max-w-3xl">
@@ -1877,14 +1924,14 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
                     </p>
                   ) : (
                     <p className="text-xs text-[#697586] dark:text-[#929BA9]">
-                      Belum ada alasan entry yang dicatat.
+                      {tr('Belum ada alasan entry yang dicatat.', 'No entry reason recorded yet.')}
                     </p>
                   )}
                 </div>
 
                 <div className="pt-4 border-t border-[#DDE3EA] dark:border-[#20252D]">
                   <span className="block text-[11px] text-[#697586] dark:text-[#929BA9] mb-1">
-                    Catatan Tambahan
+                    {tr('Catatan Tambahan', 'Additional Notes')}
                   </span>
                   {trade.notes ? (
                     <p className="text-xs sm:text-sm text-[#151D2A] dark:text-[#F2F4F7] whitespace-pre-line leading-relaxed max-w-3xl">
@@ -1892,7 +1939,10 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
                     </p>
                   ) : (
                     <p className="text-xs text-[#697586] dark:text-[#929BA9]">
-                      Tidak ada catatan tambahan pada rencana ini.
+                      {tr(
+                        'Tidak ada catatan tambahan pada rencana ini.',
+                        'No additional notes for this plan.'
+                      )}
                     </p>
                   )}
                 </div>
@@ -1912,10 +1962,13 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
           <div className="flex items-center justify-between gap-3">
             <div>
               <h2 className="text-sm font-bold text-[#151D2A] dark:text-[#F2F4F7]">
-                Realisasi Eksekusi
+                {tr('Realisasi Eksekusi', 'Execution Realization')}
               </h2>
               <p className="text-xs text-[#697586] dark:text-[#929BA9]">
-                Data aktual pembukaan posisi, penutupan, biaya transaksi, dan hasil bersih
+                {tr(
+                  'Data aktual pembukaan posisi, penutupan, biaya transaksi, dan hasil bersih',
+                  'Actual position entry, exit, transaction costs, and net result data'
+                )}
               </p>
             </div>
             <button
@@ -1923,34 +1976,44 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
               onClick={() => onEdit(trade)}
               className="px-3 py-1.5 rounded-lg bg-[#F5F7FA] dark:bg-[#101318] hover:bg-[#EEF2F6] dark:hover:bg-[#161A22] border border-[#DDE3EA] dark:border-white/[0.14] text-xs font-semibold text-[#151D2A] dark:text-[#F2F4F7] whitespace-nowrap shrink-0 transition-colors cursor-pointer"
             >
-              Edit Data Eksekusi
+              {tr('Edit Data Eksekusi', 'Edit Execution Data')}
             </button>
           </div>
 
           {isPlanned ? (
             <div className="py-6 border-t border-[#DDE3EA] dark:border-[#20252D] space-y-2">
               <p className="text-xs font-medium text-[#151D2A] dark:text-[#F2F4F7]">
-                Posisi Belum Dieksekusi (Status: PLANNED)
+                {tr(
+                  'Posisi Belum Dieksekusi (Status: DIRENCANAKAN)',
+                  'Position Not Yet Executed (Status: PLANNED)'
+                )}
               </p>
               <p className="text-xs text-[#697586] dark:text-[#929BA9] max-w-xl leading-relaxed">
-                Catatan ini masih berupa rencana order ({resolved.orderType} @{' '}
+                {tr('Catatan ini masih berupa rencana order (', 'This entry is still a planned order (')}
+                {resolved.orderType} @{' '}
                 <span className="font-mono-numbers tabular-nums font-medium text-[#151D2A] dark:text-[#F2F4F7]">
                   {formatActualPrice(resolved.plannedEntry, trade.instrument)}
                 </span>
-                ). Gunakan tombol <strong>Konfirmasi Entry</strong> di bagian atas saat order tereksekusi di pasar.
+                {tr(
+                  '). Gunakan tombol Konfirmasi Entry di bagian atas saat order tereksekusi di pasar.',
+                  '). Use the Confirm Entry button at the top once the order is executed in the market.'
+                )}
               </p>
             </div>
           ) : isCancelled ? (
             <div className="py-6 border-t border-[#DDE3EA] dark:border-[#20252D] space-y-2">
               <p className="text-xs font-medium text-[#151D2A] dark:text-[#F2F4F7]">
-                Rencana Order Dibatalkan (CANCELLED)
+                {tr('Rencana Order Dibatalkan (DIBATALKAN)', 'Planned Order Cancelled (CANCELLED)')}
               </p>
               <p className="text-xs text-[#697586] dark:text-[#929BA9] max-w-xl leading-relaxed">
-                Order dibatalkan sebelum tereksekusi di pasar dan tidak memengaruhi perhitungan Win Rate maupun kerugian akun.
+                {tr(
+                  'Order dibatalkan sebelum tereksekusi di pasar dan tidak memengaruhi perhitungan Win Rate maupun kerugian akun.',
+                  'The order was cancelled before execution in the market and does not affect Win Rate or account drawdown calculations.'
+                )}
               </p>
               {resolved.cancellationReason && (
                 <p className="text-xs text-[#151D2A] dark:text-[#F2F4F7] pt-1">
-                  Alasan Pembatalan: {resolved.cancellationReason}
+                  {tr('Alasan Pembatalan:', 'Cancellation Reason:')} {resolved.cancellationReason}
                 </p>
               )}
             </div>
@@ -1960,7 +2023,7 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
               <div className="pt-4 border-t border-[#DDE3EA] dark:border-[#20252D] grid grid-cols-2 sm:grid-cols-4 gap-y-5 gap-x-6">
                 <div>
                   <span className="block text-[11px] text-[#697586] dark:text-[#929BA9]">
-                    Actual Entry
+                    {tr('Harga Entry Aktual', 'Actual Entry')}
                   </span>
                   <span className="mt-1 block text-base font-semibold font-mono-numbers tabular-nums text-[#151D2A] dark:text-[#F2F4F7]">
                     {formatActualPrice(resolved.actualEntry, trade.instrument)}
@@ -1969,7 +2032,7 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
 
                 <div>
                   <span className="block text-[11px] text-[#697586] dark:text-[#929BA9]">
-                    Actual Exit
+                    {tr('Harga Exit Aktual', 'Actual Exit')}
                   </span>
                   <span className="mt-1 block text-base font-semibold font-mono-numbers tabular-nums text-[#151D2A] dark:text-[#F2F4F7]">
                     {isClosed ? formatActualPrice(resolved.actualExit, trade.instrument) : '—'}
@@ -1978,7 +2041,7 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
 
                 <div>
                   <span className="block text-[11px] text-[#697586] dark:text-[#929BA9]">
-                    Position Size (Lot)
+                    {tr('Ukuran Posisi (Lot)', 'Position Size (Lot)')}
                   </span>
                   <span className="mt-1 block text-base font-semibold font-mono-numbers tabular-nums text-[#151D2A] dark:text-[#F2F4F7]">
                     {resolved.actualLot !== undefined
@@ -1989,7 +2052,7 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
 
                 <div>
                   <span className="block text-[11px] text-[#697586] dark:text-[#929BA9]">
-                    Risk Aktual
+                    {tr('Risiko Aktual', 'Actual Risk')}
                   </span>
                   <span className="mt-1 block text-base font-semibold font-mono-numbers tabular-nums text-[#151D2A] dark:text-[#F2F4F7]">
                     {preferredCurrency === 'IDR'
@@ -2001,7 +2064,7 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
 
                 <div>
                   <span className="block text-[11px] text-[#697586] dark:text-[#929BA9]">
-                    Waktu Entry
+                    {tr('Waktu Entry', 'Entry Time')}
                   </span>
                   <span className="mt-1 block text-xs sm:text-sm font-medium font-mono-numbers tabular-nums text-[#151D2A] dark:text-[#F2F4F7]">
                     {(resolved.entryTime || trade.dateTime || '').slice(0, 16).replace('T', ' ')}
@@ -2010,7 +2073,7 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
 
                 <div>
                   <span className="block text-[11px] text-[#697586] dark:text-[#929BA9]">
-                    Waktu Exit
+                    {tr('Waktu Exit', 'Exit Time')}
                   </span>
                   <span className="mt-1 block text-xs sm:text-sm font-medium font-mono-numbers tabular-nums text-[#151D2A] dark:text-[#F2F4F7]">
                     {isClosed && resolved.exitTime
@@ -2021,7 +2084,7 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
 
                 <div>
                   <span className="block text-[11px] text-[#697586] dark:text-[#929BA9]">
-                    Metode Penutupan
+                    {tr('Metode Penutupan', 'Close Method')}
                   </span>
                   <span className="mt-1 block text-xs sm:text-sm font-semibold text-[#151D2A] dark:text-[#F2F4F7]">
                     {isClosed
@@ -2031,13 +2094,13 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
                           : trade.outcome === 'LOSS'
                           ? 'Stop Loss (SL)'
                           : 'Manual / BE')
-                      : 'Masih Terbuka (Active)'}
+                      : tr('Masih Terbuka (Aktif)', 'Still Open (Active)')}
                   </span>
                 </div>
 
                 <div>
                   <span className="block text-[11px] text-[#697586] dark:text-[#929BA9]">
-                    Hasil Aktual (Net P/L)
+                    {tr('Hasil Aktual (L/R Bersih)', 'Actual Result (Net P/L)')}
                   </span>
                   {isClosed ? (
                     <span
@@ -2056,7 +2119,7 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
                     </span>
                   ) : (
                     <span className="mt-1 block text-xs font-medium text-[#D97706] dark:text-[#F59E0B]">
-                      Posisi Sedang Berjalan
+                      {tr('Posisi Sedang Berjalan', 'Position Running')}
                     </span>
                   )}
                 </div>
@@ -2067,7 +2130,7 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
                 <div className="pt-4 border-t border-[#DDE3EA] dark:border-[#20252D] grid grid-cols-3 gap-4 text-xs">
                   <div>
                     <span className="block text-[11px] text-[#697586] dark:text-[#929BA9]">
-                      Gross P/L
+                      {tr('L/R Kotor', 'Gross P/L')}
                     </span>
                     <span className="mt-0.5 block font-mono-numbers tabular-nums font-medium text-[#151D2A] dark:text-[#F2F4F7]">
                       {preferredCurrency === 'IDR'
@@ -2077,7 +2140,7 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
                   </div>
                   <div>
                     <span className="block text-[11px] text-[#697586] dark:text-[#929BA9]">
-                      Komisi Broker
+                      {tr('Komisi Broker', 'Broker Commission')}
                     </span>
                     <span className="mt-0.5 block font-mono-numbers tabular-nums font-medium text-[#151D2A] dark:text-[#F2F4F7]">
                       {preferredCurrency === 'IDR'
@@ -2087,7 +2150,7 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
                   </div>
                   <div>
                     <span className="block text-[11px] text-[#697586] dark:text-[#929BA9]">
-                      Biaya Swap
+                      {tr('Biaya Swap', 'Swap Fee')}
                     </span>
                     <span className="mt-0.5 block font-mono-numbers tabular-nums font-medium text-[#151D2A] dark:text-[#F2F4F7]">
                       {preferredCurrency === 'IDR'
@@ -2102,12 +2165,12 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
               {(hasEntryDeviation || hasLotDeviation) && (
                 <div className="pt-4 border-t border-[#DDE3EA] dark:border-[#20252D] space-y-2">
                   <span className="block text-[11px] font-semibold uppercase tracking-[0.06em] text-[#697586] dark:text-[#929BA9]">
-                    Perbandingan Rencana vs Aktual
+                    {tr('Perbandingan Rencana vs Aktual', 'Planned vs Actual Comparison')}
                   </span>
                   <div className="grid grid-cols-2 gap-4 text-xs font-mono-numbers tabular-nums">
                     <div>
                       <span className="block text-[11px] text-[#697586] dark:text-[#929BA9] font-sans">
-                        Planned Entry vs Actual Entry
+                        {tr('Rencana Entry vs Entry Aktual', 'Planned Entry vs Actual Entry')}
                       </span>
                       <span className="mt-0.5 block font-medium text-[#151D2A] dark:text-[#F2F4F7]">
                         {formatActualPrice(resolved.plannedEntry, trade.instrument)} →{' '}
@@ -2116,7 +2179,7 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
                     </div>
                     <div>
                       <span className="block text-[11px] text-[#697586] dark:text-[#929BA9] font-sans">
-                        Planned Lot vs Actual Lot
+                        {tr('Rencana Lot vs Lot Aktual', 'Planned Lot vs Actual Lot')}
                       </span>
                       <span className="mt-0.5 block font-medium text-[#151D2A] dark:text-[#F2F4F7]">
                         {resolved.plannedLot.toFixed(2)} Lot →{' '}
@@ -2132,7 +2195,7 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
               {/* Execution Notes separated cleanly from numeric metrics */}
               <div className="pt-4 border-t border-[#DDE3EA] dark:border-[#20252D]">
                 <span className="block text-[11px] text-[#697586] dark:text-[#929BA9] mb-1">
-                  Catatan Eksekusi
+                  {tr('Catatan Eksekusi', 'Execution Notes')}
                 </span>
                 {cleanExecutionNotes ? (
                   <p className="text-xs sm:text-sm text-[#151D2A] dark:text-[#F2F4F7] whitespace-pre-line leading-relaxed max-w-3xl">
@@ -2161,14 +2224,17 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
             <div>
               <div className="flex items-center gap-2">
                 <h2 className="text-sm font-bold text-[#151D2A] dark:text-[#F2F4F7]">
-                  Chart &amp; Screenshot
+                  {tr('Chart & Screenshot', 'Chart & Screenshots')}
                 </h2>
                 <span className="text-xs text-[#697586] dark:text-[#929BA9] font-mono-numbers tabular-nums">
-                  · {screenshotCount} file
+                  · {screenshotCount} {tr('file', screenshotCount === 1 ? 'file' : 'files')}
                 </span>
               </div>
               <p className="text-xs text-[#697586] dark:text-[#929BA9]">
-                Dokumentasi chart sebelum entry (Before Trade) dan sesudah posisi selesai (After Trade)
+                {tr(
+                  'Dokumentasi chart sebelum entry (Sebelum Trade) dan sesudah posisi selesai (Sesudah Trade)',
+                  'Chart documentation before entry (Before Trade) and after position closure (After Trade)'
+                )}
               </p>
             </div>
 
@@ -2176,7 +2242,11 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
               <div className="flex items-center gap-2">
                 <label className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#F5F7FA] dark:bg-[#101318] hover:bg-[#EEF2F6] dark:hover:bg-[#161A22] border border-[#DDE3EA] dark:border-white/[0.14] text-xs font-semibold text-[#151D2A] dark:text-[#F2F4F7] transition-colors cursor-pointer">
                   <Plus className="h-3.5 w-3.5 stroke-[2] text-[#697586] dark:text-[#929BA9]" />
-                  <span>{beforeDisplayUrl ? 'Ganti Before' : 'Tambah Before'}</span>
+                  <span>
+                    {beforeDisplayUrl
+                      ? tr('Ganti Sebelum', 'Replace Before')
+                      : tr('Tambah Sebelum', 'Add Before')}
+                  </span>
                   <input
                     type="file"
                     accept="image/*"
@@ -2187,7 +2257,11 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
 
                 <label className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#F5F7FA] dark:bg-[#101318] hover:bg-[#EEF2F6] dark:hover:bg-[#161A22] border border-[#DDE3EA] dark:border-white/[0.14] text-xs font-semibold text-[#151D2A] dark:text-[#F2F4F7] transition-colors cursor-pointer">
                   <Upload className="h-3.5 w-3.5 stroke-[1.75] text-[#697586] dark:text-[#929BA9]" />
-                  <span>{afterDisplayUrl ? 'Ganti After' : 'Tambah After'}</span>
+                  <span>
+                    {afterDisplayUrl
+                      ? tr('Ganti Sesudah', 'Replace After')
+                      : tr('Tambah Sesudah', 'Add After')}
+                  </span>
                   <input
                     type="file"
                     accept="image/*"
@@ -2202,7 +2276,7 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
           {isBeforeLoading || isAfterLoading || isUploadingImage ? (
             <div className="py-16 border-t border-[#DDE3EA] dark:border-[#20252D] flex flex-col items-center justify-center gap-2 text-xs text-[#697586] dark:text-[#929BA9]">
               <Loader2 className="h-5 w-5 animate-spin text-[#3478DC]" />
-              <span>Memproses gambar chart...</span>
+              <span>{tr('Memproses gambar chart...', 'Processing chart image...')}</span>
             </div>
           ) : screenshotCount === 0 ? (
             /* Minimalist Empty State when no screenshot is attached */
@@ -2210,17 +2284,23 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
               <ImageIcon className="h-6 w-6 mx-auto stroke-[1.5] text-[#697586] dark:text-[#929BA9]" />
               <div className="space-y-1 max-w-sm mx-auto">
                 <p className="text-xs font-medium text-[#151D2A] dark:text-[#F2F4F7]">
-                  Belum ada dokumentasi chart pada transaksi ini
+                  {tr(
+                    'Belum ada dokumentasi chart pada transaksi ini',
+                    'No chart documentation attached to this trade yet'
+                  )}
                 </p>
                 <p className="text-[11px] text-[#697586] dark:text-[#929BA9] leading-relaxed">
-                  Tambahkan screenshot chart Before Trade atau After Trade untuk menyimpan bukti visual setup dan eksekusi.
+                  {tr(
+                    'Tambahkan screenshot chart Sebelum Trade atau Sesudah Trade untuk menyimpan bukti visual setup dan eksekusi.',
+                    'Add a Before Trade or After Trade chart screenshot to keep visual proof of your setup and execution.'
+                  )}
                 </p>
               </div>
               {onSaveTradeUpdate && (
                 <div className="pt-1 flex items-center justify-center gap-2">
                   <label className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-[#151D2A] hover:bg-[#1E293B] text-white dark:bg-[#161A22] dark:hover:bg-[#1E2430] dark:text-[#F2F4F7] border border-black/10 dark:border-white/[0.14] text-xs font-semibold transition-colors cursor-pointer">
                     <Upload className="h-3.5 w-3.5 stroke-[1.75]" />
-                    <span>Unggah Screenshot Chart</span>
+                    <span>{tr('Unggah Screenshot Chart', 'Upload Chart Screenshot')}</span>
                     <input
                       type="file"
                       accept="image/*"
@@ -2245,8 +2325,8 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
                     : resolved.beforeScreenshotUrl || trade.screenshotUrl || resolved.afterScreenshotUrl;
                 const activeTitle =
                   activePrimarySlot === 'AFTER' && afterDisplayUrl
-                    ? `After Trade — ${trade.instrument}`
-                    : `Before Trade — ${trade.instrument}`;
+                    ? `${tr('Sesudah Trade', 'After Trade')} — ${trade.instrument}`
+                    : `${tr('Sebelum Trade', 'Before Trade')} — ${trade.instrument}`;
 
                 if (!activeUrl || !activeRawRef) return null;
 
@@ -2255,8 +2335,8 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
                     <div className="flex items-center justify-between gap-2 text-xs">
                       <span className="font-medium text-[#151D2A] dark:text-[#F2F4F7]">
                         {activePrimarySlot === 'AFTER' && afterDisplayUrl
-                          ? 'Chart Utama · After Trade'
-                          : 'Chart Utama · Before Trade'}
+                          ? tr('Chart Utama · Sesudah Trade', 'Primary Chart · After Trade')
+                          : tr('Chart Utama · Sebelum Trade', 'Primary Chart · Before Trade')}
                       </span>
                       <div className="flex items-center gap-3">
                         <button
@@ -2265,7 +2345,7 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
                           className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-[#F5F7FA] dark:bg-[#101318] hover:bg-[#EEF2F6] dark:hover:bg-[#161A22] border border-[#DDE3EA] dark:border-white/[0.14] text-xs font-medium text-[#151D2A] dark:text-[#F2F4F7] cursor-pointer"
                         >
                           <Maximize2 className="h-3.5 w-3.5 stroke-[1.75]" />
-                          <span>Layar Penuh</span>
+                          <span>{tr('Layar Penuh', 'Fullscreen')}</span>
                         </button>
                       </div>
                     </div>
@@ -2283,7 +2363,7 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
                       <div className="absolute inset-0 bg-black/30 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity">
                         <span className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg bg-[#0B0D11]/95 border border-white/[0.14] text-[#F2F4F7] text-xs font-medium">
                           <ZoomIn className="h-3.5 w-3.5 stroke-[1.75]" />
-                          <span>Buka Layar Penuh</span>
+                          <span>{tr('Buka Layar Penuh', 'Open Fullscreen')}</span>
                         </span>
                       </div>
                     </div>
@@ -2309,7 +2389,7 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
                       }}
                       className="text-xs font-semibold text-[#151D2A] dark:text-[#F2F4F7] text-left cursor-pointer"
                     >
-                      Before Trade (Setup Awal)
+                      {tr('Sebelum Trade (Setup Awal)', 'Before Trade (Initial Setup)')}
                     </button>
                     <div className="flex items-center gap-2 text-[11px]">
                       {beforeDisplayUrl && (
@@ -2318,12 +2398,12 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
                           onClick={() =>
                             onViewScreenshot(
                               resolved.beforeScreenshotUrl || trade.screenshotUrl!,
-                              `BEFORE TRADE — ${trade.instrument}`
+                              `${tr('SEBELUM TRADE', 'BEFORE TRADE')} — ${trade.instrument}`
                             )
                           }
                           className="text-[#151D2A] dark:text-[#F2F4F7] hover:underline font-medium cursor-pointer"
                         >
-                          Perbesar
+                          {tr('Perbesar', 'Enlarge')}
                         </button>
                       )}
                       {onSaveTradeUpdate && (resolved.beforeScreenshotUrl || trade.screenshotUrl) && (
@@ -2332,7 +2412,7 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
                           onClick={() => handleDeleteScreenshotSlot('BEFORE')}
                           className="text-[#E11D48] dark:text-[#E05260] hover:underline font-medium cursor-pointer"
                         >
-                          Hapus
+                          {tr('Hapus', 'Delete')}
                         </button>
                       )}
                     </div>
@@ -2352,10 +2432,10 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
                     </div>
                   ) : (
                     <div className="rounded-lg border border-dashed border-[#DDE3EA] dark:border-[#20252D] aspect-[16/9] flex flex-col items-center justify-center gap-1.5 text-xs text-[#697586] dark:text-[#929BA9]">
-                      <span>Belum ada gambar Before Trade</span>
+                      <span>{tr('Belum ada gambar Sebelum Trade', 'No Before Trade image yet')}</span>
                       {onSaveTradeUpdate && (
                         <label className="text-[#151D2A] dark:text-[#F2F4F7] font-semibold hover:underline cursor-pointer">
-                          + Unggah Before Trade
+                          {tr('+ Unggah Sebelum Trade', '+ Upload Before Trade')}
                           <input
                             type="file"
                             accept="image/*"
@@ -2384,7 +2464,7 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
                       }}
                       className="text-xs font-semibold text-[#151D2A] dark:text-[#F2F4F7] text-left cursor-pointer"
                     >
-                      After Trade (Hasil Akhir)
+                      {tr('Sesudah Trade (Hasil Akhir)', 'After Trade (Final Outcome)')}
                     </button>
                     <div className="flex items-center gap-2 text-[11px]">
                       {afterDisplayUrl && (
@@ -2393,12 +2473,12 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
                           onClick={() =>
                             onViewScreenshot(
                               resolved.afterScreenshotUrl!,
-                              `AFTER TRADE — ${trade.instrument}`
+                              `${tr('SESUDAH TRADE', 'AFTER TRADE')} — ${trade.instrument}`
                             )
                           }
                           className="text-[#151D2A] dark:text-[#F2F4F7] hover:underline font-medium cursor-pointer"
                         >
-                          Perbesar
+                          {tr('Perbesar', 'Enlarge')}
                         </button>
                       )}
                       {onSaveTradeUpdate && resolved.afterScreenshotUrl && (
@@ -2407,7 +2487,7 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
                           onClick={() => handleDeleteScreenshotSlot('AFTER')}
                           className="text-[#E11D48] dark:text-[#E05260] hover:underline font-medium cursor-pointer"
                         >
-                          Hapus
+                          {tr('Hapus', 'Delete')}
                         </button>
                       )}
                     </div>
@@ -2427,10 +2507,10 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
                     </div>
                   ) : (
                     <div className="rounded-lg border border-dashed border-[#DDE3EA] dark:border-[#20252D] aspect-[16/9] flex flex-col items-center justify-center gap-1.5 text-xs text-[#697586] dark:text-[#929BA9]">
-                      <span>Belum ada gambar After Trade</span>
+                      <span>{tr('Belum ada gambar Sesudah Trade', 'No After Trade image yet')}</span>
                       {onSaveTradeUpdate && (
                         <label className="text-[#151D2A] dark:text-[#F2F4F7] font-semibold hover:underline cursor-pointer">
-                          + Unggah After Trade
+                          {tr('+ Unggah Sesudah Trade', '+ Upload After Trade')}
                           <input
                             type="file"
                             accept="image/*"
@@ -2458,10 +2538,13 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
           <div className="flex items-center justify-between gap-3">
             <div>
               <h2 className="text-sm font-bold text-[#151D2A] dark:text-[#F2F4F7]">
-                Evaluasi &amp; Refleksi Trade
+                {tr('Evaluasi & Refleksi Trade', 'Trade Evaluation & Reflection')}
               </h2>
               <p className="text-xs text-[#697586] dark:text-[#929BA9]">
-                Tinjauan objektif hasil, kepatuhan rencana, psikologi, dan pembelajaran pasca-trade
+                {tr(
+                  'Tinjauan objektif hasil, kepatuhan rencana, psikologi, dan pembelajaran pasca-trade',
+                  'Objective review of outcome, plan compliance, psychology, and post-trade lessons'
+                )}
               </p>
             </div>
             {onSaveTradeUpdate && !isEditingEval && (
@@ -2470,7 +2553,9 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
                 onClick={() => setIsEditingEval(true)}
                 className="px-3 py-1.5 rounded-lg bg-[#F5F7FA] dark:bg-[#101318] hover:bg-[#EEF2F6] dark:hover:bg-[#161A22] border border-[#DDE3EA] dark:border-white/[0.14] text-xs font-semibold text-[#151D2A] dark:text-[#F2F4F7] whitespace-nowrap shrink-0 transition-colors cursor-pointer"
               >
-                {trade.postTradeEvaluation || trade.notes ? 'Ubah Evaluasi' : '+ Tulis Evaluasi'}
+                {trade.postTradeEvaluation || trade.notes
+                  ? tr('Ubah Evaluasi', 'Edit Evaluation')
+                  : tr('+ Tulis Evaluasi', '+ Write Evaluation')}
               </button>
             )}
           </div>
@@ -2480,12 +2565,12 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
             {/* Group 1: Hasil Trade */}
             <div className="space-y-3">
               <span className="block text-[11px] font-semibold uppercase tracking-[0.06em] text-[#697586] dark:text-[#929BA9]">
-                1. Hasil Trade
+                {tr('1. Hasil Trade', '1. Trade Outcome')}
               </span>
               <div className="grid grid-cols-2 gap-4 text-xs">
                 <div>
                   <span className="block text-[11px] text-[#697586] dark:text-[#929BA9]">
-                    Status &amp; Outcome
+                    {tr('Status & Hasil', 'Status & Outcome')}
                   </span>
                   <span
                     className={`mt-0.5 block text-sm font-semibold ${
@@ -2503,7 +2588,7 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
                 </div>
                 <div>
                   <span className="block text-[11px] text-[#697586] dark:text-[#929BA9]">
-                    Realisasi R / Net P/L
+                    {tr('Realisasi R / L/R Bersih', 'Realized R / Net P/L')}
                   </span>
                   <span className="mt-0.5 block text-sm font-semibold font-mono-numbers tabular-nums text-[#151D2A] dark:text-[#F2F4F7]">
                     {isClosed
@@ -2512,27 +2597,33 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
                             ? formatTradeFinancial(trade, 'netProfit', false, true)
                             : `${isProfit ? '+' : ''}${formatCurrency(trade.netProfit, settings)}`
                         }`
-                      : 'Belum Ditutup'}
+                      : tr('Belum Ditutup', 'Not Closed Yet')}
                   </span>
                 </div>
               </div>
               <div className="pt-2 grid grid-cols-3 gap-2 text-[11px] font-mono-numbers tabular-nums text-[#697586] dark:text-[#929BA9]">
                 <div>
-                  <span className="block font-sans">Plan vs Actual Entry</span>
+                  <span className="block font-sans">
+                    {tr('Rencana vs Entry Aktual', 'Plan vs Actual Entry')}
+                  </span>
                   <span className="font-medium text-[#151D2A] dark:text-[#F2F4F7]">
                     {formatActualPrice(resolved.plannedEntry, trade.instrument)} /{' '}
                     {formatActualPrice(resolved.actualEntry, trade.instrument)}
                   </span>
                 </div>
                 <div>
-                  <span className="block font-sans">Plan vs Actual Lot</span>
+                  <span className="block font-sans">
+                    {tr('Rencana vs Lot Aktual', 'Plan vs Actual Lot')}
+                  </span>
                   <span className="font-medium text-[#151D2A] dark:text-[#F2F4F7]">
                     {resolved.plannedLot.toFixed(2)} /{' '}
                     {resolved.actualLot !== undefined ? resolved.actualLot.toFixed(2) : '—'}
                   </span>
                 </div>
                 <div>
-                  <span className="block font-sans">Plan vs Actual R:R</span>
+                  <span className="block font-sans">
+                    {tr('Rencana vs R:R Aktual', 'Plan vs Actual R:R')}
+                  </span>
                   <span className="font-medium text-[#151D2A] dark:text-[#F2F4F7]">
                     {formatPlannedRR(plannedRR)} / {formatRMultiple(realizedR)}
                   </span>
@@ -2544,14 +2635,14 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
             <div className="space-y-2.5 sm:border-l sm:border-[#DDE3EA] sm:dark:border-[#20252D] sm:pl-6">
               <div className="flex items-center justify-between gap-2">
                 <span className="block text-[11px] font-semibold uppercase tracking-[0.06em] text-[#697586] dark:text-[#929BA9]">
-                  2. Disiplin terhadap Rencana
+                  {tr('2. Disiplin terhadap Rencana', '2. Plan Discipline')}
                 </span>
                 <span className="text-xs font-semibold font-mono-numbers tabular-nums text-[#151D2A] dark:text-[#F2F4F7]">
                   {trade.disciplineRating
-                    ? `Skor Manual: ${trade.disciplineRating}/5`
+                    ? `${tr('Skor Manual:', 'Manual Score:')} ${trade.disciplineRating}/5`
                     : compliance.rating !== null
-                    ? `Audit Sistem: ${compliance.rating}/5`
-                    : 'Belum Dinilai'}
+                    ? `${tr('Audit Sistem:', 'System Audit:')} ${compliance.rating}/5`
+                    : tr('Belum Dinilai', 'Not Rated')}
                 </span>
               </div>
               <p className="text-xs font-semibold text-[#151D2A] dark:text-[#F2F4F7]">
@@ -2569,7 +2660,10 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
               <form onSubmit={handleSaveEvaluation} className="space-y-4 text-xs">
                 <div>
                   <label className="block text-[11px] text-[#697586] dark:text-[#929BA9] mb-1.5">
-                    Skor Disiplin Pribadi (Opsional — Jangan pilih jika belum ingin memberi skor)
+                    {tr(
+                      'Skor Disiplin Pribadi (Opsional — Jangan pilih jika belum ingin memberi skor)',
+                      'Personal Discipline Score (Optional — Leave unselected if not rating yet)'
+                    )}
                   </label>
                   <div className="flex items-center gap-2">
                     {[1, 2, 3, 4, 5].map((score) => (
@@ -2594,52 +2688,64 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   <div>
                     <label className="block text-[11px] text-[#697586] dark:text-[#929BA9] mb-1">
-                      3. Kualitas Entry
+                      {tr('3. Kualitas Entry', '3. Entry Quality')}
                     </label>
                     <textarea
                       rows={2}
                       value={evalEntryQualityInput}
                       onChange={(e) => setEvalEntryQualityInput(e.target.value)}
-                      placeholder="Apakah timing dan level harga entry sesuai konfirmasi setup?"
+                      placeholder={tr(
+                        'Apakah timing dan level harga entry sesuai konfirmasi setup?',
+                        'Did entry timing and price level match your setup confirmation?'
+                      )}
                       className="w-full rounded-lg bg-[#F5F7FA] dark:bg-[#101318] border border-[#DDE3EA] dark:border-[#20252D] p-2.5 text-xs text-[#151D2A] dark:text-[#F2F4F7] leading-relaxed focus:border-[#3478DC] focus:outline-none"
                     />
                   </div>
 
                   <div>
                     <label className="block text-[11px] text-[#697586] dark:text-[#929BA9] mb-1">
-                      4. Kontrol Emosi
+                      {tr('4. Kontrol Emosi', '4. Emotional Control')}
                     </label>
                     <textarea
                       rows={2}
                       value={evalEmotionalControlInput}
                       onChange={(e) => setEvalEmotionalControlInput(e.target.value)}
-                      placeholder="Bagaimana kondisi psikologis saat floating profit/loss?"
+                      placeholder={tr(
+                        'Bagaimana kondisi psikologis saat floating profit/loss?',
+                        'How was your psychological state during floating profit/loss?'
+                      )}
                       className="w-full rounded-lg bg-[#F5F7FA] dark:bg-[#101318] border border-[#DDE3EA] dark:border-[#20252D] p-2.5 text-xs text-[#151D2A] dark:text-[#F2F4F7] leading-relaxed focus:border-[#3478DC] focus:outline-none"
                     />
                   </div>
 
                   <div>
                     <label className="block text-[11px] text-[#697586] dark:text-[#929BA9] mb-1">
-                      5. Hal yang Berjalan Baik
+                      {tr('5. Hal yang Berjalan Baik', '5. What Went Well')}
                     </label>
                     <textarea
                       rows={2}
                       value={evalWentWellInput}
                       onChange={(e) => setEvalWentWellInput(e.target.value)}
-                      placeholder="Apa langkah disiplin yang sudah tepat pada transaksi ini?"
+                      placeholder={tr(
+                        'Apa langkah disiplin yang sudah tepat pada transaksi ini?',
+                        'What disciplined actions went well in this trade?'
+                      )}
                       className="w-full rounded-lg bg-[#F5F7FA] dark:bg-[#101318] border border-[#DDE3EA] dark:border-[#20252D] p-2.5 text-xs text-[#151D2A] dark:text-[#F2F4F7] leading-relaxed focus:border-[#3478DC] focus:outline-none"
                     />
                   </div>
 
                   <div>
                     <label className="block text-[11px] text-[#697586] dark:text-[#929BA9] mb-1">
-                      6. Hal yang Perlu Diperbaiki
+                      {tr('6. Hal yang Perlu Diperbaiki', '6. Needs Improvement')}
                     </label>
                     <textarea
                       rows={2}
                       value={evalNeedsImprovementInput}
                       onChange={(e) => setEvalNeedsImprovementInput(e.target.value)}
-                      placeholder="Apa kesalahan atau celah eksekusi yang perlu dihindari ke depan?"
+                      placeholder={tr(
+                        'Apa kesalahan atau celah eksekusi yang perlu dihindari ke depan?',
+                        'What mistakes or execution gaps should be avoided next time?'
+                      )}
                       className="w-full rounded-lg bg-[#F5F7FA] dark:bg-[#101318] border border-[#DDE3EA] dark:border-[#20252D] p-2.5 text-xs text-[#151D2A] dark:text-[#F2F4F7] leading-relaxed focus:border-[#3478DC] focus:outline-none"
                     />
                   </div>
@@ -2647,26 +2753,29 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
 
                 <div>
                   <label className="block text-[11px] text-[#697586] dark:text-[#929BA9] mb-1">
-                    7. Pelajaran dari Trade (Refleksi Utama)
+                    {tr('7. Pelajaran dari Trade (Refleksi Utama)', '7. Lessons Learned (Core Reflection)')}
                   </label>
                   <textarea
                     rows={3}
                     value={evalReflectionInput}
                     onChange={(e) => setEvalReflectionInput(e.target.value)}
-                    placeholder="Tuliskan kesimpulan utama dan pelajaran dari transaksi ini..."
+                    placeholder={tr(
+                      'Tuliskan kesimpulan utama dan pelajaran dari transaksi ini...',
+                      'Write the main conclusion and key lessons from this trade...'
+                    )}
                     className="w-full rounded-lg bg-[#F5F7FA] dark:bg-[#101318] border border-[#DDE3EA] dark:border-[#20252D] p-3 text-xs text-[#151D2A] dark:text-[#F2F4F7] leading-relaxed focus:border-[#3478DC] focus:outline-none"
                   />
                 </div>
 
                 <div>
                   <label className="block text-[11px] text-[#697586] dark:text-[#929BA9] mb-1">
-                    Catatan Evaluasi &amp; Konfluensi Tambahan
+                    {tr('Catatan Evaluasi & Konfluensi Tambahan', 'Evaluation & Additional Confluence Notes')}
                   </label>
                   <textarea
                     rows={2}
                     value={evalNotesInput}
                     onChange={(e) => setEvalNotesInput(e.target.value)}
-                    placeholder="Catatan tambahan..."
+                    placeholder={tr('Catatan tambahan...', 'Additional notes...')}
                     className="w-full rounded-lg bg-[#F5F7FA] dark:bg-[#101318] border border-[#DDE3EA] dark:border-[#20252D] p-3 text-xs text-[#151D2A] dark:text-[#F2F4F7] leading-relaxed focus:border-[#3478DC] focus:outline-none"
                   />
                 </div>
@@ -2677,7 +2786,7 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
                     onClick={() => setIsEditingEval(false)}
                     className="px-3.5 py-1.5 rounded-lg border border-[#DDE3EA] dark:border-[#20252D] bg-[#F5F7FA] dark:bg-[#101318] font-medium text-[#697586] dark:text-[#929BA9] cursor-pointer"
                   >
-                    Batal
+                    {tr('Batal', 'Cancel')}
                   </button>
                   <button
                     type="submit"
@@ -2685,7 +2794,11 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
                     className="inline-flex items-center gap-1.5 px-4 py-1.5 rounded-lg bg-[#151D2A] hover:bg-[#1E293B] text-white dark:bg-[#161A22] dark:hover:bg-[#1E2430] dark:text-[#F2F4F7] border border-black/10 dark:border-white/[0.14] font-semibold cursor-pointer"
                   >
                     <Save className="h-3.5 w-3.5 stroke-[1.75]" />
-                    <span>{isSavingEval ? 'Menyimpan...' : 'Simpan Evaluasi'}</span>
+                    <span>
+                      {isSavingEval
+                        ? tr('Menyimpan...', 'Saving...')
+                        : tr('Simpan Evaluasi', 'Save Evaluation')}
+                    </span>
                   </button>
                 </div>
               </form>
@@ -2694,53 +2807,69 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
                   <div>
                     <span className="block text-[11px] font-semibold uppercase tracking-[0.06em] text-[#697586] dark:text-[#929BA9] mb-1">
-                      3. Kualitas Entry
+                      {tr('3. Kualitas Entry', '3. Entry Quality')}
                     </span>
                     <p className="text-xs sm:text-sm text-[#151D2A] dark:text-[#F2F4F7] whitespace-pre-line leading-relaxed">
                       {parsedEvalView.entryQuality ||
                         (hasEntryDeviation
-                          ? `Actual Entry (${formatActualPrice(
-                              resolved.actualEntry,
-                              trade.instrument
-                            )}) memiliki selisih terhadap Planned Entry (${formatActualPrice(
-                              resolved.plannedEntry,
-                              trade.instrument
-                            )}).`
-                          : 'Belum ada catatan evaluasi kualitas entry.')}
+                          ? tr(
+                              `Entry Aktual (${formatActualPrice(
+                                resolved.actualEntry,
+                                trade.instrument
+                              )}) memiliki selisih terhadap Rencana Entry (${formatActualPrice(
+                                resolved.plannedEntry,
+                                trade.instrument
+                              )}).`,
+                              `Actual Entry (${formatActualPrice(
+                                resolved.actualEntry,
+                                trade.instrument
+                              )}) deviated from Planned Entry (${formatActualPrice(
+                                resolved.plannedEntry,
+                                trade.instrument
+                              )}).`
+                            )
+                          : tr(
+                              'Belum ada catatan evaluasi kualitas entry.',
+                              'No entry quality evaluation notes yet.'
+                            ))}
                     </p>
                   </div>
 
                   <div>
                     <span className="block text-[11px] font-semibold uppercase tracking-[0.06em] text-[#697586] dark:text-[#929BA9] mb-1">
-                      4. Kontrol Emosi
+                      {tr('4. Kontrol Emosi', '4. Emotional Control')}
                     </span>
                     <p className="text-xs sm:text-sm text-[#151D2A] dark:text-[#F2F4F7] whitespace-pre-line leading-relaxed">
-                      {parsedEvalView.emotionalControl || 'Belum ada catatan evaluasi kontrol emosi.'}
+                      {parsedEvalView.emotionalControl ||
+                        tr(
+                          'Belum ada catatan evaluasi kontrol emosi.',
+                          'No emotional control evaluation notes yet.'
+                        )}
                     </p>
                   </div>
 
                   <div>
                     <span className="block text-[11px] font-semibold uppercase tracking-[0.06em] text-[#697586] dark:text-[#929BA9] mb-1">
-                      5. Hal yang Berjalan Baik
+                      {tr('5. Hal yang Berjalan Baik', '5. What Went Well')}
                     </span>
                     <p className="text-xs sm:text-sm text-[#151D2A] dark:text-[#F2F4F7] whitespace-pre-line leading-relaxed">
-                      {parsedEvalView.wentWell || 'Belum diisi.'}
+                      {parsedEvalView.wentWell || tr('Belum diisi.', 'Not filled yet.')}
                     </p>
                   </div>
 
                   <div>
                     <span className="block text-[11px] font-semibold uppercase tracking-[0.06em] text-[#697586] dark:text-[#929BA9] mb-1">
-                      6. Hal yang Perlu Diperbaiki
+                      {tr('6. Hal yang Perlu Diperbaiki', '6. Needs Improvement')}
                     </span>
                     <p className="text-xs sm:text-sm text-[#151D2A] dark:text-[#F2F4F7] whitespace-pre-line leading-relaxed">
-                      {parsedEvalView.needsImprovement || 'Belum diisi.'}
+                      {parsedEvalView.needsImprovement || tr('Belum diisi.', 'Not filled yet.')}
                     </p>
                   </div>
                 </div>
 
                 <div className="pt-4 border-t border-[#DDE3EA] dark:border-[#20252D]">
                   <span className="block text-[11px] font-semibold uppercase tracking-[0.06em] text-[#697586] dark:text-[#929BA9] mb-1.5">
-                    7. Pelajaran dari Trade
+                    {tr('7. Pelajaran dari Trade', '7. Lessons Learned')}
                   </span>
                   {parsedEvalView.lessonsLearned ? (
                     <p className="text-xs sm:text-sm text-[#151D2A] dark:text-[#F2F4F7] whitespace-pre-line leading-relaxed max-w-3xl">
@@ -2748,7 +2877,10 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
                     </p>
                   ) : (
                     <p className="text-xs text-[#697586] dark:text-[#929BA9]">
-                      Belum ada refleksi atau pelajaran pasca-trade yang ditulis untuk transaksi ini.
+                      {tr(
+                        'Belum ada refleksi atau pelajaran pasca-trade yang ditulis untuk transaksi ini.',
+                        'No post-trade reflection or lessons learned written for this trade yet.'
+                      )}
                     </p>
                   )}
                 </div>
@@ -2756,7 +2888,7 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
                 {(trade.notes || trade.entryReason) && (
                   <div className="pt-4 border-t border-[#DDE3EA] dark:border-[#20252D]">
                     <span className="block text-[11px] font-semibold uppercase tracking-[0.06em] text-[#697586] dark:text-[#929BA9] mb-1.5">
-                      Catatan Konfluensi &amp; Jurnal
+                      {tr('Catatan Konfluensi & Jurnal', 'Confluence & Journal Notes')}
                     </span>
                     <p className="text-xs sm:text-sm text-[#151D2A] dark:text-[#F2F4F7] whitespace-pre-line leading-relaxed max-w-3xl">
                       {trade.notes || trade.entryReason}
@@ -2779,14 +2911,18 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
           <div className="flex items-center justify-between gap-3">
             <div>
               <h2 className="text-sm font-bold text-[#151D2A] dark:text-[#F2F4F7]">
-                Riwayat Aktivitas
+                {tr('Riwayat Aktivitas', 'Activity History')}
               </h2>
               <p className="text-xs text-[#697586] dark:text-[#929BA9]">
-                Jejak kronologis pembuatan rencana, eksekusi posisi, dokumentasi chart, dan evaluasi
+                {tr(
+                  'Jejak kronologis pembuatan rencana, eksekusi posisi, dokumentasi chart, dan evaluasi',
+                  'Chronological trail of plan creation, position execution, chart documentation, and evaluation'
+                )}
               </p>
             </div>
             <span className="text-xs text-[#697586] dark:text-[#929BA9] font-mono-numbers tabular-nums">
-              {timelineEvents.length} aktivitas
+              {timelineEvents.length}{' '}
+              {tr('aktivitas', timelineEvents.length === 1 ? 'activity' : 'activities')}
             </span>
           </div>
 
@@ -2794,7 +2930,7 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
             <div className="py-10 border-t border-[#DDE3EA] dark:border-[#20252D] text-center space-y-1.5">
               <Activity className="h-5 w-5 mx-auto stroke-[1.5] text-[#697586] dark:text-[#929BA9]" />
               <p className="text-xs font-medium text-[#151D2A] dark:text-[#F2F4F7]">
-                Belum ada riwayat aktivitas tercatat
+                {tr('Belum ada riwayat aktivitas tercatat', 'No activity history recorded yet')}
               </p>
             </div>
           ) : (

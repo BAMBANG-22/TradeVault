@@ -12,6 +12,7 @@ import {
   computeEquityChartAxis,
 } from '../../utils/calculations';
 import { useGlobalCurrency } from '../../utils/currencyRate';
+import { useLanguage } from '../../utils/language';
 import { AppSettings } from '../../types/settings';
 import { TrendingUp, Layers } from 'lucide-react';
 
@@ -269,6 +270,7 @@ export const EquityChart: React.FC<EquityChartProps> = ({
   hideInternalControls = false,
 }) => {
   const { preferredCurrency, effectiveRate, formatDynamic } = useGlobalCurrency();
+  const { tr } = useLanguage();
   const [hoveredPoint, setHoveredPoint] = useState<EquityPoint | null>(null);
   const [tooltipPlacement, setTooltipPlacement] = useState<DynamicTooltipPlacement | null>(null);
   const [internalViewMode, setInternalViewMode] = useState<'equity' | 'growth'>('equity');
@@ -526,10 +528,10 @@ export const EquityChart: React.FC<EquityChartProps> = ({
     clearInteraction();
   };
 
-  const startLabel = hasExecutedTrades ? safeCurve[0].date.slice(0, 10) : 'Awal';
+  const startLabel = hasExecutedTrades ? safeCurve[0].date.slice(0, 10) : tr('Awal', 'Start');
   const endLabel = hasExecutedTrades
     ? safeCurve[safeCurve.length - 1].date.slice(0, 10)
-    : 'Terbaru';
+    : tr('Terbaru', 'Latest');
 
   const modeSelector = (
     <div
@@ -556,7 +558,7 @@ export const EquityChart: React.FC<EquityChartProps> = ({
             : 'text-[#697586] dark:text-[#929BA9] hover:text-[#151D2A] dark:hover:text-[#F2F4F7]'
         }`}
       >
-        Saldo
+        {tr('Saldo', 'Balance')}
       </button>
       <button
         type="button"
@@ -571,7 +573,7 @@ export const EquityChart: React.FC<EquityChartProps> = ({
             : 'text-[#697586] dark:text-[#929BA9] hover:text-[#151D2A] dark:hover:text-[#F2F4F7]'
         }`}
       >
-        Persen
+        {tr('Persen', 'Percent')}
       </button>
     </div>
   );
@@ -588,8 +590,10 @@ export const EquityChart: React.FC<EquityChartProps> = ({
         {viewMode === 'growth' && !hasValidGrowth && (
           <div className="mb-2.5 rounded-xl bg-[#F5F7FA] dark:bg-[#101318] border border-[#DDE3EA] dark:border-[#20252D] px-3 py-2 text-[11px] text-amber-600 dark:text-amber-400 flex items-center justify-between gap-2">
             <span>
-              Persentase pertumbuhan (<strong>N/A</strong>) tidak dapat dihitung karena saldo awal
-              periode bernilai nol atau negatif.
+              {tr(
+                'Persentase pertumbuhan (N/A) tidak dapat dihitung karena saldo awal periode bernilai nol atau negatif.',
+                'Growth percentage (N/A) cannot be calculated because the period starting balance is zero or negative.'
+              )}
             </span>
             <button
               type="button"
@@ -599,7 +603,7 @@ export const EquityChart: React.FC<EquityChartProps> = ({
               }}
               className="px-2.5 py-1 rounded-lg bg-white dark:bg-[#0B0D10] border border-[#DDE3EA] dark:border-[#20252D] text-[#151D2A] dark:text-[#F2F4F7] font-semibold shrink-0 cursor-pointer"
             >
-              Saldo
+              {tr('Saldo', 'Balance')}
             </button>
           </div>
         )}
@@ -729,7 +733,7 @@ export const EquityChart: React.FC<EquityChartProps> = ({
         {!hasExecutedTrades && (
           <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
             <span className="px-3.5 py-1.5 rounded-full bg-white/90 dark:bg-[#101318]/90 border border-[#DDE3EA] dark:border-[#20252D] text-[11px] text-[#697586] dark:text-[#929BA9] shadow-xs">
-              Belum ada transaksi pada periode ini
+              {tr('Belum ada transaksi pada periode ini', 'No trades in this period yet')}
             </span>
           </div>
         )}
@@ -777,7 +781,9 @@ export const EquityChart: React.FC<EquityChartProps> = ({
               >
                 <div className="flex items-center justify-between gap-4 text-[10px] text-[#697586] dark:text-[#929BA9] font-sans mb-0.5">
                   <span>
-                    {hoveredPoint.index === 0 ? 'Modal Awal' : `Trade #${hoveredPoint.index}`}
+                    {hoveredPoint.index === 0
+                      ? tr('Modal Awal', 'Initial Capital')
+                      : `Trade #${hoveredPoint.index}`}
                   </span>
                   <span className="font-mono-numbers">{hoveredPoint.date.slice(0, 10)}</span>
                 </div>
@@ -824,11 +830,11 @@ export const EquityChart: React.FC<EquityChartProps> = ({
           <div>
             <h3 className="text-sm font-semibold text-[#151D2A] dark:text-[#F2F4F7]">
               {viewMode === 'equity'
-                ? 'Equity Curve (Saldo Kumulatif)'
-                : 'Growth Curve (Pertumbuhan %)'}
+                ? tr('Kurva Ekuitas (Saldo Kumulatif)', 'Equity Curve (Cumulative Balance)')
+                : tr('Kurva Pertumbuhan (Pertumbuhan %)', 'Growth Curve (Growth %)')}
             </h3>
             <p className="text-xs text-[#697586] dark:text-[#929BA9] font-mono-numbers tabular-nums">
-              {Math.max(0, safeCurve.length - 1)} trade • Modal awal:{' '}
+              {Math.max(0, safeCurve.length - 1)} trade • {tr('Modal awal:', 'Initial capital:')}{' '}
               {isPrivacyMode
                 ? '******'
                 : preferredCurrency === 'IDR'
@@ -848,10 +854,13 @@ export const EquityChart: React.FC<EquityChartProps> = ({
                 ? 'bg-[#EEF2F6] dark:bg-[#101318] text-[#1769E8] dark:text-[#3478DC] border-[#DDE3EA] dark:border-[#20252D]'
                 : 'bg-[#F5F7FA] dark:bg-[#101318] text-[#697586] dark:text-[#929BA9] border-[#DDE3EA] dark:border-[#20252D] hover:text-[#151D2A] dark:hover:text-[#F2F4F7]'
             }`}
-            title="Tampilkan / sembunyikan garis High Watermark (Puncak Saldo)"
+            title={tr(
+              'Tampilkan / sembunyikan garis High Watermark (Puncak Saldo)',
+              'Show / hide High Watermark (Peak Balance) line'
+            )}
           >
             <Layers className="h-3.5 w-3.5 stroke-[1.75]" />
-            <span className="hidden sm:inline">High Watermark</span>
+            <span className="hidden sm:inline">{tr('Puncak Saldo', 'High Watermark')}</span>
           </button>
         </div>
       </div>

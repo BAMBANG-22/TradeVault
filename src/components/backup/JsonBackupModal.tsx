@@ -26,7 +26,6 @@ import { Trade } from '../../types/trade';
 import { AppSettings } from '../../types/settings';
 import { generateBackupJson, parseAndRestoreBackup } from '../../utils/storage';
 import { exportTradesToCsv, downloadCsvFile } from '../../utils/csv';
-
 import { formatCurrency } from '../../utils/calculations';
 import {
   generateFullZipBackup,
@@ -42,6 +41,7 @@ import {
 } from '../../utils/backupZip';
 import { isStoragePath, prepareTradesForJsonBackup } from '../../utils/supabaseSync';
 import { exportFile } from '../../utils/fileExport';
+import { useLanguage } from '../../utils/language';
 
 interface JsonBackupModalProps {
   isOpen: boolean;
@@ -85,6 +85,7 @@ export const JsonBackupModal: React.FC<JsonBackupModalProps> = ({
   currentUser,
   onRestoreSuccess,
 }) => {
+  const { tr } = useLanguage();
   const [activeTab, setActiveTab] = useState<'export' | 'import'>('export');
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [validationReport, setValidationReport] = useState<ValidationReport | null>(null);
@@ -185,8 +186,6 @@ export const JsonBackupModal: React.FC<JsonBackupModalProps> = ({
   if (!isOpen) return null;
 
   // Handle Standard JSON Export (Tahap 1 & Lama)
-  // Resolves private Storage paths into self-contained Base64 Data URLs in the exported JSON copy
-  // so restoring the JSON backup after deleting trades can always re-upload screenshots to Storage.
   const handleDownloadBackup = async () => {
     if (isExportingJson) return;
     setIsExportingJson(true);
@@ -202,18 +201,24 @@ export const JsonBackupModal: React.FC<JsonBackupModalProps> = ({
       });
       if (result.status === 'saved') {
         setExportStatusMsg({
-          text: `File cadangan JSON (${result.fileName}) berhasil disimpan.`,
+          text: tr(
+            `File cadangan JSON (${result.fileName}) berhasil disimpan.`,
+            `JSON backup file (${result.fileName}) saved successfully.`
+          ),
           type: 'success',
         });
       } else {
         setExportStatusMsg({
-          text: 'Penyimpanan cadangan JSON dibatalkan oleh pengguna.',
+          text: tr(
+            'Penyimpanan cadangan JSON dibatalkan oleh pengguna.',
+            'JSON backup save cancelled by user.'
+          ),
           type: 'info',
         });
       }
     } catch (err: any) {
       setExportStatusMsg({
-        text: err?.message || 'Gagal menyimpan file cadangan JSON.',
+        text: err?.message || tr('Gagal menyimpan file cadangan JSON.', 'Failed to save JSON backup file.'),
         type: 'error',
       });
     } finally {
@@ -225,7 +230,10 @@ export const JsonBackupModal: React.FC<JsonBackupModalProps> = ({
   const handleDownloadCsv = async () => {
     if (isExportingCsv) return;
     if (trades.length === 0) {
-      setExportStatusMsg({ text: 'Belum ada transaksi untuk diekspor ke CSV.', type: 'error' });
+      setExportStatusMsg({
+        text: tr('Belum ada transaksi untuk diekspor ke CSV.', 'No trades available to export to CSV.'),
+        type: 'error',
+      });
       return;
     }
     setIsExportingCsv(true);
@@ -236,18 +244,18 @@ export const JsonBackupModal: React.FC<JsonBackupModalProps> = ({
       const res = await downloadCsvFile(csvStr, fileName);
       if (res.status === 'saved') {
         setExportStatusMsg({
-          text: `Berkas CSV (${fileName}) berhasil disimpan.`,
+          text: tr(`Berkas CSV (${fileName}) berhasil disimpan.`, `CSV file (${fileName}) saved successfully.`),
           type: 'success',
         });
       } else {
         setExportStatusMsg({
-          text: 'Penyimpanan berkas CSV dibatalkan oleh pengguna.',
+          text: tr('Penyimpanan berkas CSV dibatalkan oleh pengguna.', 'CSV file save cancelled by user.'),
           type: 'info',
         });
       }
     } catch (err: any) {
       setExportStatusMsg({
-        text: err?.message || 'Gagal menyimpan berkas CSV.',
+        text: err?.message || tr('Gagal menyimpan berkas CSV.', 'Failed to save CSV file.'),
         type: 'error',
       });
     } finally {
@@ -266,7 +274,7 @@ export const JsonBackupModal: React.FC<JsonBackupModalProps> = ({
       phase: 'scanning',
       currentStep: 0,
       totalSteps: trades.length,
-      message: 'Mempersiapkan proses backup arsip...',
+      message: tr('Mempersiapkan proses cadangan arsip...', 'Preparing archive backup process...'),
       percent: 5,
     });
     setZipFailedItems([]);
@@ -292,7 +300,7 @@ export const JsonBackupModal: React.FC<JsonBackupModalProps> = ({
           phase: 'packaging',
           currentStep: trades.length,
           totalSteps: trades.length,
-          message: 'Menyimpan arsip ZIP ke perangkat...',
+          message: tr('Menyimpan arsip ZIP ke perangkat...', 'Saving ZIP archive to device...'),
           percent: 99,
         });
         const saveRes = await exportFile({
@@ -303,12 +311,18 @@ export const JsonBackupModal: React.FC<JsonBackupModalProps> = ({
         setZipPhase('completed');
         if (saveRes.status === 'saved') {
           setExportStatusMsg({
-            text: `Cadangan lengkap ZIP (${saveRes.fileName}) berhasil disimpan.`,
+            text: tr(
+              `Cadangan lengkap ZIP (${saveRes.fileName}) berhasil disimpan.`,
+              `Full ZIP backup (${saveRes.fileName}) saved successfully.`
+            ),
             type: 'success',
           });
         } else {
           setExportStatusMsg({
-            text: 'Penyimpanan ZIP dibatalkan. Anda dapat menekan "Unduh Ulang ZIP" tanpa membuat ulang arsip.',
+            text: tr(
+              'Penyimpanan ZIP dibatalkan. Anda dapat menekan "Unduh Ulang ZIP" tanpa membuat ulang arsip.',
+              'ZIP save cancelled. You can press "Redownload ZIP" without rebuilding the archive.'
+            ),
             type: 'info',
           });
         }
@@ -326,8 +340,10 @@ export const JsonBackupModal: React.FC<JsonBackupModalProps> = ({
           {
             tradeId: 'GLOBAL',
             sourceType: 'storage',
-            pathOrRef: 'Arsip Backup',
-            error: err?.message || 'Gagal memproses atau menyimpan arsip ZIP.',
+            pathOrRef: tr('Arsip Cadangan', 'Backup Archive'),
+            error:
+              err?.message ||
+              tr('Gagal memproses atau menyimpan arsip ZIP.', 'Failed to process or save ZIP archive.'),
           },
         ]);
         setZipPhase('failed');
@@ -349,18 +365,21 @@ export const JsonBackupModal: React.FC<JsonBackupModalProps> = ({
       });
       if (saveRes.status === 'saved') {
         setExportStatusMsg({
-          text: `Cadangan lengkap ZIP (${saveRes.fileName}) berhasil disimpan.`,
+          text: tr(
+            `Cadangan lengkap ZIP (${saveRes.fileName}) berhasil disimpan.`,
+            `Full ZIP backup (${saveRes.fileName}) saved successfully.`
+          ),
           type: 'success',
         });
       } else {
         setExportStatusMsg({
-          text: 'Penyimpanan ulang ZIP dibatalkan oleh pengguna.',
+          text: tr('Penyimpanan ulang ZIP dibatalkan oleh pengguna.', 'ZIP redownload cancelled by user.'),
           type: 'info',
         });
       }
     } catch (err: any) {
       setExportStatusMsg({
-        text: err?.message || 'Gagal menyimpan ulang arsip ZIP.',
+        text: err?.message || tr('Gagal menyimpan ulang arsip ZIP.', 'Failed to redownload ZIP archive.'),
         type: 'error',
       });
     } finally {
@@ -450,7 +469,12 @@ export const JsonBackupModal: React.FC<JsonBackupModalProps> = ({
         validTradesCount: 0,
         invalidTradesCount: 0,
         hasSettings: false,
-        errors: [`Gagal memvalidasi arsip ZIP: ${err.message || 'Format tidak dikenali'}`],
+        errors: [
+          tr(
+            `Gagal memvalidasi arsip ZIP: ${err.message || 'Format tidak dikenali'}`,
+            `Failed to validate ZIP archive: ${err.message || 'Unrecognized format'}`
+          ),
+        ],
       });
     } finally {
       setIsAnalyzingFile(false);
@@ -477,7 +501,7 @@ export const JsonBackupModal: React.FC<JsonBackupModalProps> = ({
             validTradesCount: 0,
             invalidTradesCount: 0,
             hasSettings: false,
-            errors: [restoreParsed.message || 'File JSON tidak valid.'],
+            errors: [restoreParsed.message || tr('File JSON tidak valid.', 'Invalid JSON file.')],
           });
           return;
         }
@@ -497,7 +521,10 @@ export const JsonBackupModal: React.FC<JsonBackupModalProps> = ({
           backupSettings: restoreParsed.settings,
           backupTrades: validTrades,
           backupTotalProfit: totalProfit,
-          errors: validTrades.length === 0 ? ['Tidak ada transaksi yang valid dalam file JSON.'] : [],
+          errors:
+            validTrades.length === 0
+              ? [tr('Tidak ada transaksi yang valid dalam file JSON.', 'No valid trades found in JSON file.')]
+              : [],
         });
       } catch (err: any) {
         setValidationReport({
@@ -509,7 +536,12 @@ export const JsonBackupModal: React.FC<JsonBackupModalProps> = ({
           validTradesCount: 0,
           invalidTradesCount: 0,
           hasSettings: false,
-          errors: [`File tidak dapat dibaca sebagai format JSON valid: ${err.message}`],
+          errors: [
+            tr(
+              `File tidak dapat dibaca sebagai format JSON valid: ${err.message}`,
+              `File could not be read as valid JSON: ${err.message}`
+            ),
+          ],
         });
       }
     };
@@ -520,19 +552,25 @@ export const JsonBackupModal: React.FC<JsonBackupModalProps> = ({
   const handleExecuteRestore = async () => {
     if (isRestoringJson) return;
     if (!validationReport || !validationReport.isValid || !validationReport.backupTrades) {
-      setErrorMessage('Pilih file backup yang valid terlebih dahulu.');
+      setErrorMessage(
+        tr('Pilih berkas cadangan yang valid terlebih dahulu.', 'Please select a valid backup file first.')
+      );
       return;
     }
 
     if (importMode === 'replace' && !confirmOverwrite) {
-      setErrorMessage('Anda harus mencentang kotak konfirmasi sebelum menimpa seluruh data.');
+      setErrorMessage(
+        tr(
+          'Anda harus mencentang kotak konfirmasi sebelum menimpa seluruh data.',
+          'You must check the confirmation box before overwriting all data.'
+        )
+      );
       return;
     }
 
     if (validationReport.fileFormat === 'zip' && parsedZipArchive) {
       handleExecuteZipRestore(false);
     } else {
-      // Standard JSON Restore: await completion so Storage uploads and DB sync finish cleanly
       setIsRestoringJson(true);
       setErrorMessage(null);
       try {
@@ -544,7 +582,9 @@ export const JsonBackupModal: React.FC<JsonBackupModalProps> = ({
         );
         onClose();
       } catch (err: any) {
-        setErrorMessage(err?.message || 'Gagal memulihkan file cadangan JSON.');
+        setErrorMessage(
+          err?.message || tr('Gagal memulihkan file cadangan JSON.', 'Failed to restore JSON backup file.')
+        );
       } finally {
         setIsRestoringJson(false);
       }
@@ -566,7 +606,10 @@ export const JsonBackupModal: React.FC<JsonBackupModalProps> = ({
       phase: 'uploading_images',
       currentStep: 0,
       totalSteps: parsedZipArchive.archivedImagesCount,
-      message: 'Mempersiapkan pengunggahan screenshot dan pemulihan data...',
+      message: tr(
+        'Mempersiapkan pengunggahan tangkapan layar dan pemulihan data...',
+        'Preparing screenshot uploads and data restoration...'
+      ),
       percent: 5,
     });
 
@@ -588,7 +631,6 @@ export const JsonBackupModal: React.FC<JsonBackupModalProps> = ({
         setRestoreZipSuccessSummary(res);
         setRestoreZipPhase('completed');
 
-        // Apply final trades and settings to App state & Supabase
         const saveRes = (await onRestoreSuccess(
           res.restoredTrades,
           res.restoredSettings,
@@ -596,7 +638,13 @@ export const JsonBackupModal: React.FC<JsonBackupModalProps> = ({
           Boolean(currentUser && syncToCloud)
         )) as { success?: boolean; error?: string } | undefined;
         if (saveRes && saveRes.success === false) {
-          setErrorMessage(saveRes.error || 'Gagal menyimpan data pemulihan ke penyimpanan lokal browser.');
+          setErrorMessage(
+            saveRes.error ||
+              tr(
+                'Gagal menyimpan data pemulihan ke penyimpanan lokal browser.',
+                'Failed to save restored data to local browser storage.'
+              )
+          );
         }
       } else {
         setRestoreZipFailedItems(res.failedScreenshots || []);
@@ -611,8 +659,10 @@ export const JsonBackupModal: React.FC<JsonBackupModalProps> = ({
         setRestoreZipFailedItems([
           {
             tradeId: 'GLOBAL',
-            archivePath: 'Arsip ZIP',
-            error: err.message || 'Kesalahan sistem saat memulihkan arsip.',
+            archivePath: tr('Arsip ZIP', 'ZIP Archive'),
+            error:
+              err.message ||
+              tr('Kesalahan sistem saat memulihkan arsip.', 'System error while restoring archive.'),
           },
         ]);
         setRestoreZipPhase('failed');
@@ -642,7 +692,7 @@ export const JsonBackupModal: React.FC<JsonBackupModalProps> = ({
           }}
           disabled={isBackupOrRestoreBusy}
           className="absolute right-4 top-4 p-1.5 rounded-lg text-[#697586] dark:text-[#929BA9] hover:text-[#151D2A] dark:hover:text-[#F2F5F9] hover:bg-[#EEF2F6] dark:hover:bg-[#171D26] transition-colors disabled:opacity-50"
-          aria-label="Tutup menu cadangan data"
+          aria-label={tr('Tutup menu cadangan data', 'Close data backup menu')}
         >
           <X className="h-5 w-5 stroke-[1.75]" />
         </button>
@@ -654,10 +704,13 @@ export const JsonBackupModal: React.FC<JsonBackupModalProps> = ({
           </div>
           <div>
             <h3 className="text-base font-bold text-[#151D2A] dark:text-[#F2F5F9]">
-              Cadangan Data (Export & Import)
+              {tr('Cadangan Data (Ekspor & Impor)', 'Data Backup (Export & Import)')}
             </h3>
             <p className="text-xs text-[#697586] dark:text-[#929BA9]">
-              Mendukung Cadangan Lengkap Arsip ZIP (Data & Screenshot) dan Cadangan Ringkas JSON
+              {tr(
+                'Mendukung Cadangan Lengkap Arsip ZIP (Data & Tangkapan Layar) dan Cadangan Ringkas JSON',
+                'Supports Full ZIP Archive Backup (Data & Screenshots) and Compact JSON Backup'
+              )}
             </p>
           </div>
         </div>
@@ -674,7 +727,7 @@ export const JsonBackupModal: React.FC<JsonBackupModalProps> = ({
             }`}
           >
             <Download className="h-4 w-4 stroke-[1.75]" />
-            <span>Ekspor Cadangan (Export)</span>
+            <span>{tr('Ekspor Cadangan', 'Export Backup')}</span>
           </button>
           <button
             type="button"
@@ -686,7 +739,7 @@ export const JsonBackupModal: React.FC<JsonBackupModalProps> = ({
             }`}
           >
             <Upload className="h-4 w-4 stroke-[1.75]" />
-            <span>Impor Cadangan (Import)</span>
+            <span>{tr('Impor Cadangan', 'Import Backup')}</span>
           </button>
         </div>
 
@@ -715,16 +768,23 @@ export const JsonBackupModal: React.FC<JsonBackupModalProps> = ({
                       <FileArchive className="h-4 w-4 stroke-[1.75]" />
                     </div>
                     <div>
-                      <span className="font-bold text-[#151D2A] dark:text-[#F2F5F9] block">Backup Lengkap (ZIP)</span>
-                      <span className="text-[10px] text-[#1769E8] dark:text-[#60A5FA] font-medium">Disarankan</span>
+                      <span className="font-bold text-[#151D2A] dark:text-[#F2F5F9] block">
+                        {tr('Cadangan Lengkap (ZIP)', 'Full Backup (ZIP)')}
+                      </span>
+                      <span className="text-[10px] text-[#1769E8] dark:text-[#60A5FA] font-medium">
+                        {tr('Disarankan', 'Recommended')}
+                      </span>
                     </div>
                   </div>
                   <span className="text-[10px] font-mono-numbers px-1.5 py-0.5 rounded bg-[#1769E8]/15 text-[#1769E8] dark:text-[#60A5FA] border border-[#1769E8]/30">
-                    Tahap 1
+                    {tr('Arsip', 'Archive')}
                   </span>
                 </div>
                 <p className="text-[11px] text-[#697586] dark:text-[#929BA9] leading-relaxed mt-1">
-                  Mencakup <strong className="text-[#151D2A] dark:text-[#F2F5F9]">manifest.json</strong>, <strong className="text-[#151D2A] dark:text-[#F2F5F9]">trades.json</strong>, serta folder <strong className="text-[#151D2A] dark:text-[#F2F5F9]">screenshots/</strong> dengan file gambar asli.
+                  {tr(
+                    'Mencakup manifest.json, trades.json, serta folder screenshots/ dengan berkas gambar asli.',
+                    'Includes manifest.json, trades.json, and the screenshots/ folder with original image files.'
+                  )}
                 </p>
               </button>
 
@@ -746,13 +806,20 @@ export const JsonBackupModal: React.FC<JsonBackupModalProps> = ({
                       <FileJson className="h-4 w-4 stroke-[1.75]" />
                     </div>
                     <div>
-                      <span className="font-bold text-[#151D2A] dark:text-[#F2F5F9] block">Backup Ringkas (JSON)</span>
-                      <span className="text-[10px] text-[#697586] dark:text-[#929BA9]">Format Standar</span>
+                      <span className="font-bold text-[#151D2A] dark:text-[#F2F5F9] block">
+                        {tr('Cadangan Ringkas (JSON)', 'Compact Backup (JSON)')}
+                      </span>
+                      <span className="text-[10px] text-[#697586] dark:text-[#929BA9]">
+                        {tr('Format Standar', 'Standard Format')}
+                      </span>
                     </div>
                   </div>
                 </div>
                 <p className="text-[11px] text-[#697586] dark:text-[#929BA9] leading-relaxed mt-1">
-                  Berkas JSON ringan berisi seluruh riwayat transaksi dan pengaturan akun tanpa mengunduh berkas biner screenshot.
+                  {tr(
+                    'Berkas JSON ringan berisi seluruh riwayat transaksi dan pengaturan akun.',
+                    'Lightweight JSON file containing all trade history and account settings.'
+                  )}
                 </p>
               </button>
             </div>
@@ -785,34 +852,44 @@ export const JsonBackupModal: React.FC<JsonBackupModalProps> = ({
                   <div className="flex items-center justify-between">
                     <span className="text-xs font-semibold text-[#151D2A] dark:text-[#F2F5F9] flex items-center gap-1.5">
                       <Image className="h-3.5 w-3.5 stroke-[1.75] text-[#697586] dark:text-[#929BA9]" />
-                      <span>Inventaris Screenshot & Gambar</span>
+                      <span>{tr('Inventaris Tangkapan Layar & Gambar', 'Screenshot & Image Inventory')}</span>
                     </span>
                     <span className="text-[11px] text-[#697586] dark:text-[#929BA9]">
-                      Total <strong className="text-[#1769E8] dark:text-[#60A5FA]">{screenshotStats.totalScreenshots}</strong> gambar ditemukan
+                      {tr('Total', 'Total')}{' '}
+                      <strong className="text-[#1769E8] dark:text-[#60A5FA]">{screenshotStats.totalScreenshots}</strong>{' '}
+                      {tr('gambar ditemukan', 'images found')}
                     </span>
                   </div>
 
                   <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs">
                     <div className="p-2 rounded-lg bg-white dark:bg-[#11151B] border border-[#DDE3EA] dark:border-[#252B34]">
-                      <span className="text-[10px] text-[#697586] dark:text-[#929BA9] block">Total Transaksi</span>
+                      <span className="text-[10px] text-[#697586] dark:text-[#929BA9] block">
+                        {tr('Total Transaksi', 'Total Trades')}
+                      </span>
                       <span className="text-sm font-bold font-mono-numbers text-[#151D2A] dark:text-[#F2F5F9]">
                         {trades.length}
                       </span>
                     </div>
                     <div className="p-2 rounded-lg bg-white dark:bg-[#11151B] border border-[#DDE3EA] dark:border-[#252B34]">
-                      <span className="text-[10px] text-[#697586] dark:text-[#929BA9] block">Storage Privat</span>
+                      <span className="text-[10px] text-[#697586] dark:text-[#929BA9] block">
+                        {tr('Storage Privat', 'Private Storage')}
+                      </span>
                       <span className="text-sm font-bold font-mono-numbers text-[#1769E8] dark:text-[#60A5FA]">
                         {screenshotStats.storageCount}
                       </span>
                     </div>
                     <div className="p-2 rounded-lg bg-white dark:bg-[#11151B] border border-[#DDE3EA] dark:border-[#252B34]">
-                      <span className="text-[10px] text-[#697586] dark:text-[#929BA9] block">Base64 Lokal</span>
+                      <span className="text-[10px] text-[#697586] dark:text-[#929BA9] block">
+                        {tr('Base64 Lokal', 'Local Base64')}
+                      </span>
                       <span className="text-sm font-bold font-mono-numbers text-emerald-600 dark:text-emerald-400">
                         {screenshotStats.base64Count}
                       </span>
                     </div>
                     <div className="p-2 rounded-lg bg-white dark:bg-[#11151B] border border-[#DDE3EA] dark:border-[#252B34]">
-                      <span className="text-[10px] text-[#697586] dark:text-[#929BA9] block">Link Eksternal</span>
+                      <span className="text-[10px] text-[#697586] dark:text-[#929BA9] block">
+                        {tr('Tautan Eksternal', 'External Links')}
+                      </span>
                       <span className="text-sm font-bold font-mono-numbers text-amber-600 dark:text-amber-400">
                         {screenshotStats.externalCount}
                       </span>
@@ -823,14 +900,23 @@ export const JsonBackupModal: React.FC<JsonBackupModalProps> = ({
                     <div className="p-2.5 rounded-lg bg-white dark:bg-[#11151B] border border-[#DDE3EA] dark:border-[#252B34] text-[11px] text-[#151D2A] dark:text-[#F2F5F9] flex items-start gap-2">
                       <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5 text-amber-600 dark:text-amber-400 stroke-[1.75]" />
                       <div>
-                        <strong className="text-amber-600 dark:text-amber-400">Perhatian Autentikasi:</strong> Terdapat {screenshotStats.storageCount} gambar tersimpan di Supabase Storage privat. Anda belum login. Silakan login ke akun Supabase terlebih dahulu agar sistem memiliki izin mengunduh file gambar tersebut.
+                        <strong className="text-amber-600 dark:text-amber-400">
+                          {tr('Perhatian Autentikasi:', 'Authentication Notice:')}
+                        </strong>{' '}
+                        {tr(
+                          `Terdapat ${screenshotStats.storageCount} gambar tersimpan di Supabase Storage privat. Anda belum masuk akun. Silakan masuk ke akun Supabase terlebih dahulu agar sistem memiliki izin mengunduh berkas gambar tersebut.`,
+                          `There are ${screenshotStats.storageCount} images stored in private Supabase Storage. You are not signed in. Please sign in to your Supabase account first so the system has permission to download those image files.`
+                        )}
                       </div>
                     </div>
                   )}
 
                   {screenshotStats.totalScreenshots > 80 && (
                     <div className="p-2 rounded-lg bg-white dark:bg-[#11151B] border border-[#DDE3EA] dark:border-[#252B34] text-[10px] text-[#697586] dark:text-[#929BA9]">
-                      Terdapat {screenshotStats.totalScreenshots} gambar. Pengunduhan dan kompresi akan diproses secara bertahap agar konsumsi memori browser tetap stabil.
+                      {tr(
+                        `Terdapat ${screenshotStats.totalScreenshots} gambar. Pengunduhan dan kompresi akan diproses secara bertahap agar konsumsi memori browser tetap stabil.`,
+                        `There are ${screenshotStats.totalScreenshots} images. Downloading and compression will be processed in batches to keep browser memory usage stable.`
+                      )}
                     </div>
                   )}
                 </div>
@@ -841,7 +927,10 @@ export const JsonBackupModal: React.FC<JsonBackupModalProps> = ({
                     <div className="flex items-center justify-between text-xs">
                       <span className="font-semibold text-[#1769E8] dark:text-[#60A5FA] flex items-center gap-2">
                         <Loader2 className="h-4 w-4 animate-spin text-[#1769E8] stroke-[1.75]" />
-                        <span>{zipProgress?.message || 'Membuat arsip backup...'}</span>
+                        <span>
+                          {zipProgress?.message ||
+                            tr('Membuat arsip cadangan...', 'Building backup archive...')}
+                        </span>
                       </span>
                       <span className="font-mono-numbers font-bold text-[#1769E8] dark:text-[#60A5FA]">
                         {zipProgress?.percent || 0}%
@@ -857,14 +946,17 @@ export const JsonBackupModal: React.FC<JsonBackupModalProps> = ({
 
                     <div className="flex items-center justify-between text-[11px] text-[#697586] dark:text-[#929BA9] pt-1">
                       <span>
-                        Langkah {zipProgress?.currentStep || 0} dari {zipProgress?.totalSteps || 0}
+                        {tr(
+                          `Langkah ${zipProgress?.currentStep || 0} dari ${zipProgress?.totalSteps || 0}`,
+                          `Step ${zipProgress?.currentStep || 0} of ${zipProgress?.totalSteps || 0}`
+                        )}
                       </span>
                       <button
                         type="button"
                         onClick={handleCancelZipBackup}
                         className="text-rose-600 dark:text-rose-400 hover:underline font-medium"
                       >
-                        Batalkan
+                        {tr('Batalkan', 'Cancel')}
                       </button>
                     </div>
                   </div>
@@ -875,18 +967,25 @@ export const JsonBackupModal: React.FC<JsonBackupModalProps> = ({
                   <div className="p-4 rounded-xl bg-[#F5F7FA] dark:bg-[#080A0E] border border-[#DDE3EA] dark:border-[#252B34] space-y-3">
                     <div className="flex items-center gap-2 text-xs text-emerald-600 dark:text-emerald-400 font-bold">
                       <CheckCircle2 className="h-4 w-4 text-emerald-600 dark:text-emerald-400 stroke-[1.75]" />
-                      <span>Cadangan Lengkap ZIP Siap!</span>
+                      <span>{tr('Cadangan Lengkap ZIP Siap!', 'Full ZIP Backup Ready!')}</span>
                     </div>
                     <div className="text-[11px] text-[#151D2A] dark:text-[#F2F5F9] space-y-1">
                       <p>
-                        Berkas arsip: <strong className="font-mono-numbers text-[#1769E8] dark:text-[#60A5FA]">{zipResult.fileName}</strong>
+                        {tr('Berkas arsip:', 'Archive file:')}{' '}
+                        <strong className="font-mono-numbers text-[#1769E8] dark:text-[#60A5FA]">
+                          {zipResult.fileName}
+                        </strong>
                       </p>
                       <p>
-                        Total {zipResult.manifest.summary.archivedScreenshots} file gambar berhasil dikemas ke dalam folder <code className="bg-white dark:bg-[#11151B] px-1 py-0.5 rounded text-[10px]">screenshots/</code> tanpa kegagalan.
+                        {tr(
+                          `Total ${zipResult.manifest.summary.archivedScreenshots} berkas gambar berhasil dikemas ke dalam folder screenshots/ tanpa kegagalan.`,
+                          `A total of ${zipResult.manifest.summary.archivedScreenshots} image files were packaged into the screenshots/ folder without errors.`
+                        )}
                       </p>
                       {zipResult.blob && (
                         <p className="text-[#697586] dark:text-[#929BA9] text-[10px]">
-                          Ukuran file ZIP: {(zipResult.blob.size / (1024 * 1024)).toFixed(2)} MB
+                          {tr('Ukuran berkas ZIP:', 'ZIP file size:')}{' '}
+                          {(zipResult.blob.size / (1024 * 1024)).toFixed(2)} MB
                         </p>
                       )}
                     </div>
@@ -899,7 +998,11 @@ export const JsonBackupModal: React.FC<JsonBackupModalProps> = ({
                           className="py-2 px-3 rounded-lg bg-[#1769E8] hover:bg-[#1458C4] disabled:opacity-50 disabled:cursor-not-allowed text-white font-bold text-xs flex items-center gap-1.5 transition-colors"
                         >
                           <Download className="h-3.5 w-3.5 stroke-[1.75]" />
-                          <span>{isRedownloadingZip ? 'Menyimpan ZIP...' : 'Unduh Ulang ZIP'}</span>
+                          <span>
+                            {isRedownloadingZip
+                              ? tr('Menyimpan ZIP...', 'Saving ZIP...')
+                              : tr('Unduh Ulang ZIP', 'Redownload ZIP')}
+                          </span>
                         </button>
                       )}
                       <button
@@ -908,7 +1011,7 @@ export const JsonBackupModal: React.FC<JsonBackupModalProps> = ({
                         disabled={isRedownloadingZip}
                         className="py-2 px-3 rounded-lg bg-white dark:bg-[#11151B] border border-[#DDE3EA] dark:border-[#252B34] hover:bg-[#EEF2F6] dark:hover:bg-[#171D26] disabled:opacity-50 text-[#151D2A] dark:text-[#F2F5F9] text-xs transition-colors"
                       >
-                        Selesai
+                        {tr('Selesai', 'Done')}
                       </button>
                     </div>
                   </div>
@@ -919,19 +1022,31 @@ export const JsonBackupModal: React.FC<JsonBackupModalProps> = ({
                   <div className="p-4 rounded-xl bg-[#F5F7FA] dark:bg-[#080A0E] border border-[#DDE3EA] dark:border-[#252B34] space-y-3">
                     <div className="flex items-center gap-2 text-xs text-rose-600 dark:text-rose-400 font-bold">
                       <AlertTriangle className="h-4 w-4 text-rose-600 dark:text-rose-400 shrink-0 stroke-[1.75]" />
-                      <span>Cadangan Lengkap Belum Berhasil Dibuat</span>
+                      <span>
+                        {tr('Cadangan Lengkap Belum Berhasil Dibuat', 'Full Backup Could Not Be Completed')}
+                      </span>
                     </div>
 
                     <p className="text-[11px] text-[#697586] dark:text-[#929BA9] leading-relaxed">
-                      Terdapat <strong className="text-rose-600 dark:text-rose-400">{zipFailedItems.length}</strong> file screenshot yang gagal diunduh dari Supabase Storage. Sistem menolak membuang gambar secara diam-diam demi menjaga kelengkapan catatan transaksi Anda.
+                      {tr(
+                        `Terdapat ${zipFailedItems.length} berkas tangkapan layar yang gagal diunduh dari Supabase Storage. Sistem menolak membuang gambar secara diam-diam demi menjaga kelengkapan catatan transaksi Anda.`,
+                        `There were ${zipFailedItems.length} screenshot files that failed to download from Supabase Storage. The system refuses to silently drop images to preserve your trade records.`
+                      )}
                     </p>
 
                     <div className="max-h-36 overflow-y-auto space-y-1.5 p-2 rounded-lg bg-white dark:bg-[#080A0E] border border-[#DDE3EA] dark:border-[#252B34] text-[11px]">
                       {zipFailedItems.map((item, idx) => (
-                        <div key={idx} className="flex items-start justify-between gap-2 p-1.5 rounded bg-[#F5F7FA] dark:bg-[#11151B] border border-[#DDE3EA] dark:border-[#252B34]">
+                        <div
+                          key={idx}
+                          className="flex items-start justify-between gap-2 p-1.5 rounded bg-[#F5F7FA] dark:bg-[#11151B] border border-[#DDE3EA] dark:border-[#252B34]"
+                        >
                           <div className="truncate">
-                            <span className="font-mono-numbers text-[#1769E8] dark:text-[#60A5FA] font-semibold">{item.tradeId}</span>
-                            <span className="text-[#697586] dark:text-[#929BA9] text-[10px] block truncate">{item.pathOrRef}</span>
+                            <span className="font-mono-numbers text-[#1769E8] dark:text-[#60A5FA] font-semibold">
+                              {item.tradeId}
+                            </span>
+                            <span className="text-[#697586] dark:text-[#929BA9] text-[10px] block truncate">
+                              {item.pathOrRef}
+                            </span>
                           </div>
                           <span className="text-[10px] text-rose-600 dark:text-rose-400 shrink-0 font-medium">
                             {item.error}
@@ -947,7 +1062,7 @@ export const JsonBackupModal: React.FC<JsonBackupModalProps> = ({
                         className="py-2 px-3.5 rounded-lg bg-[#1769E8] hover:bg-[#1458C4] text-white font-bold text-xs flex items-center gap-1.5 transition-colors"
                       >
                         <RefreshCw className="h-3.5 w-3.5 stroke-[1.75]" />
-                        <span>Coba Lagi (Retry)</span>
+                        <span>{tr('Coba Lagi', 'Retry')}</span>
                       </button>
 
                       <button
@@ -956,7 +1071,7 @@ export const JsonBackupModal: React.FC<JsonBackupModalProps> = ({
                         className="py-2 px-3.5 rounded-lg bg-white dark:bg-[#11151B] border border-[#DDE3EA] dark:border-[#252B34] hover:bg-[#EEF2F6] dark:hover:bg-[#171D26] text-amber-600 dark:text-amber-400 text-xs font-semibold flex items-center gap-1.5 transition-colors"
                       >
                         <AlertCircle className="h-3.5 w-3.5 text-amber-600 dark:text-amber-400 stroke-[1.75]" />
-                        <span>Unduh Sebagai Cadangan Parsial</span>
+                        <span>{tr('Unduh Sebagai Cadangan Parsial', 'Download as Partial Backup')}</span>
                       </button>
 
                       <button
@@ -964,7 +1079,7 @@ export const JsonBackupModal: React.FC<JsonBackupModalProps> = ({
                         onClick={handleResetZipState}
                         className="py-2 px-3 rounded-lg bg-white dark:bg-[#11151B] border border-[#DDE3EA] dark:border-[#252B34] hover:bg-[#EEF2F6] dark:hover:bg-[#171D26] text-[#697586] dark:text-[#929BA9] hover:text-[#151D2A] dark:hover:text-[#F2F5F9] text-xs transition-colors"
                       >
-                        Batalkan
+                        {tr('Batalkan', 'Cancel')}
                       </button>
                     </div>
                   </div>
@@ -976,16 +1091,28 @@ export const JsonBackupModal: React.FC<JsonBackupModalProps> = ({
                     <div className="p-3 rounded-lg bg-[#F5F7FA] dark:bg-[#080A0E] border border-[#DDE3EA] dark:border-[#252B34] text-[11px] text-[#697586] dark:text-[#929BA9] space-y-1">
                       <p className="flex items-center gap-1.5 text-[#151D2A] dark:text-[#F2F5F9] font-medium">
                         <ShieldCheck className="h-3.5 w-3.5 text-emerald-600 dark:text-emerald-400 stroke-[1.75]" />
-                        <span>Prinsip Keamanan Ekspor Cadangan:</span>
+                        <span>{tr('Prinsip Keamanan Ekspor Cadangan:', 'Backup Export Security Principles:')}</span>
                       </p>
                       <p>
-                        • File screenshot dari bucket privat diunduh menggunakan sesi Supabase login Anda secara terautentikasi.
+                        •{' '}
+                        {tr(
+                          'Berkas tangkapan layar dari bucket privat diunduh menggunakan sesi login Supabase Anda secara terautentikasi.',
+                          'Screenshot files from private buckets are downloaded securely using your authenticated Supabase session.'
+                        )}
                       </p>
                       <p>
-                        • Path folder dan ID rahasia internal disanitasi menjadi nama berkas aman di dalam arsip ZIP.
+                        •{' '}
+                        {tr(
+                          'Path folder dan ID rahasia internal disanitasi menjadi nama berkas aman di dalam arsip ZIP.',
+                          'Folder paths and internal IDs are sanitized into safe filenames inside the ZIP archive.'
+                        )}
                       </p>
                       <p>
-                        • Token otentikasi maupun kredensial sensitif tidak pernah disertakan ke dalam file arsip.
+                        •{' '}
+                        {tr(
+                          'Token autentikasi maupun kredensial sensitif tidak pernah disertakan ke dalam berkas arsip.',
+                          'Authentication tokens and sensitive credentials are never included in the archive file.'
+                        )}
                       </p>
                     </div>
 
@@ -997,7 +1124,10 @@ export const JsonBackupModal: React.FC<JsonBackupModalProps> = ({
                     >
                       <FileArchive className="h-4 w-4 stroke-[1.75]" />
                       <span>
-                        Mulai Buat Cadangan ZIP Lengkap ({trades.length} Transaksi & {screenshotStats.totalScreenshots} Screenshot)
+                        {tr(
+                          `Mulai Buat Cadangan ZIP Lengkap (${trades.length} Transaksi & ${screenshotStats.totalScreenshots} Gambar)`,
+                          `Create Full ZIP Backup (${trades.length} Trades & ${screenshotStats.totalScreenshots} Screenshots)`
+                        )}
                       </span>
                     </button>
                   </div>
@@ -1010,29 +1140,37 @@ export const JsonBackupModal: React.FC<JsonBackupModalProps> = ({
               <div className="space-y-3">
                 <div className="rounded-xl bg-[#F5F7FA] dark:bg-[#080A0E] border border-[#DDE3EA] dark:border-[#252B34] p-4 space-y-3">
                   <span className="text-xs font-semibold text-[#151D2A] dark:text-[#F2F5F9] block">
-                    Ringkasan Data yang Akan Diekspor (JSON):
+                    {tr('Ringkasan Data yang Akan Diekspor (JSON):', 'Summary of Data to Export (JSON):')}
                   </span>
                   <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs">
                     <div className="p-2.5 rounded-lg bg-white dark:bg-[#11151B] border border-[#DDE3EA] dark:border-[#252B34]">
-                      <span className="text-[10px] text-[#697586] dark:text-[#929BA9] block">Total Trade</span>
+                      <span className="text-[10px] text-[#697586] dark:text-[#929BA9] block">
+                        {tr('Total Transaksi', 'Total Trades')}
+                      </span>
                       <span className="text-sm font-bold font-mono-numbers text-[#1769E8] dark:text-[#60A5FA]">
                         {trades.length}
                       </span>
                     </div>
                     <div className="p-2.5 rounded-lg bg-white dark:bg-[#11151B] border border-[#DDE3EA] dark:border-[#252B34]">
-                      <span className="text-[10px] text-[#697586] dark:text-[#929BA9] block">Trade Asli</span>
+                      <span className="text-[10px] text-[#697586] dark:text-[#929BA9] block">
+                        {tr('Transaksi Asli', 'Real Trades')}
+                      </span>
                       <span className="text-sm font-bold font-mono-numbers text-emerald-600 dark:text-emerald-400">
                         {trades.filter((t) => !t.isDemo).length}
                       </span>
                     </div>
                     <div className="p-2.5 rounded-lg bg-white dark:bg-[#11151B] border border-[#DDE3EA] dark:border-[#252B34]">
-                      <span className="text-[10px] text-[#697586] dark:text-[#929BA9] block">Trade Demo</span>
+                      <span className="text-[10px] text-[#697586] dark:text-[#929BA9] block">
+                        {tr('Transaksi Demo', 'Demo Trades')}
+                      </span>
                       <span className="text-sm font-bold font-mono-numbers text-amber-600 dark:text-amber-400">
                         {trades.filter((t) => t.isDemo).length}
                       </span>
                     </div>
                     <div className="p-2.5 rounded-lg bg-white dark:bg-[#11151B] border border-[#DDE3EA] dark:border-[#252B34]">
-                      <span className="text-[10px] text-[#697586] dark:text-[#929BA9] block">Mata Uang</span>
+                      <span className="text-[10px] text-[#697586] dark:text-[#929BA9] block">
+                        {tr('Mata Uang', 'Currency')}
+                      </span>
                       <span className="text-sm font-bold font-mono-numbers text-[#151D2A] dark:text-[#F2F5F9]">
                         {settings.currency} ({settings.currencySymbol})
                       </span>
@@ -1041,10 +1179,18 @@ export const JsonBackupModal: React.FC<JsonBackupModalProps> = ({
 
                   <div className="p-3 rounded-lg bg-white dark:bg-[#11151B] border border-[#DDE3EA] dark:border-[#252B34] text-[11px] text-[#697586] dark:text-[#929BA9] space-y-1">
                     <p>
-                      • Berkas JSON mencakup seluruh riwayat trade, evaluasi psikologi, catatan eksekusi, screenshot lokal, serta parameter akun (modal awal dan spesifikasi broker).
+                      •{' '}
+                      {tr(
+                        'Berkas JSON mencakup seluruh riwayat transaksi, evaluasi psikologi, catatan eksekusi, tangkapan layar lokal, serta parameter akun.',
+                        'The JSON file includes all trade history, psychology evaluations, execution notes, local screenshots, and account parameters.'
+                      )}
                     </p>
                     <p>
-                      • File ini dapat disimpan di hard drive, Google Drive pribadi, atau dipindahkan ke ponsel/laptop lain.
+                      •{' '}
+                      {tr(
+                        'Berkas ini dapat disimpan di perangkat, penyimpanan cloud pribadi, atau dipindahkan ke ponsel/laptop lain.',
+                        'This file can be saved on your device, personal cloud storage, or transferred to another phone/laptop.'
+                      )}
                     </p>
                   </div>
                 </div>
@@ -1058,8 +1204,11 @@ export const JsonBackupModal: React.FC<JsonBackupModalProps> = ({
                   <Download className="h-4 w-4 stroke-[1.75]" />
                   <span>
                     {isExportingJson
-                      ? 'Menyiapkan Cadangan JSON & Screenshot...'
-                      : `Unduh File Cadangan JSON (${trades.length} Transaksi)`}
+                      ? tr('Menyiapkan Cadangan JSON & Gambar...', 'Preparing JSON Backup & Screenshots...')
+                      : tr(
+                          `Unduh Berkas Cadangan JSON (${trades.length} Transaksi)`,
+                          `Download JSON Backup File (${trades.length} Trades)`
+                        )}
                   </span>
                 </button>
               </div>
@@ -1094,12 +1243,17 @@ export const JsonBackupModal: React.FC<JsonBackupModalProps> = ({
                 </div>
                 <div className="text-xs">
                   <span className="font-semibold text-[#1769E8] dark:text-[#60A5FA] hover:underline">
-                    Pilih Berkas Cadangan (.ZIP atau .JSON)
+                    {tr('Pilih Berkas Cadangan (.ZIP atau .JSON)', 'Select Backup File (.ZIP or .JSON)')}
                   </span>{' '}
-                  <span className="text-[#697586] dark:text-[#929BA9]">atau tarik file ke sini</span>
+                  <span className="text-[#697586] dark:text-[#929BA9]">
+                    {tr('atau tarik berkas ke sini', 'or drag file here')}
+                  </span>
                 </div>
                 <span className="text-[11px] text-[#697586] dark:text-[#929BA9]">
-                  Mendukung arsip lengkap .zip (Tahap 1 & 2) atau berkas ringkas .json
+                  {tr(
+                    'Mendukung arsip lengkap .zip atau berkas ringkas .json',
+                    'Supports full .zip archives or compact .json files'
+                  )}
                 </span>
               </label>
             </div>
@@ -1118,7 +1272,10 @@ export const JsonBackupModal: React.FC<JsonBackupModalProps> = ({
                 <div className="flex items-center justify-between text-xs">
                   <span className="font-semibold text-[#1769E8] dark:text-[#60A5FA] flex items-center gap-2">
                     <Loader2 className="h-4 w-4 animate-spin text-[#1769E8] stroke-[1.75]" />
-                    <span>{restoreZipProgress?.message || 'Memulihkan data dan screenshot...'}</span>
+                    <span>
+                      {restoreZipProgress?.message ||
+                        tr('Memulihkan data dan tangkapan layar...', 'Restoring data and screenshots...')}
+                    </span>
                   </span>
                   <span className="font-mono-numbers font-bold text-[#1769E8] dark:text-[#60A5FA]">
                     {restoreZipProgress?.percent || 0}%
@@ -1134,14 +1291,17 @@ export const JsonBackupModal: React.FC<JsonBackupModalProps> = ({
 
                 <div className="flex items-center justify-between text-[11px] text-[#697586] dark:text-[#929BA9] pt-1">
                   <span>
-                    Proses {restoreZipProgress?.currentStep || 0} dari {restoreZipProgress?.totalSteps || 0}
+                    {tr(
+                      `Proses ${restoreZipProgress?.currentStep || 0} dari ${restoreZipProgress?.totalSteps || 0}`,
+                      `Step ${restoreZipProgress?.currentStep || 0} of ${restoreZipProgress?.totalSteps || 0}`
+                    )}
                   </span>
                   <button
                     type="button"
                     onClick={handleCancelRestore}
                     className="text-rose-600 dark:text-rose-400 hover:underline font-medium"
                   >
-                    Batalkan Pemulihan
+                    {tr('Batalkan Pemulihan', 'Cancel Restore')}
                   </button>
                 </div>
               </div>
@@ -1152,24 +1312,30 @@ export const JsonBackupModal: React.FC<JsonBackupModalProps> = ({
               <div className="p-4 rounded-xl bg-[#F5F7FA] dark:bg-[#080A0E] border border-[#DDE3EA] dark:border-[#252B34] space-y-3">
                 <div className="flex items-center gap-2 text-xs text-emerald-600 dark:text-emerald-400 font-bold">
                   <CheckCircle2 className="h-4 w-4 text-emerald-600 dark:text-emerald-400 stroke-[1.75]" />
-                  <span>Pemulihan Arsip ZIP Selesai!</span>
+                  <span>{tr('Pemulihan Arsip ZIP Selesai!', 'ZIP Archive Restore Completed!')}</span>
                 </div>
 
                 <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 text-xs">
                   <div className="p-2 rounded-lg bg-white dark:bg-[#11151B] border border-[#DDE3EA] dark:border-[#252B34]">
-                    <span className="text-[10px] text-[#697586] dark:text-[#929BA9] block">Total Dipulihkan</span>
+                    <span className="text-[10px] text-[#697586] dark:text-[#929BA9] block">
+                      {tr('Total Dipulihkan', 'Total Restored')}
+                    </span>
                     <span className="text-sm font-bold font-mono-numbers text-[#1769E8] dark:text-[#60A5FA]">
-                      {restoreZipSuccessSummary.restoredTrades.length} Trade
+                      {restoreZipSuccessSummary.restoredTrades.length} {tr('Transaksi', 'Trades')}
                     </span>
                   </div>
                   <div className="p-2 rounded-lg bg-white dark:bg-[#11151B] border border-[#DDE3EA] dark:border-[#252B34]">
-                    <span className="text-[10px] text-[#697586] dark:text-[#929BA9] block">Screenshot Diunggah</span>
+                    <span className="text-[10px] text-[#697586] dark:text-[#929BA9] block">
+                      {tr('Gambar Diunggah', 'Screenshots Uploaded')}
+                    </span>
                     <span className="text-sm font-bold font-mono-numbers text-emerald-600 dark:text-emerald-400">
-                      {restoreZipSuccessSummary.uploadedScreenshotsCount} File
+                      {restoreZipSuccessSummary.uploadedScreenshotsCount} {tr('Berkas', 'Files')}
                     </span>
                   </div>
                   <div className="p-2 rounded-lg bg-white dark:bg-[#11151B] border border-[#DDE3EA] dark:border-[#252B34]">
-                    <span className="text-[10px] text-[#697586] dark:text-[#929BA9] block">Trade Baru / Update</span>
+                    <span className="text-[10px] text-[#697586] dark:text-[#929BA9] block">
+                      {tr('Baru / Diperbarui', 'New / Updated')}
+                    </span>
                     <span className="text-sm font-bold font-mono-numbers text-[#151D2A] dark:text-[#F2F5F9]">
                       +{restoreZipSuccessSummary.newTradesAdded} / ↻{restoreZipSuccessSummary.duplicateTradesUpdated}
                     </span>
@@ -1178,7 +1344,11 @@ export const JsonBackupModal: React.FC<JsonBackupModalProps> = ({
 
                 {restoreZipSuccessSummary.unchangedTradesKept > 0 && (
                   <p className="text-[11px] text-[#697586] dark:text-[#929BA9]">
-                    • {restoreZipSuccessSummary.unchangedTradesKept} transaksi lokal Anda yang tidak ada dalam arsip tetap dipertahankan.
+                    •{' '}
+                    {tr(
+                      `${restoreZipSuccessSummary.unchangedTradesKept} transaksi lokal Anda yang tidak ada dalam arsip tetap dipertahankan.`,
+                      `${restoreZipSuccessSummary.unchangedTradesKept} of your local trades not in the archive were kept intact.`
+                    )}
                   </p>
                 )}
 
@@ -1187,29 +1357,44 @@ export const JsonBackupModal: React.FC<JsonBackupModalProps> = ({
                   onClick={onClose}
                   className="w-full py-2.5 px-4 rounded-xl bg-[#1769E8] hover:bg-[#1458C4] text-white font-bold text-xs transition-colors"
                 >
-                  Selesai & Tutup Jendela
+                  {tr('Selesai & Tutup Jendela', 'Done & Close Window')}
                 </button>
               </div>
             )}
 
-            {/* Failed Screenshot Uploads in ZIP Restore (Requirement 7) */}
+            {/* Failed Screenshot Uploads in ZIP Restore */}
             {restoreZipPhase === 'failed' && (
               <div className="p-4 rounded-xl bg-[#F5F7FA] dark:bg-[#080A0E] border border-[#DDE3EA] dark:border-[#252B34] space-y-3">
                 <div className="flex items-center gap-2 text-xs text-rose-600 dark:text-rose-400 font-bold">
                   <AlertTriangle className="h-4 w-4 text-rose-600 dark:text-rose-400 shrink-0 stroke-[1.75]" />
-                  <span>Pemulihan Arsip Belum Berhasil Sempurna</span>
+                  <span>
+                    {tr(
+                      'Pemulihan Arsip Belum Berhasil Sempurna',
+                      'Archive Restore Could Not Complete Fully'
+                    )}
+                  </span>
                 </div>
 
                 <p className="text-[11px] text-[#697586] dark:text-[#929BA9] leading-relaxed">
-                  Terdapat <strong className="text-rose-600 dark:text-rose-400">{restoreZipFailedItems.length}</strong> file screenshot yang gagal diunggah ke Supabase Storage. Sistem tidak membuang data transaksi atau membiarkan path rusak tanpa persetujuan Anda.
+                  {tr(
+                    `Terdapat ${restoreZipFailedItems.length} berkas tangkapan layar yang gagal diunggah ke Supabase Storage. Sistem tidak membuang data transaksi atau membiarkan path rusak tanpa persetujuan Anda.`,
+                    `There were ${restoreZipFailedItems.length} screenshot files that failed to upload to Supabase Storage. The system does not discard trade data or leave broken paths without your confirmation.`
+                  )}
                 </p>
 
                 <div className="max-h-36 overflow-y-auto space-y-1.5 p-2 rounded-lg bg-white dark:bg-[#080A0E] border border-[#DDE3EA] dark:border-[#252B34] text-[11px]">
                   {restoreZipFailedItems.map((item, idx) => (
-                    <div key={idx} className="flex items-start justify-between gap-2 p-1.5 rounded bg-[#F5F7FA] dark:bg-[#11151B] border border-[#DDE3EA] dark:border-[#252B34]">
+                    <div
+                      key={idx}
+                      className="flex items-start justify-between gap-2 p-1.5 rounded bg-[#F5F7FA] dark:bg-[#11151B] border border-[#DDE3EA] dark:border-[#252B34]"
+                    >
                       <div className="truncate">
-                        <span className="font-mono-numbers text-[#1769E8] dark:text-[#60A5FA] font-semibold">{item.tradeId}</span>
-                        <span className="text-[#697586] dark:text-[#929BA9] text-[10px] block truncate">{item.archivePath}</span>
+                        <span className="font-mono-numbers text-[#1769E8] dark:text-[#60A5FA] font-semibold">
+                          {item.tradeId}
+                        </span>
+                        <span className="text-[#697586] dark:text-[#929BA9] text-[10px] block truncate">
+                          {item.archivePath}
+                        </span>
                       </div>
                       <span className="text-[10px] text-rose-600 dark:text-rose-400 shrink-0 font-medium">
                         {item.error}
@@ -1225,7 +1410,7 @@ export const JsonBackupModal: React.FC<JsonBackupModalProps> = ({
                     className="py-2 px-3.5 rounded-lg bg-[#1769E8] hover:bg-[#1458C4] text-white font-bold text-xs flex items-center gap-1.5 transition-colors"
                   >
                     <RefreshCw className="h-3.5 w-3.5 stroke-[1.75]" />
-                    <span>Coba Lagi Screenshot yang Gagal</span>
+                    <span>{tr('Coba Lagi Gambar yang Gagal', 'Retry Failed Screenshots')}</span>
                   </button>
 
                   <button
@@ -1234,7 +1419,7 @@ export const JsonBackupModal: React.FC<JsonBackupModalProps> = ({
                     className="py-2 px-3.5 rounded-lg bg-white dark:bg-[#11151B] border border-[#DDE3EA] dark:border-[#252B34] hover:bg-[#EEF2F6] dark:hover:bg-[#171D26] text-amber-600 dark:text-amber-400 text-xs font-semibold flex items-center gap-1.5 transition-colors"
                   >
                     <AlertCircle className="h-3.5 w-3.5 text-amber-600 dark:text-amber-400 stroke-[1.75]" />
-                    <span>Lanjutkan Tanpa Gambar yang Gagal</span>
+                    <span>{tr('Lanjutkan Tanpa Gambar yang Gagal', 'Continue Without Failed Images')}</span>
                   </button>
 
                   <button
@@ -1242,13 +1427,13 @@ export const JsonBackupModal: React.FC<JsonBackupModalProps> = ({
                     onClick={() => setRestoreZipPhase('idle')}
                     className="py-2 px-3 rounded-lg bg-white dark:bg-[#11151B] border border-[#DDE3EA] dark:border-[#252B34] hover:bg-[#EEF2F6] dark:hover:bg-[#171D26] text-[#697586] dark:text-[#929BA9] hover:text-[#151D2A] dark:hover:text-[#F2F5F9] text-xs transition-colors"
                   >
-                    Batalkan
+                    {tr('Batalkan', 'Cancel')}
                   </button>
                 </div>
               </div>
             )}
 
-            {/* Validation Report & Preview (shown when not actively uploading or completed) */}
+            {/* Validation Report & Preview */}
             {validationReport && restoreZipPhase === 'idle' && (
               <div className="space-y-3">
                 <div className="p-4 rounded-xl border bg-[#F5F7FA] dark:bg-[#080A0E] border-[#DDE3EA] dark:border-[#252B34] space-y-3">
@@ -1259,14 +1444,16 @@ export const JsonBackupModal: React.FC<JsonBackupModalProps> = ({
                           <CheckCircle2 className="h-4 w-4 text-emerald-600 dark:text-emerald-400 stroke-[1.75]" />
                           <span className="text-emerald-600 dark:text-emerald-400">
                             {validationReport.fileFormat === 'zip'
-                              ? 'Arsip ZIP Valid & Terverifikasi'
-                              : 'File JSON Valid & Terverifikasi'}
+                              ? tr('Arsip ZIP Valid & Terverifikasi', 'Valid & Verified ZIP Archive')
+                              : tr('Berkas JSON Valid & Terverifikasi', 'Valid & Verified JSON File')}
                           </span>
                         </>
                       ) : (
                         <>
                           <AlertTriangle className="h-4 w-4 text-rose-600 dark:text-rose-400 stroke-[1.75]" />
-                          <span className="text-rose-600 dark:text-rose-400">File Backup Tidak Memenuhi Syarat</span>
+                          <span className="text-rose-600 dark:text-rose-400">
+                            {tr('Berkas Cadangan Tidak Memenuhi Syarat', 'Backup File Does Not Meet Requirements')}
+                          </span>
                         </>
                       )}
                     </span>
@@ -1279,13 +1466,17 @@ export const JsonBackupModal: React.FC<JsonBackupModalProps> = ({
                   {validationReport.isValid && (
                     <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs pt-1">
                       <div className="p-2 rounded-lg bg-white dark:bg-[#11151B] border border-[#DDE3EA] dark:border-[#252B34]">
-                        <span className="text-[10px] text-[#697586] dark:text-[#929BA9] block">Trade Valid</span>
+                        <span className="text-[10px] text-[#697586] dark:text-[#929BA9] block">
+                          {tr('Transaksi Valid', 'Valid Trades')}
+                        </span>
                         <span className="text-sm font-bold font-mono-numbers text-[#1769E8] dark:text-[#60A5FA]">
-                          {validationReport.validTradesCount} Trade
+                          {validationReport.validTradesCount} {tr('Transaksi', 'Trades')}
                         </span>
                       </div>
                       <div className="p-2 rounded-lg bg-white dark:bg-[#11151B] border border-[#DDE3EA] dark:border-[#252B34]">
-                        <span className="text-[10px] text-[#697586] dark:text-[#929BA9] block">Total P/L</span>
+                        <span className="text-[10px] text-[#697586] dark:text-[#929BA9] block">
+                          {tr('Total P/L', 'Total P/L')}
+                        </span>
                         <span
                           className={`text-sm font-bold font-mono-numbers ${
                             (validationReport.backupTotalProfit || 0) >= 0
@@ -1297,19 +1488,25 @@ export const JsonBackupModal: React.FC<JsonBackupModalProps> = ({
                         </span>
                       </div>
                       <div className="p-2 rounded-lg bg-white dark:bg-[#11151B] border border-[#DDE3EA] dark:border-[#252B34]">
-                        <span className="text-[10px] text-[#697586] dark:text-[#929BA9] block">Pengaturan</span>
+                        <span className="text-[10px] text-[#697586] dark:text-[#929BA9] block">
+                          {tr('Pengaturan', 'Settings')}
+                        </span>
                         <span className="text-sm font-bold text-[#151D2A] dark:text-[#F2F5F9]">
-                          {validationReport.hasSettings ? 'Tersedia' : 'Pakai Saat Ini'}
+                          {validationReport.hasSettings
+                            ? tr('Tersedia', 'Included')
+                            : tr('Pakai Saat Ini', 'Keep Current')}
                         </span>
                       </div>
                       <div className="p-2 rounded-lg bg-white dark:bg-[#11151B] border border-[#DDE3EA] dark:border-[#252B34]">
                         <span className="text-[10px] text-[#697586] dark:text-[#929BA9] block">
-                          {validationReport.fileFormat === 'zip' ? 'Screenshot ZIP' : 'Format'}
+                          {validationReport.fileFormat === 'zip'
+                            ? tr('Gambar ZIP', 'ZIP Images')
+                            : tr('Format', 'Format')}
                         </span>
                         <span className="text-sm font-bold text-emerald-600 dark:text-emerald-400 font-mono-numbers">
                           {validationReport.fileFormat === 'zip'
-                            ? `${validationReport.archivedImagesCount || 0} File`
-                            : 'JSON Teks'}
+                            ? `${validationReport.archivedImagesCount || 0} ${tr('Berkas', 'Files')}`
+                            : tr('JSON Teks', 'Text JSON')}
                         </span>
                       </div>
                     </div>
@@ -1320,7 +1517,7 @@ export const JsonBackupModal: React.FC<JsonBackupModalProps> = ({
                     <div className="p-2.5 rounded-lg bg-white dark:bg-[#11151B] border border-[#DDE3EA] dark:border-[#252B34] text-[11px] text-[#151D2A] dark:text-[#F2F5F9] space-y-1">
                       <span className="font-semibold block flex items-center gap-1 text-amber-600 dark:text-amber-400">
                         <Info className="h-3.5 w-3.5 text-amber-600 dark:text-amber-400 stroke-[1.75]" />
-                        <span>Catatan Arsip:</span>
+                        <span>{tr('Catatan Arsip:', 'Archive Notes:')}</span>
                       </span>
                       {validationReport.warnings.map((warn, idx) => (
                         <p key={idx} className="text-[10px] text-[#697586] dark:text-[#929BA9]">
@@ -1333,7 +1530,9 @@ export const JsonBackupModal: React.FC<JsonBackupModalProps> = ({
                   {/* Errors listing if any */}
                   {validationReport.errors.length > 0 && (
                     <div className="p-3 rounded-lg bg-white dark:bg-[#11151B] border border-[#DDE3EA] dark:border-[#252B34] text-xs text-rose-600 dark:text-rose-400 space-y-1">
-                      <span className="font-semibold block">Catatan Validasi:</span>
+                      <span className="font-semibold block">
+                        {tr('Catatan Validasi:', 'Validation Notes:')}
+                      </span>
                       {validationReport.errors.map((err, idx) => (
                         <p key={idx} className="text-[11px]">
                           • {err}
@@ -1347,7 +1546,7 @@ export const JsonBackupModal: React.FC<JsonBackupModalProps> = ({
                 {validationReport.isValid && (
                   <div className="p-4 rounded-xl bg-[#F5F7FA] dark:bg-[#080A0E] border border-[#DDE3EA] dark:border-[#252B34] space-y-3">
                     <span className="text-xs font-semibold text-[#151D2A] dark:text-[#F2F5F9] block">
-                      Pilih Metode Pemulihan:
+                      {tr('Pilih Metode Pemulihan:', 'Select Restore Method:')}
                     </span>
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
                       {/* MERGE OPTION */}
@@ -1366,10 +1565,15 @@ export const JsonBackupModal: React.FC<JsonBackupModalProps> = ({
                             onChange={() => setImportMode('merge')}
                             className="text-[#1769E8]"
                           />
-                          <span className="font-bold text-[#151D2A] dark:text-[#F2F5F9]">Gabungkan (Merge)</span>
+                          <span className="font-bold text-[#151D2A] dark:text-[#F2F5F9]">
+                            {tr('Gabungkan Data', 'Merge Data')}
+                          </span>
                         </div>
                         <span className="text-[10px] text-[#697586] dark:text-[#929BA9] leading-tight">
-                          Menambahkan transaksi dari cadangan tanpa menghapus data yang ada. Jika ada ID yang sama, data diperbarui.
+                          {tr(
+                            'Menambahkan transaksi dari cadangan tanpa menghapus data yang ada. Jika ada ID yang sama, data diperbarui.',
+                            'Adds trades from backup without deleting existing records. Matching IDs will be updated.'
+                          )}
                         </span>
                       </label>
 
@@ -1389,10 +1593,15 @@ export const JsonBackupModal: React.FC<JsonBackupModalProps> = ({
                             onChange={() => setImportMode('replace')}
                             className="text-[#1769E8]"
                           />
-                          <span className="font-bold text-rose-600 dark:text-rose-400">Ganti Total (Overwrite)</span>
+                          <span className="font-bold text-rose-600 dark:text-rose-400">
+                            {tr('Ganti Seluruh Data', 'Replace All Data')}
+                          </span>
                         </div>
                         <span className="text-[10px] text-[#697586] dark:text-[#929BA9] leading-tight">
-                          Mengganti seluruh trade di browser lokal dengan data cadangan ini.
+                          {tr(
+                            'Mengganti seluruh transaksi di browser lokal dengan data cadangan ini.',
+                            'Replaces all trades in your local browser with this backup dataset.'
+                          )}
                         </span>
                       </label>
                     </div>
@@ -1401,13 +1610,34 @@ export const JsonBackupModal: React.FC<JsonBackupModalProps> = ({
                     {importMode === 'merge' && mergeStats && (
                       <div className="p-3 rounded-lg bg-white dark:bg-[#11151B] border border-[#DDE3EA] dark:border-[#252B34] text-[11px] text-[#697586] dark:text-[#929BA9] space-y-1">
                         <span className="font-semibold block text-[#151D2A] dark:text-[#F2F5F9]">
-                          Rincian Penggabungan (Merge):
+                          {tr('Rincian Penggabungan Data:', 'Merge Breakdown:')}
                         </span>
-                        <p>• <strong className="text-[#151D2A] dark:text-[#F2F5F9]">{mergeStats.newItems}</strong> transaksi baru akan ditambahkan ke riwayat Anda.</p>
+                        <p>
+                          •{' '}
+                          <strong className="text-[#151D2A] dark:text-[#F2F5F9]">{mergeStats.newItems}</strong>{' '}
+                          {tr(
+                            'transaksi baru akan ditambahkan ke riwayat Anda.',
+                            'new trades will be added to your history.'
+                          )}
+                        </p>
                         {mergeStats.duplicates > 0 && (
-                          <p>• <strong className="text-[#151D2A] dark:text-[#F2F5F9]">{mergeStats.duplicates}</strong> transaksi yang sudah ada (ID cocok) akan diperbarui nilainya dari cadangan.</p>
+                          <p>
+                            •{' '}
+                            <strong className="text-[#151D2A] dark:text-[#F2F5F9]">{mergeStats.duplicates}</strong>{' '}
+                            {tr(
+                              'transaksi yang sudah ada (ID cocok) akan diperbarui nilainya dari cadangan.',
+                              'existing trades (matching IDs) will be updated from the backup.'
+                            )}
+                          </p>
                         )}
-                        <p>• <strong className="text-[#151D2A] dark:text-[#F2F5F9]">{mergeStats.unchanged}</strong> transaksi lama di browser Anda yang tidak ada dalam cadangan tetap aman dan utuh.</p>
+                        <p>
+                          •{' '}
+                          <strong className="text-[#151D2A] dark:text-[#F2F5F9]">{mergeStats.unchanged}</strong>{' '}
+                          {tr(
+                            'transaksi lama di browser Anda yang tidak ada dalam cadangan tetap aman dan utuh.',
+                            'existing trades in your browser not in the backup will remain safe and intact.'
+                          )}
+                        </p>
                       </div>
                     )}
 
@@ -1422,11 +1652,20 @@ export const JsonBackupModal: React.FC<JsonBackupModalProps> = ({
                             className="mt-0.5 rounded border-[#DDE3EA] dark:border-[#252B34] text-[#1769E8] focus:ring-0"
                           />
                           <span className="text-[11px] leading-relaxed">
-                            <strong className="text-amber-600 dark:text-amber-400">Konfirmasi Penggantian:</strong> Saya memahami bahwa {trades.length} transaksi yang ada saat ini di browser akan digantikan seluruhnya oleh {validationReport.validTradesCount} transaksi dari berkas cadangan ini.
+                            <strong className="text-amber-600 dark:text-amber-400">
+                              {tr('Konfirmasi Penggantian:', 'Replacement Confirmation:')}
+                            </strong>{' '}
+                            {tr(
+                              `Saya memahami bahwa ${trades.length} transaksi yang ada saat ini di browser akan digantikan seluruhnya oleh ${validationReport.validTradesCount} transaksi dari berkas cadangan ini.`,
+                              `I understand that all ${trades.length} existing trades in the browser will be completely replaced by ${validationReport.validTradesCount} trades from this backup file.`
+                            )}
                           </span>
                         </label>
                         <p className="text-[10px] text-[#697586] dark:text-[#929BA9] pl-6 leading-tight">
-                          Pemberitahuan Cloud: Penggantian ini hanya berlaku untuk tampilan dan cache browser lokal Anda. Transaksi yang ada di database cloud Supabase TIDAK dihapus dari server demi keselamatan data.
+                          {tr(
+                            'Pemberitahuan Cloud: Penggantian ini hanya berlaku untuk tampilan dan cache browser lokal Anda kecuali sinkronisasi cloud diaktifkan.',
+                            'Cloud Notice: This replacement applies to your local browser cache unless cloud sync is enabled.'
+                          )}
                         </p>
                       </div>
                     )}
@@ -1439,10 +1678,10 @@ export const JsonBackupModal: React.FC<JsonBackupModalProps> = ({
                     <div className="flex items-center justify-between">
                       <span className="text-xs font-semibold text-[#151D2A] dark:text-[#F2F5F9] flex items-center gap-1.5">
                         <Cloud className="h-3.5 w-3.5 text-[#1769E8] dark:text-[#60A5FA] stroke-[1.75]" />
-                        <span>Sinkronisasi Cloud Supabase</span>
+                        <span>{tr('Sinkronisasi Cloud Supabase', 'Supabase Cloud Sync')}</span>
                       </span>
                       <span className="text-[10px] text-emerald-600 dark:text-emerald-400 font-medium px-2 py-0.5 rounded bg-white dark:bg-[#11151B] border border-[#DDE3EA] dark:border-[#252B34] truncate max-w-[200px]">
-                        {currentUser.email || 'Akun Terhubung'}
+                        {currentUser.email || tr('Akun Terhubung', 'Connected Account')}
                       </span>
                     </div>
                     <label className="flex items-start gap-2.5 cursor-pointer text-xs text-[#151D2A] dark:text-[#F2F5F9]">
@@ -1454,14 +1693,26 @@ export const JsonBackupModal: React.FC<JsonBackupModalProps> = ({
                       />
                       <div className="text-[11px] leading-relaxed">
                         <span className="font-semibold text-[#151D2A] dark:text-[#F2F5F9]">
-                          Unggah & sinkronkan langsung ke database Supabase setelah pemulihan
+                          {tr(
+                            'Unggah & sinkronkan langsung ke database Supabase setelah pemulihan',
+                            'Upload & sync directly to Supabase database after restore'
+                          )}
                         </span>
                         <p className="text-[10px] text-[#697586] dark:text-[#929BA9] mt-0.5">
                           {syncToCloud
                             ? validationReport.fileFormat === 'zip'
-                              ? 'Transaksi baru disimpan, screenshot diunggah ke folder Storage Anda, dan transaksi yang ada diperbarui secara aman.'
-                              : 'Transaksi baru akan disimpan dan transaksi yang sudah ada diperbarui secara aman tanpa duplikasi.'
-                            : 'Peringatan: Jika tidak dicentang, data hanya dimuat ke browser dan BELUM tersimpan di server cloud Supabase.'}
+                              ? tr(
+                                  'Transaksi baru disimpan, tangkapan layar diunggah ke folder Storage Anda, dan transaksi yang ada diperbarui secara aman.',
+                                  'New trades are saved, screenshots are uploaded to your Storage folder, and existing trades are safely updated.'
+                                )
+                              : tr(
+                                  'Transaksi baru akan disimpan dan transaksi yang sudah ada diperbarui secara aman tanpa duplikasi.',
+                                  'New trades will be saved and existing trades safely updated without duplication.'
+                                )
+                            : tr(
+                                'Peringatan: Jika tidak dicentang, data hanya dimuat ke browser dan BELUM tersimpan di server cloud Supabase.',
+                                'Warning: If unchecked, data is only loaded into the browser and NOT YET saved to the Supabase cloud server.'
+                              )}
                         </p>
                       </div>
                     </label>
@@ -1479,10 +1730,27 @@ export const JsonBackupModal: React.FC<JsonBackupModalProps> = ({
                     <CheckCircle2 className="h-4 w-4 stroke-[1.75]" />
                     <span>
                       {isRestoringJson
-                        ? 'Memulihkan & Menyinkronkan Screenshot ke Cloud...'
+                        ? tr(
+                            'Memulihkan & Menyinkronkan Gambar ke Cloud...',
+                            'Restoring & Syncing Screenshots to Cloud...'
+                          )
                         : importMode === 'replace'
-                        ? `Ganti Seluruh Data (${validationReport.validTradesCount} Trade)${currentUser && syncToCloud ? ' & Simpan ke Cloud' : ''}`
-                        : `Gabungkan ${validationReport.validTradesCount} Trade${currentUser && syncToCloud ? ' & Simpan ke Cloud' : ''}`}
+                        ? tr(
+                            `Ganti Seluruh Data (${validationReport.validTradesCount} Transaksi)${
+                              currentUser && syncToCloud ? ' & Simpan ke Cloud' : ''
+                            }`,
+                            `Replace All Data (${validationReport.validTradesCount} Trades)${
+                              currentUser && syncToCloud ? ' & Save to Cloud' : ''
+                            }`
+                          )
+                        : tr(
+                            `Gabungkan ${validationReport.validTradesCount} Transaksi${
+                              currentUser && syncToCloud ? ' & Simpan ke Cloud' : ''
+                            }`,
+                            `Merge ${validationReport.validTradesCount} Trades${
+                              currentUser && syncToCloud ? ' & Save to Cloud' : ''
+                            }`
+                          )}
                     </span>
                   </button>
                 )}
@@ -1494,4 +1762,3 @@ export const JsonBackupModal: React.FC<JsonBackupModalProps> = ({
     </div>
   );
 };
-

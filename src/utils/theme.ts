@@ -6,9 +6,11 @@
 import { useState, useEffect, useCallback } from 'react';
 
 export type AppTheme = 'light' | 'dark';
+export type ThemeMode = AppTheme;
 
 export const THEME_STORAGE_KEY = 'tradevault_theme_v1';
 export const THEME_CHANGE_EVENT = 'tradevault-theme-change';
+export const THEME_EVENT_NAME = THEME_CHANGE_EVENT;
 
 /**
  * Reads the persisted theme from localStorage.
@@ -27,6 +29,8 @@ export function getStoredTheme(): AppTheme {
   }
 }
 
+export const getThemeMode = getStoredTheme;
+
 /**
  * Persists the user's manual theme choice to localStorage and notifies listeners.
  */
@@ -40,6 +44,14 @@ export function setStoredTheme(theme: AppTheme): void {
   } catch (err) {
     console.warn('Failed to save theme preference:', err);
   }
+}
+
+export const setThemeMode = setStoredTheme;
+
+export function toggleThemeMode(): AppTheme {
+  const next: AppTheme = getStoredTheme() === 'dark' ? 'light' : 'dark';
+  setStoredTheme(next);
+  return next;
 }
 
 /**

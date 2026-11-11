@@ -33,6 +33,7 @@ import { EquityChart } from './EquityChart';
 import { DashboardCalendar } from './DashboardCalendar';
 import { RiskSnapshot } from './RiskSnapshot';
 import { Eye, EyeOff, ChevronDown, Check, ArrowRight, Plus, ArrowUpDown } from 'lucide-react';
+import { useLanguage } from '../../utils/language';
 
 interface DashboardViewProps {
   trades: Trade[];
@@ -53,12 +54,22 @@ const PERIOD_SHORT_LABELS: Record<DashboardPeriodPreset, string> = {
   'ALL': 'ALL',
 };
 
-function formatRecentTradeDate(dateTimeStr: string): string {
+const PERIOD_EN_LABELS: Record<DashboardPeriodPreset, string> = {
+  '1D': 'Last 1 Day',
+  '7D': 'Last 7 Days',
+  '1M': 'Last 1 Month',
+  '3M': 'Last 3 Months',
+  '6M': 'Last 6 Months',
+  '1Y': 'Last 1 Year',
+  'ALL': 'All Time',
+};
+
+function formatRecentTradeDate(dateTimeStr: string, locale: string = 'id-ID'): string {
   if (!dateTimeStr) return '-';
   try {
     const dt = new Date(dateTimeStr);
     if (!isNaN(dt.getTime())) {
-      const datePart = dt.toLocaleDateString('id-ID', {
+      const datePart = dt.toLocaleDateString(locale, {
         day: '2-digit',
         month: 'short',
         year: 'numeric',
@@ -97,6 +108,8 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   onAddTrade,
   onViewTrade,
 }) => {
+  const { isEn, locale, tr } = useLanguage();
+
   // Global Privacy Mode (Hide Balance) persisted in localStorage
   const [isPrivacyMode, setIsPrivacyMode] = useState<boolean>(() => {
     try {
@@ -320,7 +333,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
 
   const todayFormattedDate = useMemo(() => {
     try {
-      return new Date().toLocaleDateString('id-ID', {
+      return new Date().toLocaleDateString(locale, {
         weekday: 'short',
         day: '2-digit',
         month: 'short',
@@ -329,7 +342,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     } catch {
       return '';
     }
-  }, []);
+  }, [locale]);
 
   const periodDropdownControl = (
     <div ref={periodMenuRef} className="relative">
@@ -341,7 +354,11 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         aria-expanded={isPeriodMenuOpen}
         className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-[#F5F7FA] dark:bg-[#101318] border border-[#DDE3EA] dark:border-[#20252D] hover:border-[#3478DC] text-xs font-semibold text-[#151D2A] dark:text-[#F2F4F7] transition-colors cursor-pointer whitespace-nowrap"
       >
-        <span>{PERIOD_SHORT_LABELS[selectedPeriod] || selectedPeriod}</span>
+        <span>
+          {selectedPeriod === 'ALL'
+            ? tr('SEMUA', 'ALL')
+            : PERIOD_SHORT_LABELS[selectedPeriod] || selectedPeriod}
+        </span>
         <ChevronDown
           className={`h-3.5 w-3.5 stroke-[2] text-[#697586] dark:text-[#929BA9] transition-transform duration-150 ${
             isPeriodMenuOpen ? 'rotate-180' : ''
@@ -352,7 +369,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       {isPeriodMenuOpen && (
         <div
           role="listbox"
-          aria-label="Pilih Periode Performa"
+          aria-label={tr('Pilih Periode Performa', 'Select Performance Period')}
           data-testid="dashboard-period-dropdown-menu"
           className="absolute right-0 top-full mt-1.5 z-30 w-44 rounded-xl bg-white dark:bg-[#101318] border border-[#DDE3EA] dark:border-[#20252D] py-1 shadow-xl"
         >
@@ -376,8 +393,12 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                 }`}
               >
                 <div className="flex items-center gap-2">
-                  <span className="font-semibold">{PERIOD_SHORT_LABELS[opt.id]}</span>
-                  <span className="text-[#697586] dark:text-[#929BA9] text-[11px]">{opt.label}</span>
+                  <span className="font-semibold">
+                    {opt.id === 'ALL' ? tr('SEMUA', 'ALL') : PERIOD_SHORT_LABELS[opt.id]}
+                  </span>
+                  <span className="text-[#697586] dark:text-[#929BA9] text-[11px]">
+                    {isEn ? PERIOD_EN_LABELS[opt.id] : opt.label}
+                  </span>
                 </div>
                 {isSelected && <Check className="h-3.5 w-3.5 stroke-[2] text-[#1769E8] dark:text-[#3478DC]" />}
               </button>
@@ -393,7 +414,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       {/* TOP HEADER: DASHBOARD TITLE & CURRENT DATE */}
       <div className="flex items-center justify-between pb-3 border-b border-[#DDE3EA] dark:border-[#20252D]">
         <h1 className="text-xs font-bold uppercase tracking-[0.12em] text-[#151D2A] dark:text-[#F2F4F7]">
-          DASHBOARD
+          {tr('DASBOR', 'DASHBOARD')}
         </h1>
         <span className="text-[11px] font-medium text-[#697586] dark:text-[#929BA9]">
           {todayFormattedDate}
@@ -401,11 +422,11 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       </div>
 
       {/* 1. ACCOUNT BALANCE (Direct on background, zero card wrapper) */}
-      <section aria-label="Account Balance" className="py-1">
+      <section aria-label={tr('Saldo Akun', 'Account Balance')} className="py-1">
         <div className="flex items-start justify-between gap-4">
           <div className="space-y-1.5 min-w-0 flex-1">
             <span className="block text-[11px] font-semibold uppercase tracking-[0.08em] text-[#697586] dark:text-[#929BA9]">
-              ACCOUNT BALANCE
+              {tr('SALDO AKUN', 'ACCOUNT BALANCE')}
             </span>
 
             {/* Balances layout with vertical stack and swap button on the right */}
@@ -457,8 +478,16 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                   onClick={handleTogglePrivacy}
                   data-testid="dashboard-privacy-toggle"
                   className="inline-flex items-center justify-center p-2 rounded-full bg-[#F5F7FA] dark:bg-[#101318] border border-[#DDE3EA] dark:border-[#20252D] text-[#697586] dark:text-[#929BA9] hover:text-[#151D2A] dark:hover:text-[#F2F4F7] hover:border-black/20 dark:hover:border-white/20 transition-colors cursor-pointer shrink-0"
-                  title={isPrivacyMode ? 'Tampilkan Nominal Saldo' : 'Sembunyikan Nominal Saldo'}
-                  aria-label={isPrivacyMode ? 'Tampilkan Nominal Saldo' : 'Sembunyikan Nominal Saldo'}
+                  title={
+                    isPrivacyMode
+                      ? tr('Tampilkan Nominal Saldo', 'Show Balance Amount')
+                      : tr('Sembunyikan Nominal Saldo', 'Hide Balance Amount')
+                  }
+                  aria-label={
+                    isPrivacyMode
+                      ? tr('Tampilkan Nominal Saldo', 'Show Balance Amount')
+                      : tr('Sembunyikan Nominal Saldo', 'Hide Balance Amount')
+                  }
                   aria-pressed={isPrivacyMode}
                 >
                   {isPrivacyMode ? (
@@ -474,8 +503,14 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                   onClick={handleSwapCurrency}
                   data-testid="dashboard-currency-swap-btn"
                   className="inline-flex items-center justify-center p-2 rounded-full bg-[#F5F7FA] dark:bg-[#101318] border border-[#DDE3EA] dark:border-[#20252D] text-[#697586] dark:text-[#929BA9] hover:text-[#151D2A] dark:hover:text-[#F2F4F7] hover:border-black/20 dark:hover:border-white/20 transition-all duration-300 cursor-pointer shrink-0 group select-none"
-                  title={`Tukar saldo utama ke ${dualBalance.secondaryCurrency}`}
-                  aria-label={`Tukar saldo utama ke ${dualBalance.secondaryCurrency}`}
+                  title={tr(
+                    `Tukar saldo utama ke ${dualBalance.secondaryCurrency}`,
+                    `Swap primary balance to ${dualBalance.secondaryCurrency}`
+                  )}
+                  aria-label={tr(
+                    `Tukar saldo utama ke ${dualBalance.secondaryCurrency}`,
+                    `Swap primary balance to ${dualBalance.secondaryCurrency}`
+                  )}
                 >
                   <ArrowUpDown
                     className={`h-4 w-4 stroke-[2] transition-transform duration-300 ${
@@ -493,9 +528,9 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       <div className="border-b border-[#DDE3EA] dark:border-[#20252D]" />
 
       {/* 2. ACCOUNT PERFORMANCE (Direct on background, zero card wrapper) */}
-      <section aria-label="Account Performance" className="space-y-4 py-1">
+      <section aria-label={tr('Performa Akun', 'Account Performance')} className="space-y-4 py-1">
         <h2 className="text-[11px] font-semibold uppercase tracking-[0.08em] text-[#697586] dark:text-[#929BA9]">
-          ACCOUNT PERFORMANCE
+          {tr('PERFORMA AKUN', 'ACCOUNT PERFORMANCE')}
         </h2>
 
         {/* Unified 2x2 Metrics Grid directly on background */}
@@ -506,7 +541,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           {/* Top-Left: Net Profit */}
           <div>
             <span className="block text-xs font-sans text-[#697586] dark:text-[#929BA9]">
-              Net Profit
+              {tr('Profit Bersih', 'Net Profit')}
             </span>
             <span
               data-testid="dashboard-account-net-profit"
@@ -544,7 +579,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           {/* Top-Right: Pertumbuhan */}
           <div>
             <span className="block text-xs font-sans text-[#697586] dark:text-[#929BA9]">
-              Pertumbuhan
+              {tr('Pertumbuhan', 'Growth')}
             </span>
             <span
               data-testid="dashboard-account-growth"
@@ -565,7 +600,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           {/* Bottom-Left: Win Rate */}
           <div>
             <span className="block text-xs font-sans text-[#697586] dark:text-[#929BA9]">
-              Win Rate
+              {tr('Tingkat Menang', 'Win Rate')}
             </span>
             <span
               data-testid="dashboard-account-win-rate"
@@ -578,7 +613,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           {/* Bottom-Right: Total Trades */}
           <div>
             <span className="block text-xs font-sans text-[#697586] dark:text-[#929BA9]">
-              Total Trades
+              {tr('Total Transaksi', 'Total Trades')}
             </span>
             <span
               data-testid="dashboard-account-total-trades"
@@ -594,9 +629,9 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       <div className="border-b border-[#DDE3EA] dark:border-[#20252D]" />
 
       {/* 3. EQUITY CURVE (Direct on background, zero card wrapper) */}
-      <section aria-label="Equity Curve" className="space-y-3 py-1">
+      <section aria-label={tr('Kurva Ekuitas', 'Equity Curve')} className="space-y-3 py-1">
         <h2 className="text-[11px] font-semibold uppercase tracking-[0.08em] text-[#697586] dark:text-[#929BA9]">
-          EQUITY CURVE
+          {tr('KURVA EKUITAS', 'EQUITY CURVE')}
         </h2>
 
         <EquityChart
@@ -614,7 +649,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       <div className="border-b border-[#DDE3EA] dark:border-[#20252D]" />
 
       {/* 4. PERFORMANCE CALENDAR */}
-      <section aria-label="Performance Calendar" className="py-1">
+      <section aria-label={tr('Kalender Performa', 'Performance Calendar')} className="py-1">
         <DashboardCalendar
           trades={trades}
           settings={settings}
@@ -629,7 +664,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       <div className="border-b border-[#DDE3EA] dark:border-[#20252D]" />
 
       {/* 5. RISK SNAPSHOT */}
-      <section aria-label="Risk Snapshot" className="py-1">
+      <section aria-label={tr('Ringkasan Risiko', 'Risk Snapshot')} className="py-1">
         <RiskSnapshot
           trades={trades}
           settings={settings}
@@ -645,25 +680,27 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       <div className="border-b border-[#DDE3EA] dark:border-[#20252D]" />
 
       {/* 6. RECENT TRADES (Seamless Black, zero card wrapper, zero blue accent) */}
-      <section aria-label="Recent Trades" className="space-y-2 py-1">
+      <section aria-label={tr('Transaksi Terbaru', 'Recent Trades')} className="space-y-2 py-1">
         <div className="flex items-center justify-between pb-2.5 border-b border-[#DDE3EA] dark:border-[#20252D]">
           <h2 className="text-[11px] font-semibold uppercase tracking-[0.08em] text-[#697586] dark:text-[#929BA9]">
-            RECENT TRADES
+            {tr('TRANSAKSI TERBARU', 'RECENT TRADES')}
           </h2>
           <button
             type="button"
             onClick={() => onNavigate('trades')}
             className="inline-flex items-center gap-1.5 text-xs font-medium text-[#697586] dark:text-[#929BA9] hover:text-[#151D2A] dark:hover:text-[#F2F4F7] transition-colors cursor-pointer whitespace-nowrap"
           >
-            <span>Lihat Semua</span>
+            <span>{tr('Lihat Semua', 'View All')}</span>
             <ArrowRight className="h-3.5 w-3.5 stroke-[1.75]" />
           </button>
         </div>
 
         {recentThreeTrades.length === 0 ? (
           <div className="py-8 text-center text-xs text-[#697586] dark:text-[#929BA9]">
-            Belum ada transaksi yang dicatat. Gunakan tombol &ldquo;Tambah Entry&rdquo; di bawah
-            untuk mulai mencatat.
+            {tr(
+              'Belum ada transaksi yang dicatat. Gunakan tombol “Tambah Entry” di bawah untuk mulai mencatat.',
+              'No trades recorded yet. Use the “Add Entry” button below to start logging.'
+            )}
           </div>
         ) : (
           <div
@@ -698,7 +735,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                             : 'text-[#E11D48] dark:text-[#E05260]'
                         }`}
                       >
-                        {t.position}
+                        {t.position === 'BUY' ? tr('BELI', 'BUY') : tr('JUAL', 'SELL')}
                       </span>
                       <span className="text-[#697586] dark:text-[#929BA9]" aria-hidden="true">
                         ·
@@ -709,11 +746,11 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                     </div>
 
                     <div className="text-[11px] font-sans text-[#697586] dark:text-[#929BA9]">
-                      {formatRecentTradeDate(t.dateTime)}
+                      {formatRecentTradeDate(t.dateTime, locale)}
                       {outcome === 'BREAKEVEN' && (
                         <>
                           <span className="mx-1" aria-hidden="true">·</span>
-                          <span>BE</span>
+                          <span>{tr('IMPAS', 'BE')}</span>
                         </>
                       )}
                     </div>
@@ -764,7 +801,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           className="w-full sm:w-auto sm:min-w-[200px] flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl bg-[#F5F7FA] dark:bg-[#101318] hover:bg-[#EEF2F6] dark:hover:bg-[#161A22] border border-[#DDE3EA] dark:border-[#20252D] hover:border-[#CBD5E1] dark:hover:border-[#2D343F] text-[#151D2A] dark:text-[#F2F4F7] text-xs sm:text-sm font-semibold transition-all duration-150 cursor-pointer shadow-xs"
         >
           <Plus className="h-4 w-4 stroke-[2] text-[#697586] dark:text-[#929BA9]" />
-          <span>Tambah Entry</span>
+          <span>{tr('Tambah Entry', 'Add Entry')}</span>
         </button>
       </div>
     </div>

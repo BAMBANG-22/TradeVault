@@ -22,6 +22,7 @@ import {
 } from 'lucide-react';
 import { AppSettings } from '../../types/settings';
 import { useTheme } from '../../utils/theme';
+import { useLanguage } from '../../utils/language';
 import { BrandLogo } from './BrandLogo';
 
 interface SidebarProps {
@@ -50,14 +51,15 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onAddTrade,
 }) => {
   const { isDark, toggleTheme } = useTheme();
+  const { isEn, tr } = useLanguage();
 
   const mainMenuItems = [
-    { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
-    { id: 'trades', label: 'Trade Log', icon: BookOpen },
-    { id: 'add-trade', label: 'Catat Trade Baru', icon: PlusCircle },
-    { id: 'analytics', label: 'Analytics', icon: BarChart3 },
-    { id: 'risk', label: 'Risk Management', icon: ShieldAlert },
-    { id: 'market-chart', label: 'Market Chart', icon: CandlestickChart },
+    { id: 'dashboard', label: tr('Dasbor', 'Dashboard'), icon: LayoutDashboard },
+    { id: 'trades', label: tr('Jurnal Trade', 'Trade Log'), icon: BookOpen },
+    { id: 'add-trade', label: tr('Catat Trade Baru', 'New Trade'), icon: PlusCircle },
+    { id: 'analytics', label: tr('Analitik', 'Analytics'), icon: BarChart3 },
+    { id: 'risk', label: tr('Manajemen Risiko', 'Risk Management'), icon: ShieldAlert },
+    { id: 'market-chart', label: tr('Chart Pasar', 'Market Chart'), icon: CandlestickChart },
   ];
 
   return (
@@ -100,7 +102,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                     {currentUser.email}
                   </span>
                   <span className="text-[11px] text-[#697586] dark:text-[#8E98A8] block mt-0.5">
-                    Akun aktif
+                    {tr('Akun aktif', 'Active account')}
                   </span>
                 </div>
               </div>
@@ -118,10 +120,10 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 </div>
                 <div className="min-w-0">
                   <span className="text-xs font-semibold text-[#151D2A] dark:text-[#F2F5F9] block truncate">
-                    Belum masuk
+                    {tr('Belum masuk', 'Not signed in')}
                   </span>
                   <span className="text-[11px] text-[#697586] dark:text-[#8E98A8] block mt-0.5">
-                    Ketuk untuk masuk akun
+                    {tr('Ketuk untuk masuk akun', 'Tap to sign in')}
                   </span>
                 </div>
               </div>
@@ -136,9 +138,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
           className="pb-3.5 border-b border-[#DDE3EA] dark:border-[#202630]"
         >
           <span className="text-[10px] font-semibold uppercase tracking-[0.08em] text-[#697586] dark:text-[#8E98A8] block px-2 mb-1.5">
-            MENU UTAMA
+            {tr('MENU UTAMA', 'MAIN MENU')}
           </span>
-          <nav className="flex flex-col space-y-0.5" aria-label="Navigasi Desktop">
+          <nav className="flex flex-col space-y-0.5" aria-label={tr('Navigasi Desktop', 'Desktop Navigation')}>
             {mainMenuItems.map((item) => {
               const Icon = item.icon;
               const isActive =
@@ -181,7 +183,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
           className="pb-3.5 border-b border-[#DDE3EA] dark:border-[#202630]"
         >
           <span className="text-[10px] font-semibold uppercase tracking-[0.08em] text-[#697586] dark:text-[#8E98A8] block px-2 mb-1.5">
-            PREFERENSI
+            {tr('PREFERENSI', 'PREFERENCES')}
           </span>
           <button
             type="button"
@@ -197,10 +199,10 @@ export const Sidebar: React.FC<SidebarProps> = ({
               )}
               <div className="min-w-0">
                 <span className="text-[13px] font-medium text-[#151D2A] dark:text-[#F2F5F9] block leading-snug">
-                  Tampilan
+                  {tr('Tampilan', 'Appearance')}
                 </span>
                 <span className="text-[11px] text-[#697586] dark:text-[#8E98A8] block">
-                  {isDark ? 'Gelap' : 'Terang'}
+                  {isEn ? (isDark ? 'Dark' : 'Light') : (isDark ? 'Gelap' : 'Terang')}
                 </span>
               </div>
             </div>
@@ -213,7 +215,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
           className="pb-3.5 border-b border-[#DDE3EA] dark:border-[#202630]"
         >
           <span className="text-[10px] font-semibold uppercase tracking-[0.08em] text-[#697586] dark:text-[#8E98A8] block px-2 mb-1.5">
-            PENGATURAN
+            {tr('PENGATURAN', 'SETTINGS')}
           </span>
           <div className="flex flex-col space-y-0.5">
             <button
@@ -227,7 +229,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
             >
               <div className="flex items-center gap-3 min-w-0">
                 <Settings className="h-4 w-4 shrink-0 text-[#697586] dark:text-[#8E98A8] stroke-[1.75]" />
-                <span className="truncate">Pengaturan Aplikasi</span>
+                <span className="truncate">{tr('Pengaturan Aplikasi', 'App Settings')}</span>
               </div>
               <ChevronRight className="h-3.5 w-3.5 shrink-0 text-[#697586] dark:text-[#8E98A8] stroke-[1.75]" />
             </button>
@@ -245,17 +247,17 @@ export const Sidebar: React.FC<SidebarProps> = ({
             >
               <div className="flex items-center gap-3 min-w-0">
                 <User className="h-4 w-4 shrink-0 text-[#697586] dark:text-[#8E98A8] stroke-[1.75]" />
-                <span className="truncate">Pengaturan Akun</span>
+                <span className="truncate">{tr('Pengaturan Akun', 'Account Settings')}</span>
               </div>
               <ChevronRight className="h-3.5 w-3.5 shrink-0 text-[#697586] dark:text-[#8E98A8] stroke-[1.75]" />
             </button>
           </div>
         </div>
 
-        {/* 6. Data & Penyimpanan */}
+        {/* 6. Data & Penyimpanan - DATA &amp; PENYIMPANAN */}
         <div data-testid="sidebar-storage-section" className="pb-2">
           <span className="text-[10px] font-semibold uppercase tracking-[0.08em] text-[#697586] dark:text-[#8E98A8] block px-2 mb-1.5">
-            DATA &amp; PENYIMPANAN
+            {tr('DATA & PENYIMPANAN', 'DATA & STORAGE')}
           </span>
           <div className="flex flex-col space-y-0.5">
             <button
@@ -265,7 +267,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
             >
               <div className="flex items-center gap-3 min-w-0">
                 <Database className="h-4 w-4 shrink-0 text-[#697586] dark:text-[#8E98A8] stroke-[1.75]" />
-                <span className="truncate">Penyimpanan Lokal</span>
+                <span className="truncate">{tr('Penyimpanan Lokal', 'Local Storage')}</span>
               </div>
               <div className="flex items-center gap-1.5 shrink-0">
                 <span className="text-[11px] font-mono-numbers tabular-nums text-[#697586] dark:text-[#8E98A8]">
@@ -282,7 +284,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
             >
               <div className="flex items-center gap-3 min-w-0">
                 <Info className="h-4 w-4 shrink-0 text-[#697586] dark:text-[#8E98A8] stroke-[1.75]" />
-                <span className="truncate">Info Penyimpanan</span>
+                <span className="truncate">{tr('Info Penyimpanan', 'Storage Info')}</span>
               </div>
               <ChevronRight className="h-3.5 w-3.5 shrink-0 text-[#697586] dark:text-[#8E98A8] stroke-[1.75]" />
             </button>
@@ -294,7 +296,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
             >
               <div className="flex items-center gap-3 min-w-0">
                 <HardDriveDownload className="h-4 w-4 shrink-0 text-[#697586] dark:text-[#8E98A8] stroke-[1.75]" />
-                <span className="truncate">Backup Data</span>
+                <span className="truncate">{tr('Cadangan Data', 'Backup Data')}</span>
               </div>
               <ChevronRight className="h-3.5 w-3.5 shrink-0 text-[#697586] dark:text-[#8E98A8] stroke-[1.75]" />
             </button>
@@ -305,7 +307,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
       {/* Footer */}
       <div className="pt-3 mt-4 border-t border-[#DDE3EA] dark:border-[#202630] px-2">
         <span className="text-[10px] font-semibold uppercase tracking-[0.1em] text-[#697586] dark:text-[#8E98A8] block">
-          TRADEVAULT JOURNAL
+          {tr('JURNAL TRADEVAULT', 'TRADEVAULT JOURNAL')}
         </span>
       </div>
     </aside>

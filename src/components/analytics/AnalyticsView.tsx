@@ -20,6 +20,7 @@ import {
   useGlobalCurrency,
   computeCumulativeProfitInDisplayCurrency,
 } from '../../utils/currencyRate';
+import { useLanguage } from '../../utils/language';
 import { EquityChart } from '../dashboard/EquityChart';
 import { DrawdownChart } from '../dashboard/DrawdownChart';
 import { RadarChart } from '../dashboard/RadarChart';
@@ -45,16 +46,6 @@ interface AnalyticsViewProps {
 type PeriodPreset = 'ALL' | 'TODAY' | 'THIS_MONTH' | 'LAST_MONTH' | '7D' | '30D' | 'YTD' | 'CUSTOM';
 type ChartRangeOption = '1D' | '1W' | '1M' | '3M' | '6M' | '1Y' | 'ALL';
 type BreakdownCategory = 'day' | 'session' | 'instrument';
-
-const CHART_RANGE_OPTIONS: { id: ChartRangeOption; label: string }[] = [
-  { id: '1D', label: '1D' },
-  { id: '1W', label: '1W' },
-  { id: '1M', label: '1M' },
-  { id: '3M', label: '3M' },
-  { id: '6M', label: '6M' },
-  { id: '1Y', label: '1Y' },
-  { id: 'ALL', label: 'All Time' },
-];
 
 /**
  * Filters an equityCurve by a relative chart timeframe ('1D', '1W', '1M', '3M', '6M', '1Y', 'ALL')
@@ -109,8 +100,22 @@ const filterEquityCurveByRange = (
 
 export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ trades, settings, onViewTrade }) => {
   const { preferredCurrency, rateRecord, formatDynamic } = useGlobalCurrency();
+  const { tr } = useLanguage();
   const fmtMoney = (valUsd: number, privacy: boolean = isPrivacyMode) =>
     preferredCurrency === 'IDR' ? formatDynamic(valUsd, privacy) : formatCurrency(valUsd, settings, privacy);
+
+  const chartRangeOptions: { id: ChartRangeOption; label: string }[] = useMemo(
+    () => [
+      { id: '1D', label: '1D' },
+      { id: '1W', label: '1W' },
+      { id: '1M', label: '1M' },
+      { id: '3M', label: '3M' },
+      { id: '6M', label: '6M' },
+      { id: '1Y', label: '1Y' },
+      { id: 'ALL', label: tr('Semua Waktu', 'All Time') },
+    ],
+    [tr]
+  );
 
   // Global Analytics Period filter state
   const [selectedPeriod, setSelectedPeriod] = useState<PeriodPreset>('ALL');
@@ -249,14 +254,14 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ trades, settings, 
   };
 
   const getPeriodLabel = (): string => {
-    if (selectedPeriod === 'THIS_MONTH') return 'Bulan Ini';
-    if (selectedPeriod === 'LAST_MONTH') return 'Bulan Lalu';
-    if (selectedPeriod === '7D') return '7 Hari Terakhir';
-    if (selectedPeriod === '30D') return '30 Hari Terakhir';
-    if (selectedPeriod === 'TODAY') return 'Hari Ini';
-    if (selectedPeriod === 'YTD') return 'Tahun Ini';
-    if (startDate || endDate) return `${startDate || '...'} s/d ${endDate || '...'}`;
-    return 'Semua Waktu';
+    if (selectedPeriod === 'THIS_MONTH') return tr('Bulan Ini', 'This Month');
+    if (selectedPeriod === 'LAST_MONTH') return tr('Bulan Lalu', 'Last Month');
+    if (selectedPeriod === '7D') return tr('7 Hari Terakhir', 'Last 7 Days');
+    if (selectedPeriod === '30D') return tr('30 Hari Terakhir', 'Last 30 Days');
+    if (selectedPeriod === 'TODAY') return tr('Hari Ini', 'Today');
+    if (selectedPeriod === 'YTD') return tr('Tahun Ini', 'This Year');
+    if (startDate || endDate) return `${startDate || '...'} ${tr('s/d', 'to')} ${endDate || '...'}`;
+    return tr('Semua Waktu', 'All Time');
   };
 
   // Filter trades based on active date range and compute true period starting balance
@@ -289,7 +294,7 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ trades, settings, 
   }, [equityCurve, equityRange]);
 
   const equityRangeSummary = useMemo(() => {
-    const label = CHART_RANGE_OPTIONS.find((o) => o.id === equityRange)?.label || 'All Time';
+    const label = chartRangeOptions.find((o) => o.id === equityRange)?.label || tr('Semua Waktu', 'All Time');
     if (!rangedEquityCurve || rangedEquityCurve.length <= 1) {
       return {
         label,
@@ -310,7 +315,7 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ trades, settings, 
       netDelta,
       growthDelta,
     };
-  }, [rangedEquityCurve, equityRange, periodStartingBalance]);
+  }, [rangedEquityCurve, equityRange, periodStartingBalance, chartRangeOptions, tr]);
 
   // Section 02B: Filtered Drawdown Curve & Dynamic Summary (Current DD, Max DD, Recovery %)
   const rangedDrawdownCurve = useMemo(() => {
@@ -318,7 +323,7 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ trades, settings, 
   }, [equityCurve, drawdownRange]);
 
   const drawdownSummary = useMemo(() => {
-    const label = CHART_RANGE_OPTIONS.find((o) => o.id === drawdownRange)?.label || 'All Time';
+    const label = chartRangeOptions.find((o) => o.id === drawdownRange)?.label || tr('Semua Waktu', 'All Time');
     if (!rangedDrawdownCurve || rangedDrawdownCurve.length <= 1) {
       return {
         label,
@@ -352,11 +357,19 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ trades, settings, 
       maxDdAmt,
       recoveryPct,
     };
-  }, [rangedDrawdownCurve, drawdownRange]);
+  }, [rangedDrawdownCurve, drawdownRange, chartRangeOptions, tr]);
 
-  // Section 05: Day of Week Performance (Senin - Jumat)
+  // Section 05: Day of Week Performance (Senin - Jumat / Monday - Friday)
   const dayOfWeekStats = useMemo(() => {
-    const dayNames = ['Minggu', 'Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat', 'Sabtu'];
+    const dayNames = [
+      tr('Minggu', 'Sunday'),
+      tr('Senin', 'Monday'),
+      tr('Selasa', 'Tuesday'),
+      tr('Rabu', 'Wednesday'),
+      tr('Kamis', 'Thursday'),
+      tr('Jumat', 'Friday'),
+      tr('Sabtu', 'Saturday'),
+    ];
     const map: Record<
       number,
       { dayName: string; trades: Trade[]; netProfit: number; winCount: number; lossCount: number }
@@ -388,14 +401,14 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ trades, settings, 
         netProfit: Number(item.netProfit.toFixed(2)),
       };
     });
-  }, [filteredTrades]);
+  }, [filteredTrades, tr]);
 
   // Section 05: Session Performance (Asian, London, New York)
   const sessionStats = useMemo(() => {
     const sessions = [
-      { id: 'Asian', label: 'Asia', desc: 'Tokyo & Sydney' },
-      { id: 'London', label: 'London', desc: 'Eropa / UK' },
-      { id: 'New York', label: 'New York', desc: 'Amerika / US' },
+      { id: 'Asian', label: tr('Asia', 'Asian'), desc: 'Tokyo & Sydney' },
+      { id: 'London', label: 'London', desc: tr('Eropa / UK', 'Europe / UK') },
+      { id: 'New York', label: 'New York', desc: tr('Amerika / US', 'America / US') },
     ];
 
     return sessions.map((sess) => {
@@ -445,7 +458,7 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ trades, settings, 
         profitFactor,
       };
     });
-  }, [filteredTrades]);
+  }, [filteredTrades, tr]);
 
   // Section 05: Symbol / Instrument Performance
   const symbolStats = useMemo(() => {
@@ -488,32 +501,32 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ trades, settings, 
     const isSufficient = radarIndicators.isDataSufficient;
     return [
       {
-        name: 'Win Rate',
+        name: tr('Rasio Menang', 'Win Rate'),
         score: isSufficient ? radarIndicators.winRateScore : 0,
         isAvailable: isSufficient,
         displayVal: isSufficient ? `${metrics.winRate}%` : '-',
-        target: 'Target: ≥ 50%',
+        target: tr('Target: ≥ 50%', 'Target: ≥ 50%'),
       },
       {
-        name: 'Profit Factor',
+        name: tr('Faktor Profit', 'Profit Factor'),
         score: isSufficient ? radarIndicators.profitFactorScore : 0,
         isAvailable: isSufficient,
         displayVal: isSufficient
           ? formatProfitFactor(metrics.profitFactor, metrics.isProfitFactorInfinite)
           : '-',
-        target: 'Target: ≥ 1.50',
+        target: tr('Target: ≥ 1.50', 'Target: ≥ 1.50'),
       },
       {
-        name: 'Average RR',
+        name: tr('Rata-rata RR', 'Average RR'),
         score: isSufficient && metrics.hasValidRiskReward ? radarIndicators.rewardRiskScore : 0,
         isAvailable: isSufficient && metrics.hasValidRiskReward,
         displayVal: isSufficient
           ? formatRMultiple(metrics.averageRiskReward, metrics.hasValidRiskReward)
           : '-',
-        target: 'Target: ≥ 1.00R',
+        target: tr('Target: ≥ 1.00R', 'Target: ≥ 1.00R'),
       },
       {
-        name: 'Expectancy',
+        name: tr('Ekspektansi', 'Expectancy'),
         score: isSufficient ? radarIndicators.expectancyScore : 0,
         isAvailable: isSufficient,
         displayVal: isSufficient
@@ -522,7 +535,7 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ trades, settings, 
         target: preferredCurrency === 'IDR' ? 'Target: > Rp0' : 'Target: > $0',
       },
       {
-        name: 'Risk Control',
+        name: tr('Kontrol Risiko', 'Risk Control'),
         score: isSufficient
           ? radarIndicators.riskControlScore ?? radarIndicators.drawdownControlScore
           : 0,
@@ -530,22 +543,22 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ trades, settings, 
         displayVal: isSufficient
           ? `${metrics.maxDrawdownPercent > 0 ? '-' : ''}${metrics.maxDrawdownPercent.toFixed(1)}% DD`
           : '-',
-        target: 'Target: DD ≤ 10%',
+        target: tr('Target: DD ≤ 10%', 'Target: DD ≤ 10%'),
       },
       {
-        name: 'Consistency',
+        name: tr('Konsistensi', 'Consistency'),
         score: isSufficient ? radarIndicators.consistencyScore : 0,
         isAvailable: isSufficient,
         displayVal: isSufficient ? `${radarIndicators.consistencyScore}%` : '-',
-        target: 'Target: ≥ 60% Hari Win',
+        target: tr('Target: ≥ 60% Hari Menang', 'Target: ≥ 60% Win Days'),
       },
     ];
-  }, [radarIndicators, metrics, settings, isPrivacyMode, preferredCurrency, fmtMoney]);
+  }, [radarIndicators, metrics, settings, isPrivacyMode, preferredCurrency, fmtMoney, tr]);
 
   const breakdownLabels: Record<BreakdownCategory, string> = {
-    day: 'Hari & Bulanan',
-    session: 'Sesi Trading (Asia / London / NY)',
-    instrument: `Instrumen (${symbolStats.length})`,
+    day: tr('Hari & Bulanan', 'Day & Monthly'),
+    session: tr('Sesi Trading (Asia / London / NY)', 'Trading Session (Asia / London / NY)'),
+    instrument: `${tr('Instrumen', 'Instruments')} (${symbolStats.length})`,
   };
 
   return (
@@ -557,11 +570,20 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ trades, settings, 
             <BarChart className="h-7 w-7 stroke-[1.75]" />
           </div>
           <h3 className="text-base sm:text-lg font-bold text-[#151D2A] dark:text-[#F2F5F9]">
-            Belum Ada Data Transaksi untuk Dianalisis
+            {tr('Belum Ada Data Transaksi untuk Dianalisis', 'No Trade Data Available for Analysis')}
           </h3>
           <p className="text-xs text-[#697586] dark:text-[#8E98A8] max-w-md leading-relaxed">
-            Jurnal trading Anda masih kosong. Tambahkan transaksi melalui tombol{' '}
-            <strong className="text-[#3B82F6] font-semibold">(+) Tambah Transaksi</strong> di navigasi bawah untuk membuka statistik performa, kurva ekuitas, dan profil risiko.
+            {tr(
+              'Jurnal trading Anda masih kosong. Tambahkan transaksi melalui tombol ',
+              'Your trading journal is still empty. Add a trade using the '
+            )}
+            <strong className="text-[#3B82F6] font-semibold">
+              {tr('(+) Tambah Transaksi', '(+) Add Trade')}
+            </strong>
+            {tr(
+              ' di navigasi bawah untuk membuka statistik performa, kurva ekuitas, dan profil risiko.',
+              ' button in the navigation bar to unlock performance statistics, equity curves, and risk profiles.'
+            )}
           </p>
         </div>
       ) : (
@@ -574,10 +596,10 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ trades, settings, 
             <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2.5 sm:gap-3">
               <div>
                 <span className="block text-[10px] font-bold uppercase tracking-[0.14em] text-[#697586] dark:text-[#6E7785]">
-                  01 / PERFORMANCE OVERVIEW
+                  {tr('01 / RINGKASAN PERFORMA', '01 / PERFORMANCE OVERVIEW')}
                 </span>
                 <h2 className="text-base sm:text-lg font-bold text-[#151D2A] dark:text-[#F2F5F9] mt-0.5">
-                  Ringkasan Performa Utama
+                  {tr('Ringkasan Performa Utama', 'Key Performance Overview')}
                 </h2>
               </div>
 
@@ -588,8 +610,8 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ trades, settings, 
                     type="button"
                     onClick={handleResetFilters}
                     className="p-1.5 rounded-full text-[#697586] dark:text-[#8E98A8] hover:text-[#151D2A] dark:hover:text-[#F2F5F9] bg-black/[0.03] dark:bg-white/[0.04] border border-[#DDE3EA] dark:border-white/[0.08] transition-colors cursor-pointer shrink-0"
-                    title="Reset Filter Tanggal"
-                    aria-label="Reset Filter Tanggal"
+                    title={tr('Reset Filter Tanggal', 'Reset Date Filter')}
+                    aria-label={tr('Reset Filter Tanggal', 'Reset Date Filter')}
                   >
                     <RotateCcw className="h-3.5 w-3.5 stroke-[1.75]" />
                   </button>
@@ -600,14 +622,16 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ trades, settings, 
                   <button
                     type="button"
                     onClick={() => setShowPeriodDropdown((prev) => !prev)}
-                    aria-label="Filter Periode Analisis"
+                    aria-label={tr('Filter Periode Analisis', 'Filter Analytics Period')}
                     className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium border transition-colors cursor-pointer select-none max-w-full ${
                       showPeriodDropdown || selectedPeriod !== 'ALL' || Boolean(startDate || endDate)
                         ? 'bg-black/[0.05] dark:bg-white/[0.07] text-[#151D2A] dark:text-[#F2F5F9] border-[#3B82F6]/60'
                         : 'bg-black/[0.03] dark:bg-white/[0.04] text-[#151D2A] dark:text-[#F2F5F9] border-[#DDE3EA] dark:border-white/[0.08] hover:border-[#3B82F6]/40'
                     }`}
                   >
-                    <span className="text-[#697586] dark:text-[#8E98A8] shrink-0">Periode:</span>
+                    <span className="text-[#697586] dark:text-[#8E98A8] shrink-0">
+                      {tr('Periode:', 'Period:')}
+                    </span>
                     <strong className="font-bold truncate max-w-[165px] sm:max-w-none">{getPeriodLabel()}</strong>
                     <ChevronDown className="h-3.5 w-3.5 text-[#697586] dark:text-[#8E98A8] shrink-0" />
                   </button>
@@ -616,7 +640,7 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ trades, settings, 
                     <div className="absolute left-0 sm:left-auto sm:right-0 top-10 z-30 w-[min(288px,calc(100vw-2rem))] sm:w-80 rounded-2xl border border-[#DDE3EA] dark:border-white/10 bg-white dark:bg-[#0E1217] p-3.5 shadow-2xl space-y-3 text-xs animate-in fade-in duration-150">
                       <div className="flex items-center justify-between pb-2 border-b border-[#DDE3EA] dark:border-white/[0.07]">
                         <span className="font-bold text-[#151D2A] dark:text-[#F2F5F9]">
-                          Filter Periode Analytics
+                          {tr('Filter Periode Analitik', 'Filter Analytics Period')}
                         </span>
                         <button
                           type="button"
@@ -629,13 +653,13 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ trades, settings, 
 
                       <div className="grid grid-cols-2 gap-1.5 text-[11px]">
                         {[
-                          { id: 'ALL', label: 'Semua Waktu' },
-                          { id: 'TODAY', label: 'Hari Ini' },
-                          { id: '7D', label: '7 Hari Terakhir' },
-                          { id: '30D', label: '30 Hari Terakhir' },
-                          { id: 'THIS_MONTH', label: 'Bulan Ini' },
-                          { id: 'LAST_MONTH', label: 'Bulan Lalu' },
-                          { id: 'YTD', label: 'Tahun Ini' },
+                          { id: 'ALL', label: tr('Semua Waktu', 'All Time') },
+                          { id: 'TODAY', label: tr('Hari Ini', 'Today') },
+                          { id: '7D', label: tr('7 Hari Terakhir', 'Last 7 Days') },
+                          { id: '30D', label: tr('30 Hari Terakhir', 'Last 30 Days') },
+                          { id: 'THIS_MONTH', label: tr('Bulan Ini', 'This Month') },
+                          { id: 'LAST_MONTH', label: tr('Bulan Lalu', 'Last Month') },
+                          { id: 'YTD', label: tr('Tahun Ini', 'This Year') },
                         ].map((p) => (
                           <button
                             key={p.id}
@@ -658,12 +682,12 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ trades, settings, 
                       {/* Custom Date Range Inputs */}
                       <div className="pt-2 border-t border-[#DDE3EA] dark:border-white/[0.07] space-y-2">
                         <span className="block text-[11px] text-[#697586] dark:text-[#8E98A8] font-medium">
-                          Rentang Tanggal Kustom
+                          {tr('Rentang Tanggal Kustom', 'Custom Date Range')}
                         </span>
                         <div className="grid grid-cols-2 gap-2 text-[11px]">
                           <div>
                             <label className="block text-[10px] text-[#697586] dark:text-[#7D8796] mb-0.5">
-                              Dari
+                              {tr('Dari', 'From')}
                             </label>
                             <input
                               type="date"
@@ -674,7 +698,7 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ trades, settings, 
                           </div>
                           <div>
                             <label className="block text-[10px] text-[#697586] dark:text-[#7D8796] mb-0.5">
-                              Sampai
+                              {tr('Sampai', 'To')}
                             </label>
                             <input
                               type="date"
@@ -695,14 +719,14 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ trades, settings, 
                           }}
                           className="px-2.5 py-1 text-[11px] text-[#697586] dark:text-[#8E98A8] hover:text-[#151D2A] dark:hover:text-[#F2F5F9] cursor-pointer"
                         >
-                          Reset
+                          {tr('Reset', 'Reset')}
                         </button>
                         <button
                           type="button"
                           onClick={() => setShowPeriodDropdown(false)}
                           className="px-3 py-1 text-[11px] font-bold rounded-full bg-[#3B82F6] text-white hover:bg-[#2563EB] transition-colors cursor-pointer"
                         >
-                          Selesai
+                          {tr('Selesai', 'Done')}
                         </button>
                       </div>
                     </div>
@@ -718,8 +742,8 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ trades, settings, 
                       ? 'bg-black/[0.05] dark:bg-white/[0.07] text-amber-500 border-amber-500/40'
                       : 'bg-black/[0.03] dark:bg-white/[0.04] border-[#DDE3EA] dark:border-white/[0.08] text-[#697586] dark:text-[#8E98A8] hover:text-[#151D2A] dark:hover:text-[#F2F5F9]'
                   }`}
-                  title="Sembunyikan nominal saldo agar aman dibagikan"
-                  aria-label="Toggle Mode Privasi"
+                  title={tr('Sembunyikan nominal saldo agar aman dibagikan', 'Hide balance figures for safe sharing')}
+                  aria-label={tr('Ubah Mode Privasi', 'Toggle Privacy Mode')}
                 >
                   {isPrivacyMode ? (
                     <EyeOff className="h-3.5 w-3.5 stroke-[1.75]" />
@@ -734,10 +758,16 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ trades, settings, 
             {!hasClosedTradesInPeriod ? (
               <div className="py-8 px-4 rounded-2xl bg-black/[0.02] dark:bg-white/[0.02] border border-[#DDE3EA] dark:border-white/[0.06] text-center space-y-1.5">
                 <p className="text-xs sm:text-sm font-bold text-[#151D2A] dark:text-[#F2F5F9]">
-                  Belum Ada Transaksi Tertutup pada Periode Ini ({getPeriodLabel()})
+                  {tr(
+                    `Belum Ada Transaksi Tertutup pada Periode Ini (${getPeriodLabel()})`,
+                    `No Closed Trades in This Period (${getPeriodLabel()})`
+                  )}
                 </p>
                 <p className="text-[11px] text-[#697586] dark:text-[#7D8796]">
-                  Pilih periode lain atau reset filter tanggal untuk melihat kembali analisis performa historis Anda.
+                  {tr(
+                    'Pilih periode lain atau reset filter tanggal untuk melihat kembali analisis performa historis Anda.',
+                    'Select another period or reset the date filter to view your historical performance analytics.'
+                  )}
                 </p>
               </div>
             ) : (
@@ -745,7 +775,7 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ trades, settings, 
                 {/* Dominant Figure: Total Net Profit / Loss + Companion Growth */}
                 <div className="space-y-1.5">
                   <span className="block text-[11px] font-semibold uppercase tracking-[0.08em] text-[#697586] dark:text-[#7D8796]">
-                    Total Net Profit / Loss
+                    {tr('Total Profit / Loss Bersih', 'Total Net Profit / Loss')}
                   </span>
                   <div
                     className={`text-3xl sm:text-4xl font-bold tabular-nums tracking-tight ${
@@ -796,10 +826,12 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ trades, settings, 
                       ) : (
                         <TrendingDown className="h-3.5 w-3.5" />
                       )}
-                      Growth {formatGrowthPercent(metrics.totalGainPercent, metrics.hasValidGrowthPercent, 2)}
+                      {tr('Pertumbuhan', 'Growth')} {formatGrowthPercent(metrics.totalGainPercent, metrics.hasValidGrowthPercent, 2)}
                     </span>
                     <span className="text-[#DDE3EA] dark:text-white/15">·</span>
-                    <span>Modal Awal Periode: {fmtMoney(periodStartingBalance, isPrivacyMode)}</span>
+                    <span>
+                      {tr('Modal Awal Periode:', 'Period Starting Balance:')} {fmtMoney(periodStartingBalance, isPrivacyMode)}
+                    </span>
                   </div>
                 </div>
 
@@ -807,7 +839,7 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ trades, settings, 
                 <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-y-5 gap-x-4 pt-5 border-t border-[#DDE3EA] dark:border-white/[0.06] tabular-nums">
                   <div>
                     <span className="block text-[10px] font-semibold uppercase tracking-wider text-[#697586] dark:text-[#7D8796]">
-                      Win Rate
+                      {tr('Rasio Menang', 'Win Rate')}
                     </span>
                     <span className="mt-1 block text-base sm:text-lg font-bold text-[#151D2A] dark:text-[#F2F5F9]">
                       {metrics.winRate}%
@@ -819,7 +851,7 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ trades, settings, 
 
                   <div>
                     <span className="block text-[10px] font-semibold uppercase tracking-wider text-[#697586] dark:text-[#7D8796]">
-                      Profit Factor
+                      {tr('Faktor Profit', 'Profit Factor')}
                     </span>
                     <span
                       className={`mt-1 block text-base sm:text-lg font-bold ${
@@ -831,25 +863,25 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ trades, settings, 
                       {formatProfitFactor(metrics.profitFactor, metrics.isProfitFactorInfinite)}
                     </span>
                     <span className="text-[11px] text-[#697586] dark:text-[#6E7785]">
-                      Gross Profit / Loss
+                      {tr('Profit / Rugi Kotor', 'Gross Profit / Loss')}
                     </span>
                   </div>
 
                   <div>
                     <span className="block text-[10px] font-semibold uppercase tracking-wider text-[#697586] dark:text-[#7D8796]">
-                      Average RR
+                      {tr('Rata-rata RR', 'Average RR')}
                     </span>
                     <span className="mt-1 block text-base sm:text-lg font-bold text-[#151D2A] dark:text-[#F2F5F9]">
                       {formatRMultiple(metrics.averageRiskReward, metrics.hasValidRiskReward)}
                     </span>
                     <span className="text-[11px] text-[#697586] dark:text-[#6E7785]">
-                      Realized R-Multiple
+                      {tr('R-Multiple Aktual', 'Realized R-Multiple')}
                     </span>
                   </div>
 
                   <div>
                     <span className="block text-[10px] font-semibold uppercase tracking-wider text-[#697586] dark:text-[#7D8796]">
-                      Expectancy
+                      {tr('Ekspektansi', 'Expectancy')}
                     </span>
                     <span
                       className={`mt-1 block text-base sm:text-lg font-bold ${
@@ -863,25 +895,25 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ trades, settings, 
                       {fmtMoney(metrics.expectancy, isPrivacyMode)}
                     </span>
                     <span className="text-[11px] text-[#697586] dark:text-[#6E7785]">
-                      Harapan / Trade
+                      {tr('Harapan / Trade', 'Expected / Trade')}
                     </span>
                   </div>
 
                   <div>
                     <span className="block text-[10px] font-semibold uppercase tracking-wider text-[#697586] dark:text-[#7D8796]">
-                      Total Trades
+                      {tr('Total Trade', 'Total Trades')}
                     </span>
                     <span className="mt-1 block text-base sm:text-lg font-bold text-[#151D2A] dark:text-[#F2F5F9]">
                       {metrics.totalTrades}
                     </span>
                     <span className="text-[11px] text-[#697586] dark:text-[#6E7785]">
-                      {metrics.breakevenTrades} Breakeven
+                      {metrics.breakevenTrades} {tr('Impas', 'Breakeven')}
                     </span>
                   </div>
 
                   <div>
                     <span className="block text-[10px] font-semibold uppercase tracking-wider text-[#697586] dark:text-[#7D8796]">
-                      Maximum Drawdown
+                      {tr('Drawdown Maksimum', 'Maximum Drawdown')}
                     </span>
                     <span
                       className={`mt-1 block text-base sm:text-lg font-bold ${
@@ -909,8 +941,13 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ trades, settings, 
               <div className="p-3.5 rounded-xl bg-[#E05260]/10 border border-[#E05260]/30 text-xs flex items-center gap-2.5">
                 <ShieldAlert className="h-4 w-4 stroke-[1.75] text-[#E05260] shrink-0" />
                 <div className="text-[#151D2A] dark:text-[#F2F5F9]">
-                  <strong className="font-bold text-[#E05260]">Peringatan Risiko Kritis:</strong>{' '}
-                  Penurunan modal telah menyentuh batas risiko akun (Drawdown ≥ 100%). Evaluasi ukuran lot dan manajemen risiko.
+                  <strong className="font-bold text-[#E05260]">
+                    {tr('Peringatan Risiko Kritis:', 'Critical Risk Warning:')}
+                  </strong>{' '}
+                  {tr(
+                    'Penurunan modal telah menyentuh batas risiko akun (Drawdown ≥ 100%). Evaluasi ukuran lot dan manajemen risiko.',
+                    'Account drawdown has reached the critical risk limit (Drawdown ≥ 100%). Evaluate lot sizing and risk management.'
+                  )}
                 </div>
               </div>
             )}
@@ -922,10 +959,10 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ trades, settings, 
           <section className="space-y-8 pb-8 border-b border-[#DDE3EA] dark:border-white/[0.06]">
             <div>
               <span className="block text-[10px] font-bold uppercase tracking-[0.14em] text-[#697586] dark:text-[#6E7785]">
-                02 / CAPITAL PERFORMANCE
+                {tr('02 / PERFORMA MODAL', '02 / CAPITAL PERFORMANCE')}
               </span>
               <h2 className="text-base sm:text-lg font-bold text-[#151D2A] dark:text-[#F2F5F9] mt-0.5">
-                Pertumbuhan Ekuitas &amp; Risiko Penurunan Modal
+                {tr('Pertumbuhan Ekuitas & Risiko Penurunan Modal', 'Equity Growth & Drawdown Risk')}
               </h2>
             </div>
 
@@ -934,7 +971,7 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ trades, settings, 
               <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2.5 sm:gap-3">
                 <div>
                   <h3 className="text-sm font-bold text-[#151D2A] dark:text-[#F2F5F9]">
-                    Equity Curve
+                    {tr('Kurva Ekuitas', 'Equity Curve')}
                   </h3>
                   {/* Dynamic Period Summary Line */}
                   <p className="text-xs text-[#697586] dark:text-[#8E98A8] tabular-nums mt-0.5">
@@ -942,7 +979,7 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ trades, settings, 
                       {equityRangeSummary.label}
                     </span>
                     {' · '}
-                    <span>{equityRangeSummary.tradesCount} Trades</span>
+                    <span>{equityRangeSummary.tradesCount} {tr('Trade', 'Trades')}</span>
                     {' · '}
                     <span
                       className={`font-bold ${
@@ -974,15 +1011,15 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ trades, settings, 
                       }
                       className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium bg-black/[0.03] dark:bg-white/[0.04] border border-[#DDE3EA] dark:border-white/[0.08] text-[#151D2A] dark:text-[#F2F5F9] hover:border-[#3B82F6]/50 transition-colors cursor-pointer select-none whitespace-nowrap"
                     >
-                      <span>{equityMode === 'equity' ? 'Nominal' : 'Percent'}</span>
+                      <span>{equityMode === 'equity' ? tr('Nominal', 'Nominal') : tr('Persen', 'Percent')}</span>
                       <ChevronDown className="h-3.5 w-3.5 text-[#697586] dark:text-[#8E98A8]" />
                     </button>
 
                     {openEquityDropdown === 'mode' && (
                       <div className="absolute left-0 top-9 z-30 w-36 rounded-xl border border-[#DDE3EA] dark:border-white/10 bg-white dark:bg-[#0E1217] p-1 shadow-xl text-xs">
                         {[
-                          { id: 'equity', label: 'Nominal' },
-                          { id: 'growth', label: 'Percent (%)' },
+                          { id: 'equity', label: tr('Nominal', 'Nominal') },
+                          { id: 'growth', label: tr('Persen (%)', 'Percent (%)') },
                         ].map((opt) => (
                           <button
                             key={opt.id}
@@ -1007,7 +1044,7 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ trades, settings, 
                     )}
                   </div>
 
-                  {/* Pill Dropdown 2: Period (Single Pill Dropdown, NEVER a horizontal button row) */}
+                  {/* Pill Dropdown 2: Period */}
                   <div className="relative">
                     <button
                       type="button"
@@ -1022,7 +1059,7 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ trades, settings, 
 
                     {openEquityDropdown === 'range' && (
                       <div className="absolute right-0 top-9 z-30 w-36 rounded-xl border border-[#DDE3EA] dark:border-white/10 bg-white dark:bg-[#0E1217] p-1 shadow-xl text-xs tabular-nums">
-                        {CHART_RANGE_OPTIONS.map((opt) => (
+                        {chartRangeOptions.map((opt) => (
                           <button
                             key={opt.id}
                             type="button"
@@ -1068,7 +1105,7 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ trades, settings, 
               <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2.5 sm:gap-3">
                 <div>
                   <h3 className="text-sm font-bold text-[#151D2A] dark:text-[#F2F5F9]">
-                    Drawdown Curve
+                    {tr('Kurva Drawdown', 'Drawdown Curve')}
                   </h3>
                   {/* Dynamic Period Summary Line for Drawdown */}
                   <p className="text-xs text-[#697586] dark:text-[#8E98A8] tabular-nums mt-0.5">
@@ -1090,7 +1127,7 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ trades, settings, 
                     </span>
                     {' · '}
                     <span>
-                      Recovery{' '}
+                      {tr('Pemulihan', 'Recovery')}{' '}
                       <strong className="text-[#151D2A] dark:text-[#F2F5F9]">
                         {drawdownSummary.recoveryPct}%
                       </strong>
@@ -1109,15 +1146,15 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ trades, settings, 
                       }
                       className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium bg-black/[0.03] dark:bg-white/[0.04] border border-[#DDE3EA] dark:border-white/[0.08] text-[#151D2A] dark:text-[#F2F5F9] hover:border-[#3B82F6]/50 transition-colors cursor-pointer select-none whitespace-nowrap"
                     >
-                      <span>{drawdownMode === 'percent' ? 'Percent' : 'Nominal'}</span>
+                      <span>{drawdownMode === 'percent' ? tr('Persen', 'Percent') : tr('Nominal', 'Nominal')}</span>
                       <ChevronDown className="h-3.5 w-3.5 text-[#697586] dark:text-[#8E98A8]" />
                     </button>
 
                     {openDrawdownDropdown === 'mode' && (
                       <div className="absolute left-0 top-9 z-30 w-36 rounded-xl border border-[#DDE3EA] dark:border-white/10 bg-white dark:bg-[#0E1217] p-1 shadow-xl text-xs">
                         {[
-                          { id: 'percent', label: 'Percent (%)' },
-                          { id: 'nominal', label: 'Nominal' },
+                          { id: 'percent', label: tr('Persen (%)', 'Percent (%)') },
+                          { id: 'nominal', label: tr('Nominal', 'Nominal') },
                         ].map((opt) => (
                           <button
                             key={opt.id}
@@ -1157,7 +1194,7 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ trades, settings, 
 
                     {openDrawdownDropdown === 'range' && (
                       <div className="absolute right-0 top-9 z-30 w-36 rounded-xl border border-[#DDE3EA] dark:border-white/10 bg-white dark:bg-[#0E1217] p-1 shadow-xl text-xs tabular-nums">
-                        {CHART_RANGE_OPTIONS.map((opt) => (
+                        {chartRangeOptions.map((opt) => (
                           <button
                             key={opt.id}
                             type="button"
@@ -1187,7 +1224,7 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ trades, settings, 
               <div className="grid grid-cols-3 gap-2 sm:gap-4 py-2.5 border-y border-[#DDE3EA] dark:border-white/[0.06] text-xs tabular-nums">
                 <div className="min-w-0">
                   <span className="block text-[10px] uppercase tracking-wider text-[#697586] dark:text-[#7D8796]">
-                    Current Drawdown
+                    {tr('Drawdown Saat Ini', 'Current Drawdown')}
                   </span>
                   <strong
                     className={`mt-0.5 block text-sm sm:text-base font-bold ${
@@ -1208,7 +1245,7 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ trades, settings, 
 
                 <div>
                   <span className="block text-[10px] uppercase tracking-wider text-[#697586] dark:text-[#7D8796]">
-                    Maximum Drawdown
+                    {tr('Drawdown Maksimum', 'Maximum Drawdown')}
                   </span>
                   <strong
                     className={`mt-0.5 block text-sm sm:text-base font-bold ${
@@ -1229,7 +1266,7 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ trades, settings, 
 
                 <div>
                   <span className="block text-[10px] uppercase tracking-wider text-[#697586] dark:text-[#7D8796]">
-                    Recovery
+                    {tr('Pemulihan', 'Recovery')}
                   </span>
                   <strong
                     className={`mt-0.5 block text-sm sm:text-base font-bold ${
@@ -1260,16 +1297,18 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ trades, settings, 
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div>
                 <span className="block text-[10px] font-bold uppercase tracking-[0.14em] text-[#697586] dark:text-[#6E7785]">
-                  03 / PERFORMANCE PROFILE
+                  {tr('03 / PROFIL PERFORMA', '03 / PERFORMANCE PROFILE')}
                 </span>
                 <h2 className="text-base sm:text-lg font-bold text-[#151D2A] dark:text-[#F2F5F9] mt-0.5">
-                  Performance Profile
+                  {tr('Profil Performa 6 Pilar', '6-Pillar Performance Profile')}
                 </h2>
               </div>
 
               {/* Overall Performance Score Pill */}
               <div className="flex items-center gap-2">
-                <span className="text-xs text-[#697586] dark:text-[#7D8796]">Overall Score:</span>
+                <span className="text-xs text-[#697586] dark:text-[#7D8796]">
+                  {tr('Skor Keseluruhan:', 'Overall Score:')}
+                </span>
                 <span className="px-3 py-1 rounded-full bg-black/[0.04] dark:bg-white/[0.05] border border-[#DDE3EA] dark:border-white/[0.08] text-[#151D2A] dark:text-[#F2F5F9] text-xs tabular-nums font-bold">
                   {radarIndicators.isDataSufficient
                     ? `${Math.round(
@@ -1281,7 +1320,7 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ trades, settings, 
                           radarIndicators.consistencyScore) /
                           6
                       )}/100`
-                    : 'Data Belum Cukup'}
+                    : tr('Data Belum Cukup', 'Insufficient Data')}
                 </span>
               </div>
             </div>
@@ -1330,7 +1369,9 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ trades, settings, 
                       <div className="flex items-center justify-between text-[10px] text-[#697586] dark:text-[#7D8796]">
                         <span>{p.target}</span>
                         <span className="tabular-nums font-semibold">
-                          {p.isAvailable ? `Skor ${p.score}/100` : 'Data Belum Cukup'}
+                          {p.isAvailable
+                            ? `${tr('Skor', 'Score')} ${p.score}/100`
+                            : tr('Data Belum Cukup', 'Insufficient Data')}
                         </span>
                       </div>
                     </div>
@@ -1346,10 +1387,10 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ trades, settings, 
           <section className="space-y-4 pb-8 border-b border-[#DDE3EA] dark:border-white/[0.06]">
             <div>
               <span className="block text-[10px] font-bold uppercase tracking-[0.14em] text-[#697586] dark:text-[#6E7785]">
-                04 / PERFORMANCE CALENDAR
+                {tr('04 / KALENDER PERFORMA', '04 / PERFORMANCE CALENDAR')}
               </span>
               <h2 className="text-base sm:text-lg font-bold text-[#151D2A] dark:text-[#F2F5F9] mt-0.5">
-                Kalender Performa &amp; Aktivitas Harian
+                {tr('Kalender Performa & Aktivitas Harian', 'Performance Calendar & Daily Activity')}
               </h2>
             </div>
 
@@ -1370,10 +1411,10 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ trades, settings, 
             <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2.5 sm:gap-3">
               <div>
                 <span className="block text-[10px] font-bold uppercase tracking-[0.14em] text-[#697586] dark:text-[#6E7785]">
-                  05 / PERFORMANCE BREAKDOWN
+                  {tr('05 / RINCIAN PERFORMA', '05 / PERFORMANCE BREAKDOWN')}
                 </span>
                 <h2 className="text-base sm:text-lg font-bold text-[#151D2A] dark:text-[#F2F5F9] mt-0.5">
-                  Rincian Performa Berdasarkan Dimensi
+                  {tr('Rincian Performa Berdasarkan Dimensi', 'Performance Breakdown by Dimension')}
                 </h2>
               </div>
 
@@ -1384,7 +1425,9 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ trades, settings, 
                   onClick={() => setShowBreakdownDropdown((prev) => !prev)}
                   className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium bg-black/[0.03] dark:bg-white/[0.04] border border-[#DDE3EA] dark:border-white/[0.08] text-[#151D2A] dark:text-[#F2F5F9] hover:border-[#3B82F6]/50 transition-colors cursor-pointer select-none max-w-full"
                 >
-                  <span className="text-[#697586] dark:text-[#8E98A8] shrink-0">Dimensi:</span>
+                  <span className="text-[#697586] dark:text-[#8E98A8] shrink-0">
+                    {tr('Dimensi:', 'Dimension:')}
+                  </span>
                   <strong className="font-bold truncate">{breakdownLabels[breakdownCategory]}</strong>
                   <ChevronDown className="h-3.5 w-3.5 text-[#697586] dark:text-[#8E98A8] shrink-0" />
                 </button>
@@ -1422,7 +1465,7 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ trades, settings, 
                 {/* Senin - Jumat */}
                 <div className="space-y-2">
                   <span className="text-[11px] font-bold uppercase tracking-wider text-[#697586] dark:text-[#7D8796] block">
-                    Hari dalam Seminggu (Senin – Jumat)
+                    {tr('Hari dalam Seminggu (Senin – Jumat)', 'Day of the Week (Monday – Friday)')}
                   </span>
                   <div className="divide-y divide-[#DDE3EA] dark:divide-white/[0.06] border-y border-[#DDE3EA] dark:border-white/[0.06]">
                     {dayOfWeekStats.map((item) => (
@@ -1435,7 +1478,7 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ trades, settings, 
                             {item.dayName}
                           </span>
                           <span className="text-[11px] text-[#697586] dark:text-[#7D8796]">
-                            {item.total} Trade · Win Rate {item.winRate}%
+                            {item.total} {tr('Trade', 'Trades')} · {tr('Rasio Menang', 'Win Rate')} {item.winRate}%
                           </span>
                         </div>
 
@@ -1461,11 +1504,11 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ trades, settings, 
                 {/* Rekapitulasi Bulanan */}
                 <div className="space-y-2">
                   <span className="text-[11px] font-bold uppercase tracking-wider text-[#697586] dark:text-[#7D8796] block">
-                    Rekapitulasi Bulanan
+                    {tr('Rekapitulasi Bulanan', 'Monthly Summary')}
                   </span>
                   {monthlyPerformance.length === 0 ? (
                     <div className="py-8 text-center text-xs text-[#697586] dark:text-[#7D8796] border-y border-[#DDE3EA] dark:border-white/[0.06]">
-                      Belum ada data bulanan.
+                      {tr('Belum ada data bulanan.', 'No monthly data yet.')}
                     </div>
                   ) : (
                     <div className="divide-y divide-[#DDE3EA] dark:divide-white/[0.06] border-y border-[#DDE3EA] dark:border-white/[0.06] max-h-72 overflow-y-auto">
@@ -1479,7 +1522,7 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ trades, settings, 
                               {m.label}
                             </span>
                             <span className="text-[11px] text-[#697586] dark:text-[#7D8796]">
-                              {m.tradesCount} Trade · Win Rate {m.winRate}%
+                              {m.tradesCount} {tr('Trade', 'Trades')} · {tr('Rasio Menang', 'Win Rate')} {m.winRate}%
                             </span>
                           </div>
 
@@ -1523,14 +1566,14 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ trades, settings, 
                         </span>
                       </div>
                       <span className="text-[11px] text-[#697586] dark:text-[#7D8796] mt-0.5 block">
-                        {sess.total} Trade ({sess.winCount}W · {sess.lossCount}L)
+                        {sess.total} {tr('Trade', 'Trades')} ({sess.winCount}W · {sess.lossCount}L)
                       </span>
                     </div>
 
                     <div className="flex items-center justify-between sm:justify-end gap-6">
                       <div>
                         <span className="text-[10px] uppercase tracking-wider text-[#697586] dark:text-[#7D8796] block">
-                          Win Rate
+                          {tr('Rasio Menang', 'Win Rate')}
                         </span>
                         <span className="font-semibold text-[#151D2A] dark:text-[#F2F5F9]">
                           {sess.winRate}%
@@ -1539,7 +1582,7 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ trades, settings, 
 
                       <div>
                         <span className="text-[10px] uppercase tracking-wider text-[#697586] dark:text-[#7D8796] block">
-                          Profit Factor
+                          {tr('Faktor Profit', 'Profit Factor')}
                         </span>
                         <span className="font-semibold text-[#151D2A] dark:text-[#F2F5F9]">
                           {sess.profitFactor === Infinity ? '∞' : sess.profitFactor.toFixed(2)}
@@ -1548,7 +1591,7 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ trades, settings, 
 
                       <div className="text-right min-w-[96px]">
                         <span className="text-[10px] uppercase tracking-wider text-[#697586] dark:text-[#7D8796] block">
-                          Net P/L
+                          {tr('P/L Bersih', 'Net P/L')}
                         </span>
                         <span
                           className={`font-bold text-xs sm:text-sm ${
@@ -1574,7 +1617,7 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ trades, settings, 
               <div>
                 {symbolStats.length === 0 ? (
                   <p className="py-8 text-center text-xs text-[#697586] dark:text-[#7D8796]">
-                    Belum ada data instrumen pada periode ini.
+                    {tr('Belum ada data instrumen pada periode ini.', 'No instrument data in this period.')}
                   </p>
                 ) : (
                   <div className="divide-y divide-[#DDE3EA] dark:divide-white/[0.06] border-y border-[#DDE3EA] dark:border-white/[0.06]">
@@ -1588,14 +1631,14 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ trades, settings, 
                             {item.symbol}
                           </span>
                           <span className="text-[11px] text-[#697586] dark:text-[#7D8796]">
-                            {item.total} Trade ({item.winCount}W · {item.lossCount}L)
+                            {item.total} {tr('Trade', 'Trades')} ({item.winCount}W · {item.lossCount}L)
                           </span>
                         </div>
 
                         <div className="flex items-center justify-between sm:justify-end gap-6">
                           <div>
                             <span className="text-[10px] uppercase tracking-wider text-[#697586] dark:text-[#7D8796] block">
-                              Win Rate
+                              {tr('Rasio Menang', 'Win Rate')}
                             </span>
                             <span className="font-semibold text-[#151D2A] dark:text-[#F2F5F9]">
                               {item.winRate}%
@@ -1604,7 +1647,7 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ trades, settings, 
 
                           <div>
                             <span className="text-[10px] uppercase tracking-wider text-[#697586] dark:text-[#7D8796] block">
-                              Rata-rata / Trade
+                              {tr('Rata-rata / Trade', 'Avg / Trade')}
                             </span>
                             <span className="font-semibold text-[#151D2A] dark:text-[#F2F5F9]">
                               {fmtMoney(item.avgProfit, isPrivacyMode)}
@@ -1613,7 +1656,7 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ trades, settings, 
 
                           <div className="text-right min-w-[96px]">
                             <span className="text-[10px] uppercase tracking-wider text-[#697586] dark:text-[#7D8796] block">
-                              Net P/L
+                              {tr('P/L Bersih', 'Net P/L')}
                             </span>
                             <span
                               className={`font-bold text-xs sm:text-sm ${
@@ -1643,10 +1686,10 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ trades, settings, 
           <section className="space-y-5">
             <div>
               <span className="block text-[10px] font-bold uppercase tracking-[0.14em] text-[#697586] dark:text-[#6E7785]">
-                06 / TRADING BEHAVIOR
+                {tr('06 / PERILAKU TRADING', '06 / TRADING BEHAVIOR')}
               </span>
               <h2 className="text-base sm:text-lg font-bold text-[#151D2A] dark:text-[#F2F5F9] mt-0.5">
-                Perilaku Eksekusi, Streak &amp; Distribusi Hasil
+                {tr('Perilaku Eksekusi, Beruntun & Distribusi Hasil', 'Execution Behavior, Streaks & Outcome Distribution')}
               </h2>
             </div>
 
@@ -1654,60 +1697,60 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ trades, settings, 
             <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-y-5 gap-x-4 py-4 border-y border-[#DDE3EA] dark:border-white/[0.06] tabular-nums">
               <div>
                 <span className="block text-[10px] font-semibold uppercase tracking-wider text-[#697586] dark:text-[#7D8796]">
-                  Win Streak
+                  {tr('Menang Beruntun', 'Win Streak')}
                 </span>
                 <span className="mt-1 block text-base sm:text-lg font-bold text-[#00A878]">
-                  {metrics.consecutiveWinsMax} Trade
+                  {metrics.consecutiveWinsMax} {tr('Trade', 'Trades')}
                 </span>
                 <span className="text-[11px] text-[#697586] dark:text-[#6E7785]">
-                  Saat ini: {metrics.currentStreak.count}{' '}
+                  {tr('Saat ini:', 'Current:')} {metrics.currentStreak.count}{' '}
                   {metrics.currentStreak.type === 'WIN'
-                    ? 'Win'
+                    ? tr('Menang', 'Win')
                     : metrics.currentStreak.type === 'LOSS'
-                    ? 'Loss'
+                    ? tr('Rugi', 'Loss')
                     : '-'}
                 </span>
               </div>
 
               <div>
                 <span className="block text-[10px] font-semibold uppercase tracking-wider text-[#697586] dark:text-[#7D8796]">
-                  Loss Streak
+                  {tr('Rugi Beruntun', 'Loss Streak')}
                 </span>
                 <span className="mt-1 block text-base sm:text-lg font-bold text-[#E05260]">
-                  {metrics.consecutiveLossesMax} Trade
+                  {metrics.consecutiveLossesMax} {tr('Trade', 'Trades')}
                 </span>
                 <span className="text-[11px] text-[#697586] dark:text-[#6E7785]">
-                  Maksimal beruntun
+                  {tr('Maksimal beruntun', 'Max consecutive')}
                 </span>
               </div>
 
               <div>
                 <span className="block text-[10px] font-semibold uppercase tracking-wider text-[#697586] dark:text-[#7D8796]">
-                  Average Win
+                  {tr('Rata-rata Menang', 'Average Win')}
                 </span>
                 <span className="mt-1 block text-base sm:text-lg font-bold text-[#00A878]">
                   {metrics.averageWin > 0 ? `+${fmtMoney(metrics.averageWin, isPrivacyMode)}` : fmtMoney(0, isPrivacyMode)}
                 </span>
                 <span className="text-[11px] text-[#697586] dark:text-[#6E7785]">
-                  Rata-rata profit / win
+                  {tr('Rata-rata profit / menang', 'Avg profit / win')}
                 </span>
               </div>
 
               <div>
                 <span className="block text-[10px] font-semibold uppercase tracking-wider text-[#697586] dark:text-[#7D8796]">
-                  Average Loss
+                  {tr('Rata-rata Rugi', 'Average Loss')}
                 </span>
                 <span className="mt-1 block text-base sm:text-lg font-bold text-[#E05260]">
                   {metrics.averageLoss > 0 ? `-${fmtMoney(metrics.averageLoss, isPrivacyMode)}` : fmtMoney(0, isPrivacyMode)}
                 </span>
                 <span className="text-[11px] text-[#697586] dark:text-[#6E7785]">
-                  Rata-rata rugi / loss
+                  {tr('Rata-rata rugi / loss', 'Avg loss / losing trade')}
                 </span>
               </div>
 
               <div>
                 <span className="block text-[10px] font-semibold uppercase tracking-wider text-[#697586] dark:text-[#7D8796]">
-                  Win / Loss Ratio
+                  {tr('Rasio Menang / Rugi', 'Win / Loss Ratio')}
                 </span>
                 <span className="mt-1 block text-base sm:text-lg font-bold text-[#151D2A] dark:text-[#F2F5F9]">
                   {metrics.averageLoss > 0
@@ -1717,7 +1760,7 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ trades, settings, 
                     : '0.00x'}
                 </span>
                 <span className="text-[11px] text-[#697586] dark:text-[#6E7785]">
-                  Payoff Ratio
+                  {tr('Rasio Hasil (Payoff)', 'Payoff Ratio')}
                 </span>
               </div>
             </div>
@@ -1726,7 +1769,10 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ trades, settings, 
             <div className="space-y-2 pt-1 tabular-nums">
               <div className="flex items-center justify-between text-xs text-[#697586] dark:text-[#8E98A8]">
                 <span className="font-semibold text-[#151D2A] dark:text-[#F2F5F9]">
-                  Distribusi Win / Loss / Breakeven ({metrics.totalTrades} Trade)
+                  {tr(
+                    `Distribusi Menang / Rugi / Impas (${metrics.totalTrades} Trade)`,
+                    `Win / Loss / Breakeven Distribution (${metrics.totalTrades} Trades)`
+                  )}
                 </span>
                 <span>
                   {metrics.winningTrades}W · {metrics.losingTrades}L · {metrics.breakevenTrades}BE
@@ -1739,17 +1785,17 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ trades, settings, 
                     <div
                       className="h-full bg-[#00A878] transition-all"
                       style={{ width: `${(metrics.winningTrades / metrics.totalTrades) * 100}%` }}
-                      title={`Winning: ${metrics.winningTrades} (${metrics.winRate}%)`}
+                      title={`${tr('Menang', 'Winning')}: ${metrics.winningTrades} (${metrics.winRate}%)`}
                     />
                     <div
                       className="h-full bg-[#E05260] transition-all"
                       style={{ width: `${(metrics.losingTrades / metrics.totalTrades) * 100}%` }}
-                      title={`Losing: ${metrics.losingTrades} (${metrics.lossRate}%)`}
+                      title={`${tr('Rugi', 'Losing')}: ${metrics.losingTrades} (${metrics.lossRate}%)`}
                     />
                     <div
                       className="h-full bg-[#7D8796] transition-all"
                       style={{ width: `${(metrics.breakevenTrades / metrics.totalTrades) * 100}%` }}
-                      title={`Breakeven: ${metrics.breakevenTrades} (${metrics.breakevenRate}%)`}
+                      title={`${tr('Impas', 'Breakeven')}: ${metrics.breakevenTrades} (${metrics.breakevenRate}%)`}
                     />
                   </>
                 )}
@@ -1758,15 +1804,15 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ trades, settings, 
               <div className="flex flex-wrap items-center gap-4 text-[11px] text-[#697586] dark:text-[#7D8796] pt-0.5">
                 <span className="flex items-center gap-1.5">
                   <span className="h-2 w-2 rounded-full bg-[#00A878]" />
-                  Win ({metrics.winRate}%)
+                  {tr('Menang', 'Win')} ({metrics.winRate}%)
                 </span>
                 <span className="flex items-center gap-1.5">
                   <span className="h-2 w-2 rounded-full bg-[#E05260]" />
-                  Loss ({metrics.lossRate}%)
+                  {tr('Rugi', 'Loss')} ({metrics.lossRate}%)
                 </span>
                 <span className="flex items-center gap-1.5">
                   <span className="h-2 w-2 rounded-full bg-[#7D8796]" />
-                  Breakeven ({metrics.breakevenRate}%)
+                  {tr('Impas', 'Breakeven')} ({metrics.breakevenRate}%)
                 </span>
               </div>
             </div>

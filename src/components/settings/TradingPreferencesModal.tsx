@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { AppSettings, CurrencyCode } from '../../types/settings';
-import { X, Check } from 'lucide-react';
+import { useLanguage } from '../../utils/language';
+import { X } from 'lucide-react';
 
 export type PreferenceCategory = 'balance' | 'currency' | 'broker' | 'risk' | 'adjustments';
 
@@ -19,6 +20,7 @@ export const TradingPreferencesModal: React.FC<TradingPreferencesModalProps> = (
   settings,
   onSave,
 }) => {
+  const { tr } = useLanguage();
   const [activeCategory, setActiveCategory] = useState<PreferenceCategory>(category);
   const [formData, setFormData] = useState<AppSettings>({ ...settings });
 
@@ -57,11 +59,11 @@ export const TradingPreferencesModal: React.FC<TradingPreferencesModalProps> = (
   };
 
   const categoryTitles: Record<PreferenceCategory, string> = {
-    balance: 'Saldo Akun (Modal Awal)',
-    currency: 'Mata Uang Akun',
-    broker: 'Spesifikasi Broker (XAUUSD)',
-    risk: 'Parameter Risiko & Target',
-    adjustments: 'Penyesuaian Modal (Deposit / WD)',
+    balance: tr('Saldo Akun (Modal Awal)', 'Account Balance (Initial Capital)'),
+    currency: tr('Mata Uang Akun', 'Account Currency'),
+    broker: tr('Spesifikasi Broker (XAUUSD)', 'Broker Specification (XAUUSD)'),
+    risk: tr('Parameter Risiko & Target', 'Risk & Target Parameters'),
+    adjustments: tr('Penyesuaian Modal (Deposit / WD)', 'Capital Adjustments (Deposit / WD)'),
   };
 
   return (
@@ -80,14 +82,17 @@ export const TradingPreferencesModal: React.FC<TradingPreferencesModalProps> = (
               {categoryTitles[activeCategory]}
             </h3>
             <p className="text-xs text-[#697586] dark:text-[#929BA9] mt-0.5">
-              Atur parameter preferensi trading untuk kalkulasi jurnal dan manajemen risiko
+              {tr(
+                'Atur parameter preferensi trading untuk kalkulasi jurnal dan manajemen risiko',
+                'Configure trading preference parameters for journal calculations and risk management'
+              )}
             </p>
           </div>
           <button
             type="button"
             onClick={onClose}
             className="p-1.5 -mr-1 rounded-md text-[#697586] dark:text-[#929BA9] hover:text-[#151D2A] dark:hover:text-[#F2F5F9] transition-colors cursor-pointer"
-            aria-label="Tutup"
+            aria-label={tr('Tutup', 'Close')}
           >
             <X className="h-4 w-4 stroke-[1.75]" />
           </button>
@@ -106,11 +111,11 @@ export const TradingPreferencesModal: React.FC<TradingPreferencesModalProps> = (
                   : 'text-[#697586] dark:text-[#929BA9] hover:text-[#151D2A] dark:hover:text-[#F2F5F9]'
               }`}
             >
-              {cat === 'balance' && 'Saldo'}
-              {cat === 'currency' && 'Mata Uang'}
-              {cat === 'broker' && 'Broker'}
-              {cat === 'risk' && 'Risiko'}
-              {cat === 'adjustments' && 'Deposit/WD'}
+              {cat === 'balance' && tr('Saldo', 'Balance')}
+              {cat === 'currency' && tr('Mata Uang', 'Currency')}
+              {cat === 'broker' && tr('Broker', 'Broker')}
+              {cat === 'risk' && tr('Risiko', 'Risk')}
+              {cat === 'adjustments' && tr('Deposit/WD', 'Deposit/WD')}
             </button>
           ))}
         </div>
@@ -122,7 +127,7 @@ export const TradingPreferencesModal: React.FC<TradingPreferencesModalProps> = (
             <div className="space-y-3">
               <div>
                 <label className="block text-[#151D2A] dark:text-[#F2F5F9] font-medium mb-1">
-                  Modal Awal Akun ({formData.currencySymbol})
+                  {tr('Modal Awal Akun', 'Account Initial Capital')} ({formData.currencySymbol})
                 </label>
                 <input
                   type="number"
@@ -136,7 +141,10 @@ export const TradingPreferencesModal: React.FC<TradingPreferencesModalProps> = (
                   required
                 />
                 <p className="text-[11px] text-[#697586] dark:text-[#929BA9] mt-1">
-                  Digunakan sebagai patokan ekuitas dasar awal dan kalkulator persentase pertumbuhan.
+                  {tr(
+                    'Digunakan sebagai patokan ekuitas dasar awal dan kalkulator persentase pertumbuhan.',
+                    'Used as the baseline starting equity and growth percentage reference.'
+                  )}
                 </p>
               </div>
             </div>
@@ -146,7 +154,7 @@ export const TradingPreferencesModal: React.FC<TradingPreferencesModalProps> = (
           {activeCategory === 'currency' && (
             <div className="space-y-3">
               <label className="block text-[#151D2A] dark:text-[#F2F5F9] font-medium">
-                Pilih Mata Uang Jurnal
+                {tr('Pilih Mata Uang Jurnal', 'Select Journal Currency')}
               </label>
               <div className="grid grid-cols-3 gap-2">
                 {(['USD', 'IDR', 'EUR'] as CurrencyCode[]).map((c) => {
@@ -177,7 +185,7 @@ export const TradingPreferencesModal: React.FC<TradingPreferencesModalProps> = (
             <div className="space-y-3">
               <div>
                 <label className="block text-[#151D2A] dark:text-[#F2F5F9] font-medium mb-1">
-                  Standar Jarak 1 Pip XAUUSD (Gold)
+                  {tr('Standar Jarak 1 Pip XAUUSD (Gold)', 'XAUUSD (Gold) 1 Pip Distance Standard')}
                 </label>
                 <select
                   value={formData.xauusdPipSize === 0.1 ? 0.1 : 1.0}
@@ -187,17 +195,26 @@ export const TradingPreferencesModal: React.FC<TradingPreferencesModalProps> = (
                   className="w-full rounded-lg bg-[#F5F7FA] dark:bg-[#080A0E] border border-[#DDE3EA] dark:border-[#252B34] px-3 py-2 text-[#151D2A] dark:text-[#F2F5F9] focus:border-[#1458C4] focus:outline-none font-mono-numbers"
                 >
                   <option value={0.1}>
-                    Mode A — 1 Pip = $0.10 Harga (Contoh: 4000 → 3995 = 50 pips, 4000 → 3950 = 500 pips)
+                    {tr(
+                      'Mode A — 1 Pip = $0.10 Harga (Contoh: 4000 → 3995 = 50 pips, 4000 → 3950 = 500 pips)',
+                      'Mode A — 1 Pip = $0.10 Price (e.g., 4000 → 3995 = 50 pips, 4000 → 3950 = 500 pips)'
+                    )}
                   </option>
                   <option value={1.0}>
-                    Mode B — 1 Pip = $1.00 Harga (Contoh: 4000 → 3995 = 5 pips, 4000 → 3950 = 50 pips)
+                    {tr(
+                      'Mode B — 1 Pip = $1.00 Harga (Contoh: 4000 → 3995 = 5 pips, 4000 → 3950 = 50 pips)',
+                      'Mode B — 1 Pip = $1.00 Price (e.g., 4000 → 3995 = 5 pips, 4000 → 3950 = 50 pips)'
+                    )}
                   </option>
                 </select>
               </div>
 
               <div>
                 <label className="block text-[#151D2A] dark:text-[#F2F5F9] font-medium mb-1">
-                  Contract Size (Troy Ounces per 1.0 Lot Standar)
+                  {tr(
+                    'Contract Size (Troy Ounces per 1.0 Lot Standar)',
+                    'Contract Size (Troy Ounces per 1.0 Standard Lot)'
+                  )}
                 </label>
                 <select
                   value={formData.xauusdContractSize}
@@ -206,15 +223,17 @@ export const TradingPreferencesModal: React.FC<TradingPreferencesModalProps> = (
                   }
                   className="w-full rounded-lg bg-[#F5F7FA] dark:bg-[#080A0E] border border-[#DDE3EA] dark:border-[#252B34] px-3 py-2 text-[#151D2A] dark:text-[#F2F5F9] focus:border-[#1458C4] focus:outline-none"
                 >
-                  <option value={100}>100 oz (Standar Industri Forex/CFD MT5)</option>
-                  <option value={10}>10 oz (Akun Mini)</option>
-                  <option value={1}>1 oz (Akun Micro / Cent)</option>
+                  <option value={100}>
+                    {tr('100 oz (Standar Industri Forex/CFD MT5)', '100 oz (Forex/CFD MT5 Industry Standard)')}
+                  </option>
+                  <option value={10}>{tr('10 oz (Akun Mini)', '10 oz (Mini Account)')}</option>
+                  <option value={1}>{tr('1 oz (Akun Micro / Cent)', '1 oz (Micro / Cent Account)')}</option>
                 </select>
               </div>
 
               <div>
                 <label className="block text-[#151D2A] dark:text-[#F2F5F9] font-medium mb-1">
-                  Perkiraan Komisi Broker per Lot ($)
+                  {tr('Perkiraan Komisi Broker per Lot ($)', 'Estimated Broker Commission per Lot ($)')}
                 </label>
                 <input
                   type="number"
@@ -230,7 +249,10 @@ export const TradingPreferencesModal: React.FC<TradingPreferencesModalProps> = (
 
               <div className="p-3 rounded-lg bg-[#F5F7FA] dark:bg-[#080A0E] border border-[#DDE3EA] dark:border-[#252B34] text-[11px] text-[#697586] dark:text-[#929BA9]">
                 <span className="font-semibold text-[#151D2A] dark:text-[#F2F5F9] block mb-0.5">
-                  Rumus Standar: LOT × JARAK PIP = NILAI UANG
+                  {tr(
+                    'Rumus Standar: LOT × JARAK PIP = NILAI UANG',
+                    'Standard Formula: LOT × PIP DISTANCE = MONETARY VALUE'
+                  )}
                 </span>
                 0.01 lot = $0.10/pip • 0.05 lot = $0.50/pip • 0.10 lot = $1.00/pip • 1.00 lot = $10.00/pip.
               </div>
@@ -242,7 +264,7 @@ export const TradingPreferencesModal: React.FC<TradingPreferencesModalProps> = (
             <div className="space-y-3">
               <div>
                 <label className="block text-[#151D2A] dark:text-[#F2F5F9] font-medium mb-1">
-                  Default Risiko per Trade (%)
+                  {tr('Default Risiko per Trade (%)', 'Default Risk per Trade (%)')}
                 </label>
                 <input
                   type="number"
@@ -260,7 +282,7 @@ export const TradingPreferencesModal: React.FC<TradingPreferencesModalProps> = (
 
               <div>
                 <label className="block text-[#151D2A] dark:text-[#F2F5F9] font-medium mb-1">
-                  Basis Modal Perhitungan Risiko Default
+                  {tr('Basis Modal Perhitungan Risiko Default', 'Default Risk Calculation Capital Basis')}
                 </label>
                 <select
                   value={formData.riskCapitalBasis || 'EQUITY'}
@@ -272,14 +294,18 @@ export const TradingPreferencesModal: React.FC<TradingPreferencesModalProps> = (
                   }
                   className="w-full rounded-lg bg-[#F5F7FA] dark:bg-[#080A0E] border border-[#DDE3EA] dark:border-[#252B34] px-3 py-2 text-[#151D2A] dark:text-[#F2F5F9] focus:border-[#1458C4] focus:outline-none"
                 >
-                  <option value="EQUITY">Ekuitas Saat Ini (Current Equity)</option>
-                  <option value="BALANCE">Saldo Awal (Starting Balance)</option>
+                  <option value="EQUITY">
+                    {tr('Ekuitas Saat Ini (Current Equity)', 'Current Equity')}
+                  </option>
+                  <option value="BALANCE">
+                    {tr('Saldo Awal (Starting Balance)', 'Starting Balance')}
+                  </option>
                 </select>
               </div>
 
               <div>
                 <label className="block text-[#151D2A] dark:text-[#F2F5F9] font-medium mb-1">
-                  Target Return Bulanan (%)
+                  {tr('Target Return Bulanan (%)', 'Monthly Return Target (%)')}
                 </label>
                 <input
                   type="number"
@@ -300,7 +326,7 @@ export const TradingPreferencesModal: React.FC<TradingPreferencesModalProps> = (
             <div className="space-y-3">
               <div>
                 <label className="block text-[#151D2A] dark:text-[#F2F5F9] font-medium mb-1">
-                  Total Deposit Tambahan ({formData.currencySymbol})
+                  {tr('Total Deposit Tambahan', 'Total Additional Deposits')} ({formData.currencySymbol})
                 </label>
                 <input
                   type="number"
@@ -319,7 +345,7 @@ export const TradingPreferencesModal: React.FC<TradingPreferencesModalProps> = (
 
               <div>
                 <label className="block text-[#151D2A] dark:text-[#F2F5F9] font-medium mb-1">
-                  Total Penarikan / Withdrawal ({formData.currencySymbol})
+                  {tr('Total Penarikan / Withdrawal', 'Total Withdrawals')} ({formData.currencySymbol})
                 </label>
                 <input
                   type="number"
@@ -345,13 +371,13 @@ export const TradingPreferencesModal: React.FC<TradingPreferencesModalProps> = (
               onClick={onClose}
               className="px-4 py-2 rounded-lg border border-[#DDE3EA] dark:border-[#252B34] text-[#697586] dark:text-[#929BA9] hover:text-[#151D2A] dark:hover:text-[#F2F5F9] font-medium transition-colors cursor-pointer"
             >
-              Batal
+              {tr('Batal', 'Cancel')}
             </button>
             <button
               type="submit"
               className="px-4 py-2 rounded-lg bg-[#1458C4] hover:bg-[#11469e] text-white font-semibold transition-colors cursor-pointer"
             >
-              Simpan Pengaturan
+              {tr('Simpan Pengaturan', 'Save Settings')}
             </button>
           </div>
         </form>

@@ -24,6 +24,7 @@ import {
 } from 'lucide-react';
 import { AppSettings } from '../../types/settings';
 import { useTheme } from '../../utils/theme';
+import { useLanguage } from '../../utils/language';
 import { BrandLogo } from './BrandLogo';
 
 interface MobileNavProps {
@@ -56,6 +57,7 @@ export const MobileNav: React.FC<MobileNavProps> = ({
   onAddTrade,
 }) => {
   const { isDark, toggleTheme } = useTheme();
+  const { isEn, tr } = useLanguage();
 
   useEffect(() => {
     if (!isOpen) return;
@@ -69,26 +71,26 @@ export const MobileNav: React.FC<MobileNavProps> = ({
   }, [isOpen, onClose]);
 
   const bottomTabs = [
-    { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
-    { id: 'trades', label: 'Trade Log', icon: BookOpen },
-    { id: 'analytics', label: 'Analytics', icon: BarChart3 },
-    { id: 'risk', label: 'Risk', icon: ShieldAlert },
+    { id: 'dashboard', label: tr('Dasbor', 'Dashboard'), icon: LayoutDashboard },
+    { id: 'trades', label: tr('Jurnal Trade', 'Trade Log'), icon: BookOpen },
+    { id: 'analytics', label: tr('Analitik', 'Analytics'), icon: BarChart3 },
+    { id: 'risk', label: tr('Risiko', 'Risk'), icon: ShieldAlert },
   ];
 
   const mainMenuItems = [
-    { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
-    { id: 'trades', label: 'Trade Log', icon: BookOpen },
-    { id: 'add-trade', label: 'Catat Trade Baru', icon: PlusCircle },
-    { id: 'analytics', label: 'Analytics', icon: BarChart3 },
-    { id: 'risk', label: 'Risk Management', icon: ShieldAlert },
-    { id: 'market-chart', label: 'Market Chart', icon: CandlestickChart },
+    { id: 'dashboard', label: tr('Dasbor', 'Dashboard'), icon: LayoutDashboard },
+    { id: 'trades', label: tr('Jurnal Trade', 'Trade Log'), icon: BookOpen },
+    { id: 'add-trade', label: tr('Catat Trade Baru', 'New Trade'), icon: PlusCircle },
+    { id: 'analytics', label: tr('Analitik', 'Analytics'), icon: BarChart3 },
+    { id: 'risk', label: tr('Manajemen Risiko', 'Risk Management'), icon: ShieldAlert },
+    { id: 'market-chart', label: tr('Chart Pasar', 'Market Chart'), icon: CandlestickChart },
   ];
 
   return (
     <>
       {/* Mobile Bottom Thumb Navigation Bar (5 Positions: Dashboard, Trade Log, [+], Analytics, Risk) */}
       <nav
-        aria-label="Navigasi Utama Bawah"
+        aria-label={tr('Navigasi Utama Bawah', 'Bottom Primary Navigation')}
         className="fixed bottom-0 left-0 right-0 z-40 lg:hidden border-t border-[#DDE3EA] dark:border-[#20252D] bg-white/95 dark:bg-[#0B0D11]/95 backdrop-blur-md px-2 pt-1.5 pb-[calc(0.375rem+env(safe-area-inset-bottom,0px))] transition-colors duration-150"
       >
         <div className="grid grid-cols-5 items-center">
@@ -124,8 +126,8 @@ export const MobileNav: React.FC<MobileNavProps> = ({
                   onNavigate('add-trade');
                 }
               }}
-              aria-label="Tambah Transaksi"
-              title="Tambah Transaksi"
+              aria-label={tr('Tambah Transaksi', 'Add Trade')}
+              title={tr('Tambah Transaksi', 'Add Trade')}
               data-testid="global-bottom-add-trade-button"
               className="flex items-center justify-center min-h-[44px] min-w-[48px] px-1 group cursor-pointer focus:outline-none"
             >
@@ -180,7 +182,7 @@ export const MobileNav: React.FC<MobileNavProps> = ({
         <div
           role="dialog"
           aria-modal={isOpen}
-          aria-label="Menu Navigasi Utama"
+          aria-label={tr('Menu Navigasi Utama', 'Main Navigation Menu')}
           data-testid="mobile-drawer-panel"
           className={`fixed inset-y-0 left-0 z-10 w-72 max-w-[85vw] bg-white dark:bg-[#0E1218] border-r border-[#DDE3EA] dark:border-[#202630] px-4 pt-[calc(0.875rem+env(safe-area-inset-top,0px))] pb-[calc(1.25rem+env(safe-area-inset-bottom,0px))] overflow-y-auto flex flex-col justify-between shadow-2xl transform transition-transform duration-250 ease-[cubic-bezier(0.22,1,0.36,1)] ${
             isOpen ? 'translate-x-0' : '-translate-x-full'
@@ -203,7 +205,7 @@ export const MobileNav: React.FC<MobileNavProps> = ({
                 type="button"
                 onClick={onClose}
                 className="p-1.5 -mr-1 rounded-lg text-[#697586] dark:text-[#929BA9] hover:text-[#151D2A] dark:hover:text-[#F2F5F9] hover:bg-[#F5F7FA] dark:hover:bg-[#161B24] transition-colors cursor-pointer"
-                aria-label="Tutup Menu"
+                aria-label={tr('Tutup Menu', 'Close Menu')}
               >
                 <X className="h-4 w-4 stroke-[1.75]" />
               </button>
@@ -235,7 +237,7 @@ export const MobileNav: React.FC<MobileNavProps> = ({
                         {currentUser.email}
                       </span>
                       <span className="text-[11px] text-[#697586] dark:text-[#8E98A8] block mt-0.5">
-                        Akun aktif
+                        {tr('Akun aktif', 'Active account')}
                       </span>
                     </div>
                   </div>
@@ -256,10 +258,10 @@ export const MobileNav: React.FC<MobileNavProps> = ({
                     </div>
                     <div className="min-w-0">
                       <span className="text-xs font-semibold text-[#151D2A] dark:text-[#F2F5F9] block truncate">
-                        Belum masuk
+                        {tr('Belum masuk', 'Not signed in')}
                       </span>
                       <span className="text-[11px] text-[#697586] dark:text-[#8E98A8] block mt-0.5">
-                        Ketuk untuk masuk akun
+                        {tr('Ketuk untuk masuk akun', 'Tap to sign in')}
                       </span>
                     </div>
                   </div>
@@ -274,9 +276,9 @@ export const MobileNav: React.FC<MobileNavProps> = ({
               className="pb-3.5 border-b border-[#DDE3EA] dark:border-[#202630]"
             >
               <span className="text-[10px] font-semibold uppercase tracking-[0.08em] text-[#697586] dark:text-[#8E98A8] block px-2 mb-1.5">
-                MENU UTAMA
+                {tr('MENU UTAMA', 'MAIN MENU')}
               </span>
-              <nav className="flex flex-col space-y-0.5" aria-label="Menu Utama">
+              <nav className="flex flex-col space-y-0.5" aria-label={tr('Menu Utama', 'Main Menu')}>
                 {mainMenuItems.map((item) => {
                   const Icon = item.icon;
                   const isActive =
@@ -320,7 +322,7 @@ export const MobileNav: React.FC<MobileNavProps> = ({
               className="pb-3.5 border-b border-[#DDE3EA] dark:border-[#202630]"
             >
               <span className="text-[10px] font-semibold uppercase tracking-[0.08em] text-[#697586] dark:text-[#8E98A8] block px-2 mb-1.5">
-                PREFERENSI
+                {tr('PREFERENSI', 'PREFERENCES')}
               </span>
               <button
                 type="button"
@@ -336,10 +338,10 @@ export const MobileNav: React.FC<MobileNavProps> = ({
                   )}
                   <div className="min-w-0">
                     <span className="text-[13px] font-medium text-[#151D2A] dark:text-[#F2F5F9] block leading-snug">
-                      Tampilan
+                      {tr('Tampilan', 'Appearance')}
                     </span>
                     <span className="text-[11px] text-[#697586] dark:text-[#8E98A8] block">
-                      {isDark ? 'Gelap' : 'Terang'}
+                      {isEn ? (isDark ? 'Dark' : 'Light') : (isDark ? 'Gelap' : 'Terang')}
                     </span>
                   </div>
                 </div>
@@ -352,7 +354,7 @@ export const MobileNav: React.FC<MobileNavProps> = ({
               className="pb-3.5 border-b border-[#DDE3EA] dark:border-[#202630]"
             >
               <span className="text-[10px] font-semibold uppercase tracking-[0.08em] text-[#697586] dark:text-[#8E98A8] block px-2 mb-1.5">
-                PENGATURAN
+                {tr('PENGATURAN', 'SETTINGS')}
               </span>
               <div className="flex flex-col space-y-0.5">
                 <button
@@ -369,7 +371,7 @@ export const MobileNav: React.FC<MobileNavProps> = ({
                 >
                   <div className="flex items-center gap-3 min-w-0">
                     <Settings className="h-4 w-4 shrink-0 text-[#697586] dark:text-[#8E98A8] stroke-[1.75]" />
-                    <span className="truncate">Pengaturan Aplikasi</span>
+                    <span className="truncate">{tr('Pengaturan Aplikasi', 'App Settings')}</span>
                   </div>
                   <ChevronRight className="h-3.5 w-3.5 shrink-0 text-[#697586] dark:text-[#8E98A8] stroke-[1.75]" />
                 </button>
@@ -388,17 +390,17 @@ export const MobileNav: React.FC<MobileNavProps> = ({
                 >
                   <div className="flex items-center gap-3 min-w-0">
                     <User className="h-4 w-4 shrink-0 text-[#697586] dark:text-[#8E98A8] stroke-[1.75]" />
-                    <span className="truncate">Pengaturan Akun</span>
+                    <span className="truncate">{tr('Pengaturan Akun', 'Account Settings')}</span>
                   </div>
                   <ChevronRight className="h-3.5 w-3.5 shrink-0 text-[#697586] dark:text-[#8E98A8] stroke-[1.75]" />
                 </button>
               </div>
             </div>
 
-            {/* 6. Data & Penyimpanan */}
+            {/* 6. Data & Penyimpanan - DATA &amp; PENYIMPANAN */}
             <div data-testid="mobile-menu-storage-section" className="pb-2">
               <span className="text-[10px] font-semibold uppercase tracking-[0.08em] text-[#697586] dark:text-[#8E98A8] block px-2 mb-1.5">
-                DATA &amp; PENYIMPANAN
+                {tr('DATA & PENYIMPANAN', 'DATA & STORAGE')}
               </span>
               <div className="flex flex-col space-y-0.5">
                 <button
@@ -411,7 +413,7 @@ export const MobileNav: React.FC<MobileNavProps> = ({
                 >
                   <div className="flex items-center gap-3 min-w-0">
                     <Database className="h-4 w-4 shrink-0 text-[#697586] dark:text-[#8E98A8] stroke-[1.75]" />
-                    <span className="truncate">Penyimpanan Lokal</span>
+                    <span className="truncate">{tr('Penyimpanan Lokal', 'Local Storage')}</span>
                   </div>
                   <div className="flex items-center gap-1.5 shrink-0">
                     <span className="text-[11px] font-mono-numbers tabular-nums text-[#697586] dark:text-[#8E98A8]">
@@ -431,7 +433,7 @@ export const MobileNav: React.FC<MobileNavProps> = ({
                 >
                   <div className="flex items-center gap-3 min-w-0">
                     <Info className="h-4 w-4 shrink-0 text-[#697586] dark:text-[#8E98A8] stroke-[1.75]" />
-                    <span className="truncate">Info Penyimpanan</span>
+                    <span className="truncate">{tr('Info Penyimpanan', 'Storage Info')}</span>
                   </div>
                   <ChevronRight className="h-3.5 w-3.5 shrink-0 text-[#697586] dark:text-[#8E98A8] stroke-[1.75]" />
                 </button>
@@ -446,7 +448,7 @@ export const MobileNav: React.FC<MobileNavProps> = ({
                 >
                   <div className="flex items-center gap-3 min-w-0">
                     <HardDriveDownload className="h-4 w-4 shrink-0 text-[#697586] dark:text-[#8E98A8] stroke-[1.75]" />
-                    <span className="truncate">Backup Data</span>
+                    <span className="truncate">{tr('Cadangan Data', 'Backup Data')}</span>
                   </div>
                   <ChevronRight className="h-3.5 w-3.5 shrink-0 text-[#697586] dark:text-[#8E98A8] stroke-[1.75]" />
                 </button>
@@ -457,7 +459,7 @@ export const MobileNav: React.FC<MobileNavProps> = ({
           {/* Footer */}
           <div className="pt-3 mt-4 border-t border-[#DDE3EA] dark:border-[#202630] px-2">
             <span className="text-[10px] font-semibold uppercase tracking-[0.1em] text-[#697586] dark:text-[#8E98A8] block">
-              TRADEVAULT JOURNAL
+              {tr('JURNAL TRADEVAULT', 'TRADEVAULT JOURNAL')}
             </span>
           </div>
         </div>

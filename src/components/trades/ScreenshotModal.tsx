@@ -6,6 +6,7 @@ import {
   getCachedBase64ForStoragePath,
 } from '../../utils/supabaseSync';
 import { resolveTradingViewSnapshotUrl } from '../../utils/tradeScreenshotScanner';
+import { useLanguage } from '../../utils/language';
 
 interface ScreenshotModalProps {
   imageUrl: string | null;
@@ -16,10 +17,11 @@ interface ScreenshotModalProps {
 
 export const ScreenshotModal: React.FC<ScreenshotModalProps> = ({
   imageUrl,
-  tradeTitle = 'Chart Screenshot',
+  tradeTitle,
   isOpen,
   onClose,
 }) => {
+  const { tr } = useLanguage();
   const [resolvedUrl, setResolvedUrl] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -75,14 +77,23 @@ export const ScreenshotModal: React.FC<ScreenshotModalProps> = ({
           } else {
             setLoadError(
               res.errorMessage ||
-                'Gagal memuat screenshot dari Storage privat. Pastikan sesi login aktif.'
+                tr(
+                  'Gagal memuat screenshot dari Storage privat. Pastikan sesi login aktif.',
+                  'Failed to load screenshot from private storage. Make sure your sign-in session is active.'
+                )
             );
           }
         })
         .catch((err) => {
           if (!isMounted) return;
           setIsLoading(false);
-          setLoadError(err?.message || 'Terjadi kesalahan saat memuat gambar dari storage.');
+          setLoadError(
+            err?.message ||
+              tr(
+                'Terjadi kesalahan saat memuat gambar dari storage.',
+                'An error occurred while loading image from storage.'
+              )
+          );
         });
 
       return () => {
@@ -92,8 +103,8 @@ export const ScreenshotModal: React.FC<ScreenshotModalProps> = ({
 
     setResolvedUrl(null);
     setIsLoading(false);
-    setLoadError('Format tautan screenshot tidak dikenali.');
-  }, [isOpen, imageUrl]);
+    setLoadError(tr('Format tautan screenshot tidak dikenali.', 'Unrecognized screenshot link format.'));
+  }, [isOpen, imageUrl, tr]);
 
   if (!isOpen || !imageUrl) return null;
 
@@ -108,7 +119,7 @@ export const ScreenshotModal: React.FC<ScreenshotModalProps> = ({
       >
         <div className="flex items-center justify-between pb-3 border-b border-[#DDE3EA] dark:border-[#252B34] mb-3">
           <div className="text-sm font-semibold text-[#151D2A] dark:text-[#F2F5F9] truncate pr-4">
-            {tradeTitle}
+            {tradeTitle || tr('Screenshot Chart', 'Chart Screenshot')}
           </div>
           <div className="flex items-center gap-2">
             {resolvedUrl && (
@@ -118,8 +129,8 @@ export const ScreenshotModal: React.FC<ScreenshotModalProps> = ({
                 target="_blank"
                 rel="noreferrer"
                 className="p-1.5 rounded-lg bg-[#EEF2F6] dark:bg-[#171D26] border border-[#DDE3EA] dark:border-[#252B34] text-[#697586] dark:text-[#929BA9] hover:text-[#1769E8] hover:border-[#1769E8] text-xs flex items-center gap-1 transition-colors"
-                title="Unduh Gambar"
-                aria-label="Unduh screenshot"
+                title={tr('Unduh Gambar', 'Download Image')}
+                aria-label={tr('Unduh screenshot', 'Download screenshot')}
               >
                 <Download className="h-4 w-4 stroke-[1.75]" />
               </a>
@@ -127,7 +138,7 @@ export const ScreenshotModal: React.FC<ScreenshotModalProps> = ({
             <button
               onClick={onClose}
               className="p-1.5 rounded-lg bg-[#EEF2F6] dark:bg-[#171D26] border border-[#DDE3EA] dark:border-[#252B34] text-[#697586] dark:text-[#929BA9] hover:text-[#151D2A] dark:hover:text-[#F2F5F9] transition-colors"
-              aria-label="Tutup pratinjau screenshot"
+              aria-label={tr('Tutup pratinjau screenshot', 'Close screenshot preview')}
             >
               <X className="h-4 w-4 stroke-[1.75]" />
             </button>
@@ -138,7 +149,9 @@ export const ScreenshotModal: React.FC<ScreenshotModalProps> = ({
           {isLoading && (
             <div className="flex flex-col items-center justify-center gap-2 text-[#1769E8] py-12">
               <Loader2 className="h-6 w-6 animate-spin" />
-              <span className="text-xs text-[#697586] dark:text-[#929BA9]">Memuat gambar dari Storage privat...</span>
+              <span className="text-xs text-[#697586] dark:text-[#929BA9]">
+                {tr('Memuat gambar dari Storage privat...', 'Loading image from private storage...')}
+              </span>
             </div>
           )}
 
@@ -167,7 +180,10 @@ export const ScreenshotModal: React.FC<ScreenshotModalProps> = ({
                 } else {
                   setResolvedUrl(null);
                   setLoadError(
-                    'Gagal merender file gambar dari Storage privat. Pastikan file gambar masih tersedia di bucket trade-screenshots.'
+                    tr(
+                      'Gagal merender file gambar dari Storage privat. Pastikan file gambar masih tersedia di bucket trade-screenshots.',
+                      'Failed to render image file from private storage. Make sure the image file still exists in the trade-screenshots bucket.'
+                    )
                   );
                 }
               }}

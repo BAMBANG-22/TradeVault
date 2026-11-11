@@ -10,6 +10,7 @@ import {
 } from '../../utils/tradeSimulation';
 import { formatCurrency } from '../../utils/calculations';
 import { useGlobalCurrency } from '../../utils/currencyRate';
+import { useLanguage } from '../../utils/language';
 import { AlertTriangle, RefreshCw, HelpCircle, ArrowRightLeft } from 'lucide-react';
 
 interface TradeSimulationTabProps {
@@ -94,6 +95,7 @@ export const TradeSimulationTab: React.FC<TradeSimulationTabProps> = ({
   currentEquity,
 }) => {
   const { preferredCurrency, effectiveRate } = useGlobalCurrency();
+  const { tr } = useLanguage();
 
   const initialCurrency: CurrencyCode =
     preferredCurrency === 'IDR' || settings.currency === 'IDR'
@@ -335,14 +337,14 @@ export const TradeSimulationTab: React.FC<TradeSimulationTabProps> = ({
       return `≈ $${eqUsd.toLocaleString('en-US', {
         minimumFractionDigits: 2,
         maximumFractionDigits: 2,
-      })} USD (Kurs Rp ${Math.round(rate).toLocaleString('id-ID')})`;
+      })} USD (${tr('Kurs', 'Rate')} Rp ${Math.round(rate).toLocaleString('id-ID')})`;
     }
     if (currency === 'USD') {
       const eqIdr = Math.round(startingCapital * rate);
-      return `≈ Rp ${eqIdr.toLocaleString('id-ID')} (Kurs Rp ${Math.round(rate).toLocaleString('id-ID')})`;
+      return `≈ Rp ${eqIdr.toLocaleString('id-ID')} (${tr('Kurs', 'Rate')} Rp ${Math.round(rate).toLocaleString('id-ID')})`;
     }
     return null;
-  }, [currency, startingCapital, effectiveRate]);
+  }, [currency, startingCapital, effectiveRate, tr]);
 
   // First trade risk & reward preview
   const firstTradeRiskAmount = simulation.firstTradeRiskDollar;
@@ -418,10 +420,13 @@ export const TradeSimulationTab: React.FC<TradeSimulationTabProps> = ({
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-4 border-b border-[#DDE3EA] dark:border-[#20252D]">
           <div>
             <h2 className="text-sm font-semibold uppercase tracking-wider text-[#151D2A] dark:text-[#F2F4F7]">
-              Simulasi Berbasis Trade
+              {tr('Simulasi Berbasis Trade', 'Trade-Based Simulation')}
             </h2>
             <p className="text-xs text-[#667085] dark:text-[#98A2B3] mt-0.5">
-              Simulasi skenario performa trading, distribusi Win/Loss, dan probabilitas Monte Carlo dalam USD & IDR
+              {tr(
+                'Simulasi skenario performa trading, distribusi Win/Loss, dan probabilitas Monte Carlo dalam USD & IDR',
+                'Simulate trading performance scenarios, Win/Loss distribution, and Monte Carlo probabilities in USD & IDR'
+              )}
             </p>
           </div>
 
@@ -449,7 +454,7 @@ export const TradeSimulationTab: React.FC<TradeSimulationTabProps> = ({
               onClick={handleSyncLiveEquity}
               className="px-3 py-1.5 rounded-lg border border-[#DDE3EA] dark:border-[#20252D] bg-[#F5F7FA] dark:bg-[#101318] hover:border-[#151D2A]/30 dark:hover:border-white/[0.2] text-xs font-medium text-[#151D2A] dark:text-[#F2F4F7] transition-colors font-mono-numbers tabular-nums"
             >
-              Gunakan Saldo Akun ({formatCurrency(liveAccountBalanceInSelectedCurrency, activeSettings)})
+              {tr('Gunakan Saldo Akun', 'Use Account Balance')} ({formatCurrency(liveAccountBalanceInSelectedCurrency, activeSettings)})
             </button>
           </div>
         </div>
@@ -462,16 +467,16 @@ export const TradeSimulationTab: React.FC<TradeSimulationTabProps> = ({
           <div className="sm:col-span-2 lg:col-span-1">
             <div className="flex items-center justify-between mb-1.5">
               <label className="text-[11px] font-semibold uppercase tracking-wider text-[#667085] dark:text-[#98A2B3]">
-                Modal Awal ({activeSettings.currencySymbol})
+                {tr('Modal Awal', 'Initial Capital')} ({activeSettings.currencySymbol})
               </label>
               <button
                 type="button"
                 onClick={() => handleCurrencySwitch(currency === 'IDR' ? 'USD' : 'IDR')}
                 className="inline-flex items-center gap-1 text-[10px] font-semibold text-[#3478DC] hover:underline"
-                title="Ubah mata uang dan konversi otomatis"
+                title={tr('Ubah mata uang dan konversi otomatis', 'Switch currency and convert automatically')}
               >
                 <ArrowRightLeft className="w-3 h-3" />
-                <span>Ke {currency === 'IDR' ? 'USD' : 'IDR'}</span>
+                <span>{tr('Ke', 'To')} {currency === 'IDR' ? 'USD' : 'IDR'}</span>
               </button>
             </div>
 
@@ -522,7 +527,7 @@ export const TradeSimulationTab: React.FC<TradeSimulationTabProps> = ({
           {/* Win Rate (%) */}
           <div>
             <label className="block text-[11px] font-semibold uppercase tracking-wider text-[#667085] dark:text-[#98A2B3] mb-1.5">
-              Win Rate (%)
+              {tr('Tingkat Menang (%)', 'Win Rate (%)')}
             </label>
             <div className="relative">
               <input
@@ -540,7 +545,7 @@ export const TradeSimulationTab: React.FC<TradeSimulationTabProps> = ({
               </span>
             </div>
             <p className="text-[10px] font-mono-numbers tabular-nums text-[#667085] dark:text-[#98A2B3] mt-1.5">
-              Target: {simulation.targetWinCount} Win / {simulation.targetLossCount} Loss
+              {tr('Target', 'Target')}: {simulation.targetWinCount} {tr('Menang', 'Win')} / {simulation.targetLossCount} {tr('Rugi', 'Loss')}
             </p>
           </div>
 
@@ -548,7 +553,7 @@ export const TradeSimulationTab: React.FC<TradeSimulationTabProps> = ({
           <div>
             <div className="flex items-center justify-between mb-1.5">
               <label className="text-[11px] font-semibold uppercase tracking-wider text-[#667085] dark:text-[#98A2B3]">
-                Risiko / Trade ({riskType === 'percent' ? '%' : activeSettings.currencySymbol})
+                {tr('Risiko / Trade', 'Risk / Trade')} ({riskType === 'percent' ? '%' : activeSettings.currencySymbol})
               </label>
               <div className="inline-flex items-center p-0.5 rounded-md bg-[#EEF2F6] dark:bg-[#101318] border border-[#DDE3EA] dark:border-[#20252D]">
                 <button
@@ -617,7 +622,7 @@ export const TradeSimulationTab: React.FC<TradeSimulationTabProps> = ({
           {/* Risk / Reward (1 : X) */}
           <div>
             <label className="block text-[11px] font-semibold uppercase tracking-wider text-[#667085] dark:text-[#98A2B3] mb-1.5">
-              Risk : Reward (1 : X)
+              {tr('Rasio Risiko : Imbalan (1 : X)', 'Risk : Reward (1 : X)')}
             </label>
             <input
               type="number"
@@ -636,7 +641,7 @@ export const TradeSimulationTab: React.FC<TradeSimulationTabProps> = ({
           {/* Total Trades */}
           <div>
             <label className="block text-[11px] font-semibold uppercase tracking-wider text-[#667085] dark:text-[#98A2B3] mb-1.5">
-              Jumlah Transaksi
+              {tr('Jumlah Transaksi', 'Total Trades')}
             </label>
             <input
               type="number"
@@ -649,7 +654,7 @@ export const TradeSimulationTab: React.FC<TradeSimulationTabProps> = ({
               placeholder="50"
             />
             <p className="text-[10px] text-[#667085] dark:text-[#98A2B3] mt-1.5">
-              Simulasi {tradesCount} eksekusi berurutan
+              {tr(`Simulasi ${tradesCount} eksekusi berurutan`, `Simulating ${tradesCount} consecutive executions`)}
             </p>
           </div>
         </div>
@@ -659,7 +664,7 @@ export const TradeSimulationTab: React.FC<TradeSimulationTabProps> = ({
           {/* Risk Method */}
           <div>
             <label className="block text-[11px] font-semibold uppercase tracking-wider text-[#667085] dark:text-[#98A2B3] mb-1.5">
-              Metode Perhitungan Risiko
+              {tr('Metode Perhitungan Risiko', 'Risk Calculation Method')}
             </label>
             <select
               value={riskMethod}
@@ -667,10 +672,10 @@ export const TradeSimulationTab: React.FC<TradeSimulationTabProps> = ({
               className="w-full rounded-xl bg-[#F5F7FA] dark:bg-[#101318] border border-[#DDE3EA] dark:border-[#20252D] px-3.5 py-2.5 text-xs font-medium text-[#151D2A] dark:text-[#F2F4F7] focus:border-[#151D2A] dark:focus:border-white/[0.28] focus:outline-none transition-colors"
             >
               <option value="balance" className="bg-white dark:bg-[#0B0D11]">
-                Saldo Berjalan / Compounding (Risiko Mengikuti Ekuitas)
+                {tr('Saldo Berjalan / Compounding (Risiko Mengikuti Ekuitas)', 'Running Balance / Compounding (Dynamic Risk)')}
               </option>
               <option value="initial_capital" className="bg-white dark:bg-[#0B0D11]">
-                Modal Awal Tetap / Flat Risk (Risiko Konstan)
+                {tr('Modal Awal Tetap / Risiko Konstan', 'Fixed Initial Capital / Constant Risk')}
               </option>
             </select>
           </div>
@@ -678,7 +683,7 @@ export const TradeSimulationTab: React.FC<TradeSimulationTabProps> = ({
           {/* Sequence Mode */}
           <div>
             <label className="block text-[11px] font-semibold uppercase tracking-wider text-[#667085] dark:text-[#98A2B3] mb-1.5">
-              Pola Urutan Win / Loss
+              {tr('Pola Urutan Menang / Rugi', 'Win / Loss Sequence Pattern')}
             </label>
             <select
               value={sequenceMode}
@@ -686,19 +691,19 @@ export const TradeSimulationTab: React.FC<TradeSimulationTabProps> = ({
               className="w-full rounded-xl bg-[#F5F7FA] dark:bg-[#101318] border border-[#DDE3EA] dark:border-[#20252D] px-3.5 py-2.5 text-xs font-medium text-[#151D2A] dark:text-[#F2F4F7] focus:border-[#151D2A] dark:focus:border-white/[0.28] focus:outline-none transition-colors"
             >
               <option value="expected_spread" className="bg-white dark:bg-[#0B0D11]">
-                Distribusi Merata (Proporsional)
+                {tr('Distribusi Merata (Proporsional)', 'Evenly Distributed (Proportional)')}
               </option>
               <option value="loss_streak_first" className="bg-white dark:bg-[#0B0D11]">
-                Semua Loss di Awal (Skenario Terburuk)
+                {tr('Semua Rugi di Awal (Skenario Terburuk)', 'All Losses First (Worst-Case Scenario)')}
               </option>
               <option value="win_streak_first" className="bg-white dark:bg-[#0B0D11]">
-                Semua Win di Awal
+                {tr('Semua Menang di Awal', 'All Wins First')}
               </option>
               <option value="custom_loss_streak" className="bg-white dark:bg-[#0B0D11]">
-                Loss Beruntun Kustom di Awal (Stress Test)
+                {tr('Rugi Beruntun Kustom di Awal (Uji Ketahanan)', 'Custom Consecutive Losses First (Stress Test)')}
               </option>
               <option value="monte_carlo_random" className="bg-white dark:bg-[#0B0D11]">
-                Urutan Acak Realistis (Monte Carlo Seed)
+                {tr('Urutan Acak Realistis (Monte Carlo)', 'Realistic Random Sequence (Monte Carlo)')}
               </option>
             </select>
           </div>
@@ -715,8 +720,8 @@ export const TradeSimulationTab: React.FC<TradeSimulationTabProps> = ({
               className="w-full rounded-xl bg-[#151D2A] hover:bg-[#1E293B] dark:bg-[#161A22] dark:hover:bg-[#1D232E] text-white dark:text-[#F2F4F7] border border-black/10 dark:border-white/[0.14] text-xs font-semibold py-2.5 px-4 transition-colors"
             >
               {sequenceMode === 'monte_carlo_random'
-                ? `Acak Ulang Urutan (Seed #${randomSeed})`
-                : 'Jalankan Simulasi'}
+                ? tr(`Acak Ulang Urutan (Seed #${randomSeed})`, `Randomize Sequence (Seed #${randomSeed})`)
+                : tr('Jalankan Simulasi', 'Run Simulation')}
             </button>
           </div>
         </div>
@@ -726,7 +731,7 @@ export const TradeSimulationTab: React.FC<TradeSimulationTabProps> = ({
           <div className="p-3.5 rounded-xl bg-[#F5F7FA] dark:bg-[#101318] border border-[#DDE3EA] dark:border-[#20252D] flex flex-col sm:flex-row sm:items-center justify-between gap-3">
             <div className="flex flex-wrap items-center gap-2">
               <span className="text-xs font-medium text-[#151D2A] dark:text-[#F2F4F7]">
-                Jumlah Loss Beruntun di Awal:
+                {tr('Jumlah Rugi Beruntun di Awal:', 'Initial Consecutive Losses:')}
               </span>
               {CONSECUTIVE_LOSS_PRESETS.map((preset) => (
                 <button
@@ -754,7 +759,7 @@ export const TradeSimulationTab: React.FC<TradeSimulationTabProps> = ({
             </div>
 
             <span className="text-xs font-mono-numbers tabular-nums text-[#667085] dark:text-[#98A2B3]">
-              Loss Beruntun Diterapkan: <strong>{simulation.actualInitialLossStreak} trade</strong>
+              {tr('Rugi Beruntun Diterapkan:', 'Applied Loss Streak:')} <strong>{simulation.actualInitialLossStreak} trade</strong>
             </span>
           </div>
         )}
@@ -770,7 +775,10 @@ export const TradeSimulationTab: React.FC<TradeSimulationTabProps> = ({
           <div className="p-3 rounded-xl bg-[#E05260]/10 border border-[#E05260]/25 text-[#E05260] text-xs flex items-start gap-2">
             <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
             <span>
-              Saldo akun menyentuh batas ekuitas minimum pada satu atau lebih transaksi; risiko otomatis dibatasi sebesar sisa saldo agar ekuitas tidak pernah turun di bawah {formatCurrency(0, activeSettings)}.
+              {tr(
+                `Saldo akun menyentuh batas ekuitas minimum pada satu atau lebih transaksi; risiko otomatis dibatasi sebesar sisa saldo agar ekuitas tidak pernah turun di bawah ${formatCurrency(0, activeSettings)}.`,
+                `Account balance reached minimum equity on one or more trades; risk was automatically capped to remaining equity so balance never drops below ${formatCurrency(0, activeSettings)}.`
+              )}
             </span>
           </div>
         )}
@@ -783,7 +791,7 @@ export const TradeSimulationTab: React.FC<TradeSimulationTabProps> = ({
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
           <div className="flex items-center gap-2.5">
             <h3 className="text-xs font-semibold uppercase tracking-wider text-[#151D2A] dark:text-[#F2F4F7]">
-              Ringkasan Hasil Simulasi ({tradesCount} Transaksi)
+              {tr(`Ringkasan Hasil Simulasi (${tradesCount} Transaksi)`, `Simulation Summary (${tradesCount} Trades)`)}
             </h3>
             <button
               type="button"
@@ -791,13 +799,16 @@ export const TradeSimulationTab: React.FC<TradeSimulationTabProps> = ({
               className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-medium bg-[#EEF2F6] dark:bg-[#101318] text-[#151D2A] dark:text-[#F2F4F7] border border-[#DDE3EA] dark:border-[#20252D]"
             >
               <HelpCircle className="w-3 h-3 text-[#3478DC]" />
-              <span>{showReadingGuide ? 'Tutup Panduan' : 'Cara Membaca'}</span>
+              <span>{showReadingGuide ? tr('Tutup Panduan', 'Hide Guide') : tr('Cara Membaca', 'Reading Guide')}</span>
             </button>
           </div>
 
           {isRoundingAdjusted && sequenceMode !== 'monte_carlo_random' && (
             <span className="text-[11px] text-[#667085] dark:text-[#98A2B3] font-mono-numbers tabular-nums">
-              Pembulatan transaksi utuh: {winRate}% dari {tradesCount} trade = {simulation.winCount}W / {simulation.lossCount}L ({simulation.actualWinRatePercent.toFixed(1)}% aktual)
+              {tr(
+                `Pembulatan transaksi utuh: ${winRate}% dari ${tradesCount} trade = ${simulation.winCount}M / ${simulation.lossCount}R (${simulation.actualWinRatePercent.toFixed(1)}% aktual)`,
+                `Whole-trade rounding: ${winRate}% of ${tradesCount} trades = ${simulation.winCount}W / ${simulation.lossCount}L (${simulation.actualWinRatePercent.toFixed(1)}% actual)`
+              )}
             </span>
           )}
         </div>
@@ -806,15 +817,24 @@ export const TradeSimulationTab: React.FC<TradeSimulationTabProps> = ({
           <div className="p-3.5 rounded-xl bg-[#F5F7FA] dark:bg-[#101318] border border-[#DDE3EA] dark:border-[#20252D] text-[11px] text-[#667085] dark:text-[#98A2B3] grid grid-cols-1 md:grid-cols-2 gap-3 leading-relaxed">
             <div>
               <strong className="text-[#151D2A] dark:text-[#F2F4F7] block mb-0.5">
-                • Perbedaan Metode Saldo Berjalan vs Modal Awal Tetap:
+                {tr(
+                  '• Perbedaan Metode Saldo Berjalan vs Modal Awal Tetap:',
+                  '• Running Balance vs Fixed Initial Capital Method:'
+                )}
               </strong>
-              Pada <strong>Saldo Berjalan (Compounding)</strong>, nilai risiko ({riskType === 'percent' ? `${riskValue}%` : formatCurrency(riskValue, activeSettings)}) dihitung ulang dari saldo terbaru sebelum setiap trade. Pada <strong>Modal Awal Tetap (Flat Risk)</strong>, risiko setiap trade selalu tetap sebesar <strong>{formatCurrency(firstTradeRiskAmount, activeSettings)}</strong>.
+              {tr(
+                `Pada Saldo Berjalan (Compounding), nilai risiko (${riskType === 'percent' ? `${riskValue}%` : formatCurrency(riskValue, activeSettings)}) dihitung ulang dari saldo terbaru sebelum setiap trade. Pada Modal Awal Tetap (Risiko Konstan), risiko setiap trade selalu tetap sebesar ${formatCurrency(firstTradeRiskAmount, activeSettings)}.`,
+                `In Running Balance (Compounding), the risk (${riskType === 'percent' ? `${riskValue}%` : formatCurrency(riskValue, activeSettings)}) is recalculated from your latest balance before each trade. In Fixed Initial Capital, every trade risks a constant ${formatCurrency(firstTradeRiskAmount, activeSettings)}.`
+              )}
             </div>
             <div>
               <strong className="text-[#151D2A] dark:text-[#F2F4F7] block mb-0.5">
                 • Expectancy ({simulation.expectancyR >= 0 ? '+' : ''}{simulation.expectancyR.toFixed(2)}R / {simulation.expectancyDollar >= 0 ? '+' : '-'}{formatCurrency(Math.abs(simulation.expectancyDollar), activeSettings)} per trade):
               </strong>
-              Jika bernilai positif (+), strategi Anda secara matematis menguntungkan dalam jangka panjang. Jika negatif (-), strategi akan menggerus modal meskipun sesekali profit.
+              {tr(
+                'Jika bernilai positif (+), strategi Anda secara matematis menguntungkan dalam jangka panjang. Jika negatif (-), strategi akan menggerus modal meskipun sesekali profit.',
+                'If positive (+), your strategy has a mathematical edge over the long run. If negative (-), the strategy will erode capital over time despite occasional wins.'
+              )}
             </div>
           </div>
         )}
@@ -823,33 +843,33 @@ export const TradeSimulationTab: React.FC<TradeSimulationTabProps> = ({
           {/* Winning Trades */}
           <div className="p-3.5 rounded-xl bg-[#F5F7FA] dark:bg-[#101318] border border-[#DDE3EA] dark:border-[#20252D]">
             <span className="text-[11px] text-[#667085] dark:text-[#98A2B3] block mb-1">
-              Transaksi Profit (Win)
+              {tr('Transaksi Profit (Menang)', 'Winning Trades')}
             </span>
             <div className="text-lg font-bold font-mono-numbers tabular-nums text-[#059669] dark:text-[#00A878]">
               {simulation.winCount} Trade
             </div>
             <span className="text-[10px] font-mono-numbers tabular-nums text-[#667085] dark:text-[#98A2B3] block mt-0.5">
-              {simulation.actualWinRatePercent.toFixed(1)}% dari {tradesCount} trade
+              {simulation.actualWinRatePercent.toFixed(1)}% {tr('dari', 'of')} {tradesCount} trade
             </span>
           </div>
 
           {/* Losing Trades */}
           <div className="p-3.5 rounded-xl bg-[#F5F7FA] dark:bg-[#101318] border border-[#DDE3EA] dark:border-[#20252D]">
             <span className="text-[11px] text-[#667085] dark:text-[#98A2B3] block mb-1">
-              Transaksi Rugi (Loss)
+              {tr('Transaksi Rugi (Kalah)', 'Losing Trades')}
             </span>
             <div className="text-lg font-bold font-mono-numbers tabular-nums text-[#E11D48] dark:text-[#E05260]">
               {simulation.lossCount} Trade
             </div>
             <span className="text-[10px] font-mono-numbers tabular-nums text-[#667085] dark:text-[#98A2B3] block mt-0.5">
-              {simulation.actualLossRatePercent.toFixed(1)}% (Max Loss Beruntun: {simulation.actualMaxLossStreak}x)
+              {simulation.actualLossRatePercent.toFixed(1)}% ({tr('Maks Rugi Beruntun', 'Max Loss Streak')}: {simulation.actualMaxLossStreak}x)
             </span>
           </div>
 
           {/* Net Profit / Loss */}
           <div className="p-3.5 rounded-xl bg-[#F5F7FA] dark:bg-[#101318] border border-[#DDE3EA] dark:border-[#20252D]">
             <span className="text-[11px] text-[#667085] dark:text-[#98A2B3] block mb-1">
-              Net Profit / Loss
+              {tr('Profit / Rugi Bersih', 'Net Profit / Loss')}
             </span>
             <div
               className={`text-base sm:text-lg font-bold font-mono-numbers tabular-nums ${
@@ -868,20 +888,20 @@ export const TradeSimulationTab: React.FC<TradeSimulationTabProps> = ({
           {/* Final Balance */}
           <div className="p-3.5 rounded-xl bg-[#F5F7FA] dark:bg-[#101318] border border-[#DDE3EA] dark:border-[#20252D]">
             <span className="text-[11px] text-[#667085] dark:text-[#98A2B3] block mb-1">
-              Saldo Akhir
+              {tr('Saldo Akhir', 'Final Balance')}
             </span>
             <div className="text-base sm:text-lg font-bold font-mono-numbers tabular-nums text-[#151D2A] dark:text-[#F2F4F7]">
               {formatCurrency(simulation.finalBalance, activeSettings)}
             </div>
             <span className="text-[10px] font-mono-numbers tabular-nums text-[#667085] dark:text-[#98A2B3] block mt-0.5">
-              Awal: {formatCurrency(simulation.startingCapital, activeSettings)}
+              {tr('Awal', 'Initial')}: {formatCurrency(simulation.startingCapital, activeSettings)}
             </span>
           </div>
 
           {/* Return (%) & Max DD */}
           <div className="p-3.5 rounded-xl bg-[#F5F7FA] dark:bg-[#101318] border border-[#DDE3EA] dark:border-[#20252D]">
             <span className="text-[11px] text-[#667085] dark:text-[#98A2B3] block mb-1">
-              Pertumbuhan Modal
+              {tr('Pertumbuhan Modal', 'Capital Growth')}
             </span>
             <div
               className={`text-lg font-bold font-mono-numbers tabular-nums ${
@@ -901,13 +921,13 @@ export const TradeSimulationTab: React.FC<TradeSimulationTabProps> = ({
           {/* Profit Factor */}
           <div className="p-3.5 rounded-xl bg-[#F5F7FA] dark:bg-[#101318] border border-[#DDE3EA] dark:border-[#20252D]">
             <span className="text-[11px] text-[#667085] dark:text-[#98A2B3] block mb-1">
-              Profit Factor
+              {tr('Faktor Profit', 'Profit Factor')}
             </span>
             <div className="text-lg font-bold font-mono-numbers tabular-nums text-[#151D2A] dark:text-[#F2F4F7]">
               {formattedProfitFactor}
             </div>
             <span className="text-[10px] font-mono-numbers tabular-nums text-[#667085] dark:text-[#98A2B3] block mt-0.5">
-              Rasio 1 : {rrRatio} R/R
+              {tr('Rasio', 'Ratio')} 1 : {rrRatio} R/R
             </span>
           </div>
         </div>
@@ -920,10 +940,10 @@ export const TradeSimulationTab: React.FC<TradeSimulationTabProps> = ({
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
           <div>
             <h3 className="text-xs font-semibold uppercase tracking-wider text-[#151D2A] dark:text-[#F2F4F7]">
-              Grafik Proyeksi Ekuitas ({tradesCount} Transaksi)
+              {tr(`Grafik Proyeksi Ekuitas (${tradesCount} Transaksi)`, `Projected Equity Curve (${tradesCount} Trades)`)}
             </h3>
             <p className="text-xs text-[#667085] dark:text-[#98A2B3] mt-0.5 font-mono-numbers tabular-nums">
-              Penurunan Maksimum (Max Drawdown): -{simulation.maxDrawdownPercent.toFixed(2)}% (-
+              {tr('Penurunan Maksimum (Max Drawdown)', 'Maximum Drawdown')}: -{simulation.maxDrawdownPercent.toFixed(2)}% (-
               {formatCurrency(simulation.maxDrawdownDollar, activeSettings)})
             </p>
           </div>
@@ -933,7 +953,9 @@ export const TradeSimulationTab: React.FC<TradeSimulationTabProps> = ({
             onClick={() => setShowTradeTable((prev) => !prev)}
             className="px-3 py-1.5 rounded-lg border border-[#DDE3EA] dark:border-[#20252D] bg-[#F5F7FA] dark:bg-[#101318] text-xs font-semibold text-[#151D2A] dark:text-[#F2F4F7] hover:border-[#151D2A]/30 dark:hover:border-white/[0.2] self-start sm:self-auto transition-colors"
           >
-            {showTradeTable ? 'Sembunyikan Tabel Rincian Trade' : 'Lihat Tabel Rincian per Trade'}
+            {showTradeTable
+              ? tr('Sembunyikan Tabel Rincian Trade', 'Hide Trade Breakdown Table')
+              : tr('Lihat Tabel Rincian per Trade', 'View Trade-by-Trade Breakdown')}
           </button>
         </div>
 
@@ -1024,7 +1046,7 @@ export const TradeSimulationTab: React.FC<TradeSimulationTabProps> = ({
                 fontSize="10"
                 fontFamily="Arial, Helvetica, sans-serif"
               >
-                Trade #0 (Awal)
+                {tr('Trade #0 (Awal)', 'Trade #0 (Start)')}
               </text>
               <text
                 x={padding.left + innerWidth / 2}
@@ -1057,10 +1079,16 @@ export const TradeSimulationTab: React.FC<TradeSimulationTabProps> = ({
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
             <div>
               <span className="text-xs font-semibold uppercase tracking-wider text-[#151D2A] dark:text-[#F2F4F7] block">
-                Simulasi Probabilitas Monte Carlo ({simulation.monteCarlo.iterationsRun.toLocaleString('id-ID')} Skenario Acak · Seed #{simulation.monteCarlo.seedUsed})
+                {tr(
+                  `Simulasi Probabilitas Monte Carlo (${simulation.monteCarlo.iterationsRun.toLocaleString('id-ID')} Skenario Acak · Seed #${simulation.monteCarlo.seedUsed})`,
+                  `Monte Carlo Probability Simulation (${simulation.monteCarlo.iterationsRun.toLocaleString('en-US')} Random Runs · Seed #${simulation.monteCarlo.seedUsed})`
+                )}
               </span>
               <span className="text-[11px] text-[#667085] dark:text-[#98A2B3]">
-                Menguji {simulation.monteCarlo.iterationsRun.toLocaleString('id-ID')} kemungkinan urutan Win/Loss acak untuk melihat batas terburuk, rata-rata, dan terbaik
+                {tr(
+                  `Menguji ${simulation.monteCarlo.iterationsRun.toLocaleString('id-ID')} kemungkinan urutan Menang/Rugi acak untuk melihat batas terburuk, rata-rata, dan terbaik`,
+                  `Testing ${simulation.monteCarlo.iterationsRun.toLocaleString('en-US')} randomized Win/Loss sequences to estimate worst, median, and best outcomes`
+                )}
               </span>
             </div>
 
@@ -1096,7 +1124,7 @@ export const TradeSimulationTab: React.FC<TradeSimulationTabProps> = ({
           <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 pt-1 text-xs">
             <div className="p-3 rounded-xl bg-[#F5F7FA] dark:bg-[#101318] border border-[#DDE3EA] dark:border-[#20252D]">
               <span className="text-[11px] text-[#667085] dark:text-[#98A2B3] block mb-0.5">
-                Kemungkinan Terburuk (P5)
+                {tr('Kemungkinan Terburuk (P5)', 'Worst Case (P5)')}
               </span>
               <span className="text-sm font-bold font-mono-numbers tabular-nums text-[#E11D48] dark:text-[#E05260]">
                 {formatCurrency(simulation.monteCarlo.p5WorstCase, activeSettings)}
@@ -1105,7 +1133,7 @@ export const TradeSimulationTab: React.FC<TradeSimulationTabProps> = ({
 
             <div className="p-3 rounded-xl bg-[#F5F7FA] dark:bg-[#101318] border border-[#DDE3EA] dark:border-[#20252D]">
               <span className="text-[11px] text-[#667085] dark:text-[#98A2B3] block mb-0.5">
-                Hasil Tengah / Median (P50)
+                {tr('Hasil Tengah / Median (P50)', 'Median Outcome (P50)')}
               </span>
               <span className="text-sm font-bold font-mono-numbers tabular-nums text-[#151D2A] dark:text-[#F2F4F7]">
                 {formatCurrency(simulation.monteCarlo.medianFinalBalance, activeSettings)}
@@ -1114,7 +1142,7 @@ export const TradeSimulationTab: React.FC<TradeSimulationTabProps> = ({
 
             <div className="p-3 rounded-xl bg-[#F5F7FA] dark:bg-[#101318] border border-[#DDE3EA] dark:border-[#20252D]">
               <span className="text-[11px] text-[#667085] dark:text-[#98A2B3] block mb-0.5">
-                Kemungkinan Terbaik (P95)
+                {tr('Kemungkinan Terbaik (P95)', 'Best Case (P95)')}
               </span>
               <span className="text-sm font-bold font-mono-numbers tabular-nums text-[#059669] dark:text-[#00A878]">
                 {formatCurrency(simulation.monteCarlo.p95BestCase, activeSettings)}
@@ -1123,7 +1151,7 @@ export const TradeSimulationTab: React.FC<TradeSimulationTabProps> = ({
 
             <div className="p-3 rounded-xl bg-[#F5F7FA] dark:bg-[#101318] border border-[#DDE3EA] dark:border-[#20252D]">
               <span className="text-[11px] text-[#667085] dark:text-[#98A2B3] block mb-0.5">
-                Peluang Profit Akhir
+                {tr('Peluang Profit Akhir', 'Probability of Profit')}
               </span>
               <span className="text-sm font-bold font-mono-numbers tabular-nums text-[#151D2A] dark:text-[#F2F4F7]">
                 {simulation.monteCarlo.probabilityOfProfit.toFixed(1)}%
@@ -1132,7 +1160,7 @@ export const TradeSimulationTab: React.FC<TradeSimulationTabProps> = ({
 
             <div className="col-span-2 sm:col-span-1 p-3 rounded-xl bg-[#F5F7FA] dark:bg-[#101318] border border-[#DDE3EA] dark:border-[#20252D]">
               <span className="text-[11px] text-[#667085] dark:text-[#98A2B3] block mb-0.5">
-                Rata-rata Max Drawdown
+                {tr('Rata-rata Max Drawdown', 'Average Max Drawdown')}
               </span>
               <span className="text-sm font-bold font-mono-numbers tabular-nums text-[#E11D48] dark:text-[#E05260]">
                 -{simulation.monteCarlo.averageMaxDrawdown.toFixed(2)}%
@@ -1150,11 +1178,11 @@ export const TradeSimulationTab: React.FC<TradeSimulationTabProps> = ({
               <thead className="border-b border-[#DDE3EA] dark:border-[#20252D] bg-[#F5F7FA] dark:bg-[#101318] text-[11px] uppercase tracking-wider text-[#667085] dark:text-[#98A2B3] sticky top-0">
                 <tr>
                   <th className="py-2.5 px-3">Trade</th>
-                  <th className="py-2.5 px-3">Hasil</th>
-                  <th className="py-2.5 px-3 font-mono-numbers">Saldo Awal</th>
-                  <th className="py-2.5 px-3 font-mono-numbers">Risiko (1R)</th>
-                  <th className="py-2.5 px-3 font-mono-numbers">Profit / Loss</th>
-                  <th className="py-2.5 px-3 font-mono-numbers">Saldo Akhir</th>
+                  <th className="py-2.5 px-3">{tr('Hasil', 'Result')}</th>
+                  <th className="py-2.5 px-3 font-mono-numbers">{tr('Saldo Awal', 'Start Balance')}</th>
+                  <th className="py-2.5 px-3 font-mono-numbers">{tr('Risiko (1R)', 'Risk (1R)')}</th>
+                  <th className="py-2.5 px-3 font-mono-numbers">{tr('Profit / Rugi', 'Profit / Loss')}</th>
+                  <th className="py-2.5 px-3 font-mono-numbers">{tr('Saldo Akhir', 'End Balance')}</th>
                   <th className="py-2.5 px-3 font-mono-numbers">Drawdown</th>
                 </tr>
               </thead>
@@ -1176,7 +1204,7 @@ export const TradeSimulationTab: React.FC<TradeSimulationTabProps> = ({
                             : 'text-[#E11D48] dark:text-[#E05260]'
                         }`}
                       >
-                        {step.isWin ? 'WIN' : 'LOSS'}
+                        {step.isWin ? tr('MENANG', 'WIN') : tr('RUGI', 'LOSS')}
                       </td>
                       <td className="py-2 px-3 text-[#667085] dark:text-[#98A2B3]">
                         {formatCurrency(prevEquity, activeSettings)}

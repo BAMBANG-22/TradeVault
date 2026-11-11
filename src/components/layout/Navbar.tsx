@@ -7,6 +7,7 @@ import React from 'react';
 import { Menu, X, Bell, User } from 'lucide-react';
 import { AppSettings } from '../../types/settings';
 import { BrandLogo } from './BrandLogo';
+import { useLanguage } from '../../utils/language';
 
 interface NavbarProps {
   currentEquity: number;
@@ -38,6 +39,8 @@ export const Navbar: React.FC<NavbarProps> = ({
   onOpenAuth,
   onOpenAccount,
 }) => {
+  const { tr } = useLanguage();
+
   return (
     <header
       data-testid="app-header"
@@ -51,7 +54,11 @@ export const Navbar: React.FC<NavbarProps> = ({
             onClick={onOpenMobileMenu}
             data-testid="header-hamburger-button"
             className="inline-flex h-9 w-9 items-center justify-center rounded-full text-[#151D2A] dark:text-[#F2F4F7] hover:bg-[#F5F7FA] dark:hover:bg-[#101318] transition-colors cursor-pointer"
-            aria-label={isMobileMenuOpen ? 'Tutup Menu Navigasi' : 'Buka Menu Navigasi'}
+            aria-label={
+              isMobileMenuOpen
+                ? tr('Tutup Menu Navigasi', 'Close Navigation Menu')
+                : tr('Buka Menu Navigasi', 'Open Navigation Menu')
+            }
             aria-expanded={isMobileMenuOpen}
           >
             {isMobileMenuOpen ? (
@@ -66,13 +73,13 @@ export const Navbar: React.FC<NavbarProps> = ({
             type="button"
             onClick={() => onNavigate('dashboard')}
             className="group flex items-center gap-2 focus:outline-none cursor-pointer"
-            aria-label="TradeVault — Kembali ke Dashboard"
+            aria-label={tr('TradeVault — Kembali ke Dasbor', 'TradeVault — Back to Dashboard')}
           >
             <span className="inline-flex items-center justify-center">
               <BrandLogo
                 variant="symbol"
                 className="h-7 w-7"
-                title="TradeVault Symbol"
+                title={tr('Simbol TradeVault', 'TradeVault Symbol')}
               />
             </span>
             <span
@@ -93,8 +100,8 @@ export const Navbar: React.FC<NavbarProps> = ({
             type="button"
             data-testid="header-notification-button"
             className="inline-flex h-8 w-8 sm:h-9 sm:w-9 items-center justify-center rounded-full text-[#697586] dark:text-[#929BA9] hover:text-[#151D2A] dark:hover:text-[#F2F4F7] hover:bg-[#F5F7FA] dark:hover:bg-[#101318] transition-colors cursor-pointer"
-            aria-label="Notifikasi"
-            title="Notifikasi"
+            aria-label={tr('Notifikasi', 'Notifications')}
+            title={tr('Notifikasi', 'Notifications')}
           >
             <Bell className="h-4 w-4 stroke-[1.75]" />
           </button>
@@ -104,8 +111,8 @@ export const Navbar: React.FC<NavbarProps> = ({
             onClick={currentUser ? onOpenAccount : onOpenAuth}
             data-testid="header-account-button"
             className="inline-flex h-8 w-8 sm:h-9 sm:w-9 items-center justify-center rounded-full bg-[#F5F7FA] dark:bg-[#101318] border border-[#DDE3EA] dark:border-[#20252D] text-[#697586] dark:text-[#929BA9] hover:text-[#151D2A] dark:hover:text-[#F2F4F7] hover:border-[#3478DC]/50 transition-colors cursor-pointer"
-            aria-label={currentUser ? 'Akun Pengguna' : 'Masuk ke Akun'}
-            title={currentUser ? (currentUser.email || 'Akun Pengguna') : 'Masuk ke Akun'}
+            aria-label={currentUser ? tr('Akun Pengguna', 'User Account') : tr('Masuk ke Akun', 'Sign In to Account')}
+            title={currentUser ? (currentUser.email || tr('Akun Pengguna', 'User Account')) : tr('Masuk ke Akun', 'Sign In to Account')}
           >
             <User className="h-4 w-4 stroke-[1.75]" />
           </button>

@@ -26,6 +26,7 @@ import {
   getCurrentUsdIdrSnapshot,
   useGlobalCurrency,
 } from '../../utils/currencyRate';
+import { useLanguage } from '../../utils/language';
 import { calculateLotBasedOrderMetrics } from '../../utils/riskCalculator';
 import {
   Search,
@@ -78,6 +79,7 @@ const DateGroupCard: React.FC<DateGroupCardProps> = ({
   onDeleteTrade,
 }) => {
   const { preferredCurrency, formatTradeFinancial } = useGlobalCurrency();
+  const { tr } = useLanguage();
   const scrollRef = React.useRef<HTMLDivElement>(null);
   const [currentVisibleIndex, setCurrentVisibleIndex] = useState(1);
   const count = section.trades.length;
@@ -101,22 +103,29 @@ const DateGroupCard: React.FC<DateGroupCardProps> = ({
     });
   };
 
+  const localizedHeaderLabel =
+    section.headerLabel === 'TODAY'
+      ? tr('HARI INI', 'TODAY')
+      : section.headerLabel === 'YESTERDAY'
+      ? tr('KEMARIN', 'YESTERDAY')
+      : section.headerLabel;
+
   return (
     <div
       data-testid={`trade-log-date-group-${section.dateKey}`}
       className="tv-smoked-glass-card rounded-[16px] border border-[#DDE3EA] dark:border-white/[0.09] overflow-hidden transition-all duration-200"
     >
-      {/* Date Group Header: Seamless inside the smoked glass container */}
+      {/* Date Group Header */}
       <div className="px-4 py-2.5 bg-[#F5F7FA]/80 dark:bg-white/[0.03] border-b border-[#DDE3EA] dark:border-white/[0.08] flex items-center justify-between select-none">
         <span className="text-[11px] font-bold uppercase tracking-wider text-[#697586] dark:text-[#929BA9] font-mono-numbers tabular-nums">
-          {section.headerLabel}
+          {localizedHeaderLabel}
         </span>
         <span className="text-[10px] font-mono-numbers tabular-nums text-[#697586] dark:text-[#929BA9]">
-          {count} Transaksi
+          {count} {tr('Transaksi', 'Trades')}
         </span>
       </div>
 
-      {/* Trades Rows: constrained to ~2 visible rows if > 2 trades, otherwise full height */}
+      {/* Trades Rows */}
       <div
         ref={scrollRef}
         onScroll={hasMoreThanTwo ? handleScroll : undefined}
@@ -151,7 +160,7 @@ const DateGroupCard: React.FC<DateGroupCardProps> = ({
               data-testid={`trade-row-${t.id}`}
               className="px-4 py-3.5 hover:bg-black/5 dark:hover:bg-white/[0.04] transition-colors cursor-pointer flex items-center justify-between gap-3"
             >
-              {/* Left: Symbol, BUY/SELL (clean text only), Lot, Time */}
+              {/* Left: Symbol, BUY/SELL, Lot, Time */}
               <div className="min-w-0 flex-1 space-y-1">
                 <div className="flex items-center gap-2 flex-wrap">
                   <span className="text-sm font-bold text-[#151D2A] dark:text-[#F2F5F9]">
@@ -180,7 +189,7 @@ const DateGroupCard: React.FC<DateGroupCardProps> = ({
                   <span>{timePart}</span>
                   <span>•</span>
                   <span className="font-sans truncate max-w-[200px] sm:max-w-xs">
-                    {t.strategy || 'Umum'}
+                    {t.strategy || tr('Umum', 'General')}
                   </span>
                   {t.session && (
                     <>
@@ -222,7 +231,7 @@ const DateGroupCard: React.FC<DateGroupCardProps> = ({
                           : `${isProfit ? '+' : ''}${formatCurrency(t.netProfit, settings)}`}
                       </div>
                       <div className="text-[10px] font-semibold uppercase tracking-wider text-[#697586] dark:text-[#929BA9]">
-                        CLOSED
+                        {tr('SELESAI', 'CLOSED')}
                       </div>
                     </>
                   )}
@@ -230,7 +239,7 @@ const DateGroupCard: React.FC<DateGroupCardProps> = ({
                   {status === 'PLANNED' && (
                     <div className="flex flex-col items-end gap-1">
                       <span className="text-xs font-bold uppercase tracking-wider text-[#151D2A] dark:text-[#F2F5F9]">
-                        LIMIT
+                        {tr('RENCANA', 'LIMIT')}
                       </span>
                       {onUpdateTradeLifecycle && (
                         <button
@@ -241,7 +250,7 @@ const DateGroupCard: React.FC<DateGroupCardProps> = ({
                           }}
                           className="text-[10px] font-semibold px-2 py-0.5 rounded border border-[#DDE3EA] dark:border-white/[0.09] bg-[#F5F7FA] dark:bg-white/[0.04] text-[#151D2A] dark:text-[#F2F5F9] hover:border-black/30 dark:hover:border-white/30 transition-colors cursor-pointer"
                         >
-                          Eksekusi / Batal
+                          {tr('Eksekusi / Batal', 'Execute / Cancel')}
                         </button>
                       )}
                     </div>
@@ -250,7 +259,7 @@ const DateGroupCard: React.FC<DateGroupCardProps> = ({
                   {status === 'OPEN' && (
                     <div className="flex flex-col items-end gap-1">
                       <span className="text-xs font-bold uppercase tracking-wider text-amber-600 dark:text-amber-400">
-                        OPEN
+                        {tr('AKTIF', 'OPEN')}
                       </span>
                       {onUpdateTradeLifecycle && (
                         <button
@@ -261,7 +270,7 @@ const DateGroupCard: React.FC<DateGroupCardProps> = ({
                           }}
                           className="text-[10px] font-semibold px-2 py-0.5 rounded border border-[#DDE3EA] dark:border-white/[0.09] bg-[#F5F7FA] dark:bg-white/[0.04] text-[#151D2A] dark:text-[#F2F5F9] hover:border-black/30 dark:hover:border-white/30 transition-colors cursor-pointer"
                         >
-                          Tutup Posisi
+                          {tr('Tutup Posisi', 'Close Position')}
                         </button>
                       )}
                     </div>
@@ -270,10 +279,10 @@ const DateGroupCard: React.FC<DateGroupCardProps> = ({
                   {status === 'CANCELLED' && (
                     <div className="flex flex-col items-end">
                       <span className="text-xs font-bold uppercase tracking-wider text-[#697586] dark:text-[#929BA9]">
-                        CANCELLED
+                        {tr('BATAL', 'CANCELLED')}
                       </span>
                       <span className="text-[10px] text-[#697586] dark:text-[#929BA9]">
-                        Dibatalkan
+                        {tr('Dibatalkan', 'Cancelled')}
                       </span>
                     </div>
                   )}
@@ -294,8 +303,8 @@ const DateGroupCard: React.FC<DateGroupCardProps> = ({
                         )
                       }
                       className="p-1.5 rounded-lg text-[#697586] dark:text-[#929BA9] hover:text-[#151D2A] dark:hover:text-[#F2F4F7] hover:bg-black/5 dark:hover:bg-white/[0.06] transition-colors cursor-pointer"
-                      title="Lihat Screenshot"
-                      aria-label={`Lihat screenshot ${t.id}`}
+                      title={tr('Lihat Screenshot', 'View Screenshot')}
+                      aria-label={tr(`Lihat screenshot ${t.id}`, `View screenshot ${t.id}`)}
                     >
                       <Image className="h-3.5 w-3.5 stroke-[1.75]" />
                     </button>
@@ -304,8 +313,8 @@ const DateGroupCard: React.FC<DateGroupCardProps> = ({
                     type="button"
                     onClick={() => onEditTrade(t)}
                     className="p-1.5 rounded-lg text-[#697586] dark:text-[#929BA9] hover:text-[#151D2A] dark:hover:text-[#F2F5F9] hover:bg-black/5 dark:hover:bg-white/[0.06] transition-colors cursor-pointer"
-                    title="Edit Transaksi"
-                    aria-label={`Edit transaksi ${t.id}`}
+                    title={tr('Edit Transaksi', 'Edit Trade')}
+                    aria-label={tr(`Edit transaksi ${t.id}`, `Edit trade ${t.id}`)}
                   >
                     <Edit2 className="h-3.5 w-3.5 stroke-[1.75]" />
                   </button>
@@ -313,8 +322,8 @@ const DateGroupCard: React.FC<DateGroupCardProps> = ({
                     type="button"
                     onClick={() => onDeleteTrade(t)}
                     className="p-1.5 rounded-lg text-[#697586] dark:text-[#929BA9] hover:text-[#E11D48] dark:hover:text-[#E05260] hover:bg-black/5 dark:hover:bg-white/[0.06] transition-colors cursor-pointer"
-                    title="Hapus Transaksi"
-                    aria-label={`Hapus transaksi ${t.id}`}
+                    title={tr('Hapus Transaksi', 'Delete Trade')}
+                    aria-label={tr(`Hapus transaksi ${t.id}`, `Delete trade ${t.id}`)}
                   >
                     <Trash2 className="h-3.5 w-3.5 stroke-[1.75]" />
                   </button>
@@ -332,15 +341,15 @@ const DateGroupCard: React.FC<DateGroupCardProps> = ({
           className="px-4 py-1.5 border-t border-black/10 dark:border-white/[0.06] bg-black/5 dark:bg-black/30 flex items-center justify-between text-[11px] text-[#697586] dark:text-[#929BA9] font-mono-numbers select-none"
         >
           <span className="text-[10px] tracking-wider uppercase font-sans">
-            {count} TRANSAKSI
+            {count} {tr('TRANSAKSI', 'TRADES')}
           </span>
           <div className="flex items-center gap-1.5">
             <button
               type="button"
               onClick={() => handleScrollStep('up')}
               className="p-1 rounded text-xs leading-none hover:text-[#151D2A] dark:hover:text-[#F2F5F9] hover:bg-black/5 dark:hover:bg-white/10 transition-colors cursor-pointer"
-              title="Scroll ke atas"
-              aria-label="Scroll ke atas"
+              title={tr('Scroll ke atas', 'Scroll up')}
+              aria-label={tr('Scroll ke atas', 'Scroll up')}
             >
               ↑
             </button>
@@ -351,8 +360,8 @@ const DateGroupCard: React.FC<DateGroupCardProps> = ({
               type="button"
               onClick={() => handleScrollStep('down')}
               className="p-1 rounded text-xs leading-none hover:text-[#151D2A] dark:hover:text-[#F2F5F9] hover:bg-black/5 dark:hover:bg-white/10 transition-colors cursor-pointer"
-              title="Scroll ke bawah"
-              aria-label="Scroll ke bawah"
+              title={tr('Scroll ke bawah', 'Scroll down')}
+              aria-label={tr('Scroll ke bawah', 'Scroll down')}
             >
               ↓
             </button>
@@ -401,6 +410,7 @@ export const TradeTable: React.FC<TradeTableProps> = ({
   isCloudSyncing = false,
   onReloadFromCloud,
 }) => {
+  const { tr } = useLanguage();
   const [filters, setFilters] = useState<TradeFilter>({
     search: '',
     lifecycleStatus: 'ALL',
@@ -639,7 +649,6 @@ export const TradeTable: React.FC<TradeTableProps> = ({
     }));
   };
 
-  // Open PLANNED -> OPEN / CANCELLED dialog
   const openPlannedTransitionModal = (trade: Trade, mode: 'OPEN' | 'CANCEL' = 'OPEN') => {
     const resolved = resolveTradeLifecycle(trade);
     const nowLocal = normalizeTradeDateTimeLocal(new Date());
@@ -654,7 +663,6 @@ export const TradeTable: React.FC<TradeTableProps> = ({
     setLifecycleError(null);
   };
 
-  // Open OPEN -> CLOSED dialog
   const openClosePositionModal = (trade: Trade) => {
     const nowLocal = normalizeTradeDateTimeLocal(new Date());
     setCloseModalTrade(trade);
@@ -703,17 +711,32 @@ export const TradeTable: React.FC<TradeTableProps> = ({
       let updatedTrade: Trade;
       if (plannedActionMode === 'OPEN') {
         if (!mt5Confirmed) {
-          setLifecycleError('Harap centang konfirmasi bahwa order telah tereksekusi di MT5.');
+          setLifecycleError(
+            tr(
+              'Harap centang konfirmasi bahwa order telah tereksekusi di MT5.',
+              'Please check the confirmation box that the order has been executed on MT5.'
+            )
+          );
           return;
         }
         const entryNum = parseFloat(actualEntryInput);
         const lotNum = parseFloat(actualLotInput);
         if (isNaN(entryNum) || entryNum <= 0) {
-          setLifecycleError('Harga Actual Entry wajib diisi dengan angka positif.');
+          setLifecycleError(
+            tr(
+              'Harga Actual Entry wajib diisi dengan angka positif.',
+              'Actual Entry price must be a positive number.'
+            )
+          );
           return;
         }
         if (isNaN(lotNum) || lotNum <= 0) {
-          setLifecycleError('Actual Lot wajib diisi dengan angka lebih dari 0.');
+          setLifecycleError(
+            tr(
+              'Actual Lot wajib diisi dengan angka lebih dari 0.',
+              'Actual Lot must be a number greater than 0.'
+            )
+          );
           return;
         }
         const combinedEntryTime =
@@ -739,10 +762,14 @@ export const TradeTable: React.FC<TradeTableProps> = ({
       if (!res || res.success !== false) {
         setPlannedModalTrade(null);
       } else {
-        setLifecycleError(res.error || 'Gagal memperbarui status transaksi.');
+        setLifecycleError(
+          res.error || tr('Gagal memperbarui status transaksi.', 'Failed to update trade status.')
+        );
       }
     } catch (err: any) {
-      setLifecycleError(err?.message || 'Gagal memproses perubahan status.');
+      setLifecycleError(
+        err?.message || tr('Gagal memproses perubahan status.', 'Failed to process status change.')
+      );
     } finally {
       setIsTransitionSubmitting(false);
     }
@@ -756,7 +783,12 @@ export const TradeTable: React.FC<TradeTableProps> = ({
     try {
       const exitNum = parseFloat(actualExitInput);
       if (isNaN(exitNum) || exitNum <= 0) {
-        setLifecycleError('Harga Actual Exit wajib diisi dengan angka positif.');
+        setLifecycleError(
+          tr(
+            'Harga Actual Exit wajib diisi dengan angka positif.',
+            'Actual Exit price must be a positive number.'
+          )
+        );
         return;
       }
       const combinedExitTime =
@@ -784,10 +816,12 @@ export const TradeTable: React.FC<TradeTableProps> = ({
       if (!res || res.success !== false) {
         setCloseModalTrade(null);
       } else {
-        setLifecycleError(res.error || 'Gagal menutup posisi transaksi.');
+        setLifecycleError(
+          res.error || tr('Gagal menutup posisi transaksi.', 'Failed to close trade position.')
+        );
       }
     } catch (err: any) {
-      setLifecycleError(err?.message || 'Gagal menutup posisi.');
+      setLifecycleError(err?.message || tr('Gagal menutup posisi.', 'Failed to close position.'));
     } finally {
       setIsTransitionSubmitting(false);
     }
@@ -827,21 +861,28 @@ export const TradeTable: React.FC<TradeTableProps> = ({
       <div className="flex items-center justify-between gap-3 pb-1">
         <div>
           <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-[#151D2A] dark:text-[#F2F5F9]">
-            Trade Log
+            {tr('Jurnal Trade', 'Trade Log')}
           </h1>
           <p className="text-xs text-[#697586] dark:text-[#929BA9]">
-            Kelola seluruh aktivitas trading
+            {tr('Kelola seluruh aktivitas trading', 'Manage all your trading activities')}
           </p>
         </div>
 
-        {/* Clean Sync Status Icon (Neutral Icon Only, no heavy text) */}
+        {/* Clean Sync Status Icon */}
         <div className="flex items-center gap-2">
           {currentUser ? (
             dataSource === 'cloud' ? (
               <div
                 data-testid="trade-log-sync-indicator"
                 className="flex items-center justify-center p-1.5 text-[#697586] dark:text-[#929BA9] hover:text-[#151D2A] dark:hover:text-[#F2F5F9] transition-colors"
-                title={isCloudSyncing ? 'Menyinkronkan dengan Cloud...' : 'Cloud Synced — Data tersimpan aman di Supabase'}
+                title={
+                  isCloudSyncing
+                    ? tr('Menyinkronkan dengan Cloud...', 'Syncing with Cloud...')
+                    : tr(
+                        'Cloud Synced — Data tersimpan aman di Supabase',
+                        'Cloud Synced — Data safely stored in Supabase'
+                      )
+                }
               >
                 <Cloud
                   className={`h-4 w-4 stroke-[1.75] ${isCloudSyncing ? 'animate-spin' : ''}`}
@@ -851,7 +892,10 @@ export const TradeTable: React.FC<TradeTableProps> = ({
               <div
                 data-testid="trade-log-sync-indicator"
                 className="flex items-center justify-center p-1.5 text-amber-500/90 dark:text-amber-400/90 transition-colors"
-                title="Cache Offline — Gagal tersambung ke cloud, menggunakan data lokal"
+                title={tr(
+                  'Cache Offline — Gagal tersambung ke cloud, menggunakan data lokal',
+                  'Offline Cache — Could not connect to cloud, using local data'
+                )}
               >
                 <AlertTriangle className="h-4 w-4 stroke-[1.75]" />
               </div>
@@ -860,7 +904,10 @@ export const TradeTable: React.FC<TradeTableProps> = ({
             <div
               data-testid="trade-log-sync-indicator"
               className="flex items-center justify-center p-1.5 text-[#697586] dark:text-[#929BA9] hover:text-[#151D2A] dark:hover:text-[#F2F5F9] transition-colors"
-              title={`Penyimpanan Lokal (${trades.length} transaksi)`}
+              title={tr(
+                `Penyimpanan Lokal (${trades.length} transaksi)`,
+                `Local Storage (${trades.length} trades)`
+              )}
             >
               <HardDrive className="h-4 w-4 stroke-[1.75]" />
             </div>
@@ -873,10 +920,13 @@ export const TradeTable: React.FC<TradeTableProps> = ({
         <div className="flex flex-col sm:flex-row sm:items-center justify-between p-3 rounded-xl bg-white dark:bg-[#11151B] border border-[#DDE3EA] dark:border-[#252B34] text-xs text-[#151D2A] dark:text-[#F2F5F9] gap-2.5">
           <div className="flex items-center gap-2">
             <span className="px-2 py-0.5 rounded font-bold bg-[#EEF2F6] dark:bg-[#171D26] text-amber-600 dark:text-amber-400 border border-[#DDE3EA] dark:border-[#252B34] text-[10px]">
-              DATA DEMO AKTIF
+              {tr('DATA DEMO AKTIF', 'DEMO DATA ACTIVE')}
             </span>
             <span className="text-[#697586] dark:text-[#929BA9]">
-              Jurnal saat ini memuat data contoh transaksi XAUUSD untuk demonstrasi analitik.
+              {tr(
+                'Jurnal saat ini memuat data contoh transaksi XAUUSD untuk demonstrasi analitik.',
+                'The journal currently contains sample XAUUSD trade data for analytics demonstration.'
+              )}
             </span>
           </div>
           <button
@@ -884,12 +934,12 @@ export const TradeTable: React.FC<TradeTableProps> = ({
             onClick={onClearDemoTrades}
             className="self-start sm:self-auto px-3 py-1.5 rounded-lg bg-[#EEF2F6] dark:bg-[#171D26] hover:border-black/30 dark:hover:border-white/30 border border-[#DDE3EA] dark:border-[#252B34] text-[#151D2A] dark:text-[#F2F5F9] font-semibold text-xs transition-colors shrink-0 cursor-pointer"
           >
-            Hapus Data Demo
+            {tr('Hapus Data Demo', 'Clear Demo Data')}
           </button>
         </div>
       )}
 
-      {/* 2. RINGKASAN TRANSAKSI (SEAMLESS PANEL - NO OUTER CARD) */}
+      {/* 2. RINGKASAN TRANSAKSI */}
       <div
         data-testid="trade-log-summary-panel"
         className="space-y-3 pb-1"
@@ -898,7 +948,7 @@ export const TradeTable: React.FC<TradeTableProps> = ({
         <div className="flex items-center justify-between">
           <div>
             <span className="block text-[11px] font-semibold uppercase tracking-[0.08em] text-[#697586] dark:text-[#929BA9]">
-              TOTAL TRANSAKSI
+              {tr('TOTAL TRANSAKSI', 'TOTAL TRADES')}
             </span>
             <div className="mt-0.5 text-2xl sm:text-3xl font-bold font-mono-numbers tabular-nums text-[#151D2A] dark:text-[#F2F5F9]">
               {summaryCounts.total}
@@ -910,7 +960,7 @@ export const TradeTable: React.FC<TradeTableProps> = ({
               onClick={() => setFilters((prev) => ({ ...prev, lifecycleStatus: 'ALL' }))}
               className="text-xs font-semibold text-[#151D2A] dark:text-[#F2F5F9] hover:underline cursor-pointer"
             >
-              Tampilkan Semua ({summaryCounts.total})
+              {tr(`Tampilkan Semua (${summaryCounts.total})`, `Show All (${summaryCounts.total})`)}
             </button>
           )}
         </div>
@@ -923,7 +973,6 @@ export const TradeTable: React.FC<TradeTableProps> = ({
           data-testid="trade-log-summary-grid"
           className="relative grid grid-cols-4 divide-x divide-[#DDE3EA] dark:divide-white/[0.08] text-center p-0.5 rounded-xl select-none"
         >
-          {/* Animated sliding background pill indicator */}
           <div
             aria-hidden="true"
             className="absolute top-0.5 bottom-0.5 rounded-lg bg-black/10 dark:bg-white/[0.10] pointer-events-none transition-all duration-200 ease-out"
@@ -946,10 +995,10 @@ export const TradeTable: React.FC<TradeTableProps> = ({
 
           {(
             [
-              { key: 'PLANNED' as const, label: 'Limit', count: summaryCounts.planned },
-              { key: 'OPEN' as const, label: 'Open', count: summaryCounts.open },
-              { key: 'CLOSED' as const, label: 'Closed', count: summaryCounts.closed },
-              { key: 'CANCELLED' as const, label: 'Cancelled', count: summaryCounts.cancelled },
+              { key: 'PLANNED' as const, label: tr('Rencana', 'Limit'), count: summaryCounts.planned },
+              { key: 'OPEN' as const, label: tr('Aktif', 'Open'), count: summaryCounts.open },
+              { key: 'CLOSED' as const, label: tr('Selesai', 'Closed'), count: summaryCounts.closed },
+              { key: 'CANCELLED' as const, label: tr('Batal', 'Cancelled'), count: summaryCounts.cancelled },
             ] as const
           ).map((item) => {
             const isSelected = filters.lifecycleStatus === item.key;
@@ -986,7 +1035,7 @@ export const TradeTable: React.FC<TradeTableProps> = ({
         </div>
       </div>
 
-      {/* 3. SEARCH & ICON-ONLY FILTER TOOLBAR (SEAMLESS - NO OUTER CARD) */}
+      {/* 3. SEARCH & ICON-ONLY FILTER TOOLBAR */}
       <div className="space-y-3">
         <div className="flex items-center gap-2.5">
           {/* Search Input */}
@@ -994,7 +1043,7 @@ export const TradeTable: React.FC<TradeTableProps> = ({
             <Search className="absolute left-3 top-2.5 h-4 w-4 stroke-[1.75] text-[#697586] dark:text-[#929BA9]" />
             <input
               type="text"
-              placeholder="Cari transaksi..."
+              placeholder={tr('Cari transaksi...', 'Search trades...')}
               value={filters.search}
               onChange={(e) => setFilters({ ...filters, search: e.target.value })}
               className="w-full rounded-lg bg-[#F5F7FA] dark:bg-[#101318] border border-[#DDE3EA] dark:border-white/[0.08] pl-9 pr-3 py-2 text-xs text-[#151D2A] dark:text-[#F2F5F9] placeholder-[#697586] dark:placeholder-[#929BA9] focus:border-black/30 dark:focus:border-white/30 focus:outline-none transition-colors"
@@ -1005,8 +1054,8 @@ export const TradeTable: React.FC<TradeTableProps> = ({
           <button
             type="button"
             onClick={() => setShowAdvancedFilters(!showAdvancedFilters)}
-            title="Filter & Urutan Transaksi"
-            aria-label="Filter & Urutan Transaksi"
+            title={tr('Filter & Urutan Transaksi', 'Filter & Sort Trades')}
+            aria-label={tr('Filter & Urutan Transaksi', 'Filter & Sort Trades')}
             className={`flex items-center justify-center h-9 w-9 rounded-lg border text-xs font-medium transition-colors cursor-pointer shrink-0 ${
               showAdvancedFilters ||
               filters.lifecycleStatus !== 'ALL' ||
@@ -1030,7 +1079,7 @@ export const TradeTable: React.FC<TradeTableProps> = ({
             {/* Quick Date Chips */}
             <div className="flex flex-wrap items-center gap-1.5 text-[11px]">
               <span className="text-[#697586] dark:text-[#929BA9] font-medium mr-1">
-                Periode Cepat:
+                {tr('Periode Cepat:', 'Quick Period:')}
               </span>
               <button
                 type="button"
@@ -1041,28 +1090,28 @@ export const TradeTable: React.FC<TradeTableProps> = ({
                     : 'bg-[#F5F7FA] dark:bg-[#080A0E] text-[#697586] dark:text-[#929BA9] border-[#DDE3EA] dark:border-[#252B34]'
                 }`}
               >
-                Semua
+                {tr('Semua', 'All')}
               </button>
               <button
                 type="button"
                 onClick={() => applyQuickDate('TODAY')}
                 className="px-2.5 py-1 rounded-md bg-[#F5F7FA] dark:bg-[#080A0E] text-[#697586] dark:text-[#929BA9] border border-[#DDE3EA] dark:border-[#252B34] hover:text-[#151D2A] dark:hover:text-[#F2F5F9] transition-colors cursor-pointer"
               >
-                Hari Ini
+                {tr('Hari Ini', 'Today')}
               </button>
               <button
                 type="button"
                 onClick={() => applyQuickDate('7D')}
                 className="px-2.5 py-1 rounded-md bg-[#F5F7FA] dark:bg-[#080A0E] text-[#697586] dark:text-[#929BA9] border border-[#DDE3EA] dark:border-[#252B34] hover:text-[#151D2A] dark:hover:text-[#F2F5F9] transition-colors cursor-pointer"
               >
-                7 Hari
+                {tr('7 Hari', '7 Days')}
               </button>
               <button
                 type="button"
                 onClick={() => applyQuickDate('MONTH')}
                 className="px-2.5 py-1 rounded-md bg-[#F5F7FA] dark:bg-[#080A0E] text-[#697586] dark:text-[#929BA9] border border-[#DDE3EA] dark:border-[#252B34] hover:text-[#151D2A] dark:hover:text-[#F2F5F9] transition-colors cursor-pointer"
               >
-                Bulan Ini
+                {tr('Bulan Ini', 'This Month')}
               </button>
             </div>
 
@@ -1070,7 +1119,7 @@ export const TradeTable: React.FC<TradeTableProps> = ({
               {/* Lifecycle Status Filter */}
               <div>
                 <label className="block text-[11px] text-[#697586] dark:text-[#929BA9] mb-1">
-                  Status Transaksi
+                  {tr('Status Transaksi', 'Trade Status')}
                 </label>
                 <select
                   value={filters.lifecycleStatus || 'ALL'}
@@ -1079,42 +1128,42 @@ export const TradeTable: React.FC<TradeTableProps> = ({
                   }
                   className="w-full rounded-lg bg-[#F5F7FA] dark:bg-[#080A0E] border border-[#DDE3EA] dark:border-[#252B34] px-2.5 py-1.5 text-[#151D2A] dark:text-[#F2F5F9] focus:border-black/30 dark:focus:border-white/30 focus:outline-none"
                 >
-                  <option value="ALL">Semua Status</option>
-                  <option value="PLANNED">LIMIT</option>
-                  <option value="OPEN">OPEN</option>
-                  <option value="CLOSED">CLOSED</option>
-                  <option value="CANCELLED">CANCELLED</option>
+                  <option value="ALL">{tr('Semua Status', 'All Statuses')}</option>
+                  <option value="PLANNED">{tr('RENCANA (LIMIT)', 'LIMIT')}</option>
+                  <option value="OPEN">{tr('AKTIF (OPEN)', 'OPEN')}</option>
+                  <option value="CLOSED">{tr('SELESAI (CLOSED)', 'CLOSED')}</option>
+                  <option value="CANCELLED">{tr('BATAL (CANCELLED)', 'CANCELLED')}</option>
                 </select>
               </div>
 
               {/* Outcome Filter */}
               <div>
                 <label className="block text-[11px] text-[#697586] dark:text-[#929BA9] mb-1">
-                  Hasil Closed
+                  {tr('Hasil Selesai', 'Closed Outcome')}
                 </label>
                 <select
                   value={filters.outcome}
                   onChange={(e) => setFilters({ ...filters, outcome: e.target.value as any })}
                   className="w-full rounded-lg bg-[#F5F7FA] dark:bg-[#080A0E] border border-[#DDE3EA] dark:border-[#252B34] px-2.5 py-1.5 text-[#151D2A] dark:text-[#F2F5F9] focus:border-black/30 dark:focus:border-white/30 focus:outline-none"
                 >
-                  <option value="ALL">Semua Hasil</option>
-                  <option value="WIN">WIN (Profit)</option>
-                  <option value="LOSS">LOSS (Rugi)</option>
-                  <option value="BREAKEVEN">BREAKEVEN (BE)</option>
+                  <option value="ALL">{tr('Semua Hasil', 'All Outcomes')}</option>
+                  <option value="WIN">{tr('MENANG (Profit)', 'WIN (Profit)')}</option>
+                  <option value="LOSS">{tr('KALAH (Rugi)', 'LOSS')}</option>
+                  <option value="BREAKEVEN">{tr('IMPAS (BE)', 'BREAKEVEN (BE)')}</option>
                 </select>
               </div>
 
               {/* Position Filter */}
               <div>
                 <label className="block text-[11px] text-[#697586] dark:text-[#929BA9] mb-1">
-                  Arah (Buy/Sell)
+                  {tr('Arah (Buy/Sell)', 'Direction (Buy/Sell)')}
                 </label>
                 <select
                   value={filters.position}
                   onChange={(e) => setFilters({ ...filters, position: e.target.value as any })}
                   className="w-full rounded-lg bg-[#F5F7FA] dark:bg-[#080A0E] border border-[#DDE3EA] dark:border-[#252B34] px-2.5 py-1.5 text-[#151D2A] dark:text-[#F2F5F9] focus:border-black/30 dark:focus:border-white/30 focus:outline-none"
                 >
-                  <option value="ALL">Semua Arah</option>
+                  <option value="ALL">{tr('Semua Arah', 'All Directions')}</option>
                   <option value="BUY">BUY</option>
                   <option value="SELL">SELL</option>
                 </select>
@@ -1123,14 +1172,14 @@ export const TradeTable: React.FC<TradeTableProps> = ({
               {/* Instrument Filter */}
               <div>
                 <label className="block text-[11px] text-[#697586] dark:text-[#929BA9] mb-1">
-                  Simbol
+                  {tr('Simbol', 'Symbol')}
                 </label>
                 <select
                   value={filters.instrument}
                   onChange={(e) => setFilters({ ...filters, instrument: e.target.value })}
                   className="w-full rounded-lg bg-[#F5F7FA] dark:bg-[#080A0E] border border-[#DDE3EA] dark:border-[#252B34] px-2.5 py-1.5 text-[#151D2A] dark:text-[#F2F5F9] focus:border-black/30 dark:focus:border-white/30 focus:outline-none"
                 >
-                  <option value="ALL">Semua Simbol</option>
+                  <option value="ALL">{tr('Semua Simbol', 'All Symbols')}</option>
                   {uniqueInstruments.map((inst) => (
                     <option key={inst} value={inst}>
                       {inst}
@@ -1142,14 +1191,14 @@ export const TradeTable: React.FC<TradeTableProps> = ({
               {/* Session Filter */}
               <div>
                 <label className="block text-[11px] text-[#697586] dark:text-[#929BA9] mb-1">
-                  Sesi Trading
+                  {tr('Sesi Trading', 'Trading Session')}
                 </label>
                 <select
                   value={filters.session}
                   onChange={(e) => setFilters({ ...filters, session: e.target.value })}
                   className="w-full rounded-lg bg-[#F5F7FA] dark:bg-[#080A0E] border border-[#DDE3EA] dark:border-[#252B34] px-2.5 py-1.5 text-[#151D2A] dark:text-[#F2F5F9] focus:border-black/30 dark:focus:border-white/30 focus:outline-none"
                 >
-                  <option value="ALL">Semua Sesi</option>
+                  <option value="ALL">{tr('Semua Sesi', 'All Sessions')}</option>
                   {uniqueSessions.map((sess) => (
                     <option key={sess} value={sess}>
                       {sess}
@@ -1161,14 +1210,14 @@ export const TradeTable: React.FC<TradeTableProps> = ({
               {/* Setup Strategy Filter */}
               <div>
                 <label className="block text-[11px] text-[#697586] dark:text-[#929BA9] mb-1">
-                  Setup / Strategi
+                  {tr('Setup / Strategi', 'Setup / Strategy')}
                 </label>
                 <select
                   value={filters.strategy}
                   onChange={(e) => setFilters({ ...filters, strategy: e.target.value })}
                   className="w-full rounded-lg bg-[#F5F7FA] dark:bg-[#080A0E] border border-[#DDE3EA] dark:border-[#252B34] px-2.5 py-1.5 text-[#151D2A] dark:text-[#F2F5F9] focus:border-black/30 dark:focus:border-white/30 focus:outline-none"
                 >
-                  <option value="ALL">Semua Setup</option>
+                  <option value="ALL">{tr('Semua Setup', 'All Setups')}</option>
                   {uniqueStrategies.map((s) => (
                     <option key={s} value={s}>
                       {s}
@@ -1180,7 +1229,7 @@ export const TradeTable: React.FC<TradeTableProps> = ({
               {/* Sorting */}
               <div>
                 <label className="block text-[11px] text-[#697586] dark:text-[#929BA9] mb-1">
-                  Urutan
+                  {tr('Urutan', 'Sort By')}
                 </label>
                 <div className="flex items-center gap-1">
                   <select
@@ -1188,18 +1237,18 @@ export const TradeTable: React.FC<TradeTableProps> = ({
                     onChange={(e) => setFilters({ ...filters, sortBy: e.target.value as any })}
                     className="flex-1 rounded-lg bg-[#F5F7FA] dark:bg-[#080A0E] border border-[#DDE3EA] dark:border-[#252B34] px-2.5 py-1.5 text-[#151D2A] dark:text-[#F2F5F9] focus:border-black/30 dark:focus:border-white/30 focus:outline-none text-[11px]"
                   >
-                    <option value="date-desc">Terbaru</option>
-                    <option value="date-asc">Terlama</option>
-                    <option value="profit-desc">P/L Tertinggi</option>
-                    <option value="profit-asc">P/L Terendah</option>
-                    <option value="lot-desc">Lot Terbesar</option>
+                    <option value="date-desc">{tr('Terbaru', 'Newest')}</option>
+                    <option value="date-asc">{tr('Terlama', 'Oldest')}</option>
+                    <option value="profit-desc">{tr('P/L Tertinggi', 'Highest P/L')}</option>
+                    <option value="profit-asc">{tr('P/L Terendah', 'Lowest P/L')}</option>
+                    <option value="lot-desc">{tr('Lot Terbesar', 'Largest Lot')}</option>
                   </select>
                   <button
                     type="button"
                     onClick={resetFilters}
                     className="p-1.5 rounded-lg bg-[#EEF2F6] dark:bg-[#171D26] hover:border-black/30 dark:hover:border-white/30 border border-[#DDE3EA] dark:border-[#252B34] text-[#151D2A] dark:text-[#F2F5F9] transition-colors cursor-pointer"
-                    title="Reset Filter"
-                    aria-label="Reset semua filter"
+                    title={tr('Reset Filter', 'Reset Filters')}
+                    aria-label={tr('Reset semua filter', 'Reset all filters')}
                   >
                     <RotateCcw className="h-3.5 w-3.5 stroke-[1.75]" />
                   </button>
@@ -1210,18 +1259,24 @@ export const TradeTable: React.FC<TradeTableProps> = ({
         )}
       </div>
 
-      {/* 4. DAFTAR TRANSAKSI BERKELOMPOK TANGGAL (TODAY, YESTERDAY, DD MMM YYYY) */}
+      {/* 4. DAFTAR TRANSAKSI BERKELOMPOK TANGGAL */}
       {paginatedTrades.length === 0 ? (
         <div className="rounded-xl border border-[#DDE3EA] dark:border-[#252B34] bg-white dark:bg-[#11151B] p-8 text-center text-xs text-[#697586] dark:text-[#929BA9] space-y-3">
           <p className="text-sm font-semibold text-[#151D2A] dark:text-[#F2F5F9]">
             {trades.length === 0
-              ? 'Belum Ada Transaksi Tercatat'
-              : 'Tidak Ada Transaksi yang Sesuai Filter'}
+              ? tr('Belum Ada Transaksi Tercatat', 'No Trades Recorded Yet')
+              : tr('Tidak Ada Transaksi yang Sesuai Filter', 'No Trades Match Current Filters')}
           </p>
           <p className="text-[11px] max-w-sm mx-auto">
             {trades.length === 0
-              ? 'Belum ada transaksi. Gunakan tombol (+) di navigasi bawah untuk mencatat transaksi baru.'
-              : 'Ubah kata kunci pencarian atau reset filter untuk melihat seluruh transaksi.'}
+              ? tr(
+                  'Belum ada transaksi. Gunakan tombol Catat Trade Baru untuk mencatat transaksi baru.',
+                  'No trades yet. Use the Record New Trade button to add a new trade.'
+                )
+              : tr(
+                  'Ubah kata kunci pencarian atau reset filter untuk melihat seluruh transaksi.',
+                  'Change your search query or reset filters to view all trades.'
+                )}
           </p>
           {trades.length > 0 && (
             <div className="flex items-center justify-center gap-2 pt-1">
@@ -1230,7 +1285,7 @@ export const TradeTable: React.FC<TradeTableProps> = ({
                 onClick={resetFilters}
                 className="px-3.5 py-1.5 rounded-lg bg-[#EEF2F6] dark:bg-[#171D26] border border-[#DDE3EA] dark:border-[#252B34] text-[#151D2A] dark:text-[#F2F5F9] font-semibold text-xs cursor-pointer"
               >
-                Reset Filter
+                {tr('Reset Filter', 'Reset Filters')}
               </button>
             </div>
           )}
@@ -1258,11 +1313,11 @@ export const TradeTable: React.FC<TradeTableProps> = ({
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-1 text-xs text-[#697586] dark:text-[#929BA9]">
         <div className="flex items-center gap-2">
           <span>
-            Menampilkan{' '}
+            {tr('Menampilkan', 'Showing')}{' '}
             <strong className="font-mono-numbers tabular-nums text-[#151D2A] dark:text-[#F2F5F9]">
               {totalItems === 0 ? 0 : startIndex + 1}-{endIndex}
             </strong>{' '}
-            dari{' '}
+            {tr('dari', 'of')}{' '}
             <strong className="font-mono-numbers tabular-nums text-[#151D2A] dark:text-[#F2F5F9]">
               {totalItems}
             </strong>
@@ -1272,10 +1327,10 @@ export const TradeTable: React.FC<TradeTableProps> = ({
             onChange={(e) => setPageSize(Number(e.target.value))}
             className="rounded-lg bg-white dark:bg-[#11151B] border border-[#DDE3EA] dark:border-[#252B34] px-2 py-1 text-xs text-[#151D2A] dark:text-[#F2F5F9] focus:border-black/30 dark:focus:border-white/30 focus:outline-none"
           >
-            <option value={15}>15 / hal</option>
-            <option value={25}>25 / hal</option>
-            <option value={50}>50 / hal</option>
-            <option value={0}>Semua</option>
+            <option value={15}>{tr('15 / hal', '15 / page')}</option>
+            <option value={25}>{tr('25 / hal', '25 / page')}</option>
+            <option value={50}>{tr('50 / hal', '50 / page')}</option>
+            <option value={0}>{tr('Semua', 'All')}</option>
           </select>
         </div>
 
@@ -1286,7 +1341,7 @@ export const TradeTable: React.FC<TradeTableProps> = ({
               disabled={safePage <= 1}
               onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
               className="p-1.5 rounded-lg border border-[#DDE3EA] dark:border-[#252B34] bg-white dark:bg-[#11151B] text-[#151D2A] dark:text-[#F2F5F9] disabled:opacity-40 cursor-pointer"
-              aria-label="Halaman Sebelumnya"
+              aria-label={tr('Halaman Sebelumnya', 'Previous Page')}
             >
               <ChevronLeft className="h-4 w-4 stroke-[1.75]" />
             </button>
@@ -1298,15 +1353,13 @@ export const TradeTable: React.FC<TradeTableProps> = ({
               disabled={safePage >= totalPages}
               onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
               className="p-1.5 rounded-lg border border-[#DDE3EA] dark:border-[#252B34] bg-white dark:bg-[#11151B] text-[#151D2A] dark:text-[#F2F5F9] disabled:opacity-40 cursor-pointer"
-              aria-label="Halaman Berikutnya"
+              aria-label={tr('Halaman Berikutnya', 'Next Page')}
             >
               <ChevronRight className="h-4 w-4 stroke-[1.75]" />
             </button>
           </div>
         )}
       </div>
-
-
 
       {/* MODAL 1: PLANNED -> OPEN / CANCELLED */}
       {plannedModalTrade && (
@@ -1321,10 +1374,11 @@ export const TradeTable: React.FC<TradeTableProps> = ({
             <div className="flex items-center justify-between pb-3 border-b border-[#DDE3EA] dark:border-[#252B34]">
               <div>
                 <h3 className="text-sm font-bold">
-                  Status Rencana: {plannedModalTrade.instrument} ({plannedModalTrade.position})
+                  {tr('Status Rencana:', 'Planned Status:')} {plannedModalTrade.instrument} (
+                  {plannedModalTrade.position})
                 </h3>
                 <p className="text-[11px] text-[#697586] dark:text-[#929BA9]">
-                  ID: {plannedModalTrade.id} • Status saat ini: LIMIT
+                  ID: {plannedModalTrade.id} • {tr('Status saat ini: RENCANA', 'Current status: LIMIT')}
                 </p>
               </div>
               <button
@@ -1350,7 +1404,7 @@ export const TradeTable: React.FC<TradeTableProps> = ({
                 }`}
               >
                 <CheckCircle2 className="h-3.5 w-3.5 stroke-[1.75]" />
-                <span>Posisi Dibuka (OPEN)</span>
+                <span>{tr('Posisi Dibuka (OPEN)', 'Open Position (OPEN)')}</span>
               </button>
               <button
                 type="button"
@@ -1365,7 +1419,7 @@ export const TradeTable: React.FC<TradeTableProps> = ({
                 }`}
               >
                 <XCircle className="h-3.5 w-3.5 stroke-[1.75]" />
-                <span>Batalkan (CANCELLED)</span>
+                <span>{tr('Batalkan (CANCELLED)', 'Cancel (CANCELLED)')}</span>
               </button>
             </div>
 
@@ -1386,14 +1440,17 @@ export const TradeTable: React.FC<TradeTableProps> = ({
                       className="mt-0.5 rounded border-[#DDE3EA] dark:border-[#252B34]"
                     />
                     <span className="text-[11px] leading-relaxed">
-                      Saya mengonfirmasi bahwa posisi ini benar-benar telah tereksekusi di MT5.
+                      {tr(
+                        'Saya mengonfirmasi bahwa posisi ini benar-benar telah tereksekusi di MT5.',
+                        'I confirm that this position has actually been executed on MT5.'
+                      )}
                     </span>
                   </label>
 
                   <div className="grid grid-cols-2 gap-3">
                     <div>
                       <label className="block text-[11px] text-[#697586] dark:text-[#929BA9] mb-1">
-                        Actual Entry Price
+                        {tr('Harga Entry Aktual', 'Actual Entry Price')}
                       </label>
                       <input
                         type="number"
@@ -1407,7 +1464,7 @@ export const TradeTable: React.FC<TradeTableProps> = ({
                     </div>
                     <div>
                       <label className="block text-[11px] text-[#697586] dark:text-[#929BA9] mb-1">
-                        Actual Lot
+                        {tr('Lot Aktual', 'Actual Lot')}
                       </label>
                       <input
                         type="number"
@@ -1425,7 +1482,7 @@ export const TradeTable: React.FC<TradeTableProps> = ({
                   <div className="grid grid-cols-2 gap-3">
                     <div>
                       <label className="block text-[11px] text-[#697586] dark:text-[#929BA9] mb-1">
-                        Tanggal Entry
+                        {tr('Tanggal Entry', 'Entry Date')}
                       </label>
                       <input
                         type="date"
@@ -1437,7 +1494,7 @@ export const TradeTable: React.FC<TradeTableProps> = ({
                     </div>
                     <div>
                       <label className="block text-[11px] text-[#697586] dark:text-[#929BA9] mb-1">
-                        Jam Entry
+                        {tr('Jam Entry', 'Entry Time')}
                       </label>
                       <input
                         type="time"
@@ -1452,17 +1509,23 @@ export const TradeTable: React.FC<TradeTableProps> = ({
               ) : (
                 <div>
                   <label className="block text-[11px] text-[#697586] dark:text-[#929BA9] mb-1">
-                    Alasan Pembatalan (Opsional)
+                    {tr('Alasan Pembatalan (Opsional)', 'Cancellation Reason (Optional)')}
                   </label>
                   <textarea
                     rows={2}
                     value={cancelReasonInput}
                     onChange={(e) => setCancelReasonInput(e.target.value)}
-                    placeholder="Contoh: Harga sudah menyentuh target sebelum mengenai limit order..."
+                    placeholder={tr(
+                      'Contoh: Harga sudah menyentuh target sebelum mengenai limit order...',
+                      'Example: Price already hit the target before reaching the limit order...'
+                    )}
                     className="w-full rounded-lg bg-[#F5F7FA] dark:bg-[#080A0E] border border-[#DDE3EA] dark:border-[#252B34] p-2.5 text-xs focus:border-black/30 dark:focus:border-white/30 focus:outline-none"
                   />
                   <p className="mt-1.5 text-[11px] text-[#697586] dark:text-[#929BA9]">
-                    Catatan: Transaksi CANCELLED tidak dihitung sebagai LOSS dan tidak memengaruhi Win Rate.
+                    {tr(
+                      'Catatan: Transaksi CANCELLED tidak dihitung sebagai LOSS dan tidak memengaruhi Win Rate.',
+                      'Note: CANCELLED trades are not counted as LOSS and do not affect your Win Rate.'
+                    )}
                   </p>
                 </div>
               )}
@@ -1474,14 +1537,16 @@ export const TradeTable: React.FC<TradeTableProps> = ({
                   disabled={isTransitionSubmitting}
                   className="px-3.5 py-2 rounded-lg border border-[#DDE3EA] dark:border-[#252B34] bg-[#F5F7FA] dark:bg-[#171D26] font-semibold cursor-pointer"
                 >
-                  Batal
+                  {tr('Batal', 'Cancel')}
                 </button>
                 <button
                   type="submit"
                   disabled={isTransitionSubmitting}
                   className="px-4 py-2 rounded-lg bg-[#151D2A] dark:bg-white text-white dark:text-[#080A0E] hover:bg-black/80 dark:hover:bg-white/90 font-semibold cursor-pointer transition-colors"
                 >
-                  {plannedActionMode === 'OPEN' ? 'Konfirmasi OPEN' : 'Batalkan Trade'}
+                  {plannedActionMode === 'OPEN'
+                    ? tr('Konfirmasi OPEN', 'Confirm OPEN')
+                    : tr('Batalkan Trade', 'Cancel Trade')}
                 </button>
               </div>
             </form>
@@ -1502,10 +1567,11 @@ export const TradeTable: React.FC<TradeTableProps> = ({
             <div className="flex items-center justify-between pb-3 border-b border-[#DDE3EA] dark:border-[#252B34]">
               <div>
                 <h3 className="text-sm font-bold">
-                  Tutup Posisi: {closeModalTrade.instrument} ({closeModalTrade.position})
+                  {tr('Tutup Posisi:', 'Close Position:')} {closeModalTrade.instrument} (
+                  {closeModalTrade.position})
                 </h3>
                 <p className="text-[11px] text-[#697586] dark:text-[#929BA9]">
-                  ID: {closeModalTrade.id} • Status saat ini: OPEN
+                  ID: {closeModalTrade.id} • {tr('Status saat ini: AKTIF', 'Current status: OPEN')}
                 </p>
               </div>
               <button
@@ -1526,7 +1592,7 @@ export const TradeTable: React.FC<TradeTableProps> = ({
             <form onSubmit={handleConfirmClosePosition} className="mt-4 space-y-3 text-xs">
               <div>
                 <label className="block text-[11px] text-[#697586] dark:text-[#929BA9] mb-1">
-                  Jenis Penutupan Posisi
+                  {tr('Jenis Penutupan Posisi', 'Position Close Type')}
                 </label>
                 <div className="grid grid-cols-3 gap-2">
                   {(['TP', 'SL', 'Manual'] as const).map((ct) => (
@@ -1549,7 +1615,7 @@ export const TradeTable: React.FC<TradeTableProps> = ({
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="block text-[11px] text-[#697586] dark:text-[#929BA9] mb-1">
-                    Actual Exit Price
+                    {tr('Harga Exit Aktual', 'Actual Exit Price')}
                   </label>
                   <input
                     type="number"
@@ -1563,7 +1629,7 @@ export const TradeTable: React.FC<TradeTableProps> = ({
                 </div>
                 <div>
                   <label className="block text-[11px] text-[#697586] dark:text-[#929BA9] mb-1">
-                    Realized Net P/L ({settings.currencySymbol})
+                    {tr('Realisasi P/L Bersih', 'Realized Net P/L')} ({settings.currencySymbol})
                   </label>
                   <input
                     type="number"
@@ -1577,7 +1643,7 @@ export const TradeTable: React.FC<TradeTableProps> = ({
                         : ''
                     }
                     onChange={(e) => setCloseNetOverrideInput(e.target.value)}
-                    placeholder="Otomatis dari Exit"
+                    placeholder={tr('Otomatis dari Exit', 'Auto from Exit')}
                     className="w-full rounded-lg bg-[#F5F7FA] dark:bg-[#080A0E] border border-[#DDE3EA] dark:border-[#252B34] px-3 py-2 font-mono-numbers tabular-nums font-bold focus:border-black/30 dark:focus:border-white/30 focus:outline-none"
                   />
                 </div>
@@ -1586,7 +1652,7 @@ export const TradeTable: React.FC<TradeTableProps> = ({
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="block text-[11px] text-[#697586] dark:text-[#929BA9] mb-1">
-                    Tanggal Close
+                    {tr('Tanggal Tutup', 'Close Date')}
                   </label>
                   <input
                     type="date"
@@ -1598,7 +1664,7 @@ export const TradeTable: React.FC<TradeTableProps> = ({
                 </div>
                 <div>
                   <label className="block text-[11px] text-[#697586] dark:text-[#929BA9] mb-1">
-                    Jam Close
+                    {tr('Jam Tutup', 'Close Time')}
                   </label>
                   <input
                     type="time"
@@ -1617,7 +1683,7 @@ export const TradeTable: React.FC<TradeTableProps> = ({
                   disabled={isTransitionSubmitting}
                   className="px-3.5 py-2 rounded-lg border border-[#DDE3EA] dark:border-[#252B34] bg-[#F5F7FA] dark:bg-[#171D26] font-semibold cursor-pointer"
                 >
-                  Batal
+                  {tr('Batal', 'Cancel')}
                 </button>
                 <button
                   type="submit"
@@ -1625,7 +1691,7 @@ export const TradeTable: React.FC<TradeTableProps> = ({
                   className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-[#151D2A] dark:bg-white text-white dark:text-[#080A0E] hover:bg-black/80 dark:hover:bg-white/90 font-semibold cursor-pointer transition-colors"
                 >
                   <Lock className="h-3.5 w-3.5 stroke-[1.75]" />
-                  <span>Konfirmasi CLOSED</span>
+                  <span>{tr('Konfirmasi SELESAI', 'Confirm CLOSED')}</span>
                 </button>
               </div>
             </form>

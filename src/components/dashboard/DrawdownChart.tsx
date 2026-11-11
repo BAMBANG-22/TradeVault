@@ -10,6 +10,7 @@ import {
   computeDrawdownCurveSeries,
 } from '../../utils/calculations';
 import { useGlobalCurrency } from '../../utils/currencyRate';
+import { useLanguage } from '../../utils/language';
 import { AppSettings } from '../../types/settings';
 import {
   resolveEquityCurvePointAtClientX,
@@ -83,6 +84,7 @@ export const DrawdownChart: React.FC<DrawdownChartProps> = ({
   viewMode = 'percent',
 }) => {
   const { preferredCurrency, effectiveRate, formatDynamic } = useGlobalCurrency();
+  const { tr } = useLanguage();
   const fmtMoney = (val: number, privacy = false) =>
     preferredCurrency === 'IDR' ? formatDynamic(val, privacy) : formatCurrency(val, settings, privacy);
 
@@ -313,16 +315,19 @@ export const DrawdownChart: React.FC<DrawdownChartProps> = ({
     clearInteraction();
   };
 
-  const startLabel = hasExecutedTrades ? safeCurve[0].date.slice(0, 10) : 'Awal';
+  const startLabel = hasExecutedTrades ? safeCurve[0].date.slice(0, 10) : tr('Awal', 'Start');
   const endLabel = hasExecutedTrades
     ? safeCurve[safeCurve.length - 1].date.slice(0, 10)
-    : 'Terbaru';
+    : tr('Terbaru', 'Latest');
 
   return (
     <div className="relative w-full overflow-hidden select-none">
       {!hasValidStartingBalance && hasExecutedTrades && (
         <div className="mb-2.5 rounded-lg bg-[#F5F7FA] dark:bg-[#171D26] border border-[#DDE3EA] dark:border-[#252B34] px-3 py-2 text-[11px] text-amber-600 dark:text-amber-400">
-          Saldo awal periode bernilai nol atau negatif. Persentase drawdown ditampilkan secara aman pada batas 0.00%.
+          {tr(
+            'Saldo awal periode bernilai nol atau negatif. Persentase drawdown ditampilkan secara aman pada batas 0.00%.',
+            'Period starting balance is zero or negative. Drawdown percentage is safely displayed at 0.00%.'
+          )}
         </div>
       )}
 
@@ -454,7 +459,7 @@ export const DrawdownChart: React.FC<DrawdownChartProps> = ({
       {!hasExecutedTrades && (
         <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
           <span className="px-3 py-1 rounded-lg bg-white/90 dark:bg-[#11151B]/90 border border-[#DDE3EA] dark:border-[#252B34] text-[11px] text-[#697586] dark:text-[#929BA9]">
-            Belum ada transaksi pada periode ini
+            {tr('Belum ada transaksi pada periode ini', 'No trades in this period')}
           </span>
         </div>
       )}
@@ -470,7 +475,7 @@ export const DrawdownChart: React.FC<DrawdownChartProps> = ({
         >
           <div className="flex items-center justify-between gap-4 text-[10px] text-[#697586] dark:text-[#929BA9] font-sans mb-0.5">
             <span>
-              {hoveredPoint.index === 0 ? 'Modal Awal' : `Trade #${hoveredPoint.index}`}
+              {hoveredPoint.index === 0 ? tr('Modal Awal', 'Initial Balance') : `Trade #${hoveredPoint.index}`}
             </span>
             <span className="font-mono-numbers">{hoveredPoint.date.slice(0, 10)}</span>
           </div>
@@ -489,11 +494,11 @@ export const DrawdownChart: React.FC<DrawdownChartProps> = ({
             </span>
           </div>
           <div className="mt-0.5 text-[10px] text-[#697586] dark:text-[#929BA9]">
-            Peak:{' '}
+            {tr('Puncak:', 'Peak:')}{' '}
             {isPrivacyMode
               ? '******'
               : fmtMoney(hoveredPoint.peak, false)}{' '}
-            • Saldo:{' '}
+            • {tr('Saldo:', 'Balance:')}{' '}
             {isPrivacyMode
               ? '******'
               : fmtMoney(hoveredPoint.equity, false)}

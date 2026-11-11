@@ -57,6 +57,7 @@ import { getSupabase } from '../../utils/supabaseClient';
 import type { Trade } from '../../types/trade';
 import type { AppSettings } from '../../types/settings';
 import { getTradeLifecycleStatus, resolveTradeLifecycle } from '../../utils/tradeLifecycle';
+import { useLanguage } from '../../utils/language';
 
 interface MarketChartViewProps {
   isActive?: boolean;
@@ -3039,7 +3040,80 @@ export const MarketChartView: React.FC<MarketChartViewProps> = ({
   onOpenAccount,
   onCreateTradeFromPosition,
 }) => {
+  const { tr } = useLanguage();
   const activeUserId: string | null = currentUser?.id || null;
+
+  const translateToolName = useCallback(
+    (name: string) => {
+      switch (name) {
+        case 'Garis Tren':
+          return tr('Garis Tren', 'Trend Line');
+        case 'Sinar Tren (Ray)':
+          return tr('Sinar Tren (Ray)', 'Trend Ray');
+        case 'Garis Horizontal':
+          return tr('Garis Horizontal', 'Horizontal Line');
+        case 'Garis Vertikal':
+          return tr('Garis Vertikal', 'Vertical Line');
+        case 'Fib Ekstensi Berbasis Tren':
+          return tr('Fib Ekstensi Berbasis Tren', 'Trend-Based Fib Extension');
+        case 'Fib Retracement':
+          return tr('Fib Retracement', 'Fib Retracement');
+        case 'Posisi Penjualan':
+          return tr('Posisi Penjualan', 'Short Position');
+        case 'Posisi Pembelian':
+          return tr('Posisi Pembelian', 'Long Position');
+        case 'Persegi':
+          return tr('Persegi', 'Rectangle');
+        case 'Catatan Harga':
+          return tr('Catatan Harga', 'Price Note');
+        default:
+          return name;
+      }
+    },
+    [tr]
+  );
+
+  const translateSectionName = useCallback(
+    (section: string) => {
+      switch (section) {
+        case 'PERALATAN TREN':
+          return tr('PERALATAN TREN', 'TREND TOOLS');
+        case 'GANN DAN FIBONACCI':
+          return tr('GANN DAN FIBONACCI', 'GANN & FIBONACCI');
+        case 'PROYEKSI DAN PENGUKURAN':
+          return tr('PROYEKSI DAN PENGUKURAN', 'PROJECTION & MEASUREMENT');
+        case 'BENTUK-BENTUK GEOMETRIS':
+          return tr('BENTUK-BENTUK GEOMETRIS', 'GEOMETRIC SHAPES');
+        case 'ANOTASI':
+          return tr('ANOTASI', 'ANNOTATIONS');
+        default:
+          return section;
+      }
+    },
+    [tr]
+  );
+
+  const translateTabName = useCallback(
+    (tab: string) => {
+      switch (tab) {
+        case 'Favorit':
+          return tr('Favorit', 'Favorites');
+        case 'Peralatan':
+          return tr('Peralatan', 'All Tools');
+        case 'Peralatan Tren':
+          return tr('Peralatan Tren', 'Trend Tools');
+        case 'Gann dan Fibonacci':
+          return tr('Gann dan Fibonacci', 'Gann & Fibonacci');
+        case 'Bentuk-Bentuk Geometris':
+          return tr('Bentuk-Bentuk Geometris', 'Geometric Shapes');
+        case 'Anotasi':
+          return tr('Anotasi', 'Annotations');
+        default:
+          return tab;
+      }
+    },
+    [tr]
+  );
 
   const [prefs, setPrefs] = useState<MarketChartPreferences>(() =>
     loadStoredChartPreferences(activeUserId)
@@ -6397,9 +6471,12 @@ export const MarketChartView: React.FC<MarketChartViewProps> = ({
                   <span
                     data-testid="chart-closed-status-badge"
                     className="inline-flex items-center px-1.5 py-0.5 rounded bg-[#1E222D] text-[8px] font-semibold tracking-wider text-[#868993] shrink-0"
-                    title="Pasar Forex & Emas tutup pada akhir pekan (Sabtu-Minggu). Data candle membeku di penutupan Jumat."
+                    title={tr(
+                      'Pasar Forex & Emas tutup pada akhir pekan (Sabtu-Minggu). Data candle membeku di penutupan Jumat.',
+                      'Forex & Gold markets are closed on weekends (Sat-Sun). Candle data is frozen at Friday close.'
+                    )}
                   >
-                    TUTUP
+                    {tr('TUTUP', 'CLOSED')}
                   </span>
                 )}
 
@@ -6455,11 +6532,11 @@ export const MarketChartView: React.FC<MarketChartViewProps> = ({
                   setHideTopSubBar(false);
                   measureViewportAndBounds();
                 }}
-                title="Keluar dari Mode Fokus / Layar Penuh"
+                title={tr('Keluar dari Mode Fokus / Layar Penuh', 'Exit Focus / Fullscreen Mode')}
                 className="inline-flex items-center gap-1 h-7 px-2 rounded-md bg-[#2A2E39] hover:bg-[#363A45] border border-white/10 text-[10px] font-semibold text-white transition-colors cursor-pointer touch-manipulation"
               >
                 <Minimize2 className="h-3 w-3 text-[#D1D4DC]" />
-                <span className="hidden xs:inline sm:inline">Keluar Fokus</span>
+                <span className="hidden xs:inline sm:inline">{tr('Keluar Fokus', 'Exit Focus')}</span>
               </button>
             )}
 
@@ -6599,16 +6676,16 @@ export const MarketChartView: React.FC<MarketChartViewProps> = ({
                       className="inline-flex items-center gap-1.5 h-6 px-2.5 rounded bg-[#2A2E39] hover:bg-[#363A45] border border-white/15 text-white text-[10px] font-semibold transition-colors cursor-pointer touch-manipulation"
                     >
                       <Scissors className="h-3 w-3 stroke-[2]" />
-                      <span>Potong di Sini</span>
+                      <span>{tr('Potong di Sini', 'Cut Here')}</span>
                     </button>
                     <button
                       type="button"
                       data-testid="replay-cancel-cut-btn"
                       onClick={handleCancelCutSelection}
-                      aria-label="Batal Replay"
+                      aria-label={tr('Batal Replay', 'Cancel Replay')}
                       className="inline-flex items-center gap-1 h-6 px-2 rounded bg-[#1E222D] hover:bg-[#2A2E39] text-[10px] font-medium text-[#868993] hover:text-white transition-colors cursor-pointer touch-manipulation"
                     >
-                      <span>Batal</span>
+                      <span>{tr('Batal', 'Cancel')}</span>
                       <X className="h-3 w-3" />
                     </button>
                   </>
@@ -6718,10 +6795,13 @@ export const MarketChartView: React.FC<MarketChartViewProps> = ({
               >
                 <span className="text-white">{renderTradingViewDrawingIcon(activeToolDef.id, 'w-4 h-4')}</span>
                 <span className="text-[11px] font-medium tracking-tight text-[#D1D4DC]">
-                  {activeToolDef.name}
+                  {translateToolName(activeToolDef.name)}
                   {activeToolDef.pointsCount === 1
-                    ? ' · Geser crosshair lalu ketuk konfirmasi'
-                    : ` · Titik ${draftStep + 1}/${activeToolDef.pointsCount}`}
+                    ? tr(
+                        ' · Geser crosshair lalu ketuk konfirmasi',
+                        ' · Move crosshair then tap confirm'
+                      )
+                    : ` · ${tr('Titik', 'Point')} ${draftStep + 1}/${activeToolDef.pointsCount}`}
                 </span>
                 <button
                   type="button"
@@ -6732,17 +6812,20 @@ export const MarketChartView: React.FC<MarketChartViewProps> = ({
                       ? 'bg-[#2A2E39] text-white border border-white/15'
                       : 'bg-[#1E222D] text-[#868993] hover:text-white border border-white/5'
                   }`}
-                  title="Snap ke Titik OHLC Candle (High, Low, Open, Close)"
+                  title={tr(
+                    'Snap ke Titik OHLC Candle (High, Low, Open, Close)',
+                    'Snap to Candle OHLC (High, Low, Open, Close)'
+                  )}
                 >
                   <Magnet className="h-3 w-3" />
-                  <span>{isMagnetActive ? 'Magnet ON' : 'Magnet OFF'}</span>
+                  <span>{isMagnetActive ? tr('Magnet Aktif', 'Magnet ON') : tr('Magnet Mati', 'Magnet OFF')}</span>
                 </button>
                 <button
                   type="button"
                   data-testid="drawing-banner-cancel-btn"
                   onClick={cancelActiveDrawingPlacement}
                   className="ml-0.5 inline-flex items-center justify-center h-5 w-5 rounded bg-[#1E222D] hover:bg-[#2A2E39] text-[#868993] hover:text-white border border-white/10 cursor-pointer"
-                  title="Batal menggambar (Esc)"
+                  title={tr('Batal menggambar (Esc)', 'Cancel drawing (Esc)')}
                 >
                   <X className="h-3 w-3" />
                 </button>
@@ -6879,17 +6962,23 @@ export const MarketChartView: React.FC<MarketChartViewProps> = ({
                             type="button"
                             data-testid="drawing-sync-to-tradelog-btn"
                             onClick={() => handleCreateTradeFromSelectedPosition(selectedDrawingObj)}
-                            title="Buka Form Catat Trade dengan data Entry, SL, dan TP ini"
+                            title={tr(
+                              'Buka Form Catat Trade dengan data Entry, SL, dan TP ini',
+                              'Open Log Trade Form with this Entry, SL, and TP data'
+                            )}
                             className="inline-flex items-center gap-1 h-6 px-2 rounded bg-[#2A2E39] hover:bg-[#363A45] border border-white/15 text-white text-[10px] font-semibold transition-colors cursor-pointer"
                           >
                             <PlusCircle className="h-3 w-3" />
-                            <span>Catat Trade</span>
+                            <span>{tr('Catat Trade', 'Log Trade')}</span>
                           </button>
                           <button
                             type="button"
                             data-testid="drawing-open-position-direct-btn"
                             onClick={() => handleCreateTradeFromSelectedPosition(selectedDrawingObj)}
-                            title="Eksekusi Posisi Baru langsung ke Jurnal TradeVault"
+                            title={tr(
+                              'Eksekusi Posisi Baru langsung ke Jurnal TradeVault',
+                              'Execute New Position directly to TradeVault Journal'
+                            )}
                             className={`inline-flex items-center gap-1 h-6 px-2 rounded text-white text-[10px] font-bold transition-colors cursor-pointer shadow-sm ${
                               selectedDrawingObj.type === 'long_position' || selectedDrawingObj.type === 'long'
                                 ? 'bg-[#089981] hover:bg-[#077f6c]'
@@ -6898,8 +6987,8 @@ export const MarketChartView: React.FC<MarketChartViewProps> = ({
                           >
                             <span>
                               {selectedDrawingObj.type === 'long_position' || selectedDrawingObj.type === 'long'
-                                ? 'Buka Buy'
-                                : 'Buka Sell'}
+                                ? tr('Buka Buy', 'Open Buy')
+                                : tr('Buka Sell', 'Open Sell')}
                             </span>
                           </button>
                         </div>
@@ -7296,10 +7385,10 @@ export const MarketChartView: React.FC<MarketChartViewProps> = ({
                       type="button"
                       data-testid="fav-toolbar-more-tools-btn"
                       onClick={() => setShowDrawingToolbar(true)}
-                      title="Menu Alat Gambar Lainnya"
+                      title={tr('Menu Alat Gambar Lainnya', 'More Drawing Tools Menu')}
                       className="inline-flex items-center justify-center h-6 px-1.5 rounded text-[9px] font-semibold text-[#868993] hover:text-white hover:bg-[#1E222D] transition-colors cursor-pointer"
                     >
-                      Lainnya
+                      {tr('Lainnya', 'More')}
                     </button>
 
                     {/* Quick Hide Favorites Bar Button */}
@@ -7307,7 +7396,7 @@ export const MarketChartView: React.FC<MarketChartViewProps> = ({
                       type="button"
                       data-testid="fav-toolbar-hide-btn"
                       onClick={handleToggleShowFavoritesOnChart}
-                      title="Sembunyikan Toolbar Favorit"
+                      title={tr('Sembunyikan Toolbar Favorit', 'Hide Favorites Toolbar')}
                       className="inline-flex items-center justify-center h-6 w-5 rounded text-[#787B86] hover:text-[#D1D4DC] hover:bg-[#1E222D] transition-colors cursor-pointer"
                     >
                       <EyeOff className="h-3 w-3" />
@@ -7320,7 +7409,11 @@ export const MarketChartView: React.FC<MarketChartViewProps> = ({
                   type="button"
                   data-testid="fav-toolbar-collapse-btn"
                   onClick={() => setIsFavToolbarCollapsed((prev) => !prev)}
-                  title={isFavToolbarCollapsed ? 'Bentangkan Toolbar Favorit' : 'Ciutkan Toolbar Favorit'}
+                  title={
+                    isFavToolbarCollapsed
+                      ? tr('Bentangkan Toolbar Favorit', 'Expand Favorites Toolbar')
+                      : tr('Ciutkan Toolbar Favorit', 'Collapse Favorites Toolbar')
+                  }
                   className="inline-flex items-center justify-center h-6 w-5 rounded text-[#787B86] hover:text-white hover:bg-[#1E222D] transition-colors cursor-pointer"
                 >
                   {isFavToolbarCollapsed ? (
@@ -7338,11 +7431,14 @@ export const MarketChartView: React.FC<MarketChartViewProps> = ({
                 type="button"
                 data-testid="chart-scroll-to-realtime-btn"
                 onClick={handleScrollToRealtime}
-                title="Kembali ke Candle Terakhir (Reset View & Auto-Scale)"
+                title={tr(
+                  'Kembali ke Candle Terakhir (Reset Tampilan & Skala Otomatis)',
+                  'Jump to Latest Candle (Reset View & Auto-Scale)'
+                )}
                 className="absolute bottom-3 right-16 z-20 inline-flex items-center gap-1 h-7 px-2 rounded-md bg-[#131722]/95 hover:bg-[#2A2E39] border border-white/15 text-[#D1D4DC] hover:text-white text-[10px] font-semibold shadow-lg transition-colors cursor-pointer select-none touch-manipulation"
               >
                 <ChevronsRight className="h-3.5 w-3.5 text-[#2962FF]" />
-                <span className="hidden sm:inline">Candle Terakhir</span>
+                <span className="hidden sm:inline">{tr('Candle Terakhir', 'Latest Candle')}</span>
               </button>
             )}
 
@@ -7354,7 +7450,10 @@ export const MarketChartView: React.FC<MarketChartViewProps> = ({
               >
                 <RefreshCw className="h-5 w-5 text-white animate-spin mb-2 stroke-[1.75]" />
                 <span className="text-xs font-medium text-neutral-300">
-                  Memuat 500 Candle {activePairItem.label} ({activeTfItem.label})...
+                  {tr(
+                    `Memuat 500 Candle ${activePairItem.label} (${activeTfItem.label})...`,
+                    `Loading 500 Candles ${activePairItem.label} (${activeTfItem.label})...`
+                  )}
                 </span>
               </div>
             )}
@@ -7457,14 +7556,14 @@ export const MarketChartView: React.FC<MarketChartViewProps> = ({
                   type="button"
                   data-testid="drawing-action-lock-point-btn"
                   onClick={handleLockAimedPoint}
-                  title="Konfirmasi Titik pada Koordinat Crosshair"
+                  title={tr('Konfirmasi Titik pada Koordinat Crosshair', 'Confirm Point at Crosshair Coordinate')}
                   className="inline-flex items-center gap-1.5 h-7 px-2.5 rounded bg-[#2A2E39] hover:bg-[#363A45] border border-white/15 text-white text-[11px] font-semibold cursor-pointer touch-manipulation"
                 >
                   {renderTradingViewDrawingIcon(activeToolDef.id, 'w-3.5 h-3.5')}
                   <span>
                     {activeToolDef.pointsCount === 1
-                      ? 'Pasang'
-                      : `Titik ${draftStep + 1}/${activeToolDef.pointsCount}`}
+                      ? tr('Pasang', 'Place')
+                      : `${tr('Titik', 'Point')} ${draftStep + 1}/${activeToolDef.pointsCount}`}
                   </span>
                 </button>
 
@@ -7473,7 +7572,7 @@ export const MarketChartView: React.FC<MarketChartViewProps> = ({
                   type="button"
                   data-testid="drawing-action-magnet-btn"
                   onClick={toggleMagnetMode}
-                  title={isMagnetActive ? 'Magnet OHLC Aktif' : 'Magnet OHLC Mati'}
+                  title={isMagnetActive ? tr('Magnet OHLC Aktif', 'OHLC Magnet ON') : tr('Magnet OHLC Mati', 'OHLC Magnet OFF')}
                   className={`inline-flex items-center justify-center h-7 w-7 rounded transition-colors cursor-pointer ${
                     isMagnetActive
                       ? 'bg-[#2A2E39] text-white border border-white/15'
@@ -7488,7 +7587,7 @@ export const MarketChartView: React.FC<MarketChartViewProps> = ({
                   type="button"
                   data-testid="drawing-action-stay-mode-btn"
                   onClick={() => setStayInDrawingMode((prev) => !prev)}
-                  title="Tetap di Mode Gambar (Pencil + Lock)"
+                  title={tr('Tetap di Mode Gambar', 'Stay in Drawing Mode')}
                   className={`relative inline-flex items-center justify-center h-7 w-7 rounded transition-colors cursor-pointer ${
                     stayInDrawingMode
                       ? 'bg-[#2A2E39] text-white border border-white/15'
@@ -7504,7 +7603,7 @@ export const MarketChartView: React.FC<MarketChartViewProps> = ({
                   type="button"
                   data-testid="drawing-action-hide-drawings-btn"
                   onClick={() => setHideAllDrawings((prev) => !prev)}
-                  title={hideAllDrawings ? 'Tampilkan Semua Gambar' : 'Sembunyikan Semua Gambar'}
+                  title={hideAllDrawings ? tr('Tampilkan Semua Gambar', 'Show All Drawings') : tr('Sembunyikan Semua Gambar', 'Hide All Drawings')}
                   className={`inline-flex items-center justify-center h-7 w-7 rounded transition-colors cursor-pointer ${
                     hideAllDrawings
                       ? 'bg-[#2A2E39] text-white border border-white/15'
@@ -7519,7 +7618,7 @@ export const MarketChartView: React.FC<MarketChartViewProps> = ({
                   type="button"
                   data-testid="drawing-action-layer-btn"
                   onClick={() => setIsLayerModalOpen((prev) => !prev)}
-                  title="Layer Objek Gambar"
+                  title={tr('Layer Objek Gambar', 'Drawing Object Layers')}
                   className={`inline-flex items-center justify-center h-7 w-7 rounded transition-colors cursor-pointer ${
                     isLayerModalOpen
                       ? 'bg-[#2A2E39] text-white border border-white/15'
@@ -7534,10 +7633,10 @@ export const MarketChartView: React.FC<MarketChartViewProps> = ({
                   type="button"
                   data-testid="drawing-action-done-btn"
                   onClick={cancelActiveDrawingPlacement}
-                  title="Batal / Keluar Mode Gambar (Esc)"
+                  title={tr('Batal / Keluar Mode Gambar (Esc)', 'Cancel / Exit Drawing Mode (Esc)')}
                   className="inline-flex items-center gap-1 h-7 px-2 rounded bg-[#1E222D] hover:bg-[#2A2E39] border border-white/10 text-[11px] font-medium text-[#D1D4DC] hover:text-white cursor-pointer"
                 >
-                  <span>Batal</span>
+                  <span>{tr('Batal', 'Cancel')}</span>
                   <X className="h-3 w-3" />
                 </button>
               </div>
@@ -7550,7 +7649,9 @@ export const MarketChartView: React.FC<MarketChartViewProps> = ({
                 className="absolute bottom-14 left-1/2 -translate-x-1/2 z-40 w-64 rounded-lg bg-[#131722] border border-white/10 p-3 text-[#D1D4DC] shadow-2xl select-none"
               >
                 <div className="flex items-center justify-between pb-2 mb-2 border-b border-white/10">
-                  <span className="text-xs font-bold text-white">Layer Gambar ({pairDrawings.length})</span>
+                  <span className="text-xs font-bold text-white">
+                    {tr('Layer Gambar', 'Drawing Layers')} ({pairDrawings.length})
+                  </span>
                   <button
                     type="button"
                     onClick={() => setIsLayerModalOpen(false)}
@@ -7560,7 +7661,9 @@ export const MarketChartView: React.FC<MarketChartViewProps> = ({
                   </button>
                 </div>
                 {pairDrawings.length === 0 ? (
-                  <p className="text-[11px] text-[#868993] py-2 text-center">Belum ada objek gambar.</p>
+                  <p className="text-[11px] text-[#868993] py-2 text-center">
+                    {tr('Belum ada objek gambar.', 'No drawing objects yet.')}
+                  </p>
                 ) : (
                   <div className="max-h-40 overflow-y-auto space-y-1">
                     {pairDrawings.map((d, idx) => (
@@ -7569,7 +7672,7 @@ export const MarketChartView: React.FC<MarketChartViewProps> = ({
                         className="flex items-center justify-between px-2 py-1.5 rounded bg-[#1E222D] text-[11px]"
                       >
                         <span className="truncate font-medium">
-                          #{idx + 1} · {DRAWING_TOOLS_CATALOG.find((t) => t.id === d.type)?.name || d.type}
+                          #{idx + 1} · {translateToolName(DRAWING_TOOLS_CATALOG.find((t) => t.id === d.type)?.name || d.type)}
                         </span>
                         <button
                           type="button"
@@ -8822,7 +8925,9 @@ export const MarketChartView: React.FC<MarketChartViewProps> = ({
               {/* Judul: Teks "Gambar" berukuran besar dan tebal */}
               <div className="flex items-center justify-between px-4 mb-3 shrink-0">
                 <div className="flex items-center gap-2 flex-wrap">
-                  <h2 className="text-lg font-bold text-[#F8FAFC] tracking-tight">Gambar</h2>
+                  <h2 className="text-lg font-bold text-[#F8FAFC] tracking-tight">
+                    {tr('Gambar', 'Drawings')}
+                  </h2>
                   <button
                     type="button"
                     data-testid="drawing-sheet-magnet-btn"
@@ -8832,10 +8937,10 @@ export const MarketChartView: React.FC<MarketChartViewProps> = ({
                         ? 'bg-[#2A2E39] text-white border border-white/15'
                         : 'bg-[#1E222D] text-[#868993] hover:text-white border border-white/[0.06]'
                     }`}
-                    title="Snap gambar ke titik OHLC candle terdekat"
+                    title={tr('Snap gambar ke titik OHLC candle terdekat', 'Snap drawing to nearest candle OHLC')}
                   >
                     <Magnet className="h-3.5 w-3.5" />
-                    <span>{isMagnetActive ? 'Magnet Aktif' : 'Magnet Mati'}</span>
+                    <span>{isMagnetActive ? tr('Magnet Aktif', 'Magnet ON') : tr('Magnet Mati', 'Magnet OFF')}</span>
                   </button>
                   <button
                     type="button"
@@ -8846,10 +8951,13 @@ export const MarketChartView: React.FC<MarketChartViewProps> = ({
                         ? 'bg-[#2A2E39] text-white border border-white/15'
                         : 'bg-[#1E222D] text-[#D1D4DC] hover:text-white border border-white/[0.06]'
                     }`}
-                    title="Penggaris Cepat (Ukur Pips, %, & Jumlah Bar tanpa memenuhi penyimpanan)"
+                    title={tr(
+                      'Penggaris Cepat (Ukur Pips, %, & Jumlah Bar tanpa memenuhi penyimpanan)',
+                      'Quick Ruler (Measure Pips, %, & Bar Count without cluttering storage)'
+                    )}
                   >
                     <Ruler className="h-3.5 w-3.5" />
-                    <span>Penggaris</span>
+                    <span>{tr('Penggaris', 'Ruler')}</span>
                   </button>
                 </div>
                 {pairDrawings.length > 0 && (
@@ -8860,7 +8968,7 @@ export const MarketChartView: React.FC<MarketChartViewProps> = ({
                     className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md bg-[#1E222D] hover:bg-[#F23645]/15 border border-white/[0.06] text-[11px] font-medium text-[#868993] hover:text-[#F23645] transition-colors cursor-pointer"
                   >
                     <Trash2 className="h-3.5 w-3.5" />
-                    <span>Hapus Semua</span>
+                    <span>{tr('Hapus Semua', 'Clear All')}</span>
                   </button>
                 )}
               </div>
@@ -8884,7 +8992,7 @@ export const MarketChartView: React.FC<MarketChartViewProps> = ({
                           : 'text-[#868993] hover:text-[#D1D4DC] hover:bg-[#1E222D]'
                       }`}
                     >
-                      {tab}
+                      {translateTabName(tab)}
                     </button>
                   );
                 })}
@@ -8897,7 +9005,10 @@ export const MarketChartView: React.FC<MarketChartViewProps> = ({
               >
                 {filteredSheetTools.length === 0 ? (
                   <div className="py-12 text-center text-xs text-[#868993]">
-                    Belum ada alat gambar favorit. Ketuk ikon bintang pada tab Peralatan untuk menambahkan.
+                    {tr(
+                      'Belum ada alat gambar favorit. Ketuk ikon bintang pada tab Peralatan untuk menambahkan.',
+                      'No favorite drawing tools yet. Tap the star icon in the All Tools tab to add.'
+                    )}
                   </div>
                 ) : (
                   DRAWING_SECTIONS_ORDER.map((sectionName) => {
@@ -8909,7 +9020,7 @@ export const MarketChartView: React.FC<MarketChartViewProps> = ({
                     return (
                       <div key={sectionName} data-testid={`drawing-section-${sectionName}`}>
                         <h3 className="text-[11px] font-semibold text-[#868993] uppercase tracking-wider mt-4 mb-2">
-                          {sectionName}
+                          {translateSectionName(sectionName)}
                         </h3>
                         <div className="grid grid-cols-2 gap-2">
                           {toolsInSection.map((tool) => {
@@ -8961,7 +9072,7 @@ export const MarketChartView: React.FC<MarketChartViewProps> = ({
 
                                 {/* Nama Alat di Bawahnya */}
                                 <span className="text-xs text-[#D1D4DC] mt-2 text-center font-medium leading-tight">
-                                  {tool.name}
+                                  {translateToolName(tool.name)}
                                 </span>
                               </div>
                             );
@@ -8984,7 +9095,7 @@ export const MarketChartView: React.FC<MarketChartViewProps> = ({
                     <Star className="h-2.5 w-2.5 text-[#F59E0B] fill-[#F59E0B] -ml-1 -mt-2" />
                   </div>
                   <span className="text-xs text-[#D1D4DC] font-medium">
-                    Tampilkan favorit pada Chart
+                    {tr('Tampilkan favorit pada Chart', 'Show favorites on Chart')}
                   </span>
                 </div>
 
@@ -9017,7 +9128,7 @@ export const MarketChartView: React.FC<MarketChartViewProps> = ({
             data-testid="market-chart-indicators-modal"
             role="dialog"
             aria-modal="true"
-            aria-label="Indikator Teknis"
+            aria-label={tr('Indikator Teknis', 'Technical Indicators')}
             className="absolute inset-0 z-30 flex items-end sm:items-center justify-center p-2 sm:p-4 bg-black/65"
             onClick={() => setIsIndicatorsOpen(false)}
           >
@@ -9027,15 +9138,18 @@ export const MarketChartView: React.FC<MarketChartViewProps> = ({
             >
               <div className="flex items-center justify-between pb-2.5 border-b border-white/[0.08]">
                 <div>
-                  <h2 className="text-sm font-bold tracking-tight text-[#F8FAFC]">Indikator Teknikal</h2>
+                  <h2 className="text-sm font-bold tracking-tight text-[#F8FAFC]">
+                    {tr('Indikator Teknikal', 'Technical Indicators')}
+                  </h2>
                   <p className="text-[11px] text-[#868993]">
-                    EMA 20/50, SMA 200, &amp; Session Box ({prefs.studies.length} aktif)
+                    EMA 20/50, SMA 200, &amp; Session Box ({prefs.studies.length}{' '}
+                    {tr('aktif', 'active')})
                   </p>
                 </div>
                 <button
                   type="button"
                   onClick={() => setIsIndicatorsOpen(false)}
-                  aria-label="Tutup panel indikator"
+                  aria-label={tr('Tutup panel indikator', 'Close indicators panel')}
                   className="p-1.5 rounded-md text-[#868993] hover:text-white hover:bg-[#2A2E39] cursor-pointer"
                 >
                   <X className="h-4 w-4 stroke-[1.75]" />
@@ -9089,7 +9203,7 @@ export const MarketChartView: React.FC<MarketChartViewProps> = ({
             data-testid="market-chart-mode-menu"
             role="dialog"
             aria-modal="true"
-            aria-label="Menu Pengaturan Chart"
+            aria-label={tr('Menu Pengaturan Chart', 'Chart Settings Menu')}
             className="absolute inset-0 z-30 flex items-end sm:items-center justify-center p-2 sm:p-4 bg-black/65"
             onClick={() => setIsMoreMenuOpen(false)}
           >
@@ -9100,18 +9214,26 @@ export const MarketChartView: React.FC<MarketChartViewProps> = ({
               <div className="flex items-center justify-between pb-2 border-b border-white/[0.08]">
                 <div>
                   <h2 className="text-sm font-bold tracking-tight text-[#F8FAFC]">
-                    {isLiveMode ? 'Pengaturan Live Advance Chart' : 'Pengaturan Replay Chart'}
+                    {isLiveMode
+                      ? tr('Pengaturan Live Advance Chart', 'Live Advance Chart Settings')
+                      : tr('Pengaturan Replay Chart', 'Replay Chart Settings')}
                   </h2>
                   <p className="text-[11px] text-[#868993]">
                     {isLiveMode
-                      ? 'Tampilan penuh bersih, toolbar TradingView, dan warna candle'
-                      : 'Warna candlestick, mode layar, dan reset skala'}
+                      ? tr(
+                          'Tampilan penuh bersih, toolbar TradingView, dan warna candle',
+                          'Clean full view, TradingView toolbar, and candle colors'
+                        )
+                      : tr(
+                          'Warna candlestick, mode layar, dan reset skala',
+                          'Candlestick colors, screen mode, and scale reset'
+                        )}
                   </p>
                 </div>
                 <button
                   type="button"
                   onClick={() => setIsMoreMenuOpen(false)}
-                  aria-label="Tutup menu opsi chart"
+                  aria-label={tr('Tutup menu opsi chart', 'Close chart options menu')}
                   data-testid="market-chart-mode-menu-close"
                   className="p-1.5 rounded-md text-[#868993] hover:text-white hover:bg-[#2A2E39] cursor-pointer"
                 >
@@ -9123,7 +9245,10 @@ export const MarketChartView: React.FC<MarketChartViewProps> = ({
               {isLiveMode && (
                 <div className="space-y-2 pb-2.5 border-b border-white/[0.08]">
                   <span className="text-[10px] font-semibold uppercase tracking-wider text-[#868993] block">
-                    Opsi Tampilan Penuh / Bersih (Live Advance)
+                    {tr(
+                      'Opsi Tampilan Penuh / Bersih (Live Advance)',
+                      'Full / Clean View Options (Live Advance)'
+                    )}
                   </span>
 
                   {/* Tombol Sekali Klik: Tampilan Penuh / Sembunyikan Toolbar Samping & Atas */}
@@ -9148,7 +9273,12 @@ export const MarketChartView: React.FC<MarketChartViewProps> = ({
                   >
                     <div className="flex items-center gap-2">
                       <Maximize2 className="h-3.5 w-3.5 text-[#D1D4DC]" />
-                      <span>Sembunyikan Toolbar Samping &amp; Atas (Bersih)</span>
+                      <span>
+                        {tr(
+                          'Sembunyikan Toolbar Samping & Atas (Bersih)',
+                          'Hide Side & Top Toolbars (Clean View)'
+                        )}
+                      </span>
                     </div>
                     {isLiveCleanView && !showLiveDrawingTools && (
                       <Check className="h-4 w-4 text-white shrink-0" />
@@ -9163,7 +9293,7 @@ export const MarketChartView: React.FC<MarketChartViewProps> = ({
                       onClick={() => setShowLiveDrawingTools((prev) => !prev)}
                       className="px-3 py-2 rounded-md bg-[#1E222D] border border-white/[0.06] text-xs flex items-center justify-between text-[#D1D4DC] hover:text-white cursor-pointer"
                     >
-                      <span>Drawing Tools Samping (TradingView)</span>
+                      <span>{tr('Alat Gambar Samping (TradingView)', 'Side Drawing Tools (TradingView)')}</span>
                       <span
                         className={`text-[10px] font-bold px-2 py-0.5 rounded ${
                           showLiveDrawingTools
@@ -9171,7 +9301,7 @@ export const MarketChartView: React.FC<MarketChartViewProps> = ({
                             : 'bg-[#131722] text-[#868993]'
                         }`}
                       >
-                        {showLiveDrawingTools ? 'MUNCUL' : 'SEMBUNYI'}
+                        {showLiveDrawingTools ? tr('MUNCUL', 'VISIBLE') : tr('SEMBUNYI', 'HIDDEN')}
                       </span>
                     </button>
 
@@ -9181,7 +9311,7 @@ export const MarketChartView: React.FC<MarketChartViewProps> = ({
                       onClick={() => setIsLiveCleanView((prev) => !prev)}
                       className="px-3 py-2 rounded-md bg-[#1E222D] border border-white/[0.06] text-xs flex items-center justify-between text-[#D1D4DC] hover:text-white cursor-pointer"
                     >
-                      <span>Sembunyikan Bar Atas Widget (Clean Mode)</span>
+                      <span>{tr('Sembunyikan Bar Atas Widget', 'Hide Widget Top Bar')}</span>
                       <span
                         className={`text-[10px] font-bold px-2 py-0.5 rounded ${
                           isLiveCleanView
@@ -9189,7 +9319,7 @@ export const MarketChartView: React.FC<MarketChartViewProps> = ({
                             : 'bg-[#131722] text-[#868993]'
                         }`}
                       >
-                        {isLiveCleanView ? 'AKTIF' : 'MATI'}
+                        {isLiveCleanView ? tr('AKTIF', 'ON') : tr('MATI', 'OFF')}
                       </span>
                     </button>
 
@@ -9199,7 +9329,7 @@ export const MarketChartView: React.FC<MarketChartViewProps> = ({
                       onClick={() => setHideTopSubBar((prev) => !prev)}
                       className="px-3 py-2 rounded-md bg-[#1E222D] border border-white/[0.06] text-xs flex items-center justify-between text-[#D1D4DC] hover:text-white cursor-pointer"
                     >
-                      <span>Sembunyikan Sub-Header Atas (Imersif)</span>
+                      <span>{tr('Sembunyikan Sub-Header Atas (Imersif)', 'Hide Top Sub-Header (Immersive)')}</span>
                       <span
                         className={`text-[10px] font-bold px-2 py-0.5 rounded ${
                           hideTopSubBar
@@ -9207,7 +9337,7 @@ export const MarketChartView: React.FC<MarketChartViewProps> = ({
                             : 'bg-[#131722] text-[#868993]'
                         }`}
                       >
-                        {hideTopSubBar ? 'SEMBUNYI' : 'TAMPIL'}
+                        {hideTopSubBar ? tr('SEMBUNYI', 'HIDDEN') : tr('TAMPIL', 'VISIBLE')}
                       </span>
                     </button>
                   </div>
@@ -9217,7 +9347,7 @@ export const MarketChartView: React.FC<MarketChartViewProps> = ({
               {/* 1. Pilihan Warna Candlestick: Monokrom Pro (Putih/Hitam) vs Klasik (Hijau/Merah) */}
               <div className="space-y-1.5">
                 <span className="text-[10px] font-semibold uppercase tracking-wider text-[#868993] block">
-                  Gaya Warna Candlestick
+                  {tr('Gaya Warna Candlestick', 'Candlestick Color Style')}
                 </span>
                 <div className="grid grid-cols-2 gap-1.5">
                   <button
@@ -9233,7 +9363,7 @@ export const MarketChartView: React.FC<MarketChartViewProps> = ({
                     }`}
                   >
                     <span className="h-3 w-3 rounded-xs bg-white border border-neutral-400" />
-                    <span>Monokrom Pro</span>
+                    <span>{tr('Monokrom Pro', 'Monochrome Pro')}</span>
                   </button>
                   <button
                     type="button"
@@ -9248,7 +9378,7 @@ export const MarketChartView: React.FC<MarketChartViewProps> = ({
                     }`}
                   >
                     <span className="h-3 w-3 rounded-xs bg-[#089981]" />
-                    <span>Hijau / Merah</span>
+                    <span>{tr('Hijau / Merah', 'Green / Red')}</span>
                   </button>
                 </div>
               </div>
@@ -9256,7 +9386,7 @@ export const MarketChartView: React.FC<MarketChartViewProps> = ({
               {/* 2. Mode Tampilan Layar */}
               <div className="space-y-1.5">
                 <span className="text-[10px] font-semibold uppercase tracking-wider text-[#868993] block">
-                  Mode Layar
+                  {tr('Mode Layar', 'Screen Mode')}
                 </span>
                 <div className="grid grid-cols-3 gap-1.5">
                   {DISPLAY_MODE_OPTIONS.map((option) => {
@@ -9306,7 +9436,9 @@ export const MarketChartView: React.FC<MarketChartViewProps> = ({
                       Twelve Data API Key (Candle OANDA/Forex)
                     </span>
                     <span className="text-[10px] font-semibold text-[#089981]">
-                      {candleSource === 'twelvedata' ? '● Terhubung' : '● Siap'}
+                      {candleSource === 'twelvedata'
+                        ? tr('● Terhubung', '● Connected')
+                        : tr('● Siap', '● Ready')}
                     </span>
                   </div>
                   <div className="flex items-center gap-1.5">
@@ -9314,7 +9446,10 @@ export const MarketChartView: React.FC<MarketChartViewProps> = ({
                       type="text"
                       value={apiKeyInput}
                       onChange={(e) => setApiKeyInput(e.target.value)}
-                      placeholder="Masukkan API Key Twelve Data..."
+                      placeholder={tr(
+                        'Masukkan API Key Twelve Data...',
+                        'Enter Twelve Data API Key...'
+                      )}
                       data-testid="twelve-data-api-key-input"
                       className="flex-1 h-8 px-2.5 rounded-md bg-[#1E222D] border border-white/[0.08] text-[11px] font-mono text-white focus:outline-none focus:border-white/25"
                     />
@@ -9329,11 +9464,14 @@ export const MarketChartView: React.FC<MarketChartViewProps> = ({
                       }}
                       className="h-8 px-2.5 rounded-md bg-[#2A2E39] hover:bg-[#363A45] border border-white/15 text-white text-[11px] font-semibold cursor-pointer shrink-0 transition-colors"
                     >
-                      {apiKeySavedToast ? 'Tersimpan!' : 'Simpan'}
+                      {apiKeySavedToast ? tr('Tersimpan!', 'Saved!') : tr('Simpan', 'Save')}
                     </button>
                   </div>
                   <p className="text-[10px] text-[#868993] leading-tight">
-                    Digunakan pada mode <strong>Replay Studio</strong> agar struktur candle XAUUSD &amp; Forex identik dengan pasar spot OANDA.
+                    {tr(
+                      'Digunakan pada mode Replay Studio agar struktur candle XAUUSD & Forex identik dengan pasar spot OANDA.',
+                      'Used in Replay Studio mode so XAUUSD & Forex candle structures match OANDA spot market data.'
+                    )}
                   </p>
                 </div>
               )}
@@ -9355,7 +9493,7 @@ export const MarketChartView: React.FC<MarketChartViewProps> = ({
                     className="flex items-center justify-center gap-1.5 py-2 px-2.5 rounded-md bg-[#1E222D] hover:bg-[#2A2E39] border border-white/[0.08] text-xs font-semibold text-[#D1D4DC] hover:text-white cursor-pointer transition-colors"
                   >
                     <RotateCcw className="h-3.5 w-3.5" />
-                    <span>Reset Skala Chart</span>
+                    <span>{tr('Reset Skala Chart', 'Reset Chart Scale')}</span>
                   </button>
                 )}
 
@@ -9369,7 +9507,7 @@ export const MarketChartView: React.FC<MarketChartViewProps> = ({
                   className="flex items-center justify-center gap-1.5 py-2 px-2.5 rounded-md bg-[#1E222D] hover:bg-[#2A2E39] border border-white/[0.08] text-xs font-semibold text-[#D1D4DC] hover:text-white cursor-pointer transition-colors"
                 >
                   <Cloud className="h-3.5 w-3.5" />
-                  <span>Sinkron Akun</span>
+                  <span>{tr('Sinkron Akun', 'Sync Account')}</span>
                 </button>
               </div>
             </div>
@@ -9382,7 +9520,7 @@ export const MarketChartView: React.FC<MarketChartViewProps> = ({
             data-testid="market-chart-sync-modal"
             role="dialog"
             aria-modal="true"
-            aria-label="Sinkronisasi Akun"
+            aria-label={tr('Sinkronisasi Akun', 'Account Sync')}
             className="absolute inset-0 z-30 flex items-end sm:items-center justify-center p-2 sm:p-4 bg-black/65"
             onClick={() => setIsSyncModalOpen(false)}
           >
@@ -9391,7 +9529,9 @@ export const MarketChartView: React.FC<MarketChartViewProps> = ({
               onClick={(e) => e.stopPropagation()}
             >
               <div className="flex items-center justify-between pb-2 border-b border-white/[0.08]">
-                <h2 className="text-sm font-bold text-[#F8FAFC]">Sinkronisasi Akun Cloud</h2>
+                <h2 className="text-sm font-bold text-[#F8FAFC]">
+                  {tr('Sinkronisasi Akun Cloud', 'Cloud Account Sync')}
+                </h2>
                 <button
                   type="button"
                   onClick={() => setIsSyncModalOpen(false)}
@@ -9412,14 +9552,22 @@ export const MarketChartView: React.FC<MarketChartViewProps> = ({
                   </div>
                   <div className="min-w-0">
                     <span className="text-xs font-semibold block truncate text-[#F8FAFC]">
-                      {currentUser ? currentUser.email : 'Mode Lokal (Belum Masuk Akun)'}
+                      {currentUser
+                        ? currentUser.email
+                        : tr('Mode Lokal (Belum Masuk Akun)', 'Local Mode (Not Signed In)')}
                     </span>
                     <span className="text-[11px] text-[#868993] block">
                       {currentUser
                         ? cloudSyncStatus === 'syncing'
-                          ? 'Menyinkronkan ke cloud...'
-                          : 'Setelan chart tersinkron ke akun Anda'
-                        : 'Masuk akun untuk sinkronisasi otomatis'}
+                          ? tr('Menyinkronkan ke cloud...', 'Syncing to cloud...')
+                          : tr(
+                              'Setelan chart tersinkron ke akun Anda',
+                              'Chart settings synced to your account'
+                            )
+                        : tr(
+                            'Masuk akun untuk sinkronisasi otomatis',
+                            'Sign in for automatic synchronization'
+                          )}
                     </span>
                   </div>
                 </div>
@@ -9432,7 +9580,7 @@ export const MarketChartView: React.FC<MarketChartViewProps> = ({
                     }}
                     className="px-2.5 py-1.5 rounded-md bg-[#2A2E39] hover:bg-[#363A45] border border-white/15 text-[11px] font-semibold shrink-0 cursor-pointer"
                   >
-                    Akun
+                    {tr('Akun', 'Account')}
                   </button>
                 ) : (
                   <button
@@ -9444,7 +9592,7 @@ export const MarketChartView: React.FC<MarketChartViewProps> = ({
                     className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-md bg-white text-black text-[11px] font-semibold shrink-0 cursor-pointer"
                   >
                     <LogIn className="h-3 w-3" />
-                    <span>Masuk</span>
+                    <span>{tr('Masuk', 'Sign In')}</span>
                   </button>
                 )}
               </div>

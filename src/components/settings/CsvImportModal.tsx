@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Trade } from '../../types/trade';
 import { parseCsvToTrades, CsvImportResult } from '../../utils/csv';
+import { useLanguage } from '../../utils/language';
 import { X, Upload, AlertCircle, CheckCircle } from 'lucide-react';
 
 interface CsvImportModalProps {
@@ -17,7 +18,6 @@ interface CsvImportModalProps {
 function stabilizeCsvTradesDeterministically(trades: Trade[]): Trade[] {
   const occurrenceCountMap = new Map<string, number>();
   return trades.map((t) => {
-    // Only generate stable deterministic ID if original ID was auto-generated (starts with "CSV-")
     if (!t.id || t.id.startsWith('CSV-')) {
       const sig = `${t.dateTime}|${(t.instrument || 'XAUUSD').toUpperCase()}|${t.position}|${t.entryPrice}|${t.lotSize}|${t.netProfit}`;
       const occurrenceIndex = occurrenceCountMap.get(sig) || 0;
@@ -48,6 +48,7 @@ export const CsvImportModal: React.FC<CsvImportModalProps> = ({
   onClose,
   onConfirmImport,
 }) => {
+  const { tr } = useLanguage();
   const [csvText, setCsvText] = useState<string>('');
   const [importResult, setImportResult] = useState<CsvImportResult | null>(null);
   const [importMode, setImportMode] = useState<'merge' | 'replace'>('merge');
@@ -111,7 +112,6 @@ export const CsvImportModal: React.FC<CsvImportModalProps> = ({
     }
   };
 
-
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 dark:bg-black/80 backdrop-blur-sm p-4 animate-in fade-in duration-150"
@@ -125,16 +125,19 @@ export const CsvImportModal: React.FC<CsvImportModalProps> = ({
           <div>
             <h3 className="text-base font-bold text-[#151D2A] dark:text-[#F2F5F9] flex items-center gap-2">
               <Upload className="h-5 w-5 stroke-[1.75] text-[#697586] dark:text-[#929BA9]" />
-              Import Data Trade dari CSV
+              {tr('Import Data Trade dari CSV', 'Import Trade Data from CSV')}
             </h3>
             <p className="text-xs text-[#697586] dark:text-[#929BA9]">
-              Validasi otomatis kolom dan pratinjau data sebelum disimpan ke jurnal
+              {tr(
+                'Validasi otomatis kolom dan pratinjau data sebelum disimpan ke jurnal',
+                'Automatically validate columns and preview data before saving to your journal'
+              )}
             </p>
           </div>
           <button
             onClick={onClose}
             className="rounded-lg p-2 text-[#697586] dark:text-[#929BA9] hover:bg-[#EEF2F6] dark:hover:bg-[#171D26] hover:text-[#151D2A] dark:hover:text-[#F2F5F9]"
-            aria-label="Tutup modal impor CSV"
+            aria-label={tr('Tutup modal impor CSV', 'Close CSV import modal')}
           >
             <X className="h-5 w-5 stroke-[1.75]" />
           </button>
@@ -145,10 +148,12 @@ export const CsvImportModal: React.FC<CsvImportModalProps> = ({
           <div className="flex flex-col sm:flex-row items-center gap-3">
             <label className="flex-1 w-full flex items-center justify-center gap-2 px-4 py-3 rounded-xl border border-dashed border-[#DDE3EA] dark:border-[#252B34] bg-[#F5F7FA] dark:bg-[#080A0E] hover:border-[#1769E8] hover:bg-[#EEF2F6] dark:hover:bg-[#171D26] cursor-pointer transition-colors text-xs text-[#151D2A] dark:text-[#F2F5F9]">
               <Upload className="h-4 w-4 stroke-[1.75] text-[#1769E8] dark:text-[#60A5FA]" />
-              <span>Pilih File .CSV dari Komputer / HP</span>
+              <span>{tr('Pilih File .CSV dari Komputer / HP', 'Select .CSV File from Device')}</span>
               <input type="file" accept=".csv" onChange={handleFileUpload} className="hidden" />
             </label>
-            <span className="text-xs text-[#697586] dark:text-[#929BA9]">atau tempel teks CSV di bawah:</span>
+            <span className="text-xs text-[#697586] dark:text-[#929BA9]">
+              {tr('atau tempel teks CSV di bawah:', 'or paste CSV text below:')}
+            </span>
           </div>
 
           <textarea
@@ -168,35 +173,40 @@ export const CsvImportModal: React.FC<CsvImportModalProps> = ({
                   <div className="flex items-center gap-1.5">
                     <CheckCircle className="h-4 w-4 text-emerald-600 dark:text-emerald-400 stroke-[1.75]" />
                     <span>
-                      Diterima:{' '}
+                      {tr('Diterima:', 'Accepted:')}{' '}
                       <strong className="text-emerald-600 dark:text-emerald-400 font-mono-numbers">
                         {importResult.acceptedRowsCount ?? importResult.validTrades.length}
                       </strong>{' '}
-                      dari <span className="font-mono-numbers">{importResult.totalRows}</span> baris
+                      {tr('dari', 'of')} <span className="font-mono-numbers">{importResult.totalRows}</span>{' '}
+                      {tr('baris', 'rows')}
                     </span>
                   </div>
                   {(importResult.rejectedRowsCount > 0 || importResult.errors.length > 0) && (
                     <div className="flex items-center gap-1.5 text-rose-600 dark:text-rose-400">
                       <AlertCircle className="h-4 w-4 stroke-[1.75]" />
                       <span>
-                        Ditolak:{' '}
+                        {tr('Ditolak:', 'Rejected:')}{' '}
                         <strong className="font-mono-numbers">
                           {importResult.rejectedRowsCount || importResult.errors.length}
                         </strong>{' '}
-                        baris tidak valid
+                        {tr('baris tidak valid', 'invalid rows')}
                       </span>
                     </div>
                   )}
                 </div>
                 <div className="flex flex-col sm:flex-row sm:items-center gap-2">
-                  <span className="text-[#697586] dark:text-[#929BA9]">Mode Simpan:</span>
+                  <span className="text-[#697586] dark:text-[#929BA9]">{tr('Mode Simpan:', 'Save Mode:')}</span>
                   <select
                     value={importMode}
                     onChange={(e) => setImportMode(e.target.value as any)}
                     className="rounded bg-white dark:bg-[#11151B] border border-[#DDE3EA] dark:border-[#252B34] px-2 py-1 text-[#151D2A] dark:text-[#F2F5F9] text-xs"
                   >
-                    <option value="merge">Gabungkan dengan data yang ada</option>
-                    <option value="replace">Gantikan seluruh data jurnal</option>
+                    <option value="merge">
+                      {tr('Gabungkan dengan data yang ada', 'Merge with existing data')}
+                    </option>
+                    <option value="replace">
+                      {tr('Gantikan seluruh data jurnal', 'Replace all journal data')}
+                    </option>
                   </select>
                 </div>
               </div>
@@ -207,8 +217,11 @@ export const CsvImportModal: React.FC<CsvImportModalProps> = ({
                   <div className="flex items-start gap-2">
                     <AlertCircle className="h-4 w-4 shrink-0 mt-0.5" />
                     <span>
-                      <strong>Perhatian:</strong> Mode <em>Gantikan Seluruh Data</em> akan menghapus
-                      transaksi yang tidak ada di dalam file CSV ini dari jurnal (dan dari database Supabase jika login).
+                      <strong>{tr('Perhatian:', 'Warning:')}</strong>{' '}
+                      {tr(
+                        'Mode Gantikan Seluruh Data akan menghapus transaksi yang tidak ada di dalam file CSV ini dari jurnal (dan dari database Supabase jika login).',
+                        'Replace All Data mode will delete any trades not included in this CSV file from your journal (and from Supabase if signed in).'
+                      )}
                     </span>
                   </div>
                   <label className="flex items-center gap-2 font-semibold cursor-pointer pt-1">
@@ -218,7 +231,12 @@ export const CsvImportModal: React.FC<CsvImportModalProps> = ({
                       onChange={(e) => setConfirmReplace(e.target.checked)}
                       className="rounded border-[#DDE3EA] dark:border-[#252B34] text-[#1769E8] focus:ring-[#1769E8]"
                     />
-                    <span>Saya memahami risiko dan mengonfirmasi penggantian seluruh data</span>
+                    <span>
+                      {tr(
+                        'Saya memahami risiko dan mengonfirmasi penggantian seluruh data',
+                        'I understand the risk and confirm replacing all data'
+                      )}
+                    </span>
                   </label>
                 </div>
               )}
@@ -229,10 +247,10 @@ export const CsvImportModal: React.FC<CsvImportModalProps> = ({
                   {importResult.rowErrors && importResult.rowErrors.length > 0
                     ? importResult.rowErrors.map((rowErr, i) => (
                         <div key={i} className="font-mono-numbers">
-                          • Baris {rowErr.rowNumber}
+                          • {tr('Baris', 'Row')} {rowErr.rowNumber}
                           {rowErr.tradeId ? ` [${rowErr.tradeId}]` : ''} — Field{' '}
-                          <strong>{rowErr.field}</strong>: {rowErr.reason} (nilai:{' '}
-                          <code>{rowErr.rawValue || 'kosong'}</code>)
+                          <strong>{rowErr.field}</strong>: {rowErr.reason} ({tr('nilai', 'value')}:{' '}
+                          <code>{rowErr.rawValue || tr('kosong', 'empty')}</code>)
                         </div>
                       ))
                     : importResult.errors.map((err, i) => <div key={i}>• {err}</div>)}
@@ -243,20 +261,23 @@ export const CsvImportModal: React.FC<CsvImportModalProps> = ({
               {importResult.validTrades.length > 0 && (
                 <div className="space-y-1">
                   <span className="text-xs font-semibold text-[#151D2A] dark:text-[#F2F5F9] block">
-                    Pratinjau {Math.min(5, importResult.validTrades.length)} Trade Pertama:
+                    {tr(
+                      `Pratinjau ${Math.min(5, importResult.validTrades.length)} Trade Pertama:`,
+                      `Preview of First ${Math.min(5, importResult.validTrades.length)} Trades:`
+                    )}
                   </span>
                   <div className="max-h-48 overflow-auto rounded-xl border border-[#DDE3EA] dark:border-[#252B34] bg-[#F5F7FA] dark:bg-[#080A0E]">
                     <table className="w-full text-left text-[11px] font-mono-numbers text-[#151D2A] dark:text-[#F2F5F9]">
                       <thead className="bg-white dark:bg-[#11151B] text-[#697586] dark:text-[#929BA9] border-b border-[#DDE3EA] dark:border-[#252B34]">
                         <tr>
                           <th className="p-2">ID</th>
-                          <th className="p-2">Tanggal</th>
-                          <th className="p-2">Posisi</th>
+                          <th className="p-2">{tr('Tanggal', 'Date')}</th>
+                          <th className="p-2">{tr('Posisi', 'Position')}</th>
                           <th className="p-2">Entry</th>
                           <th className="p-2">SL</th>
                           <th className="p-2">Lot</th>
-                          <th className="p-2">Hasil</th>
-                          <th className="p-2 text-right">Net Profit</th>
+                          <th className="p-2">{tr('Hasil', 'Outcome')}</th>
+                          <th className="p-2 text-right">{tr('Profit Bersih', 'Net Profit')}</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-[#DDE3EA] dark:divide-[#252B34]">
@@ -288,7 +309,7 @@ export const CsvImportModal: React.FC<CsvImportModalProps> = ({
             onClick={onClose}
             className="px-4 py-2 rounded-lg bg-[#EEF2F6] dark:bg-[#171D26] border border-[#DDE3EA] dark:border-[#252B34] text-xs font-semibold text-[#151D2A] dark:text-[#F2F5F9] hover:bg-[#DDE3EA] dark:hover:bg-[#252B34]"
           >
-            Batal
+            {tr('Batal', 'Cancel')}
           </button>
           <button
             onClick={handleCommit}
@@ -306,7 +327,7 @@ export const CsvImportModal: React.FC<CsvImportModalProps> = ({
             }`}
           >
             <CheckCircle className="h-4 w-4 stroke-[1.75]" />
-            <span>Konfirmasi & Simpan ke Jurnal</span>
+            <span>{tr('Konfirmasi & Simpan ke Jurnal', 'Confirm & Save to Journal')}</span>
           </button>
         </div>
       </div>

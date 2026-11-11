@@ -5,6 +5,7 @@ import {
   TestSuiteSummary,
   Phase1TestSuiteSummary,
 } from '../../utils/testRunner';
+import { useLanguage } from '../../utils/language';
 import {
   X,
   CheckCircle,
@@ -23,6 +24,7 @@ export const FinancialAuditModal: React.FC<FinancialAuditModalProps> = ({
   isOpen,
   onClose,
 }) => {
+  const { tr } = useLanguage();
   const [activeTab, setActiveTab] = useState<'FINANCIAL' | 'PHASE1_STORAGE'>('FINANCIAL');
   const [suiteResult, setSuiteResult] = useState<TestSuiteSummary | null>(() =>
     runFinancialCalculationsTests()
@@ -90,17 +92,23 @@ export const FinancialAuditModal: React.FC<FinancialAuditModalProps> = ({
             </div>
             <div>
               <h3 className="text-base font-bold text-[#151D2A] dark:text-[#F2F5F9]">
-                Audit & Pengujian Otomatis Modul Finansial & Storage
+                {tr(
+                  'Audit & Pengujian Otomatis Modul Finansial & Storage',
+                  'Financial & Storage Automated Audit & Test Suite'
+                )}
               </h3>
               <p className="text-xs text-[#697586] dark:text-[#929BA9]">
-                Uji verifikasi rumus matematis dan isolasi database lokal dengan data sintetis terkontrol (tidak mengubah data riil Anda)
+                {tr(
+                  'Uji verifikasi rumus matematis dan isolasi database lokal dengan data sintetis terkontrol (tidak mengubah data riil Anda)',
+                  'Verify mathematical formulas and local database isolation using controlled synthetic fixtures (does not alter your real data)'
+                )}
               </p>
             </div>
           </div>
           <button
             onClick={onClose}
             className="p-1.5 rounded-lg bg-[#EEF2F6] dark:bg-[#171D26] text-[#697586] dark:text-[#929BA9] hover:text-[#151D2A] dark:hover:text-[#F2F5F9]"
-            aria-label="Tutup modal audit finansial"
+            aria-label={tr('Tutup modal audit finansial', 'Close financial audit modal')}
           >
             <X className="h-5 w-5 stroke-[1.75]" />
           </button>
@@ -120,7 +128,7 @@ export const FinancialAuditModal: React.FC<FinancialAuditModalProps> = ({
             }`}
           >
             <ShieldCheck className="h-3.5 w-3.5 stroke-[1.75]" />
-            <span>Audit Rumus Finansial</span>
+            <span>{tr('Audit Rumus Finansial', 'Financial Formula Audit')}</span>
           </button>
           <button
             onClick={() => {
@@ -145,7 +153,7 @@ export const FinancialAuditModal: React.FC<FinancialAuditModalProps> = ({
               <div className="flex items-center gap-2">
                 <CheckCircle className="h-4 w-4 text-emerald-600 dark:text-emerald-400 stroke-[1.75]" />
                 <span>
-                  Lulus:{' '}
+                  {tr('Lulus:', 'Passed:')}{' '}
                   <strong className="text-emerald-600 dark:text-emerald-400 font-mono-numbers">
                     {suiteResult.passed}
                   </strong>{' '}
@@ -155,11 +163,13 @@ export const FinancialAuditModal: React.FC<FinancialAuditModalProps> = ({
               {suiteResult.failed > 0 && (
                 <div className="flex items-center gap-2 text-rose-600 dark:text-rose-400">
                   <XCircle className="h-4 w-4 stroke-[1.75]" />
-                  <span>Gagal: {suiteResult.failed}</span>
+                  <span>
+                    {tr('Gagal:', 'Failed:')} {suiteResult.failed}
+                  </span>
                 </div>
               )}
               <span className="text-[#697586] dark:text-[#929BA9] font-mono-numbers">
-                Waktu: {suiteResult.durationMs}ms
+                {tr('Waktu:', 'Time:')} {suiteResult.durationMs}ms
               </span>
             </div>
 
@@ -168,7 +178,7 @@ export const FinancialAuditModal: React.FC<FinancialAuditModalProps> = ({
               className="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-[#1769E8] hover:bg-[#1458C4] text-white font-bold text-xs transition-colors"
             >
               <RotateCcw className="h-3.5 w-3.5 stroke-[1.75]" />
-              <span>Jalankan Ulang Tes</span>
+              <span>{tr('Jalankan Ulang Tes', 'Re-run Tests')}</span>
             </button>
           </div>
         )}
@@ -201,7 +211,10 @@ export const FinancialAuditModal: React.FC<FinancialAuditModalProps> = ({
                 </div>
               ) : (
                 <span className="text-[#697586] dark:text-[#929BA9]">
-                  Status: NOT RUN — Klik tombol di samping untuk menjalankan AT-01 s/d AT-17 pada database uji terisolasi (tradevault_idb_test).
+                  {tr(
+                    'Status: BELUM DIJALANKAN — Klik tombol di samping untuk menjalankan AT-01 s/d AT-17 pada database uji terisolasi (tradevault_idb_test).',
+                    'Status: NOT RUN — Click the button to run AT-01..AT-17 on the isolated test database (tradevault_idb_test).'
+                  )}
                 </span>
               )}
 
@@ -215,10 +228,10 @@ export const FinancialAuditModal: React.FC<FinancialAuditModalProps> = ({
                 />
                 <span>
                   {isRunningPhase1
-                    ? 'Menjalankan AT-01..AT-17...'
+                    ? tr('Menjalankan AT-01..AT-17...', 'Running AT-01..AT-17...')
                     : phase1Result
-                      ? 'Jalankan Ulang AT-01..AT-17'
-                      : 'Jalankan Uji Isolasi Phase 1'}
+                    ? tr('Jalankan Ulang AT-01..AT-17', 'Re-run AT-01..AT-17')
+                    : tr('Jalankan Uji Isolasi Phase 1', 'Run Phase 1 Isolation Test')}
                 </span>
               </button>
             </div>
@@ -250,7 +263,7 @@ export const FinancialAuditModal: React.FC<FinancialAuditModalProps> = ({
                   : 'bg-[#F5F7FA] dark:bg-[#080A0E] text-[#697586] dark:text-[#929BA9] border-[#DDE3EA] dark:border-[#252B34]'
               }`}
             >
-              Semua ({currentSuite.total})
+              {tr('Semua', 'All')} ({currentSuite.total})
             </button>
             {categories.map((cat) => (
               <button
@@ -320,17 +333,19 @@ export const FinancialAuditModal: React.FC<FinancialAuditModalProps> = ({
         {/* Footer */}
         <div className="mt-4 pt-3 border-t border-[#DDE3EA] dark:border-[#252B34] flex items-center justify-between text-xs">
           <span className="text-[#697586] dark:text-[#929BA9]">
-            Jaminan: Isolasi fixture sintetis & database uji (tradevault_idb_test). Data localStorage riil Anda 100% aman dan tidak tersentuh.
+            {tr(
+              'Jaminan: Isolasi fixture sintetis & database uji (tradevault_idb_test). Data localStorage riil Anda 100% aman dan tidak tersentuh.',
+              'Guarantee: Synthetic fixture & test DB isolation (tradevault_idb_test). Your real localStorage data is 100% safe and untouched.'
+            )}
           </span>
           <button
             onClick={onClose}
             className="px-4 py-2 rounded-lg bg-[#EEF2F6] dark:bg-[#171D26] border border-[#DDE3EA] dark:border-[#252B34] text-[#151D2A] dark:text-[#F2F5F9] hover:bg-[#DDE3EA] dark:hover:bg-[#252B34]"
           >
-            Tutup
+            {tr('Tutup', 'Close')}
           </button>
         </div>
       </div>
     </div>
   );
 };
-

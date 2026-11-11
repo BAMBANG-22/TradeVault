@@ -20,6 +20,7 @@ import {
   ShieldAlert,
   Terminal,
 } from 'lucide-react';
+import { useLanguage } from '../../utils/language';
 
 interface SupabaseConfigModalProps {
   isOpen: boolean;
@@ -32,6 +33,7 @@ export const SupabaseConfigModal: React.FC<SupabaseConfigModalProps> = ({
   onClose,
   onConfigSaved,
 }) => {
+  const { tr } = useLanguage();
   const [url, setUrl] = useState('');
   const [anonKey, setAnonKey] = useState('');
   const [isTesting, setIsTesting] = useState(false);
@@ -79,7 +81,10 @@ export const SupabaseConfigModal: React.FC<SupabaseConfigModalProps> = ({
     if (!cleanUrl || !cleanKey) {
       setTestResult({
         success: false,
-        message: 'Harap masukkan Project URL dan Anon Key terlebih dahulu.',
+        message: tr(
+          'Harap masukkan Project URL dan Anon Key terlebih dahulu.',
+          'Please enter Project URL and Anon Key first.'
+        ),
       });
       return;
     }
@@ -110,7 +115,10 @@ export const SupabaseConfigModal: React.FC<SupabaseConfigModalProps> = ({
     if (!cleanUrl || !cleanKey) {
       setTestResult({
         success: false,
-        message: 'Project URL dan Anon Key tidak boleh kosong.',
+        message: tr(
+          'Project URL dan Anon Key tidak boleh kosong.',
+          'Project URL and Anon Key cannot be empty.'
+        ),
       });
       return;
     }
@@ -156,7 +164,10 @@ export const SupabaseConfigModal: React.FC<SupabaseConfigModalProps> = ({
       } catch {
         setTestResult({
           success: false,
-          message: 'Gagal menyalin skrip SQL ke clipboard perangkat.',
+          message: tr(
+            'Gagal menyalin skrip SQL ke clipboard perangkat.',
+            'Failed to copy SQL script to device clipboard.'
+          ),
         });
       }
     }
@@ -179,17 +190,20 @@ export const SupabaseConfigModal: React.FC<SupabaseConfigModalProps> = ({
             </div>
             <div>
               <h3 className="text-base font-bold text-[#151D2A] dark:text-[#F2F5F9]">
-                Pengaturan Database Supabase
+                {tr('Pengaturan Database Supabase', 'Supabase Database Settings')}
               </h3>
               <p className="text-xs text-[#697586] dark:text-[#929BA9]">
-                Hubungkan jurnal ke cloud database PostgreSQL dengan autentikasi & Row Level Security
+                {tr(
+                  'Hubungkan jurnal ke database cloud PostgreSQL dengan autentikasi & Keamanan Baris (RLS)',
+                  'Connect journal to PostgreSQL cloud database with authentication & Row Level Security'
+                )}
               </p>
             </div>
           </div>
           <button
             onClick={onClose}
             className="p-1.5 rounded-lg bg-[#EEF2F6] hover:bg-[#DDE3EA] text-[#697586] hover:text-[#151D2A] dark:bg-[#171D26] dark:text-[#929BA9] dark:hover:text-[#F2F5F9]"
-            aria-label="Tutup pengaturan database Supabase"
+            aria-label={tr('Tutup pengaturan database Supabase', 'Close Supabase database settings')}
           >
             <X className="h-5 w-5 stroke-[1.75]" />
           </button>
@@ -200,7 +214,7 @@ export const SupabaseConfigModal: React.FC<SupabaseConfigModalProps> = ({
           <div className="flex items-center justify-between">
             <span className="text-xs font-bold text-[#151D2A] dark:text-[#F2F5F9] flex items-center gap-1.5">
               <Terminal className="h-4 w-4 stroke-[1.75] text-[#697586] dark:text-[#929BA9]" />
-              Panduan Langkah di Dashboard Supabase
+              {tr('Panduan Langkah di Dashboard Supabase', 'Step-by-Step Guide in Supabase Dashboard')}
             </span>
             <a
               href="https://supabase.com/dashboard"
@@ -208,30 +222,45 @@ export const SupabaseConfigModal: React.FC<SupabaseConfigModalProps> = ({
               rel="noreferrer"
               className="text-[11px] text-[#1769E8] dark:text-[#60A5FA] hover:underline flex items-center gap-1 font-medium"
             >
-              <span>Buka Supabase</span>
+              <span>{tr('Buka Supabase', 'Open Supabase')}</span>
               <ExternalLink className="h-3 w-3 stroke-[1.75]" />
             </a>
           </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-xs">
             <div className="p-2.5 rounded-lg bg-white dark:bg-[#11151B] border border-[#DDE3EA] dark:border-[#252B34] space-y-1">
-              <span className="font-bold text-[#151D2A] dark:text-[#F2F5F9] block">1. Buat Project</span>
+              <span className="font-bold text-[#151D2A] dark:text-[#F2F5F9] block">
+                {tr('1. Buat Proyek', '1. Create Project')}
+              </span>
               <p className="text-[11px] text-[#697586] dark:text-[#929BA9]">
-                Daftar/login di Supabase, klik <em>New Project</em>, beri nama <em>tradevault</em>.
+                {tr(
+                  'Daftar/masuk di Supabase, klik Proyek Baru, beri nama tradevault.',
+                  'Sign up/sign in to Supabase, click New Project, and name it tradevault.'
+                )}
               </p>
             </div>
 
             <div className="p-2.5 rounded-lg bg-white dark:bg-[#11151B] border border-[#DDE3EA] dark:border-[#252B34] space-y-1">
-              <span className="font-bold text-[#151D2A] dark:text-[#F2F5F9] block">2. Jalankan SQL</span>
+              <span className="font-bold text-[#151D2A] dark:text-[#F2F5F9] block">
+                {tr('2. Jalankan SQL', '2. Run SQL')}
+              </span>
               <p className="text-[11px] text-[#697586] dark:text-[#929BA9]">
-                Buka tab <strong>SQL Editor</strong>, tempel skrip SQL kami, lalu klik <strong>Run</strong>.
+                {tr(
+                  'Buka tab SQL Editor, tempel skrip SQL kami, lalu klik Jalankan (Run).',
+                  'Open the SQL Editor tab, paste our SQL script, and click Run.'
+                )}
               </p>
             </div>
 
             <div className="p-2.5 rounded-lg bg-white dark:bg-[#11151B] border border-[#DDE3EA] dark:border-[#252B34] space-y-1">
-              <span className="font-bold text-[#151D2A] dark:text-[#F2F5F9] block">3. Salin Kunci API</span>
+              <span className="font-bold text-[#151D2A] dark:text-[#F2F5F9] block">
+                {tr('3. Salin Kunci API', '3. Copy API Keys')}
+              </span>
               <p className="text-[11px] text-[#697586] dark:text-[#929BA9]">
-                Buka <strong>Project Settings &gt; API</strong>, salin Project URL & <em>anon public key</em>.
+                {tr(
+                  'Buka Pengaturan Proyek > API, salin Project URL & kunci publik anon.',
+                  'Open Project Settings > API, copy the Project URL & anon public key.'
+                )}
               </p>
             </div>
           </div>
@@ -239,7 +268,10 @@ export const SupabaseConfigModal: React.FC<SupabaseConfigModalProps> = ({
           {/* SQL Copy Button */}
           <div className="pt-2 flex items-center justify-between">
             <span className="text-[11px] text-[#697586] dark:text-[#929BA9]">
-              Skrip SQL mencakup tabel <code>trades</code>, <code>user_settings</code>, bucket storage, & kebijakan RLS.
+              {tr(
+                'Skrip SQL mencakup tabel trades, user_settings, bucket storage, & kebijakan RLS.',
+                'SQL script includes trades table, user_settings, storage bucket, & RLS policies.'
+              )}
             </span>
             <button
               onClick={handleCopySql}
@@ -248,12 +280,14 @@ export const SupabaseConfigModal: React.FC<SupabaseConfigModalProps> = ({
               {copiedSql ? (
                 <>
                   <Check className="h-3.5 w-3.5 text-emerald-600 dark:text-emerald-400 stroke-[1.75]" />
-                  <span className="text-emerald-600 dark:text-emerald-400">Tersalin!</span>
+                  <span className="text-emerald-600 dark:text-emerald-400">
+                    {tr('Tersalin!', 'Copied!')}
+                  </span>
                 </>
               ) : (
                 <>
                   <Copy className="h-3.5 w-3.5 text-[#1769E8] dark:text-[#60A5FA] stroke-[1.75]" />
-                  <span>Salin Skrip SQL</span>
+                  <span>{tr('Salin Skrip SQL', 'Copy SQL Script')}</span>
                 </>
               )}
             </button>
@@ -264,7 +298,13 @@ export const SupabaseConfigModal: React.FC<SupabaseConfigModalProps> = ({
         <div className="mb-4 p-3 rounded-xl bg-[#F5F7FA] dark:bg-[#080A0E] border border-[#DDE3EA] dark:border-[#252B34] text-xs text-[#697586] dark:text-[#929BA9] flex items-start gap-2.5">
           <ShieldAlert className="h-4 w-4 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5 stroke-[1.75]" />
           <div className="leading-relaxed">
-            <strong className="text-amber-600 dark:text-amber-400">Keamanan Kredensial:</strong> Hanya gunakan <strong className="text-[#151D2A] dark:text-[#F2F5F9]">Project URL</strong> dan <strong className="text-[#151D2A] dark:text-[#F2F5F9]">Anon Public Key</strong>. Jangan pernah memasukkan <code>service_role</code> secret key di browser!
+            <strong className="text-amber-600 dark:text-amber-400">
+              {tr('Keamanan Kredensial:', 'Credential Security:')}
+            </strong>{' '}
+            {tr(
+              'Hanya gunakan Project URL dan Kunci Publik Anon. Jangan pernah memasukkan kunci rahasia service_role di browser!',
+              'Only use the Project URL and Anon Public Key. Never enter the service_role secret key in the browser!'
+            )}
           </div>
         </div>
 
@@ -288,14 +328,17 @@ export const SupabaseConfigModal: React.FC<SupabaseConfigModalProps> = ({
               className="w-full rounded-lg bg-[#F5F7FA] dark:bg-[#080A0E] border border-[#DDE3EA] dark:border-[#252B34] px-3 py-2 font-mono-numbers text-[#151D2A] dark:text-[#F2F5F9] placeholder-[#697586] dark:placeholder-[#929BA9] focus:border-[#1769E8] focus:outline-none"
             />
             <p className="text-[11px] text-[#697586] dark:text-[#929BA9] mt-1">
-              Gunakan domain dasar proyek (misal <code>https://xxxx.supabase.co</code>). Jangan menambahkan <code>/auth/v1</code> atau path lain.
+              {tr(
+                'Gunakan domain dasar proyek (misal https://xxxx.supabase.co). Jangan menambahkan /auth/v1 atau path lain.',
+                'Use the base project domain (e.g. https://xxxx.supabase.co). Do not append /auth/v1 or other paths.'
+              )}
             </p>
           </div>
 
           <div>
             <label className="block text-[#151D2A] dark:text-[#F2F5F9] font-semibold mb-1 flex items-center gap-1.5">
               <Key className="h-3.5 w-3.5 text-[#697586] dark:text-[#929BA9] stroke-[1.75]" />
-              <span>Anon Public API Key</span>
+              <span>{tr('Kunci API Publik Anon', 'Anon Public API Key')}</span>
             </label>
             <textarea
               rows={2}
@@ -331,8 +374,14 @@ export const SupabaseConfigModal: React.FC<SupabaseConfigModalProps> = ({
                 <AlertTriangle className="h-4 w-4 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5 stroke-[1.75]" />
                 <span>
                   {pendingConfirm === 'save_unusual_url'
-                    ? 'Format URL biasanya seperti https://xxxx.supabase.co. Apakah Anda yakin ingin tetap menyimpan konfigurasi ini?'
-                    : 'Hapus konfigurasi Supabase dan kembali ke penyimpanan lokal browser?'}
+                    ? tr(
+                        'Format URL biasanya seperti https://xxxx.supabase.co. Apakah Anda yakin ingin tetap menyimpan konfigurasi ini?',
+                        'URL format is usually like https://xxxx.supabase.co. Are you sure you want to save this configuration anyway?'
+                      )
+                    : tr(
+                        'Hapus konfigurasi Supabase dan kembali ke penyimpanan lokal browser?',
+                        'Clear Supabase configuration and revert to local browser storage?'
+                      )}
                 </span>
               </div>
               <div className="flex items-center justify-end gap-2">
@@ -341,7 +390,7 @@ export const SupabaseConfigModal: React.FC<SupabaseConfigModalProps> = ({
                   onClick={() => setPendingConfirm(null)}
                   className="px-3 py-1.5 rounded-lg bg-[#EEF2F6] hover:bg-[#DDE3EA] dark:bg-[#171D26] border border-[#DDE3EA] dark:border-[#252B34] text-[#151D2A] dark:text-[#F2F5F9] font-semibold transition-colors"
                 >
-                  Batal
+                  {tr('Batal', 'Cancel')}
                 </button>
                 <button
                   type="button"
@@ -358,7 +407,9 @@ export const SupabaseConfigModal: React.FC<SupabaseConfigModalProps> = ({
                       : 'bg-amber-500 hover:bg-amber-400 text-slate-950'
                   }`}
                 >
-                  {pendingConfirm === 'save_unusual_url' ? 'Tetap Simpan' : 'Ya, Hapus Kredensial'}
+                  {pendingConfirm === 'save_unusual_url'
+                    ? tr('Tetap Simpan', 'Save Anyway')
+                    : tr('Ya, Hapus Kredensial', 'Yes, Clear Credentials')}
                 </button>
               </div>
             </div>
@@ -372,7 +423,7 @@ export const SupabaseConfigModal: React.FC<SupabaseConfigModalProps> = ({
             onClick={handleClear}
             className="text-xs text-rose-600 dark:text-rose-400 hover:underline"
           >
-            Hapus Kredensial Cloud
+            {tr('Hapus Kredensial Cloud', 'Clear Cloud Credentials')}
           </button>
 
           <div className="flex items-center gap-2">
@@ -382,7 +433,7 @@ export const SupabaseConfigModal: React.FC<SupabaseConfigModalProps> = ({
               onClick={handleTestConnection}
               className="px-3.5 py-2 rounded-lg bg-[#EEF2F6] hover:bg-[#DDE3EA] dark:bg-[#171D26] border border-[#DDE3EA] dark:border-[#252B34] text-xs font-semibold text-[#151D2A] dark:text-[#F2F5F9] transition-colors"
             >
-              {isTesting ? 'Menguji...' : 'Uji Koneksi'}
+              {isTesting ? tr('Menguji...', 'Testing...') : tr('Uji Koneksi', 'Test Connection')}
             </button>
 
             <button
@@ -390,7 +441,7 @@ export const SupabaseConfigModal: React.FC<SupabaseConfigModalProps> = ({
               onClick={handleSave}
               className="px-5 py-2 rounded-lg bg-[#1769E8] hover:bg-[#1458C4] text-white text-xs font-bold transition-colors"
             >
-              Simpan & Aktifkan
+              {tr('Simpan & Aktifkan', 'Save & Activate')}
             </button>
           </div>
         </div>

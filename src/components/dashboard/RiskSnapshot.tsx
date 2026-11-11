@@ -3,7 +3,6 @@ import { AppSettings } from '../../types/settings';
 import { Trade } from '../../types/trade';
 import {
   calculatePerformance,
-  formatCurrency,
   extractTradeLocalDateKey,
   formatLocalDateKey,
   computeTradeNetProfit,
@@ -14,6 +13,7 @@ import {
   useGlobalCurrency,
   formatDynamicAmount,
 } from '../../utils/currencyRate';
+import { useLanguage } from '../../utils/language';
 import { ArrowRight } from 'lucide-react';
 
 interface RiskSnapshotProps {
@@ -35,10 +35,11 @@ export const RiskSnapshot: React.FC<RiskSnapshotProps> = ({
   preferredCurrency,
   rateRecord,
 }) => {
+  const { tr } = useLanguage();
   const globalCur = useGlobalCurrency();
   const activeCurrency = preferredCurrency || globalCur.preferredCurrency;
   const activeRateRecord = rateRecord || globalCur.rateRecord;
-  // Filter closed trades
+
   const closedTrades = useMemo(() => {
     return trades.filter((t) => {
       const outcome = resolveTradeOutcome(t);
@@ -50,7 +51,6 @@ export const RiskSnapshot: React.FC<RiskSnapshotProps> = ({
     return calculatePerformance(closedTrades, settings);
   }, [closedTrades, settings]);
 
-  // 1. Current Drawdown Calculation
   const peakEquity = useMemo(() => {
     const startBal = settings.startingBalance > 0 ? settings.startingBalance : 10000;
     if (equityCurve.length === 0) return startBal;
@@ -72,7 +72,6 @@ export const RiskSnapshot: React.FC<RiskSnapshotProps> = ({
   const maxDrawdownLimit = settings.maxDrawdownLimitPercent || 10.0;
   const drawdownProgress = Math.min(100, Math.max(0, (currentDrawdownPercent / maxDrawdownLimit) * 100));
 
-  // 2. Daily Loss Usage Calculation
   const todayKey = formatLocalDateKey(new Date());
 
   const dailyLossToday = useMemo(() => {
@@ -83,7 +82,6 @@ export const RiskSnapshot: React.FC<RiskSnapshotProps> = ({
     return todayNet < 0 ? Math.abs(todayNet) : 0;
   }, [closedTrades, todayKey]);
 
-  // Check if daily loss limit is configured in user settings
   const dailyLossConfig = useMemo(() => {
     if (settings.maxDailyLossAmount && settings.maxDailyLossAmount > 0) {
       return {
@@ -105,7 +103,7 @@ export const RiskSnapshot: React.FC<RiskSnapshotProps> = ({
       limitAmount: null,
       label: null,
     };
-  }, [settings]);
+  }, [settings, activeCurrency, activeRateRecord]);
 
   const dailyLossUsagePercent = useMemo(() => {
     if (!dailyLossConfig.isConfigured || !dailyLossConfig.limitAmount) return null;
@@ -119,13 +117,13 @@ export const RiskSnapshot: React.FC<RiskSnapshotProps> = ({
 
   return (
     <div
-      aria-label="Risk Snapshot"
+      aria-label={tr('Ringkasan Risiko', 'Risk Snapshot')}
       className="space-y-4 font-sans select-none"
     >
       {/* Section Header: Text Only Title + Nav Link */}
       <div className="flex items-center justify-between pb-1">
         <h2 className="text-[11px] font-semibold uppercase tracking-[0.08em] text-[#697586] dark:text-[#929BA9]">
-          RISK SNAPSHOT
+          {tr('RINGKASAN RISIKO', 'RISK SNAPSHOT')}
         </h2>
 
         <button
@@ -133,18 +131,18 @@ export const RiskSnapshot: React.FC<RiskSnapshotProps> = ({
           onClick={() => onNavigate('risk')}
           className="inline-flex items-center gap-1 text-xs font-semibold text-[#1769E8] dark:text-[#3478DC] hover:text-[#1458C4] dark:hover:text-[#2860B2] transition-colors cursor-pointer whitespace-nowrap"
         >
-          <span>Kelola Risiko</span>
+          <span>{tr('Kelola Risiko', 'Manage Risk')}</span>
           <ArrowRight className="h-3.5 w-3.5 stroke-[1.75]" />
         </button>
       </div>
 
-      {/* Two Priority Indicators (Directly on background, NO panel boxes, NO card backgrounds) */}
+      {/* Two Priority Indicators */}
       <div className="space-y-5 font-mono-numbers tabular-nums">
         {/* Indicator 1: Current Drawdown */}
         <div className="space-y-2">
           <div className="flex items-baseline justify-between">
             <span className="text-xs font-sans font-medium text-[#151D2A] dark:text-[#F2F4F7]">
-              Current Drawdown
+              {tr('Drawdown Saat Ini', 'Current Drawdown')}
             </span>
             <span
               className={`text-base font-bold ${
@@ -159,7 +157,6 @@ export const RiskSnapshot: React.FC<RiskSnapshotProps> = ({
             </span>
           </div>
 
-          {/* Simple Thin Progress Line (h-1, NO card box) */}
           <div className="w-full h-1 rounded-full bg-[#E2E8F0] dark:bg-[#20252D] overflow-hidden">
             <div
               className={`h-full rounded-full transition-all duration-300 ${
@@ -174,13 +171,15 @@ export const RiskSnapshot: React.FC<RiskSnapshotProps> = ({
           </div>
 
           <div className="flex items-center justify-between text-[11px] font-sans text-[#697586] dark:text-[#929BA9]">
-            <span>Batas Maksimal: {maxDrawdownLimit}%</span>
+            <span>
+              {tr('Batas Maksimal:', 'Max Limit:')} {maxDrawdownLimit}%
+            </span>
             <span>
               {currentDrawdownAmount > 0
                 ? isPrivacyMode
                   ? '••••••'
                   : `-${formatDynamicAmount(currentDrawdownAmount, activeCurrency, activeRateRecord)}`
-                : 'Aman di Puncak Ekuitas'}
+                : tr('Aman di Puncak Ekuitas', 'Safe at Peak Equity')}
             </span>
           </div>
         </div>
@@ -189,7 +188,7 @@ export const RiskSnapshot: React.FC<RiskSnapshotProps> = ({
         <div className="space-y-2">
           <div className="flex items-baseline justify-between">
             <span className="text-xs font-sans font-medium text-[#151D2A] dark:text-[#F2F4F7]">
-              Daily Loss Usage
+              {tr('Penggunaan Batas Loss Harian', 'Daily Loss Usage')}
             </span>
             <span
               className={`text-base font-bold ${
@@ -204,11 +203,10 @@ export const RiskSnapshot: React.FC<RiskSnapshotProps> = ({
             >
               {dailyLossConfig.isConfigured && dailyLossUsagePercent !== null
                 ? `${dailyLossUsagePercent.toFixed(1)}%`
-                : 'Belum Dikonfigurasi'}
+                : tr('Belum Dikonfigurasi', 'Not Configured')}
             </span>
           </div>
 
-          {/* Simple Thin Progress Line (h-1) */}
           <div className="w-full h-1 rounded-full bg-[#E2E8F0] dark:bg-[#20252D] overflow-hidden">
             {dailyLossConfig.isConfigured ? (
               <div
@@ -229,16 +227,23 @@ export const RiskSnapshot: React.FC<RiskSnapshotProps> = ({
           <div className="flex items-center justify-between text-[11px] font-sans text-[#697586] dark:text-[#929BA9]">
             {dailyLossConfig.isConfigured ? (
               <>
-                <span>Batas: {dailyLossConfig.label}</span>
                 <span>
-                  Hari ini:{' '}
+                  {tr('Batas:', 'Limit:')} {dailyLossConfig.label}
+                </span>
+                <span>
+                  {tr('Hari ini:', 'Today:')}{' '}
                   {isPrivacyMode
                     ? '••••••'
                     : formatDynamicAmount(dailyLossToday, activeCurrency, activeRateRecord)}
                 </span>
               </>
             ) : (
-              <span>Atur batas risiko harian pada tab Risiko</span>
+              <span>
+                {tr(
+                  'Atur batas risiko harian pada tab Manajemen Risiko',
+                  'Configure daily loss limit in Risk Management tab'
+                )}
+              </span>
             )}
           </div>
         </div>

@@ -39,6 +39,7 @@ import {
   extractAllTradeStoragePaths,
 } from './utils/supabaseSync';
 import { useTheme } from './utils/theme';
+import { useLanguage } from './utils/language';
 
 // Layout
 import { Sidebar } from './components/layout/Sidebar';
@@ -70,8 +71,9 @@ import {
 } from './utils/tradeLifecycle';
 
 export default function App() {
-  // Theme state
+  // Theme & Language state
   useTheme();
+  const { tr } = useLanguage();
 
   // Primary state backed by localStorage with live Supabase synchronization
   const [trades, setTrades] = useState<Trade[]>(() => loadStoredTrades(null));
@@ -328,18 +330,34 @@ export default function App() {
         saveStoredTrades(result.data, activeUserId);
 
         if (result.data.length > 0) {
-          showToast(`Berhasil memuat ${result.data.length} transaksi dari database Supabase.`);
+          showToast(
+            tr(
+              `Berhasil memuat ${result.data.length} transaksi dari database Supabase.`,
+              `Successfully loaded ${result.data.length} trades from Supabase database.`
+            )
+          );
         } else {
-          showToast('Terhubung ke database Supabase. Akun ini belum memiliki transaksi cloud.');
+          showToast(
+            tr(
+              'Terhubung ke database Supabase. Akun ini belum memiliki transaksi cloud.',
+              'Connected to Supabase database. This account has no cloud trades yet.'
+            )
+          );
         }
       } else if (!result.success) {
-        setCloudLoadError(result.error || 'Gagal memuat data dari database Supabase.');
+        setCloudLoadError(
+          result.error ||
+            tr('Gagal memuat data dari database Supabase.', 'Failed to load data from Supabase database.')
+        );
         setDataSource('local_fallback');
         const fallbackTrades = loadStoredTrades(activeUserId);
         tradesRef.current = fallbackTrades;
         setTrades(fallbackTrades);
         showToast(
-          `Gagal memuat trade dari Supabase: ${result.error}. Menampilkan data cadangan offline akun ini (${fallbackTrades.length} trade).`,
+          tr(
+            `Gagal memuat transaksi dari Supabase: ${result.error}. Menampilkan data cadangan luring akun ini (${fallbackTrades.length} transaksi).`,
+            `Failed to load trades from Supabase: ${result.error}. Showing offline backup data for this account (${fallbackTrades.length} trades).`
+          ),
           'error'
         );
       }
@@ -484,7 +502,10 @@ export default function App() {
           (!targetOriginalId || t.id.toLowerCase() !== targetOriginalId.toLowerCase())
       );
       if (isDuplicate) {
-        const duplicateMsg = `ID Trade "${finalTrade.id}" sudah digunakan oleh transaksi lain. Gunakan ID unik.`;
+        const duplicateMsg = tr(
+          `ID Transaksi "${finalTrade.id}" sudah digunakan oleh transaksi lain. Gunakan ID unik.`,
+          `Trade ID "${finalTrade.id}" is already used by another trade. Please use a unique ID.`
+        );
         showToast(duplicateMsg, 'error');
         return { success: false, error: duplicateMsg };
       }
@@ -685,8 +706,14 @@ export default function App() {
         }
         showToast(
           isEdit
-            ? `Trade ${finalTrade.id} berhasil diperbarui (Lokal).`
-            : `Trade ${finalTrade.id} berhasil dicatat ke jurnal lokal!`
+            ? tr(
+                `Transaksi ${finalTrade.id} berhasil diperbarui (Lokal).`,
+                `Trade ${finalTrade.id} updated successfully (Local).`
+              )
+            : tr(
+                `Transaksi ${finalTrade.id} berhasil dicatat ke jurnal lokal!`,
+                `Trade ${finalTrade.id} logged to local journal!`
+              )
         );
         return { success: true, uploadedScreenshotPath };
       }
@@ -698,7 +725,14 @@ export default function App() {
       const cacheResult = saveStoredTrades(updatedTrades, verifiedUserId);
       if (!cacheResult.success) {
         // Non-blocking offline cache warning (cloud write already succeeded)
-        showToast(cacheResult.error || 'Peringatan: Gagal memperbarui cache offline lokal.', 'error');
+        showToast(
+          cacheResult.error ||
+            tr(
+              'Peringatan: Gagal memperbarui cache luring lokal.',
+              'Warning: Failed to update local offline cache.'
+            ),
+          'error'
+        );
       }
 
       setEditingTrade(null);
@@ -715,14 +749,24 @@ export default function App() {
       }
       showToast(
         isEdit
-          ? `Trade ${finalTrade.id} berhasil diperbarui di database Supabase!`
-          : `Trade ${finalTrade.id} berhasil disimpan ke database Supabase!`
+          ? tr(
+              `Transaksi ${finalTrade.id} berhasil diperbarui di database Supabase!`,
+              `Trade ${finalTrade.id} updated in Supabase database!`
+            )
+          : tr(
+              `Transaksi ${finalTrade.id} berhasil disimpan ke database Supabase!`,
+              `Trade ${finalTrade.id} saved to Supabase database!`
+            )
       );
 
       return { success: true, uploadedScreenshotPath };
     } catch (err: any) {
       const unexpectedMsg =
-        err?.message || 'Terjadi kesalahan tak terduga saat menyimpan transaksi. Silakan coba lagi.';
+        err?.message ||
+        tr(
+          'Terjadi kesalahan tak terduga saat menyimpan transaksi. Silakan coba lagi.',
+          'An unexpected error occurred while saving the trade. Please try again.'
+        );
       showToast(unexpectedMsg, 'error');
       return {
         success: false,
@@ -807,9 +851,16 @@ export default function App() {
       }
 
       if (verifiedUserId && !isDemoTradeItem) {
-        showToast(`Trade ${deletedId} berhasil dihapus dari database Supabase.`);
+        showToast(
+          tr(
+            `Transaksi ${deletedId} berhasil dihapus dari database Supabase.`,
+            `Trade ${deletedId} deleted from Supabase database.`
+          )
+        );
       } else {
-        showToast(`Trade ${deletedId} telah dihapus.`);
+        showToast(
+          tr(`Transaksi ${deletedId} telah dihapus.`, `Trade ${deletedId} has been deleted.`)
+        );
       }
     } finally {
       setIsCloudSyncing(false);
@@ -828,13 +879,22 @@ export default function App() {
     }
 
     if (!verifiedUserId) {
-      showToast('Harap login terlebih dahulu untuk sinkronisasi ke cloud.', 'error');
+      showToast(
+        tr(
+          'Harap masuk terlebih dahulu untuk sinkronisasi ke cloud.',
+          'Please sign in first to sync to the cloud.'
+        ),
+        'error'
+      );
       return;
     }
 
     const currentTradesToSync = tradesRef.current;
     if (currentTradesToSync.length === 0) {
-      showToast('Tidak ada transaksi untuk disinkronkan.', 'error');
+      showToast(
+        tr('Tidak ada transaksi untuk disinkronkan.', 'No trades available to sync.'),
+        'error'
+      );
       return;
     }
 
@@ -853,13 +913,27 @@ export default function App() {
       if (res.success && res.failedCount === 0) {
         setDataSource('cloud');
         setCloudLoadError(null);
-        showToast(`Berhasil menyinkronkan seluruh (${res.count}) transaksi ke tabel public.trades!`);
+        showToast(
+          tr(
+            `Berhasil menyinkronkan seluruh (${res.count}) transaksi ke tabel public.trades!`,
+            `Successfully synced all (${res.count}) trades to public.trades!`
+          )
+        );
       } else if (res.count > 0 && res.failedCount > 0) {
         setDataSource('local_fallback');
-        showToast(`Sinkronisasi parsial: ${res.count} berhasil, ${res.failedCount} gagal (${res.error})`, 'error');
+        showToast(
+          tr(
+            `Sinkronisasi parsial: ${res.count} berhasil, ${res.failedCount} gagal (${res.error})`,
+            `Partial sync: ${res.count} succeeded, ${res.failedCount} failed (${res.error})`
+          ),
+          'error'
+        );
       } else {
         setDataSource('local_fallback');
-        showToast(`Gagal menyinkronkan ke cloud: ${res.error}`, 'error');
+        showToast(
+          tr(`Gagal menyinkronkan ke cloud: ${res.error}`, `Failed to sync to cloud: ${res.error}`),
+          'error'
+        );
       }
     } finally {
       setIsCloudSyncing(false);
@@ -877,7 +951,7 @@ export default function App() {
     }
 
     if (!verifiedUserId) {
-      showToast('Harap login terlebih dahulu.', 'error');
+      showToast(tr('Harap masuk terlebih dahulu.', 'Please sign in first.'), 'error');
       return;
     }
 
@@ -903,18 +977,34 @@ export default function App() {
       setTrades(result.data);
       saveStoredTrades(result.data, verifiedUserId);
       if (result.data.length > 0) {
-        showToast(`Berhasil memuat ${result.data.length} transaksi dari database Supabase!`);
+        showToast(
+          tr(
+            `Berhasil memuat ${result.data.length} transaksi dari database Supabase!`,
+            `Successfully loaded ${result.data.length} trades from Supabase database!`
+          )
+        );
       } else {
-        showToast('Terhubung ke database Supabase. Akun ini belum memiliki transaksi cloud.');
+        showToast(
+          tr(
+            'Terhubung ke database Supabase. Akun ini belum memiliki transaksi cloud.',
+            'Connected to Supabase database. This account has no cloud trades yet.'
+          )
+        );
       }
     } else {
-      setCloudLoadError(result.error || 'Gagal memuat transaksi dari Supabase.');
+      setCloudLoadError(
+        result.error ||
+          tr('Gagal memuat transaksi dari Supabase.', 'Failed to load trades from Supabase.')
+      );
       setDataSource('local_fallback');
       const fallbackTrades = loadStoredTrades(verifiedUserId);
       tradesRef.current = fallbackTrades;
       setTrades(fallbackTrades);
       showToast(
-        `Gagal memuat dari Supabase: ${result.error}. Menggunakan cache offline akun ini (${fallbackTrades.length} trade).`,
+        tr(
+          `Gagal memuat dari Supabase: ${result.error}. Menggunakan cache luring akun ini (${fallbackTrades.length} transaksi).`,
+          `Failed to load from Supabase: ${result.error}. Using offline cache for this account (${fallbackTrades.length} trades).`
+        ),
         'error'
       );
     }
@@ -962,9 +1052,14 @@ export default function App() {
     if (saveResult.success) {
       tradesRef.current = realTrades;
       setTrades(realTrades);
-      showToast(`${demoCount} transaksi DEMO berhasil dibersihkan. Data asli Anda tetap aman.`);
+      showToast(
+        tr(
+          `${demoCount} transaksi DEMO berhasil dibersihkan. Data asli Anda tetap aman.`,
+          `${demoCount} DEMO trades cleared. Your real trades remain safe.`
+        )
+      );
     } else {
-      showToast('Gagal membersihkan data demo.', 'error');
+      showToast(tr('Gagal membersihkan data demo.', 'Failed to clear demo data.'), 'error');
     }
   };
 
@@ -982,7 +1077,14 @@ export default function App() {
 
     const saveResult = saveStoredTrades(nextTrades, verifiedUserId || currentUser?.id || null);
     if (!saveResult.success) {
-      showToast(saveResult.error || 'Gagal memuat data demo ke penyimpanan lokal.', 'error');
+      showToast(
+        saveResult.error ||
+          tr(
+            'Gagal memuat data demo ke penyimpanan lokal.',
+            'Failed to load demo data into local storage.'
+          ),
+        'error'
+      );
       return;
     }
 
@@ -994,10 +1096,18 @@ export default function App() {
       try {
         const syncRes = await migrateLocalTradesToSupabase(demoCopies, verifiedUserId);
         if (syncRes.success) {
-          showToast(`Berhasil memuat ${DEMO_TRADES.length} transaksi DEMO dan menyinkronkannya ke cloud.`);
+          showToast(
+            tr(
+              `Berhasil memuat ${DEMO_TRADES.length} transaksi DEMO dan menyinkronkannya ke cloud.`,
+              `Loaded ${DEMO_TRADES.length} DEMO trades and synced them to the cloud.`
+            )
+          );
         } else {
           showToast(
-            `Data DEMO dimuat secara lokal, namun sinkronisasi cloud mengalami kendala: ${syncRes.error}`,
+            tr(
+              `Data DEMO dimuat secara lokal, namun sinkronisasi cloud mengalami kendala: ${syncRes.error}`,
+              `DEMO data loaded locally, but cloud sync encountered an issue: ${syncRes.error}`
+            ),
             'error'
           );
         }
@@ -1005,7 +1115,12 @@ export default function App() {
         setIsCloudSyncing(false);
       }
     } else {
-      showToast(`Berhasil memuat ${DEMO_TRADES.length} transaksi contoh DEMO.`);
+      showToast(
+        tr(
+          `Berhasil memuat ${DEMO_TRADES.length} transaksi contoh DEMO.`,
+          `Successfully loaded ${DEMO_TRADES.length} sample DEMO trades.`
+        )
+      );
     }
   };
 
@@ -1025,7 +1140,11 @@ export default function App() {
         const cloudClear = await deleteObsoleteTradesFromSupabase([], previousTrades, verifiedUserId);
         if (!cloudClear.success) {
           showToast(
-            cloudClear.error || 'Gagal menghapus seluruh transaksi dari database cloud Supabase.',
+            cloudClear.error ||
+              tr(
+                'Gagal menghapus seluruh transaksi dari database cloud Supabase.',
+                'Failed to delete all trades from Supabase cloud database.'
+              ),
             'error'
           );
           return;
@@ -1040,9 +1159,18 @@ export default function App() {
       tradesRef.current = [];
       setTrades([]);
       setTradeForDetail(null);
-      showToast('Seluruh riwayat transaksi berhasil dihapus hingga bersih.');
+      showToast(
+        tr(
+          'Seluruh riwayat transaksi berhasil dihapus hingga bersih.',
+          'All trade history has been completely cleared.'
+        )
+      );
     } else {
-      showToast(saveResult.error || 'Gagal mereset penyimpanan lokal.', 'error');
+      showToast(
+        saveResult.error ||
+          tr('Gagal mereset penyimpanan lokal.', 'Failed to reset local storage.'),
+        'error'
+      );
     }
   };
 
@@ -1431,7 +1559,9 @@ export default function App() {
               {/* Clean Dark Charcoal Title & Readable Secondary Message */}
               <div className="min-w-0 flex-1 pr-1">
                 <span className="block text-[12.5px] font-bold leading-snug text-[#11151B]">
-                  {notification.type === 'success' ? 'Berhasil disimpan' : 'Perhatian'}
+                  {notification.type === 'success'
+                    ? tr('Berhasil disimpan', 'Saved successfully')
+                    : tr('Perhatian', 'Notice')}
                 </span>
                 <p
                   data-testid="toast-message-text"
@@ -1441,11 +1571,11 @@ export default function App() {
                 </p>
               </div>
 
-              {/* Accessible Manual Close Button */}
+              {/* Accessible Manual Close Button - aria-label="Tutup notifikasi" */}
               <button
                 type="button"
                 onClick={dismissToast}
-                aria-label="Tutup notifikasi"
+                aria-label={tr('Tutup notifikasi', 'Close notification')}
                 data-testid="toast-close-button"
                 className="shrink-0 -mr-1 -mt-0.5 inline-flex h-6 w-6 items-center justify-center rounded-lg text-[#64748B] hover:text-[#11151B] hover:bg-[#F1F5F9] transition-colors cursor-pointer"
               >
@@ -1519,10 +1649,15 @@ export default function App() {
                     </svg>
                   </div>
                   <div>
-                    <h4 className="text-sm font-bold text-rose-600 dark:text-rose-400">Gagal Mengambil Data dari Supabase</h4>
+                    <h4 className="text-sm font-bold text-rose-600 dark:text-rose-400">
+                      {tr('Gagal Mengambil Data dari Supabase', 'Failed to Fetch Data from Supabase')}
+                    </h4>
                     <p className="text-xs text-[#151D2A] dark:text-[#F2F5F9] mt-0.5">{cloudLoadError}</p>
                     <p className="text-[11px] text-[#697586] dark:text-[#929BA9] mt-1">
-                      Aplikasi saat ini menampilkan data cadangan lokal sementara. Transaksi baru tidak akan tersimpan ke cloud sampai koneksi berhasil dipulihkan.
+                      {tr(
+                        'Aplikasi saat ini menampilkan data cadangan lokal sementara. Transaksi baru tidak akan tersimpan ke cloud sampai koneksi berhasil dipulihkan.',
+                        'The app is currently displaying temporary local backup data. New trades will not be saved to the cloud until connection is restored.'
+                      )}
                     </p>
                   </div>
                 </div>
@@ -1533,7 +1668,11 @@ export default function App() {
                     className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg bg-[#1769E8] hover:bg-[#1458C4] text-white text-xs font-semibold transition disabled:opacity-50 cursor-pointer"
                   >
                     <span className={isCloudSyncing ? 'animate-spin inline-block' : 'inline-block'}>↻</span>
-                    <span>{isCloudSyncing ? 'Memuat Ulang...' : 'Coba Muat Ulang'}</span>
+                    <span>
+                      {isCloudSyncing
+                        ? tr('Memuat Ulang...', 'Reloading...')
+                        : tr('Coba Muat Ulang', 'Try Reloading')}
+                    </span>
                   </button>
                 </div>
               </div>
@@ -1761,7 +1900,9 @@ export default function App() {
         onClose={() => setIsAuthModalOpen(false)}
         onAuthSuccess={(user) => {
           setCurrentUser(user);
-          showToast(`Berhasil masuk sebagai ${user.email}`);
+          showToast(
+            tr(`Berhasil masuk sebagai ${user.email}`, `Signed in as ${user.email}`)
+          );
         }}
         onOpenConfig={() => {
           setIsAuthModalOpen(false);
@@ -1784,7 +1925,12 @@ export default function App() {
           tradesRef.current = guestTrades;
           setTrades(guestTrades);
           setSettings(loadStoredSettings(null));
-          showToast('Anda telah berhasil keluar dari akun cloud.');
+          showToast(
+            tr(
+              'Anda telah berhasil keluar dari akun cloud.',
+              'You have successfully signed out of your cloud account.'
+            )
+          );
         }}
       />
 
@@ -1793,7 +1939,12 @@ export default function App() {
         isOpen={isSupabaseConfigOpen}
         onClose={() => setIsSupabaseConfigOpen(false)}
         onConfigSaved={() => {
-          showToast('Konfigurasi Supabase berhasil disimpan!');
+          showToast(
+            tr(
+              'Konfigurasi Supabase berhasil disimpan!',
+              'Supabase configuration saved successfully!'
+            )
+          );
         }}
       />
     </div>

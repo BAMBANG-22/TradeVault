@@ -17,6 +17,7 @@ import {
   formatCalendarAdaptivePnl,
 } from '../../utils/calculations';
 import { useGlobalCurrency } from '../../utils/currencyRate';
+import { useLanguage } from '../../utils/language';
 import { AppSettings } from '../../types/settings';
 import { Trade } from '../../types/trade';
 import {
@@ -65,6 +66,7 @@ export const PerformanceCalendar: React.FC<PerformanceCalendarProps> = ({
   onViewTrade,
 }) => {
   const { preferredCurrency, formatDynamic, formatTradeFinancial } = useGlobalCurrency();
+  const { tr } = useLanguage();
   const fmtMoney = (val: number, privacy = isPrivacyMode) =>
     preferredCurrency === 'IDR' ? formatDynamic(val, privacy) : formatCurrency(val, settings, privacy);
 
@@ -213,9 +215,9 @@ export const PerformanceCalendar: React.FC<PerformanceCalendarProps> = ({
   }, [selectedDate, trades]);
 
   const modeLabels: Record<'calendar' | 'daily' | 'monthly', string> = {
-    calendar: 'Grid Calendar',
-    daily: `Daily List (${dailyPerformance.length})`,
-    monthly: `Monthly (${monthlyPerformance.length})`,
+    calendar: tr('Kalender Grid', 'Grid Calendar'),
+    daily: `${tr('Daftar Harian', 'Daily List')} (${dailyPerformance.length})`,
+    monthly: `${tr('Bulanan', 'Monthly')} (${monthlyPerformance.length})`,
   };
 
   const handleDateClick = (dateStr: string) => {
@@ -229,22 +231,22 @@ export const PerformanceCalendar: React.FC<PerformanceCalendarProps> = ({
         {/* Daily Summary Strip (Cardless, Hairline-separated) */}
         <div className="flex flex-wrap items-center gap-x-3 sm:gap-x-4 gap-y-1.5 text-xs tabular-nums">
           <div className="flex items-center gap-1.5">
-            <span className="text-[#697586] dark:text-[#7D8796]">Hari Aktif</span>
+            <span className="text-[#697586] dark:text-[#7D8796]">{tr('Hari Aktif', 'Active Days')}</span>
             <strong className="text-[#151D2A] dark:text-[#F2F5F9] font-bold">{dailySummary.totalDays}</strong>
           </div>
           <span className="text-[#DDE3EA] dark:text-white/10">·</span>
           <div className="flex items-center gap-1.5">
-            <span className="text-[#697586] dark:text-[#7D8796]">Profit</span>
+            <span className="text-[#697586] dark:text-[#7D8796]">{tr('Profit', 'Profit')}</span>
             <strong className="text-[#00A878] font-bold">{dailySummary.profitDays}</strong>
           </div>
           <span className="text-[#DDE3EA] dark:text-white/10">·</span>
           <div className="flex items-center gap-1.5">
-            <span className="text-[#697586] dark:text-[#7D8796]">Loss</span>
+            <span className="text-[#697586] dark:text-[#7D8796]">{tr('Rugi', 'Loss')}</span>
             <strong className="text-[#E05260] font-bold">{dailySummary.lossDays}</strong>
           </div>
           <span className="text-[#DDE3EA] dark:text-white/10">·</span>
           <div className="flex items-center gap-1.5">
-            <span className="text-[#697586] dark:text-[#7D8796]">Win Rate Hari</span>
+            <span className="text-[#697586] dark:text-[#7D8796]">{tr('Rasio Menang Harian', 'Daily Win Rate')}</span>
             <strong className="text-[#151D2A] dark:text-[#F2F5F9] font-bold">{dailySummary.dayWinRate}%</strong>
           </div>
         </div>
@@ -294,8 +296,8 @@ export const PerformanceCalendar: React.FC<PerformanceCalendarProps> = ({
               type="button"
               onClick={handlePrevMonth}
               className="p-1.5 rounded-full text-[#697586] dark:text-[#8E98A8] hover:text-[#151D2A] dark:hover:text-[#F2F5F9] hover:bg-black/[0.04] dark:hover:bg-white/[0.04] cursor-pointer transition-colors"
-              title="Bulan sebelumnya"
-              aria-label="Bulan sebelumnya"
+              title={tr('Bulan sebelumnya', 'Previous month')}
+              aria-label={tr('Bulan sebelumnya', 'Previous month')}
             >
               <ChevronLeft className="h-4 w-4 stroke-[1.75]" />
             </button>
@@ -306,8 +308,8 @@ export const PerformanceCalendar: React.FC<PerformanceCalendarProps> = ({
               type="button"
               onClick={handleNextMonth}
               className="p-1.5 rounded-full text-[#697586] dark:text-[#8E98A8] hover:text-[#151D2A] dark:hover:text-[#F2F5F9] hover:bg-black/[0.04] dark:hover:bg-white/[0.04] cursor-pointer transition-colors"
-              title="Bulan berikutnya"
-              aria-label="Bulan berikutnya"
+              title={tr('Bulan berikutnya', 'Next month')}
+              aria-label={tr('Bulan berikutnya', 'Next month')}
             >
               <ChevronRight className="h-4 w-4 stroke-[1.75]" />
             </button>
@@ -317,7 +319,9 @@ export const PerformanceCalendar: React.FC<PerformanceCalendarProps> = ({
           <div className="w-full">
             {/* Days of Week Header */}
             <div className="grid grid-cols-7 gap-1 text-center text-[10px] sm:text-[11px] font-semibold uppercase tracking-wider text-[#697586] dark:text-[#6E7785] pb-1.5">
-              {['Sen', 'Sel', 'Rab', 'Kam', 'Jum', 'Sab', 'Min'].map((d, i) => (
+              {(
+                tr('Sen,Sel,Rab,Kam,Jum,Sab,Min', 'Mon,Tue,Wed,Thu,Fri,Sat,Sun').split(',')
+              ).map((d, i) => (
                 <div key={i} className="py-1">
                   {d}
                 </div>
@@ -351,8 +355,11 @@ export const PerformanceCalendar: React.FC<PerformanceCalendarProps> = ({
                     onClick={() => handleDateClick(cell.dateStr)}
                     aria-label={
                       hasTrade
-                        ? `Tanggal ${cell.dateStr}, ${cell.perf!.tradesCount} transaksi, Net P/L ${formattedCellPl}, Win Rate ${cell.perf!.winRate}%`
-                        : `Tanggal ${cell.dateStr}, tanpa transaksi`
+                        ? tr(
+                            `Tanggal ${cell.dateStr}, ${cell.perf!.tradesCount} transaksi, Net P/L ${formattedCellPl}, Win Rate ${cell.perf!.winRate}%`,
+                            `Date ${cell.dateStr}, ${cell.perf!.tradesCount} trades, Net P/L ${formattedCellPl}, Win Rate ${cell.perf!.winRate}%`
+                          )
+                        : tr(`Tanggal ${cell.dateStr}, tanpa transaksi`, `Date ${cell.dateStr}, no trades`)
                     }
                     className={`min-h-[64px] sm:min-h-[76px] py-2 px-1 rounded-xl flex flex-col justify-between items-center text-center transition-all cursor-pointer relative ${
                       isSelected
@@ -422,7 +429,7 @@ export const PerformanceCalendar: React.FC<PerformanceCalendarProps> = ({
         <div>
           {dailyPerformance.length === 0 ? (
             <p className="py-8 text-center text-xs text-[#697586] dark:text-[#7D8796]">
-              Belum ada catatan trade harian pada periode ini.
+              {tr('Belum ada catatan trade harian pada periode ini.', 'No daily trade records in this period.')}
             </p>
           ) : (
             <div className="max-h-[360px] overflow-y-auto divide-y divide-[#DDE3EA] dark:divide-white/[0.06] border-y border-[#DDE3EA] dark:border-white/[0.06]">
@@ -448,7 +455,7 @@ export const PerformanceCalendar: React.FC<PerformanceCalendarProps> = ({
                         {day.date}
                       </div>
                       <div className="text-[11px] text-[#697586] dark:text-[#7D8796] tabular-nums mt-0.5">
-                        {day.tradesCount} Trade ({day.winningTrades}W · {day.losingTrades}L · {day.breakevenTrades}BE) · Win Rate {day.winRate}%
+                        {day.tradesCount} {tr('Trade', 'Trades')} ({day.winningTrades}W · {day.losingTrades}L · {day.breakevenTrades}BE) · {tr('Rasio Menang', 'Win Rate')} {day.winRate}%
                       </div>
                     </div>
 
@@ -490,7 +497,7 @@ export const PerformanceCalendar: React.FC<PerformanceCalendarProps> = ({
         <div>
           {monthlyPerformance.length === 0 ? (
             <p className="py-8 text-center text-xs text-[#697586] dark:text-[#7D8796]">
-              Belum ada data bulanan pada periode ini.
+              {tr('Belum ada data bulanan pada periode ini.', 'No monthly data in this period.')}
             </p>
           ) : (
             <div className="divide-y divide-[#DDE3EA] dark:divide-white/[0.06] border-y border-[#DDE3EA] dark:border-white/[0.06]">
@@ -507,13 +514,15 @@ export const PerformanceCalendar: React.FC<PerformanceCalendarProps> = ({
                         {m.label}
                       </span>
                       <span className="text-[11px] text-[#697586] dark:text-[#7D8796]">
-                        {m.tradesCount} Trade · Win Rate {m.winRate}%
+                        {m.tradesCount} {tr('Trade', 'Trades')} · {tr('Rasio Menang', 'Win Rate')} {m.winRate}%
                       </span>
                     </div>
 
                     <div className="flex items-center gap-4 sm:gap-6">
                       <div className="text-left sm:text-right">
-                        <span className="text-[10px] text-[#697586] dark:text-[#7D8796] block">Return</span>
+                        <span className="text-[10px] text-[#697586] dark:text-[#7D8796] block">
+                          {tr('Imbal Hasil', 'Return')}
+                        </span>
                         <span
                           className={`font-semibold ${
                             settings.startingBalance <= 0
@@ -532,7 +541,9 @@ export const PerformanceCalendar: React.FC<PerformanceCalendarProps> = ({
                       </div>
 
                       <div className="text-right min-w-[96px]">
-                        <span className="text-[10px] text-[#697586] dark:text-[#7D8796] block">Net P/L</span>
+                        <span className="text-[10px] text-[#697586] dark:text-[#7D8796] block">
+                          {tr('P/L Bersih', 'Net P/L')}
+                        </span>
                         <span
                           className={`font-bold text-xs sm:text-sm ${
                             isProfit
@@ -560,18 +571,18 @@ export const PerformanceCalendar: React.FC<PerformanceCalendarProps> = ({
         <div
           className="rounded-2xl border border-[#DDE3EA] dark:border-white/[0.08] bg-white/95 dark:bg-[#0D1015]/90 backdrop-blur-md p-4 space-y-3.5 transition-all duration-200 animate-in fade-in slide-in-from-top-2"
           role="region"
-          aria-label={`Rincian tanggal ${selectedDate}`}
+          aria-label={tr(`Rincian tanggal ${selectedDate}`, `Details for ${selectedDate}`)}
         >
           {/* Detail Header */}
           <div className="flex items-center justify-between pb-2.5 border-b border-[#DDE3EA] dark:border-white/[0.06]">
             <div>
               <h4 className="text-xs sm:text-sm font-bold text-[#151D2A] dark:text-[#F2F5F9] tabular-nums">
-                Detail Performa Harian — {selectedDate}
+                {tr('Detail Performa Harian', 'Daily Performance Detail')} — {selectedDate}
               </h4>
               <p className="text-[11px] text-[#697586] dark:text-[#7D8796]">
                 {selectedDateTrades.length > 0
-                  ? `${selectedDateTrades.length} transaksi tercatat`
-                  : 'Tidak ada transaksi pada tanggal ini'}
+                  ? tr(`${selectedDateTrades.length} transaksi tercatat`, `${selectedDateTrades.length} trades recorded`)
+                  : tr('Tidak ada transaksi pada tanggal ini', 'No trades on this date')}
               </p>
             </div>
 
@@ -579,7 +590,7 @@ export const PerformanceCalendar: React.FC<PerformanceCalendarProps> = ({
               type="button"
               onClick={() => setSelectedDate(null)}
               className="p-1.5 rounded-full text-[#697586] dark:text-[#8E98A8] hover:text-[#151D2A] dark:hover:text-[#F2F5F9] hover:bg-black/[0.04] dark:hover:bg-white/[0.06] transition-colors cursor-pointer"
-              aria-label="Tutup rincian tanggal"
+              aria-label={tr('Tutup rincian tanggal', 'Close date details')}
             >
               <X className="h-4 w-4 stroke-[1.75]" />
             </button>
@@ -589,7 +600,7 @@ export const PerformanceCalendar: React.FC<PerformanceCalendarProps> = ({
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 pb-3 border-b border-[#DDE3EA] dark:border-white/[0.06] text-xs tabular-nums">
             <div>
               <span className="block text-[10px] uppercase tracking-wider text-[#697586] dark:text-[#7D8796]">
-                Tanggal
+                {tr('Tanggal', 'Date')}
               </span>
               <strong className="mt-0.5 block text-xs sm:text-sm font-bold text-[#151D2A] dark:text-[#F2F5F9]">
                 {selectedDate}
@@ -597,7 +608,7 @@ export const PerformanceCalendar: React.FC<PerformanceCalendarProps> = ({
             </div>
             <div>
               <span className="block text-[10px] uppercase tracking-wider text-[#697586] dark:text-[#7D8796]">
-                Net Profit / Loss
+                {tr('Profit / Loss Bersih', 'Net Profit / Loss')}
               </span>
               <strong
                 className={`mt-0.5 block text-xs sm:text-sm font-bold ${
@@ -615,15 +626,17 @@ export const PerformanceCalendar: React.FC<PerformanceCalendarProps> = ({
             </div>
             <div>
               <span className="block text-[10px] uppercase tracking-wider text-[#697586] dark:text-[#7D8796]">
-                Jumlah Transaksi
+                {tr('Jumlah Transaksi', 'Total Trades')}
               </span>
               <strong className="mt-0.5 block text-xs sm:text-sm font-bold text-[#151D2A] dark:text-[#F2F5F9]">
-                {selectedDayPerf ? `${selectedDayPerf.tradesCount} Trade` : `${selectedDateTrades.length} Trade`}
+                {selectedDayPerf
+                  ? `${selectedDayPerf.tradesCount} ${tr('Trade', 'Trades')}`
+                  : `${selectedDateTrades.length} ${tr('Trade', 'Trades')}`}
               </strong>
             </div>
             <div>
               <span className="block text-[10px] uppercase tracking-wider text-[#697586] dark:text-[#7D8796]">
-                Win Rate Hari Ini
+                {tr('Rasio Menang Hari Ini', 'Win Rate Today')}
               </span>
               <strong className="mt-0.5 block text-xs sm:text-sm font-bold text-[#151D2A] dark:text-[#F2F5F9]">
                 {selectedDayPerf ? `${selectedDayPerf.winRate}%` : '0%'}
@@ -634,7 +647,10 @@ export const PerformanceCalendar: React.FC<PerformanceCalendarProps> = ({
           {/* Concise Trade List for Selected Date */}
           {selectedDateTrades.length === 0 ? (
             <p className="py-3 text-center text-xs text-[#697586] dark:text-[#7D8796]">
-              Hari tanpa transaksi tidak memengaruhi perhitungan win rate maupun drawdown.
+              {tr(
+                'Hari tanpa transaksi tidak memengaruhi perhitungan rasio menang maupun drawdown.',
+                'Days without trades do not affect win rate or drawdown calculations.'
+              )}
             </p>
           ) : (
             <div className="divide-y divide-[#DDE3EA] dark:divide-white/[0.06] max-h-60 overflow-y-auto">
