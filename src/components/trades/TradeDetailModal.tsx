@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import {
   Trade,
   TradeCloseType,
@@ -14,7 +14,10 @@ import {
   normalizeTradeDateTimeLocal,
 } from '../../utils/calculations';
 import { calculateLotBasedOrderMetrics } from '../../utils/riskCalculator';
-import { evaluateTradeCompliance } from '../../utils/complianceRating';
+import {
+  evaluateTradeCompliance,
+  parseExecutionAdherenceTag,
+} from '../../utils/complianceRating';
 import {
   isStoragePath,
   createScreenshotSignedUrl,
@@ -38,8 +41,7 @@ import {
   ArrowLeft,
   Edit2,
   Trash2,
-  Image,
-  ChevronDown,
+  Image as ImageIcon,
   Loader2,
   Upload,
   ZoomIn,
@@ -48,6 +50,12 @@ import {
   XCircle,
   Clock,
   Save,
+  MoreHorizontal,
+  Plus,
+  Activity,
+  Check,
+  AlertCircle,
+  Maximize2,
 } from 'lucide-react';
 
 interface TradeDetailModalProps {
@@ -69,6 +77,135 @@ interface TradeDetailModalProps {
   onOpenMobileMenu?: () => void;
 }
 
+export type DetailSectionTab =
+  | 'plan'
+  | 'execution'
+  | 'screenshots'
+  | 'evaluation'
+  | 'activity';
+
+interface StructuredEvaluationFields {
+  entryQuality: string;
+  emotionalControl: string;
+  wentWell: string;
+  needsImprovement: string;
+  lessonsLearned: string;
+}
+
+const EVAL_STRUCT_HEADER = '[TV_EVAL_V1]';
+
+/**
+ * Parses postTradeEvaluation string into structured reflection sections if formatted,
+ * or maps legacy plain-text postTradeEvaluation into `lessonsLearned` without losing any text.
+ */
+function parseStructuredEvaluation(rawPostEval?: string): StructuredEvaluationFields {
+  const empty: StructuredEvaluationFields = {
+    entryQuality: '',
+    emotionalControl: '',
+    wentWell: '',
+    needsImprovement: '',
+    lessonsLearned: '',
+  };
+  if (!rawPostEval || typeof rawPostEval !== 'string') return empty;
+  const trimmed = rawPostEval.trim();
+  if (!trimmed) return empty;
+
+  if (trimmed.startsWith(EVAL_STRUCT_HEADER)) {
+    const body = trimmed.slice(EVAL_STRUCT_HEADER.length).trim();
+    const extractField = (key: string): string => {
+      const regex = new RegExp(`##\\s*${key}\\s*\\n([\\s\\S]*?)(?=\\n##\\s*[A-Z_]+|$)`, 'i');
+      const m = body.match(regex);
+      return m ? m[1].trim() : '';
+    };
+    return {
+      entryQuality: extractField('ENTRY_QUALITY'),
+      emotionalControl: extractField('EMOTIONAL_CONTROL'),
+      wentWell: extractField('WENT_WELL'),
+      needsImprovement: extractField('NEEDS_IMPROVEMENT'),
+      lessonsLearned: extractField('LESSONS_LEARNED'),
+    };
+  }
+
+  return {
+    ...empty,
+    lessonsLearned: trimmed,
+  };
+}
+
+function serializeStructuredEvaluation(fields: StructuredEvaluationFields): string | undefined {
+  const eq = fields.entryQuality.trim();
+  const ec = fields.emotionalControl.trim();
+  const ww = fields.wentWell.trim();
+  const ni = fields.needsImprovement.trim();
+  const ll = fields.lessonsLearned.trim();
+
+  if (!eq && !ec && !ww && !ni && !ll) return undefined;
+
+  // If only lessonsLearned is filled, store as clean plain text for full backward compatibility
+  if (!eq && !ec && !ww && !ni && ll) {
+    return ll;
+  }
+
+  const sections: string[] = [EVAL_STRUCT_HEADER];
+  if (eq) sections.push(`## ENTRY_QUALITY\n${eq}`);
+  if (ec) sections.push(`## EMOTIONAL_CONTROL\n${ec}`);
+  if (ww) sections.push(`## WENT_WELL\n${ww}`);
+  if (ni) sections.push(`## NEEDS_IMPROVEMENT\n${ni}`);
+  if (ll) sections.push(`## LESSONS_LEARNED\n${ll}`);
+  return sections.join('\n\n');
+}
+
+/**
+ * Formats a price number using its natural recorded precision (minimum 2 decimals, up to 5 for forex pairs)
+ * without fabricating values when undefined/null.
+ */
+function formatActualPrice(price?: number | null, instrument = 'XAUUSD'): string {
+  if (price === undefined || price === null || !Number.isFinite(price) || price <= 0) {
+    return '—';
+  }
+  const str = String(price);
+  const dotIdx = str.indexOf('.');
+  if (dotIdx !== -1) {
+    const decLen = str.length - dotIdx - 1;
+    if (decLen >= 3) {
+      return price.toFixed(Math.min(5, decLen));
+    }
+  }
+  const upper = (instrument || '').toUpperCase();
+  if (
+    upper.includes('EUR') ||
+    upper.includes('GBP') ||
+    upper.includes('AUD') ||
+    upper.includes('NZD') ||
+    upper.includes('CAD') ||
+    upper.includes('CHF')
+  ) {
+    if (!upper.includes('JPY')) {
+      return price.toFixed(5);
+    }
+  }
+  return price.toFixed(2);
+}
+
+/**
+ * Extracts a timeframe token (e.g. M5, M15, H1, H4, D1) from trade notes/reason/strategy if present.
+ * Never invents a fake timeframe if none is recorded.
+ */
+function extractRecordedTimeframe(trade: Trade): string | null {
+  const combined = `${trade.strategy || ''} ${trade.entryReason || ''} ${trade.notes || ''}`;
+  const m = combined.match(/\b(?:TF\s*)?(M1|M3|M5|M15|M30|H1|H4|D1|W1|1m|5m|15m|30m|1h|4h|1d)\b/i);
+  if (!m || !m[1]) return null;
+  const token = m[1].toUpperCase();
+  if (token === '1M') return 'M1';
+  if (token === '5M') return 'M5';
+  if (token === '15M') return 'M15';
+  if (token === '30M') return 'M30';
+  if (token === '1H') return 'H1';
+  if (token === '4H') return 'H4';
+  if (token === '1D') return 'D1';
+  return token;
+}
+
 export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
   trade,
   allTrades = [],
@@ -84,20 +221,13 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
   onSaveTradeUpdate,
 }) => {
   const { preferredCurrency, formatDynamic, formatTradeFinancial } = useGlobalCurrency();
-  // 5 Collapsible Accordion States
-  const [openSections, setOpenSections] = useState<{
-    plan: boolean;
-    execution: boolean;
-    screenshots: boolean;
-    evaluation: boolean;
-    activity: boolean;
-  }>({
-    plan: true,
-    execution: true,
-    screenshots: true,
-    evaluation: true,
-    activity: true,
-  });
+
+  // Horizontal 5-Section Active Tab State
+  const [activeSectionTab, setActiveSectionTab] = useState<DetailSectionTab>('plan');
+
+  // Overflow Menu State ([⋯])
+  const [isMoreMenuOpen, setIsMoreMenuOpen] = useState<boolean>(false);
+  const moreMenuRef = useRef<HTMLDivElement | null>(null);
 
   // Resolved image URLs for BEFORE TRADE and AFTER TRADE
   const [beforeDisplayUrl, setBeforeDisplayUrl] = useState<string | null>(null);
@@ -105,12 +235,32 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
   const [afterDisplayUrl, setAfterDisplayUrl] = useState<string | null>(null);
   const [isAfterLoading, setIsAfterLoading] = useState<boolean>(false);
   const [isUploadingImage, setIsUploadingImage] = useState<boolean>(false);
+  const [activePrimarySlot, setActivePrimarySlot] = useState<'BEFORE' | 'AFTER'>('BEFORE');
 
-  // Evaluation inline edit state
+  // Plan inline edit state (persisted across tab switches)
+  const [isEditingPlanNotes, setIsEditingPlanNotes] = useState<boolean>(false);
+  const [planStrategyInput, setPlanStrategyInput] = useState<string>('');
+  const [planSessionInput, setPlanSessionInput] = useState<string>('');
+  const [planEntryReasonInput, setPlanEntryReasonInput] = useState<string>('');
+  const [planNotesInput, setPlanNotesInput] = useState<string>('');
+  const [isSavingPlanNotes, setIsSavingPlanNotes] = useState<boolean>(false);
+
+  // Evaluation inline edit state (persisted across tab switches)
   const [isEditingEval, setIsEditingEval] = useState<boolean>(false);
+  const [evalEntryQualityInput, setEvalEntryQualityInput] = useState<string>('');
+  const [evalEmotionalControlInput, setEvalEmotionalControlInput] = useState<string>('');
+  const [evalWentWellInput, setEvalWentWellInput] = useState<string>('');
+  const [evalNeedsImprovementInput, setEvalNeedsImprovementInput] = useState<string>('');
   const [evalReflectionInput, setEvalReflectionInput] = useState<string>('');
   const [evalNotesInput, setEvalNotesInput] = useState<string>('');
+  const [evalDisciplineRatingInput, setEvalDisciplineRatingInput] = useState<number | null>(null);
   const [isSavingEval, setIsSavingEval] = useState<boolean>(false);
+
+  // Feedback Banner State
+  const [saveFeedback, setSaveFeedback] = useState<{
+    type: 'success' | 'error';
+    message: string;
+  } | null>(null);
 
   // Lifecycle transition state inside Detail page
   const [activeTransitionPanel, setActiveTransitionPanel] = useState<
@@ -147,33 +297,88 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
         id: 'legacy-created',
         type: 'TRADE_CREATED',
         timestamp: trade.createdAt || trade.dateTime,
-        label: 'Trade Created / Recorded',
-        newValue: `${trade.instrument} ${trade.position} ${trade.lotSize.toFixed(2)} Lot @ ${trade.entryPrice.toFixed(2)}`,
+        label: 'Trade dibuat',
+        newValue: `${trade.instrument} ${trade.position} ${trade.lotSize.toFixed(2)} Lot @ ${formatActualPrice(
+          trade.entryPrice,
+          trade.instrument
+        )}`,
+        note: 'Catatan awal disimpan',
       },
     ];
+    if (resolved.status === 'OPEN' || resolved.status === 'CLOSED') {
+      fallbackEvents.push({
+        id: 'legacy-entry',
+        type: 'POSITION_OPENED',
+        timestamp: resolved.entryTime || trade.dateTime,
+        label: 'Entry dicatat',
+        newValue: `${trade.position} ${ (resolved.actualLot ?? trade.lotSize).toFixed(2)} Lot @ ${formatActualPrice(
+          resolved.actualEntry ?? trade.entryPrice,
+          trade.instrument
+        )}`,
+        note: 'Posisi dibuka',
+      });
+    }
+    if (resolved.beforeScreenshotUrl || trade.screenshotUrl || resolved.afterScreenshotUrl) {
+      fallbackEvents.push({
+        id: 'legacy-screenshot',
+        type: 'TRADE_CREATED',
+        timestamp: trade.updatedAt || trade.dateTime,
+        label: 'Screenshot ditambahkan',
+        note: 'Gambar chart disimpan',
+      });
+    }
     if (resolved.status === 'CLOSED') {
       fallbackEvents.push({
         id: 'legacy-closed',
         type: 'POSITION_CLOSED',
-        timestamp: trade.updatedAt || trade.dateTime,
-        label: 'Position Closed',
-        newValue: `Outcome: ${trade.outcome} • Net P/L: ${
+        timestamp: resolved.exitTime || trade.updatedAt || trade.dateTime,
+        label: 'Trade ditutup',
+        newValue: `Outcome: ${trade.outcome} · Net P/L: ${
           preferredCurrency === 'IDR'
             ? formatTradeFinancial(trade, 'netProfit', false, true)
             : formatCurrency(trade.netProfit, settings)
         }`,
+        note: 'Status trade diperbarui',
+      });
+    }
+    if (trade.postTradeEvaluation) {
+      fallbackEvents.push({
+        id: 'legacy-eval',
+        type: 'EVALUATION_ADDED',
+        timestamp: trade.updatedAt || trade.dateTime,
+        label: 'Evaluasi disimpan',
+        note: 'Review selesai',
       });
     }
     return fallbackEvents;
   }, [resolved, trade, settings, preferredCurrency, formatTradeFinancial]);
 
+  // Synchronize form inputs only when switching to a different trade ID or when external trade updates
   useEffect(() => {
     if (!trade || !resolved) return;
-    setEvalReflectionInput(trade.postTradeEvaluation || '');
+    const parsedEval = parseStructuredEvaluation(trade.postTradeEvaluation);
+    setEvalEntryQualityInput(parsedEval.entryQuality);
+    setEvalEmotionalControlInput(parsedEval.emotionalControl);
+    setEvalWentWellInput(parsedEval.wentWell);
+    setEvalNeedsImprovementInput(parsedEval.needsImprovement);
+    setEvalReflectionInput(parsedEval.lessonsLearned);
     setEvalNotesInput(trade.notes || '');
+    setEvalDisciplineRatingInput(
+      typeof trade.disciplineRating === 'number' && trade.disciplineRating >= 1 && trade.disciplineRating <= 5
+        ? trade.disciplineRating
+        : null
+    );
+
+    setPlanStrategyInput(trade.strategy || '');
+    setPlanSessionInput(trade.session || 'London');
+    setPlanEntryReasonInput(trade.entryReason || '');
+    setPlanNotesInput(trade.notes || '');
+
     setIsEditingEval(false);
+    setIsEditingPlanNotes(false);
     setActiveTransitionPanel(null);
     setTransitionError(null);
+    setSaveFeedback(null);
 
     const nowLocal = normalizeTradeDateTimeLocal(new Date());
     setActualEntryInput(String(resolved.plannedEntry || trade.entryPrice || ''));
@@ -203,6 +408,18 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
     setCloseNetOverrideInput('');
   }, [trade?.id, trade?.updatedAt]);
 
+  // Close overflow menu when clicking outside
+  useEffect(() => {
+    if (!isMoreMenuOpen) return;
+    const handleOutsideClick = (e: MouseEvent) => {
+      if (moreMenuRef.current && !moreMenuRef.current.contains(e.target as Node)) {
+        setIsMoreMenuOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleOutsideClick);
+    return () => document.removeEventListener('mousedown', handleOutsideClick);
+  }, [isMoreMenuOpen]);
+
   useEffect(() => {
     if (!isOpen || isChildModalOpen || isFullPage) return;
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -213,6 +430,13 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [isOpen, isChildModalOpen, isFullPage, onClose]);
+
+  // Auto-dismiss save feedback banner
+  useEffect(() => {
+    if (!saveFeedback) return;
+    const timer = setTimeout(() => setSaveFeedback(null), 3500);
+    return () => clearTimeout(timer);
+  }, [saveFeedback]);
 
   // Resolve BEFORE screenshot URL
   useEffect(() => {
@@ -304,24 +528,35 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
     setIsAfterLoading(false);
   }, [isOpen, resolved?.afterScreenshotUrl]);
 
+  // Default primary image slot selection based on availability
+  useEffect(() => {
+    if (beforeDisplayUrl) {
+      setActivePrimarySlot('BEFORE');
+    } else if (afterDisplayUrl) {
+      setActivePrimarySlot('AFTER');
+    } else {
+      setActivePrimarySlot('BEFORE');
+    }
+  }, [beforeDisplayUrl, afterDisplayUrl]);
+
   if (!isOpen) return null;
 
   if (!trade || !resolved) {
     return (
       <div
         data-testid="trade-detail-empty-state"
-        className="rounded-xl border border-[#DDE3EA] dark:border-[#252B34] bg-white dark:bg-[#11151B] p-8 text-center space-y-3"
+        className="rounded-xl border border-[#DDE3EA] dark:border-[#252B34] bg-white dark:bg-[#11151B] p-8 text-center space-y-3 max-w-2xl mx-auto"
       >
-        <h2 className="text-base font-bold text-[#151D2A] dark:text-[#F2F5F9]">
+        <h2 className="text-base font-semibold text-[#151D2A] dark:text-[#F2F5F9]">
           Belum Ada Transaksi Dipilih
         </h2>
-        <p className="text-xs text-[#697586] dark:text-[#929BA9] max-w-md mx-auto">
+        <p className="text-xs text-[#697586] dark:text-[#929BA9] max-w-md mx-auto leading-relaxed">
           Pilih salah satu transaksi dari halaman Trade Log untuk melihat detail rencana, eksekusi, chart screenshot, evaluasi, dan riwayat aktivitas.
         </p>
         <button
           type="button"
           onClick={onClose}
-          className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-[#1769E8] hover:bg-[#1458C4] text-white text-xs font-semibold cursor-pointer"
+          className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-[#1769E8] hover:bg-[#1458C4] text-white text-xs font-medium transition-colors cursor-pointer"
         >
           <ArrowLeft className="h-3.5 w-3.5 stroke-[1.75]" />
           <span>Kembali ke Trade Log</span>
@@ -329,10 +564,6 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
       </div>
     );
   }
-
-  const toggleAccordion = (key: keyof typeof openSections) => {
-    setOpenSections((prev) => ({ ...prev, [key]: !prev[key] }));
-  };
 
   // Plan metrics strictly calculated from Planned values
   const planLotMetrics = calculateLotBasedOrderMetrics(
@@ -364,15 +595,88 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
   const isLoss = isClosed && trade.netProfit <= -0.01;
   const realizedR = isClosed ? computeRealizedRMultiple(trade) : null;
   const compliance = evaluateTradeCompliance(trade, settings);
+  const { cleanNotes: cleanExecutionNotes } = parseExecutionAdherenceTag(trade.executionNotes);
+  const parsedEvalView = parseStructuredEvaluation(trade.postTradeEvaluation);
+  const recordedTimeframe = extractRecordedTimeframe(trade);
 
-  // Compress and persist BEFORE or AFTER screenshot (Smart WebP/JPEG ~45-90KB)
+  // Derive concise semantic status label for Header ("TP HIT", "SL HIT", "ACTIVE", "PLANNED", "CLOSED", "CANCELLED")
+  const headerStatusLabel = (() => {
+    if (isPlanned) return 'PLANNED';
+    if (isOpenPos) return 'ACTIVE';
+    if (isCancelled) return 'CANCELLED';
+    if (
+      resolved.closeType === 'TP' ||
+      compliance.status === 'COMPLIANT_TP' ||
+      (isProfit && trade.takeProfit && trade.exitPrice && Math.abs(trade.exitPrice - trade.takeProfit) <= Math.abs(trade.takeProfit - trade.entryPrice) * 0.15)
+    ) {
+      return 'TP HIT';
+    }
+    if (
+      resolved.closeType === 'SL' ||
+      compliance.status === 'COMPLIANT_SL' ||
+      compliance.status === 'VIOLATION_SL' ||
+      (isLoss && trade.stopLoss && trade.exitPrice && Math.abs(trade.exitPrice - trade.stopLoss) <= Math.abs(trade.entryPrice - trade.stopLoss) * 0.2)
+    ) {
+      return 'SL HIT';
+    }
+    if (isProfit) return 'CLOSED · WIN';
+    if (isLoss) return 'CLOSED · LOSS';
+    return 'CLOSED · BE';
+  })();
+
+  // Header summary primary metric (R-Multiple or Planned R:R or Net P/L)
+  const headerPrimaryMetric = (() => {
+    if (isClosed) {
+      if (realizedR !== null) {
+        return formatRMultiple(realizedR);
+      }
+      return preferredCurrency === 'IDR'
+        ? formatTradeFinancial(trade, 'netProfit', false, true)
+        : `${isProfit ? '+' : ''}${formatCurrency(trade.netProfit, settings)}`;
+    }
+    if (isCancelled) {
+      return '0.00R';
+    }
+    return formatPlannedRR(plannedRR);
+  })();
+
+  const headerSecondaryMetric = (() => {
+    if (isClosed) {
+      return preferredCurrency === 'IDR'
+        ? formatTradeFinancial(trade, 'netProfit', false, true)
+        : `${isProfit ? '+' : ''}${formatCurrency(trade.netProfit, settings)}`;
+    }
+    if (isCancelled) {
+      return 'Order Dibatalkan';
+    }
+    return isPlanned ? 'Target R:R Rencana' : 'Target R:R Aktif';
+  })();
+
+  const summaryEntryPrice =
+    isOpenPos || isClosed
+      ? resolved.actualEntry ?? resolved.plannedEntry ?? trade.entryPrice
+      : resolved.plannedEntry ?? trade.entryPrice;
+  const summaryStopLoss = resolved.plannedStopLoss ?? trade.stopLoss;
+  const summaryTakeProfit = resolved.plannedTakeProfit ?? trade.takeProfit;
+
+  const screenshotCount =
+    (resolved.beforeScreenshotUrl || trade.screenshotUrl ? 1 : 0) +
+    (resolved.afterScreenshotUrl ? 1 : 0);
+
+  // Compress and persist BEFORE or AFTER screenshot (Universal JPEG for 100% Supabase Storage compatibility)
   const handleScreenshotSlotUpload = (
     slot: 'BEFORE' | 'AFTER',
     e: React.ChangeEvent<HTMLInputElement>
   ) => {
     const file = e.target.files?.[0];
     if (!file || !onSaveTradeUpdate) return;
-    if (file.size > 10 * 1024 * 1024) return;
+    if (file.size > 10 * 1024 * 1024) {
+      setSaveFeedback({
+        type: 'error',
+        message: 'Ukuran file gambar maksimal 10 MB.',
+      });
+      return;
+    }
 
     const reader = new FileReader();
     reader.onload = (event) => {
@@ -406,6 +710,7 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
 
         setIsUploadingImage(true);
         try {
+          const nowIso = new Date().toISOString();
           const nextMainScreenshot =
             slot === 'BEFORE' ? compressedDataUrl : trade.screenshotUrl;
           const nextBeforeMeta =
@@ -415,6 +720,15 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
                   resolved.beforeScreenshotUrl !== nextMainScreenshot
                 ? resolved.beforeScreenshotUrl
                 : undefined;
+
+          const nextLog = [
+            ...resolved.activityLog,
+            createActivityEvent('TRADE_CREATED', 'Screenshot ditambahkan', {
+              timestamp: nowIso,
+              newValue: slot === 'BEFORE' ? 'Before Trade Chart' : 'After Trade Chart',
+              note: 'Gambar chart disimpan',
+            }),
+          ];
 
           const nextMeta: TradeLifecycleMeta = {
             status: resolved.status,
@@ -435,7 +749,7 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
               slot === 'AFTER' ? compressedDataUrl : resolved.afterScreenshotUrl,
             cancellationReason: resolved.cancellationReason,
             cancelledAt: resolved.cancelledAt,
-            activityLog: resolved.activityLog,
+            activityLog: nextLog,
           };
 
           const updatedTrade: Trade = {
@@ -445,9 +759,21 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
               trade.executionNotes,
               nextMeta
             ),
-            updatedAt: new Date().toISOString(),
+            updatedAt: nowIso,
           };
-          await onSaveTradeUpdate(updatedTrade, trade.id);
+          const res = await onSaveTradeUpdate(updatedTrade, trade.id);
+          if (!res || res.success !== false) {
+            setActivePrimarySlot(slot);
+            setSaveFeedback({
+              type: 'success',
+              message: `Screenshot ${slot === 'BEFORE' ? 'Before' : 'After'} Trade berhasil disimpan.`,
+            });
+          } else {
+            setSaveFeedback({
+              type: 'error',
+              message: res.error || 'Gagal mengunggah screenshot.',
+            });
+          }
         } finally {
           setIsUploadingImage(false);
         }
@@ -500,9 +826,48 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
         ),
         updatedAt: new Date().toISOString(),
       };
-      await onSaveTradeUpdate(updatedTrade, trade.id);
+      const res = await onSaveTradeUpdate(updatedTrade, trade.id);
+      if (!res || res.success !== false) {
+        setSaveFeedback({
+          type: 'success',
+          message: `Screenshot ${slot === 'BEFORE' ? 'Before' : 'After'} Trade dihapus.`,
+        });
+      }
     } finally {
       setIsUploadingImage(false);
+    }
+  };
+
+  const handleSavePlanDetails = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!onSaveTradeUpdate || isSavingPlanNotes) return;
+    setIsSavingPlanNotes(true);
+    try {
+      const nowIso = new Date().toISOString();
+      const updatedTrade: Trade = {
+        ...trade,
+        strategy: planStrategyInput.trim() || trade.strategy,
+        session: planSessionInput.trim() || trade.session,
+        entryReason: planEntryReasonInput.trim() || undefined,
+        notes: planNotesInput.trim() || undefined,
+        updatedAt: nowIso,
+      };
+      const res = await onSaveTradeUpdate(updatedTrade, trade.id);
+      if (!res || res.success !== false) {
+        setEvalNotesInput(planNotesInput.trim());
+        setIsEditingPlanNotes(false);
+        setSaveFeedback({
+          type: 'success',
+          message: 'Catatan rencana trading berhasil diperbarui.',
+        });
+      } else {
+        setSaveFeedback({
+          type: 'error',
+          message: res.error || 'Gagal menyimpan perubahan rencana.',
+        });
+      }
+    } finally {
+      setIsSavingPlanNotes(false);
     }
   };
 
@@ -512,13 +877,21 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
     setIsSavingEval(true);
     try {
       const nowIso = new Date().toISOString();
+      const serializedPostEval = serializeStructuredEvaluation({
+        entryQuality: evalEntryQualityInput,
+        emotionalControl: evalEmotionalControlInput,
+        wentWell: evalWentWellInput,
+        needsImprovement: evalNeedsImprovementInput,
+        lessonsLearned: evalReflectionInput,
+      });
+
       const nextLog = [
         ...resolved.activityLog,
-        createActivityEvent('EVALUATION_ADDED', 'Evaluation Added', {
+        createActivityEvent('EVALUATION_ADDED', 'Evaluasi disimpan', {
           timestamp: nowIso,
-          note: evalReflectionInput.trim()
-            ? 'Refleksi pasca-trade diperbarui.'
-            : 'Catatan evaluasi diperbarui.',
+          note: serializedPostEval
+            ? 'Review dan refleksi pasca-trade diperbarui'
+            : 'Catatan evaluasi diperbarui',
         }),
       ];
       const nextMeta: TradeLifecycleMeta = {
@@ -544,8 +917,9 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
 
       const updatedTrade: Trade = {
         ...trade,
-        postTradeEvaluation: evalReflectionInput.trim() || undefined,
+        postTradeEvaluation: serializedPostEval,
         notes: evalNotesInput.trim() || undefined,
+        disciplineRating: evalDisciplineRatingInput ?? trade.disciplineRating,
         executionNotes: encodeLifecycleMetaIntoExecutionNotes(
           trade.executionNotes,
           nextMeta
@@ -554,7 +928,17 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
       };
       const res = await onSaveTradeUpdate(updatedTrade, trade.id);
       if (!res || res.success !== false) {
+        setPlanNotesInput(evalNotesInput.trim());
         setIsEditingEval(false);
+        setSaveFeedback({
+          type: 'success',
+          message: 'Evaluasi trade berhasil disimpan.',
+        });
+      } else {
+        setSaveFeedback({
+          type: 'error',
+          message: res.error || 'Gagal menyimpan evaluasi.',
+        });
       }
     } finally {
       setIsSavingEval(false);
@@ -620,6 +1004,10 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
       const res = await onSaveTradeUpdate(updatedTrade, trade.id);
       if (!res || res.success !== false) {
         setActiveTransitionPanel(null);
+        setSaveFeedback({
+          type: 'success',
+          message: 'Status eksekusi trade berhasil diperbarui.',
+        });
       } else {
         setTransitionError(res.error || 'Gagal memperbarui status transaksi.');
       }
@@ -630,1145 +1018,1815 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
     }
   };
 
-  const displayLot =
-    isOpenPos || isClosed
-      ? resolved.actualLot ?? trade.lotSize
-      : resolved.plannedLot ?? trade.lotSize;
+  const sectionTabs: Array<{
+    id: DetailSectionTab;
+    label: string;
+    testId: string;
+    badge?: string | number;
+  }> = [
+    { id: 'plan', label: 'Rencana', testId: 'tab-trade-plan' },
+    { id: 'execution', label: 'Eksekusi', testId: 'tab-execution' },
+    {
+      id: 'screenshots',
+      label: 'Chart',
+      testId: 'tab-screenshots',
+      badge: screenshotCount > 0 ? screenshotCount : undefined,
+    },
+    { id: 'evaluation', label: 'Evaluasi', testId: 'tab-evaluation' },
+    {
+      id: 'activity',
+      label: 'Aktivitas',
+      testId: 'tab-activity-history',
+      badge: timelineEvents.length > 0 ? timelineEvents.length : undefined,
+    },
+  ];
+
+  const hasEntryDeviation =
+    resolved.actualEntry !== undefined &&
+    resolved.plannedEntry > 0 &&
+    Math.abs(resolved.actualEntry - resolved.plannedEntry) > 0.00001;
+
+  const hasLotDeviation =
+    resolved.actualLot !== undefined &&
+    resolved.plannedLot > 0 &&
+    Math.abs(resolved.actualLot - resolved.plannedLot) > 0.001;
 
   return (
     <div
       data-testid="trade-detail-full-page"
-      className="space-y-4 font-sans text-[#151D2A] dark:text-[#F2F5F9]"
+      className="max-w-4xl mx-auto space-y-5 font-sans text-[#151D2A] dark:text-[#F2F5F9] pb-8"
     >
-      {/* Top Navigation & Quick Trade Switcher */}
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <button
-          type="button"
-          onClick={onClose}
-          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white dark:bg-[#11151B] border border-[#DDE3EA] dark:border-[#252B34] hover:border-[#1769E8] text-xs font-semibold transition-colors cursor-pointer"
+      {/* Save / Upload Feedback Banner */}
+      {saveFeedback && (
+        <div
+          role="status"
+          className={`flex items-center justify-between gap-3 px-4 py-2.5 rounded-xl border text-xs font-medium transition-colors ${
+            saveFeedback.type === 'success'
+              ? 'bg-[#EEF2F6] dark:bg-[#161B22] border-[#DDE3EA] dark:border-[#252B34] text-[#059669] dark:text-[#34D399]'
+              : 'bg-[#EEF2F6] dark:bg-[#161B22] border-rose-500/30 text-[#E11D48] dark:text-[#FB7185]'
+          }`}
         >
-          <ArrowLeft className="h-3.5 w-3.5 stroke-[1.75]" />
-          <span>Kembali ke Trade Log</span>
-        </button>
-
-        <div className="flex items-center gap-2">
-          {allTrades.length > 1 && onSelectTrade && (
-            <select
-              value={trade.id}
-              onChange={(e) => {
-                const found = allTrades.find((item) => item.id === e.target.value);
-                if (found) onSelectTrade(found);
-              }}
-              aria-label="Pilih transaksi lain"
-              className="rounded-lg bg-white dark:bg-[#11151B] border border-[#DDE3EA] dark:border-[#252B34] px-2.5 py-1.5 text-xs font-mono-numbers tabular-nums focus:border-[#1769E8] focus:outline-none"
-            >
-              {allTrades.map((item) => (
-                <option key={item.id} value={item.id}>
-                  {item.id} • {item.instrument} ({item.position})
-                </option>
-              ))}
-            </select>
-          )}
-
+          <div className="flex items-center gap-2">
+            {saveFeedback.type === 'success' ? (
+              <Check className="h-3.5 w-3.5 shrink-0 stroke-[2]" />
+            ) : (
+              <AlertCircle className="h-3.5 w-3.5 shrink-0 stroke-[2]" />
+            )}
+            <span>{saveFeedback.message}</span>
+          </div>
           <button
             type="button"
-            onClick={() => onEdit(trade)}
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white dark:bg-[#11151B] border border-[#DDE3EA] dark:border-[#252B34] hover:border-[#1769E8] text-xs font-semibold transition-colors cursor-pointer"
-            title="Edit Transaksi"
+            onClick={() => setSaveFeedback(null)}
+            className="text-[#697586] dark:text-[#929BA9] hover:text-[#151D2A] dark:hover:text-[#F2F5F9] text-[11px]"
           >
-            <Edit2 className="h-3.5 w-3.5 stroke-[1.75]" />
-            <span>Edit</span>
-          </button>
-          <button
-            type="button"
-            onClick={() => onDelete(trade)}
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white dark:bg-[#11151B] border border-[#DDE3EA] dark:border-[#252B34] hover:border-rose-500 text-xs font-semibold text-rose-600 dark:text-rose-400 transition-colors cursor-pointer"
-            title="Hapus Transaksi"
-          >
-            <Trash2 className="h-3.5 w-3.5 stroke-[1.75]" />
-            <span>Hapus</span>
+            Tutup
           </button>
         </div>
-      </div>
+      )}
 
-      {/* RINGKASAN TRANSAKSI (SUMMARY CARD) */}
-      <div className="rounded-2xl border border-[#DDE3EA] dark:border-[#252B34] bg-white dark:bg-[#11151B] p-5 sm:p-6 transition-colors duration-150">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-          <div className="space-y-1.5">
-            <div className="flex items-center gap-2.5 flex-wrap">
-              <h1 className="text-2xl sm:text-3xl font-bold tracking-tight text-[#151D2A] dark:text-[#F2F5F9]">
-                {trade.instrument}
-              </h1>
-              <span
-                className={`text-sm font-bold uppercase ${
-                  trade.position === 'BUY'
-                    ? 'text-[#059669] dark:text-[#34D399]'
-                    : 'text-[#E11D48] dark:text-[#FB7185]'
-                }`}
-              >
-                {trade.position}
-              </span>
-              <span
-                data-testid="trade-detail-status-badge"
-                className={`px-2.5 py-0.5 rounded-lg text-xs font-bold uppercase tracking-wider border ${
-                  isPlanned
-                    ? 'border-[#1769E8]/30 bg-[#EEF2F6] dark:bg-[#171D26] text-[#1769E8]'
-                    : isOpenPos
-                    ? 'border-amber-500/30 bg-amber-500/10 text-amber-600 dark:text-amber-400'
-                    : isCancelled
-                    ? 'border-[#DDE3EA] dark:border-[#252B34] bg-[#F5F7FA] dark:bg-[#171D26] text-[#697586] dark:text-[#929BA9]'
-                    : 'border-emerald-500/30 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400'
-                }`}
-              >
-                {resolved.status}
-              </span>
-            </div>
-            <p className="text-xs text-[#697586] dark:text-[#929BA9] font-mono-numbers tabular-nums">
-              <span
-                className={`font-semibold ${
-                  trade.position === 'BUY'
-                    ? 'text-[#059669] dark:text-[#34D399]'
-                    : 'text-[#E11D48] dark:text-[#FB7185]'
-                }`}
-              >
-                {trade.position}
-              </span>{' '}
-              · {displayLot.toFixed(2)} LOT · {(resolved.entryTime || trade.dateTime || '').slice(0, 10)} · ID: {trade.id}
-            </p>
+      {/* BAGIAN 2 — HEADER DAN RINGKASAN TRADE */}
+      <div className="rounded-2xl border border-[#DDE3EA] dark:border-[#252B34] bg-white dark:bg-[#11151B] transition-colors duration-150">
+        {/* Top Action Bar: Back Button · Title · [Edit] [⋯] */}
+        <div className="flex items-center justify-between gap-3 px-4 sm:px-6 py-3.5 border-b border-[#DDE3EA] dark:border-[#252B34]">
+          <div className="flex items-center gap-2.5 min-w-0">
+            <button
+              type="button"
+              onClick={onClose}
+              aria-label="Kembali ke Trade Log"
+              className="inline-flex items-center justify-center h-8 w-8 rounded-lg border border-[#DDE3EA] dark:border-[#252B34] bg-[#F5F7FA] dark:bg-[#161B22] hover:border-[#1769E8] dark:hover:border-[#38BDF8] text-[#151D2A] dark:text-[#F2F5F9] transition-colors shrink-0 cursor-pointer"
+            >
+              <ArrowLeft className="h-4 w-4 stroke-[1.75]" />
+            </button>
+            <span className="text-xs font-semibold uppercase tracking-[0.08em] text-[#697586] dark:text-[#929BA9] truncate">
+              Detail Trade
+            </span>
           </div>
 
-          {/* Right: Realized Profit / Loss or Lifecycle Status Info */}
-          <div className="sm:text-right">
-            {isClosed ? (
-              <div>
-                <span className="block text-[10px] uppercase tracking-[0.08em] text-[#697586] dark:text-[#929BA9] font-semibold">
-                  REALIZED P/L
+          <div className="flex items-center gap-2 shrink-0">
+            {allTrades.length > 1 && onSelectTrade && (
+              <select
+                value={trade.id}
+                onChange={(e) => {
+                  const found = allTrades.find((item) => item.id === e.target.value);
+                  if (found) onSelectTrade(found);
+                }}
+                aria-label="Pilih transaksi lain"
+                className="hidden sm:block rounded-lg bg-[#F5F7FA] dark:bg-[#161B22] border border-[#DDE3EA] dark:border-[#252B34] px-2.5 py-1.5 text-xs text-[#151D2A] dark:text-[#F2F5F9] font-mono-numbers tabular-nums focus:border-[#1769E8] focus:outline-none max-w-[190px] truncate"
+              >
+                {allTrades.map((item) => (
+                  <option key={item.id} value={item.id}>
+                    {item.instrument} · {item.position} · {(item.dateTime || '').slice(0, 10)}
+                  </option>
+                ))}
+              </select>
+            )}
+
+            <button
+              type="button"
+              onClick={() => onEdit(trade)}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#F5F7FA] dark:bg-[#161B22] border border-[#DDE3EA] dark:border-[#252B34] hover:border-[#1769E8] dark:hover:border-[#38BDF8] text-xs font-medium text-[#151D2A] dark:text-[#F2F5F9] transition-colors whitespace-nowrap shrink-0 cursor-pointer"
+              title="Edit Transaksi"
+            >
+              <Edit2 className="h-3.5 w-3.5 stroke-[1.75]" />
+              <span>Edit</span>
+            </button>
+
+            {/* Menu Tambahan [⋯] */}
+            <div className="relative" ref={moreMenuRef}>
+              <button
+                type="button"
+                onClick={() => setIsMoreMenuOpen((prev) => !prev)}
+                aria-label="Menu tambahan"
+                aria-expanded={isMoreMenuOpen}
+                className="inline-flex items-center justify-center h-8 w-8 rounded-lg bg-[#F5F7FA] dark:bg-[#161B22] border border-[#DDE3EA] dark:border-[#252B34] hover:border-[#1769E8] dark:hover:border-[#38BDF8] text-[#151D2A] dark:text-[#F2F5F9] transition-colors cursor-pointer"
+              >
+                <MoreHorizontal className="h-4 w-4 stroke-[1.75]" />
+              </button>
+
+              {isMoreMenuOpen && (
+                <div className="absolute right-0 mt-1.5 w-52 rounded-xl border border-[#DDE3EA] dark:border-[#252B34] bg-white dark:bg-[#161B22] shadow-lg py-1.5 z-30 text-xs">
+                  {allTrades.length > 1 && onSelectTrade && (
+                    <div className="px-3 py-1.5 border-b border-[#DDE3EA] dark:border-[#252B34] sm:hidden">
+                      <label className="block text-[10px] text-[#697586] dark:text-[#929BA9] mb-1">
+                        Pindah Catatan Trade
+                      </label>
+                      <select
+                        value={trade.id}
+                        onChange={(e) => {
+                          const found = allTrades.find((item) => item.id === e.target.value);
+                          if (found) {
+                            onSelectTrade(found);
+                            setIsMoreMenuOpen(false);
+                          }
+                        }}
+                        className="w-full rounded-md bg-[#F5F7FA] dark:bg-[#11151B] border border-[#DDE3EA] dark:border-[#252B34] px-2 py-1 text-xs font-mono-numbers tabular-nums"
+                      >
+                        {allTrades.map((item) => (
+                          <option key={item.id} value={item.id}>
+                            {item.instrument} ({item.position}) · {(item.dateTime || '').slice(0, 10)}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
+
+                  {onSaveTradeUpdate && isPlanned && (
+                    <>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setIsMoreMenuOpen(false);
+                          setActiveTransitionPanel('OPEN');
+                        }}
+                        className="w-full px-3.5 py-2 text-left flex items-center gap-2 hover:bg-[#F5F7FA] dark:hover:bg-[#11151B] text-[#151D2A] dark:text-[#F2F5F9]"
+                      >
+                        <CheckCircle2 className="h-3.5 w-3.5 stroke-[1.75] text-[#1769E8] dark:text-[#38BDF8]" />
+                        <span>Konfirmasi Posisi Dibuka</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setIsMoreMenuOpen(false);
+                          setActiveTransitionPanel('CANCEL');
+                        }}
+                        className="w-full px-3.5 py-2 text-left flex items-center gap-2 hover:bg-[#F5F7FA] dark:hover:bg-[#11151B] text-[#697586] dark:text-[#929BA9]"
+                      >
+                        <XCircle className="h-3.5 w-3.5 stroke-[1.75]" />
+                        <span>Batalkan Rencana Order</span>
+                      </button>
+                    </>
+                  )}
+
+                  {onSaveTradeUpdate && isOpenPos && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsMoreMenuOpen(false);
+                        setActiveTransitionPanel('CLOSE');
+                      }}
+                      className="w-full px-3.5 py-2 text-left flex items-center gap-2 hover:bg-[#F5F7FA] dark:hover:bg-[#11151B] text-[#151D2A] dark:text-[#F2F5F9]"
+                    >
+                      <Lock className="h-3.5 w-3.5 stroke-[1.75] text-[#1769E8] dark:text-[#38BDF8]" />
+                      <span>Tutup Posisi (Close Trade)</span>
+                    </button>
+                  )}
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsMoreMenuOpen(false);
+                      onDelete(trade);
+                    }}
+                    className="w-full px-3.5 py-2 text-left flex items-center gap-2 hover:bg-[#F5F7FA] dark:hover:bg-[#11151B] text-[#E11D48] dark:text-[#FB7185]"
+                  >
+                    <Trash2 className="h-3.5 w-3.5 stroke-[1.75]" />
+                    <span>Hapus Catatan Trade</span>
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+
+        {/* Core Trade Summary Area */}
+        <div className="px-4 sm:px-6 py-5 space-y-5">
+          <div className="flex items-start justify-between gap-4">
+            {/* Left: Instrument + Direction + Timeframe & Date */}
+            <div className="space-y-1 min-w-0">
+              <div className="flex items-baseline gap-2.5 flex-wrap">
+                <h1 className="text-2xl sm:text-3xl font-bold tracking-tight text-[#151D2A] dark:text-[#F2F5F9]">
+                  {trade.instrument}
+                </h1>
+                {recordedTimeframe && (
+                  <span className="text-xs font-medium text-[#697586] dark:text-[#929BA9] font-mono-numbers tabular-nums">
+                    {recordedTimeframe}
+                  </span>
+                )}
+              </div>
+
+              <div className="flex items-center gap-2 flex-wrap text-xs">
+                <span
+                  className={`font-bold uppercase tracking-wide ${
+                    trade.position === 'BUY'
+                      ? 'text-[#059669] dark:text-[#34D399]'
+                      : 'text-[#E11D48] dark:text-[#FB7185]'
+                  }`}
+                >
+                  {trade.position}
                 </span>
-                <div
-                  className={`text-2xl sm:text-3xl font-bold font-mono-numbers tabular-nums ${
-                    isProfit
+                <span className="text-[#DDE3EA] dark:text-[#252B34]" aria-hidden="true">
+                  ·
+                </span>
+                <span className="text-[#697586] dark:text-[#929BA9] font-mono-numbers tabular-nums">
+                  {(resolved.entryTime || trade.dateTime || '').slice(0, 16).replace('T', ' ')}
+                </span>
+                {trade.id && (
+                  <>
+                    <span className="text-[#DDE3EA] dark:text-[#252B34]" aria-hidden="true">
+                      ·
+                    </span>
+                    <span className="text-[#697586] dark:text-[#929BA9] font-mono-numbers tabular-nums truncate max-w-[140px]">
+                      {trade.id}
+                    </span>
+                  </>
+                )}
+              </div>
+            </div>
+
+            {/* Right: Status & Result / R:R */}
+            <div className="text-right shrink-0 space-y-0.5">
+              <div
+                data-testid="trade-detail-status-badge"
+                className={`text-xs font-bold uppercase tracking-[0.06em] ${
+                  headerStatusLabel === 'TP HIT' || headerStatusLabel === 'CLOSED · WIN'
+                    ? 'text-[#059669] dark:text-[#34D399]'
+                    : headerStatusLabel === 'SL HIT' || headerStatusLabel === 'CLOSED · LOSS'
+                    ? 'text-[#E11D48] dark:text-[#FB7185]'
+                    : headerStatusLabel === 'ACTIVE'
+                    ? 'text-[#D97706] dark:text-[#F59E0B]'
+                    : headerStatusLabel === 'PLANNED'
+                    ? 'text-[#1769E8] dark:text-[#38BDF8]'
+                    : 'text-[#697586] dark:text-[#929BA9]'
+                }`}
+              >
+                {headerStatusLabel}
+              </div>
+
+              <div
+                className={`text-2xl sm:text-3xl font-bold font-mono-numbers tabular-nums tracking-tight ${
+                  isClosed
+                    ? isProfit
                       ? 'text-[#059669] dark:text-[#34D399]'
                       : isLoss
                       ? 'text-[#E11D48] dark:text-[#FB7185]'
                       : 'text-[#151D2A] dark:text-[#F2F5F9]'
-                  }`}
-                >
-                  {preferredCurrency === 'IDR'
-                    ? formatTradeFinancial(trade, 'netProfit', false, true)
-                    : `${isProfit ? '+' : ''}${formatCurrency(trade.netProfit, settings)}`}
-                </div>
-                {realizedR !== null && (
-                  <span className="text-xs font-mono-numbers tabular-nums text-[#697586] dark:text-[#929BA9]">
-                    Realized R: <strong>{formatRMultiple(realizedR)}</strong>
-                  </span>
+                    : 'text-[#151D2A] dark:text-[#F2F5F9]'
+                }`}
+              >
+                {headerPrimaryMetric}
+              </div>
+
+              <div className="text-[11px] text-[#697586] dark:text-[#929BA9] font-mono-numbers tabular-nums">
+                {headerSecondaryMetric}
+              </div>
+            </div>
+          </div>
+
+          {/* Price Strip: Entry | Stop Loss | Take Profit */}
+          <div className="pt-4 border-t border-[#DDE3EA] dark:border-[#252B34] grid grid-cols-3 gap-4 sm:gap-6">
+            <div>
+              <span className="block text-[11px] text-[#697586] dark:text-[#929BA9]">
+                Entry
+              </span>
+              <span className="mt-0.5 block text-sm sm:text-base font-semibold font-mono-numbers tabular-nums text-[#151D2A] dark:text-[#F2F5F9]">
+                {formatActualPrice(summaryEntryPrice, trade.instrument)}
+              </span>
+            </div>
+
+            <div>
+              <span className="block text-[11px] text-[#697586] dark:text-[#929BA9]">
+                Stop Loss
+              </span>
+              <span className="mt-0.5 block text-sm sm:text-base font-semibold font-mono-numbers tabular-nums text-[#E11D48] dark:text-[#FB7185]">
+                {formatActualPrice(summaryStopLoss, trade.instrument)}
+              </span>
+            </div>
+
+            <div>
+              <span className="block text-[11px] text-[#697586] dark:text-[#929BA9]">
+                Take Profit
+              </span>
+              <span className="mt-0.5 block text-sm sm:text-base font-semibold font-mono-numbers tabular-nums text-[#059669] dark:text-[#34D399]">
+                {formatActualPrice(summaryTakeProfit, trade.instrument)}
+              </span>
+            </div>
+          </div>
+
+          {/* Quick Lifecycle Bar for PLANNED or OPEN trades */}
+          {onSaveTradeUpdate && (isPlanned || isOpenPos) && (
+            <div className="pt-3.5 border-t border-[#DDE3EA] dark:border-[#252B34] flex flex-wrap items-center justify-between gap-2.5">
+              <span className="text-xs text-[#697586] dark:text-[#929BA9]">
+                {isPlanned
+                  ? 'Order masih berstatus rencana (Planned).'
+                  : 'Posisi sedang aktif berjalan di pasar.'}
+              </span>
+              <div className="flex items-center gap-2">
+                {isPlanned && (
+                  <>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setActiveTransitionPanel(
+                          activeTransitionPanel === 'OPEN' ? null : 'OPEN'
+                        )
+                      }
+                      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#1769E8] hover:bg-[#1458C4] text-white text-xs font-medium transition-colors whitespace-nowrap shrink-0 cursor-pointer"
+                    >
+                      <CheckCircle2 className="h-3.5 w-3.5 stroke-[1.75]" />
+                      <span>Konfirmasi Entry</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setActiveTransitionPanel(
+                          activeTransitionPanel === 'CANCEL' ? null : 'CANCEL'
+                        )
+                      }
+                      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#F5F7FA] dark:bg-[#161B22] border border-[#DDE3EA] dark:border-[#252B34] hover:border-[#697586] text-xs font-medium text-[#697586] dark:text-[#929BA9] transition-colors whitespace-nowrap shrink-0 cursor-pointer"
+                    >
+                      <XCircle className="h-3.5 w-3.5 stroke-[1.75]" />
+                      <span>Batalkan</span>
+                    </button>
+                  </>
+                )}
+
+                {isOpenPos && (
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setActiveTransitionPanel(
+                        activeTransitionPanel === 'CLOSE' ? null : 'CLOSE'
+                      )
+                    }
+                    className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg bg-[#1769E8] hover:bg-[#1458C4] text-white text-xs font-medium transition-colors whitespace-nowrap shrink-0 cursor-pointer"
+                  >
+                    <Lock className="h-3.5 w-3.5 stroke-[1.75]" />
+                    <span>Tutup Posisi</span>
+                  </button>
                 )}
               </div>
-            ) : isCancelled ? (
-              <div>
-                <span className="block text-xs font-bold uppercase tracking-wider text-[#697586] dark:text-[#929BA9]">
-                  CANCELLED
-                </span>
-                <span className="text-[11px] text-[#697586] dark:text-[#929BA9]">
-                  Dibatalkan sebelum eksekusi (bukan Loss)
-                </span>
-              </div>
-            ) : (
-              <div>
-                <span className="block text-xs font-bold uppercase tracking-wider text-amber-600 dark:text-amber-400">
-                  {isPlanned ? 'MENUNGGU EKSEKUSI' : 'POSISI SEDANG BERJALAN'}
-                </span>
-                <span className="text-[11px] font-mono-numbers tabular-nums text-[#697586] dark:text-[#929BA9]">
-                  Planned RR: {formatPlannedRR(plannedRR)}
-                </span>
-              </div>
-            )}
-          </div>
-        </div>
+            </div>
+          )}
 
-        {/* Status-Specific Primary Lifecycle Action Bar */}
-        {onSaveTradeUpdate && (isPlanned || isOpenPos) && (
-          <div className="mt-4 pt-3.5 border-t border-[#DDE3EA] dark:border-[#252B34] flex flex-wrap items-center justify-between gap-2">
-            <span className="text-xs text-[#697586] dark:text-[#929BA9]">
-              {isPlanned
-                ? 'Tindakan Status PLANNED: Konfirmasi saat posisi dibuka di MT5 atau batalkan rencana.'
-                : 'Tindakan Status OPEN: Tutup posisi dengan harga exit aktual (TP / SL / Manual).'}
-            </span>
-            <div className="flex items-center gap-2">
-              {isPlanned && (
+          {/* Inline Transition Form when triggered */}
+          {activeTransitionPanel && (
+            <form
+              onSubmit={handleExecuteTransition}
+              className="p-4 rounded-xl bg-[#F5F7FA] dark:bg-[#161B22] border border-[#DDE3EA] dark:border-[#252B34] space-y-3.5 text-xs"
+            >
+              {transitionError && (
+                <div className="p-2.5 rounded-lg bg-white dark:bg-[#11151B] border border-rose-500/30 text-[#E11D48] dark:text-[#FB7185]">
+                  {transitionError}
+                </div>
+              )}
+
+              {activeTransitionPanel === 'OPEN' && (
                 <>
-                  <button
-                    type="button"
-                    onClick={() =>
-                      setActiveTransitionPanel(
-                        activeTransitionPanel === 'OPEN' ? null : 'OPEN'
-                      )
-                    }
-                    className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg bg-[#1769E8] hover:bg-[#1458C4] text-white text-xs font-semibold cursor-pointer"
-                  >
-                    <CheckCircle2 className="h-3.5 w-3.5 stroke-[1.75]" />
-                    <span>Konfirmasi Posisi Dibuka (OPEN)</span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() =>
-                      setActiveTransitionPanel(
-                        activeTransitionPanel === 'CANCEL' ? null : 'CANCEL'
-                      )
-                    }
-                    className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-[#F5F7FA] dark:bg-[#171D26] border border-[#DDE3EA] dark:border-[#252B34] hover:border-[#1769E8] text-xs font-semibold cursor-pointer"
-                  >
-                    <XCircle className="h-3.5 w-3.5 stroke-[1.75]" />
-                    <span>Batalkan (CANCELLED)</span>
-                  </button>
+                  <label className="flex items-center gap-2 cursor-pointer text-[#151D2A] dark:text-[#F2F5F9]">
+                    <input
+                      type="checkbox"
+                      checked={mt5Confirmed}
+                      onChange={(e) => setMt5Confirmed(e.target.checked)}
+                    />
+                    <span>Konfirmasi posisi benar-benar telah dibuka di pasar / MT5</span>
+                  </label>
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                    <div>
+                      <label className="block text-[11px] text-[#697586] dark:text-[#929BA9] mb-1">
+                        Actual Entry
+                      </label>
+                      <input
+                        type="number"
+                        step="any"
+                        value={actualEntryInput}
+                        onChange={(e) => setActualEntryInput(e.target.value)}
+                        className="w-full rounded-lg bg-white dark:bg-[#11151B] border border-[#DDE3EA] dark:border-[#252B34] px-3 py-1.5 font-mono-numbers tabular-nums font-semibold text-[#151D2A] dark:text-[#F2F5F9]"
+                        required
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[11px] text-[#697586] dark:text-[#929BA9] mb-1">
+                        Actual Lot
+                      </label>
+                      <input
+                        type="number"
+                        step="0.01"
+                        min="0.01"
+                        value={actualLotInput}
+                        onChange={(e) => setActualLotInput(e.target.value)}
+                        className="w-full rounded-lg bg-white dark:bg-[#11151B] border border-[#DDE3EA] dark:border-[#252B34] px-3 py-1.5 font-mono-numbers tabular-nums font-semibold text-[#151D2A] dark:text-[#F2F5F9]"
+                        required
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[11px] text-[#697586] dark:text-[#929BA9] mb-1">
+                        Tanggal Entry
+                      </label>
+                      <input
+                        type="date"
+                        value={entryDateInput}
+                        onChange={(e) => setEntryDateInput(e.target.value)}
+                        className="w-full rounded-lg bg-white dark:bg-[#11151B] border border-[#DDE3EA] dark:border-[#252B34] px-3 py-1.5 font-mono-numbers tabular-nums text-[#151D2A] dark:text-[#F2F5F9]"
+                        required
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[11px] text-[#697586] dark:text-[#929BA9] mb-1">
+                        Jam Entry
+                      </label>
+                      <input
+                        type="time"
+                        value={entryTimeInput}
+                        onChange={(e) => setEntryTimeInput(e.target.value)}
+                        className="w-full rounded-lg bg-white dark:bg-[#11151B] border border-[#DDE3EA] dark:border-[#252B34] px-3 py-1.5 font-mono-numbers tabular-nums text-[#151D2A] dark:text-[#F2F5F9]"
+                        required
+                      />
+                    </div>
+                  </div>
                 </>
               )}
 
-              {isOpenPos && (
-                <button
-                  type="button"
-                  onClick={() =>
-                    setActiveTransitionPanel(
-                      activeTransitionPanel === 'CLOSE' ? null : 'CLOSE'
-                    )
-                  }
-                  className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-[#1769E8] hover:bg-[#1458C4] text-white text-xs font-semibold cursor-pointer"
-                >
-                  <Lock className="h-3.5 w-3.5 stroke-[1.75]" />
-                  <span>Tutup Posisi (CLOSED)</span>
-                </button>
-              )}
-            </div>
-          </div>
-        )}
-
-        {/* Inline Transition Form when triggered */}
-        {activeTransitionPanel && (
-          <form
-            onSubmit={handleExecuteTransition}
-            className="mt-3 p-3.5 rounded-xl bg-[#F5F7FA] dark:bg-[#171D26] border border-[#DDE3EA] dark:border-[#252B34] space-y-3 text-xs"
-          >
-            {transitionError && (
-              <div className="p-2.5 rounded-lg bg-white dark:bg-[#11151B] border border-[#DDE3EA] dark:border-[#252B34] text-rose-600 dark:text-rose-400">
-                {transitionError}
-              </div>
-            )}
-
-            {activeTransitionPanel === 'OPEN' && (
-              <>
-                <label className="flex items-center gap-2 cursor-pointer">
+              {activeTransitionPanel === 'CANCEL' && (
+                <div>
+                  <label className="block text-[11px] text-[#697586] dark:text-[#929BA9] mb-1">
+                    Alasan Pembatalan (Opsional)
+                  </label>
                   <input
-                    type="checkbox"
-                    checked={mt5Confirmed}
-                    onChange={(e) => setMt5Confirmed(e.target.checked)}
+                    type="text"
+                    value={cancelReasonInput}
+                    onChange={(e) => setCancelReasonInput(e.target.value)}
+                    placeholder="Contoh: Setup tidak valid / harga melewati zona entry..."
+                    className="w-full rounded-lg bg-white dark:bg-[#11151B] border border-[#DDE3EA] dark:border-[#252B34] px-3 py-1.5 text-[#151D2A] dark:text-[#F2F5F9]"
                   />
-                  <span>Konfirmasi posisi benar-benar telah dibuka di MT5</span>
-                </label>
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                </div>
+              )}
+
+              {activeTransitionPanel === 'CLOSE' && (
+                <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
                   <div>
                     <label className="block text-[11px] text-[#697586] dark:text-[#929BA9] mb-1">
-                      Actual Entry Price
+                      Jenis Penutupan
+                    </label>
+                    <select
+                      value={closeTypeInput}
+                      onChange={(e) => {
+                        const ct = e.target.value as TradeCloseType;
+                        setCloseTypeInput(ct);
+                        if (ct === 'TP' && trade.takeProfit) setActualExitInput(String(trade.takeProfit));
+                        if (ct === 'SL' && trade.stopLoss) setActualExitInput(String(trade.stopLoss));
+                      }}
+                      className="w-full rounded-lg bg-white dark:bg-[#11151B] border border-[#DDE3EA] dark:border-[#252B34] px-2.5 py-1.5 font-semibold text-[#151D2A] dark:text-[#F2F5F9]"
+                    >
+                      <option value="TP">TP (Take Profit)</option>
+                      <option value="SL">SL (Stop Loss)</option>
+                      <option value="Manual">Manual Close</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-[11px] text-[#697586] dark:text-[#929BA9] mb-1">
+                      Actual Exit
                     </label>
                     <input
                       type="number"
                       step="any"
-                      value={actualEntryInput}
-                      onChange={(e) => setActualEntryInput(e.target.value)}
-                      className="w-full rounded-lg bg-white dark:bg-[#080A0E] border border-[#DDE3EA] dark:border-[#252B34] px-3 py-1.5 font-mono-numbers tabular-nums font-semibold"
+                      value={actualExitInput}
+                      onChange={(e) => setActualExitInput(e.target.value)}
+                      className="w-full rounded-lg bg-white dark:bg-[#11151B] border border-[#DDE3EA] dark:border-[#252B34] px-3 py-1.5 font-mono-numbers tabular-nums font-semibold text-[#151D2A] dark:text-[#F2F5F9]"
                       required
                     />
                   </div>
                   <div>
                     <label className="block text-[11px] text-[#697586] dark:text-[#929BA9] mb-1">
-                      Actual Lot
+                      Tanggal Exit
+                    </label>
+                    <input
+                      type="date"
+                      value={exitDateInput}
+                      onChange={(e) => setExitDateInput(e.target.value)}
+                      className="w-full rounded-lg bg-white dark:bg-[#11151B] border border-[#DDE3EA] dark:border-[#252B34] px-3 py-1.5 font-mono-numbers tabular-nums text-[#151D2A] dark:text-[#F2F5F9]"
+                      required
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[11px] text-[#697586] dark:text-[#929BA9] mb-1">
+                      Jam Exit
+                    </label>
+                    <input
+                      type="time"
+                      value={exitTimeInput}
+                      onChange={(e) => setExitTimeInput(e.target.value)}
+                      className="w-full rounded-lg bg-white dark:bg-[#11151B] border border-[#DDE3EA] dark:border-[#252B34] px-3 py-1.5 font-mono-numbers tabular-nums text-[#151D2A] dark:text-[#F2F5F9]"
+                      required
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[11px] text-[#697586] dark:text-[#929BA9] mb-1">
+                      Net P/L (Opsional)
                     </label>
                     <input
                       type="number"
                       step="0.01"
-                      min="0.01"
-                      value={actualLotInput}
-                      onChange={(e) => setActualLotInput(e.target.value)}
-                      className="w-full rounded-lg bg-white dark:bg-[#080A0E] border border-[#DDE3EA] dark:border-[#252B34] px-3 py-1.5 font-mono-numbers tabular-nums font-semibold"
-                      required
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-[11px] text-[#697586] dark:text-[#929BA9] mb-1">
-                      Tanggal Entry
-                    </label>
-                    <input
-                      type="date"
-                      value={entryDateInput}
-                      onChange={(e) => setEntryDateInput(e.target.value)}
-                      className="w-full rounded-lg bg-white dark:bg-[#080A0E] border border-[#DDE3EA] dark:border-[#252B34] px-3 py-1.5 font-mono-numbers tabular-nums"
-                      required
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-[11px] text-[#697586] dark:text-[#929BA9] mb-1">
-                      Jam Entry
-                    </label>
-                    <input
-                      type="time"
-                      value={entryTimeInput}
-                      onChange={(e) => setEntryTimeInput(e.target.value)}
-                      className="w-full rounded-lg bg-white dark:bg-[#080A0E] border border-[#DDE3EA] dark:border-[#252B34] px-3 py-1.5 font-mono-numbers tabular-nums"
-                      required
+                      value={closeNetOverrideInput}
+                      onChange={(e) => setCloseNetOverrideInput(e.target.value)}
+                      placeholder="Otomatis"
+                      className="w-full rounded-lg bg-white dark:bg-[#11151B] border border-[#DDE3EA] dark:border-[#252B34] px-3 py-1.5 font-mono-numbers tabular-nums text-[#151D2A] dark:text-[#F2F5F9]"
                     />
                   </div>
                 </div>
-              </>
-            )}
+              )}
 
-            {activeTransitionPanel === 'CANCEL' && (
-              <div>
-                <label className="block text-[11px] text-[#697586] dark:text-[#929BA9] mb-1">
-                  Alasan Pembatalan (Opsional)
-                </label>
-                <input
-                  type="text"
-                  value={cancelReasonInput}
-                  onChange={(e) => setCancelReasonInput(e.target.value)}
-                  placeholder="Contoh: Setup tidak valid / harga melewati zona entry..."
-                  className="w-full rounded-lg bg-white dark:bg-[#080A0E] border border-[#DDE3EA] dark:border-[#252B34] px-3 py-1.5"
-                />
+              <div className="flex items-center justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => setActiveTransitionPanel(null)}
+                  className="px-3 py-1.5 rounded-lg border border-[#DDE3EA] dark:border-[#252B34] bg-white dark:bg-[#11151B] font-medium text-[#697586] dark:text-[#929BA9] hover:text-[#151D2A] dark:hover:text-[#F2F5F9] cursor-pointer"
+                >
+                  Batal
+                </button>
+                <button
+                  type="submit"
+                  disabled={isTransitionSaving}
+                  className="px-4 py-1.5 rounded-lg bg-[#1769E8] hover:bg-[#1458C4] text-white font-medium cursor-pointer"
+                >
+                  {isTransitionSaving ? 'Menyimpan...' : 'Simpan Status'}
+                </button>
               </div>
-            )}
+            </form>
+          )}
+        </div>
 
-            {activeTransitionPanel === 'CLOSE' && (
-              <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
-                <div>
-                  <label className="block text-[11px] text-[#697586] dark:text-[#929BA9] mb-1">
-                    Jenis Penutupan
-                  </label>
-                  <select
-                    value={closeTypeInput}
-                    onChange={(e) => {
-                      const ct = e.target.value as TradeCloseType;
-                      setCloseTypeInput(ct);
-                      if (ct === 'TP' && trade.takeProfit) setActualExitInput(String(trade.takeProfit));
-                      if (ct === 'SL' && trade.stopLoss) setActualExitInput(String(trade.stopLoss));
-                    }}
-                    className="w-full rounded-lg bg-white dark:bg-[#080A0E] border border-[#DDE3EA] dark:border-[#252B34] px-2.5 py-1.5 font-semibold"
-                  >
-                    <option value="TP">TP (Take Profit)</option>
-                    <option value="SL">SL (Stop Loss)</option>
-                    <option value="Manual">Manual Close</option>
-                  </select>
-                </div>
-                <div>
-                  <label className="block text-[11px] text-[#697586] dark:text-[#929BA9] mb-1">
-                    Actual Exit Price
-                  </label>
-                  <input
-                    type="number"
-                    step="any"
-                    value={actualExitInput}
-                    onChange={(e) => setActualExitInput(e.target.value)}
-                    className="w-full rounded-lg bg-white dark:bg-[#080A0E] border border-[#DDE3EA] dark:border-[#252B34] px-3 py-1.5 font-mono-numbers tabular-nums font-semibold"
-                    required
-                  />
-                </div>
-                <div>
-                  <label className="block text-[11px] text-[#697586] dark:text-[#929BA9] mb-1">
-                    Tanggal Exit
-                  </label>
-                  <input
-                    type="date"
-                    value={exitDateInput}
-                    onChange={(e) => setExitDateInput(e.target.value)}
-                    className="w-full rounded-lg bg-white dark:bg-[#080A0E] border border-[#DDE3EA] dark:border-[#252B34] px-3 py-1.5 font-mono-numbers tabular-nums"
-                    required
-                  />
-                </div>
-                <div>
-                  <label className="block text-[11px] text-[#697586] dark:text-[#929BA9] mb-1">
-                    Jam Exit
-                  </label>
-                  <input
-                    type="time"
-                    value={exitTimeInput}
-                    onChange={(e) => setExitTimeInput(e.target.value)}
-                    className="w-full rounded-lg bg-white dark:bg-[#080A0E] border border-[#DDE3EA] dark:border-[#252B34] px-3 py-1.5 font-mono-numbers tabular-nums"
-                    required
-                  />
-                </div>
-                <div>
-                  <label className="block text-[11px] text-[#697586] dark:text-[#929BA9] mb-1">
-                    Net P/L (Opsional)
-                  </label>
-                  <input
-                    type="number"
-                    step="0.01"
-                    value={closeNetOverrideInput}
-                    onChange={(e) => setCloseNetOverrideInput(e.target.value)}
-                    placeholder="Otomatis"
-                    className="w-full rounded-lg bg-white dark:bg-[#080A0E] border border-[#DDE3EA] dark:border-[#252B34] px-3 py-1.5 font-mono-numbers tabular-nums"
-                  />
-                </div>
-              </div>
-            )}
-
-            <div className="flex items-center justify-end gap-2">
+        {/* BAGIAN 3 — NAVIGASI LIMA BAGIAN (Horizontal Scrollable Tabs) */}
+        <div
+          role="tablist"
+          aria-label="Bagian Detail Trade"
+          className="flex items-center gap-1 sm:gap-2 px-4 sm:px-6 border-t border-[#DDE3EA] dark:border-[#252B34] overflow-x-auto"
+        >
+          {sectionTabs.map((tab) => {
+            const isActive = activeSectionTab === tab.id;
+            return (
               <button
+                key={tab.id}
                 type="button"
-                onClick={() => setActiveTransitionPanel(null)}
-                className="px-3 py-1.5 rounded-lg border border-[#DDE3EA] dark:border-[#252B34] bg-white dark:bg-[#11151B] font-semibold cursor-pointer"
+                role="tab"
+                data-testid={tab.testId}
+                aria-selected={isActive}
+                onClick={() => setActiveSectionTab(tab.id)}
+                className={`relative py-3 px-3 sm:px-4 text-xs font-medium whitespace-nowrap shrink-0 transition-colors cursor-pointer border-b-2 ${
+                  isActive
+                    ? 'border-[#1769E8] dark:border-[#38BDF8] text-[#151D2A] dark:text-[#F2F5F9] font-semibold'
+                    : 'border-transparent text-[#697586] dark:text-[#929BA9] hover:text-[#151D2A] dark:hover:text-[#F2F5F9]'
+                }`}
               >
-                Batal
+                <span>{tab.label}</span>
+                {tab.badge !== undefined && (
+                  <span className="ml-1.5 text-[11px] font-mono-numbers tabular-nums text-[#697586] dark:text-[#929BA9]">
+                    ({tab.badge})
+                  </span>
+                )}
               </button>
-              <button
-                type="submit"
-                disabled={isTransitionSaving}
-                className="px-4 py-1.5 rounded-lg bg-[#1769E8] hover:bg-[#1458C4] text-white font-semibold cursor-pointer"
-              >
-                Simpan Perubahan Status
-              </button>
-            </div>
-          </form>
-        )}
-      </div>
-
-      {/* SESI TRADING (DIRECTLY UNDER SUMMARY CARD) */}
-      <div className="rounded-2xl border border-[#DDE3EA] dark:border-[#252B34] bg-white dark:bg-[#11151B] p-5 sm:p-6 transition-colors duration-150 space-y-3">
-        <span className="block text-[11px] font-semibold uppercase tracking-[0.08em] text-[#697586] dark:text-[#929BA9]">
-          SESI TRADING
-        </span>
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-          <div className="p-3.5 rounded-xl bg-[#F5F7FA] dark:bg-[#171D26] border border-[#DDE3EA] dark:border-[#252B34]">
-            <span className="block text-[10px] uppercase font-semibold text-[#697586] dark:text-[#929BA9]">
-              Sesi Aktif
-            </span>
-            <span className="mt-1 block font-bold text-sm text-[#151D2A] dark:text-[#F2F5F9]">
-              {trade.session || 'London'}
-            </span>
-          </div>
-
-          <div className="p-3.5 rounded-xl bg-[#F5F7FA] dark:bg-[#171D26] border border-[#DDE3EA] dark:border-[#252B34]">
-            <span className="block text-[10px] uppercase font-semibold text-[#697586] dark:text-[#929BA9]">
-              Jam Transaksi
-            </span>
-            <span className="mt-1 block font-bold text-sm font-mono-numbers tabular-nums text-[#151D2A] dark:text-[#F2F5F9]">
-              {(resolved.entryTime || trade.dateTime || '').slice(11, 16) || '15:30'}
-              {resolved.exitTime ? ` – ${resolved.exitTime.slice(11, 16)}` : ''} WIB
-            </span>
-          </div>
-
-          <div className="p-3.5 rounded-xl bg-[#F5F7FA] dark:bg-[#171D26] border border-[#DDE3EA] dark:border-[#252B34]">
-            <span className="block text-[10px] uppercase font-semibold text-[#697586] dark:text-[#929BA9]">
-              Jendela Acuan Sesi
-            </span>
-            <span className="mt-1 block font-bold text-sm font-mono-numbers tabular-nums text-[#1769E8]">
-              {(trade.session || '').toLowerCase().includes('new york') || (trade.session || '').toLowerCase().includes('ny')
-                ? '19:00 – 03:00 WIB'
-                : (trade.session || '').toLowerCase().includes('asia') || (trade.session || '').toLowerCase().includes('tokyo')
-                ? '06:00 – 15:00 WIB'
-                : (trade.session || '').toLowerCase().includes('sydney')
-                ? '04:00 – 12:00 WIB'
-                : '15:00 – 23:00 WIB (London)'}
-            </span>
-          </div>
+            );
+          })}
         </div>
       </div>
 
-      {/* ACCORDION 1: 01 — RENCANA */}
-      <div
-        data-testid="accordion-trade-plan"
-        className="rounded-2xl border border-[#DDE3EA] dark:border-[#252B34] bg-white dark:bg-[#11151B] overflow-hidden transition-colors duration-150"
-      >
-        <button
-          type="button"
-          onClick={() => toggleAccordion('plan')}
-          aria-expanded={openSections.plan}
-          className="w-full px-5 py-4 flex items-center justify-between text-left bg-[#F5F7FA] dark:bg-[#171D26] border-b border-[#DDE3EA] dark:border-[#252B34] cursor-pointer"
+      {/* BAGIAN 4 — KONTEN BAGIAN AKTIF (SATU AREA KONTEN TERFOKUS) */}
+
+      {/* A. RENCANA */}
+      {activeSectionTab === 'plan' && (
+        <div
+          data-testid="accordion-trade-plan"
+          role="tabpanel"
+          className="rounded-2xl border border-[#DDE3EA] dark:border-[#252B34] bg-white dark:bg-[#11151B] p-5 sm:p-6 space-y-6 transition-colors duration-150"
         >
-          <div>
-            <h2 className="text-sm font-bold text-[#151D2A] dark:text-[#F2F5F9]">
-              01 — Rencana
-            </h2>
-            <p className="text-[11px] text-[#697586] dark:text-[#929BA9]">
-              Parameter rencana trading, lot, SL, TP, dan target RR
-            </p>
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <h2 className="text-sm font-semibold text-[#151D2A] dark:text-[#F2F5F9]">
+                Rencana Trading
+              </h2>
+              <p className="text-xs text-[#697586] dark:text-[#929BA9]">
+                Thesis analisis, parameter order rencana, dan konteks market sebelum posisi dibuka
+              </p>
+            </div>
+            {onSaveTradeUpdate && !isEditingPlanNotes && (
+              <button
+                type="button"
+                onClick={() => setIsEditingPlanNotes(true)}
+                className="text-xs font-medium text-[#1769E8] dark:text-[#38BDF8] hover:underline whitespace-nowrap shrink-0 cursor-pointer"
+              >
+                Ubah Rencana
+              </button>
+            )}
           </div>
-          <ChevronDown
-            className={`h-4 w-4 stroke-[1.75] text-[#697586] dark:text-[#929BA9] transition-transform ${
-              openSections.plan ? 'rotate-180' : ''
-            }`}
-          />
-        </button>
 
-        {openSections.plan && (
-          <div className="p-4 grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs font-mono-numbers tabular-nums">
-            <div className="p-3 rounded-lg bg-[#F5F7FA] dark:bg-[#171D26] border border-[#DDE3EA] dark:border-[#252B34]">
-              <span className="block text-[10px] uppercase text-[#697586] dark:text-[#929BA9] font-sans">
-                Symbol &amp; Direction
+          {/* 1. Market Bias & Setup / Strategi */}
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-y-4 gap-x-6 pt-4 border-t border-[#DDE3EA] dark:border-[#252B34]">
+            <div>
+              <span className="block text-[11px] text-[#697586] dark:text-[#929BA9]">
+                Market Bias
               </span>
-              <span className="mt-0.5 block font-bold text-sm">
-                {trade.instrument}{' '}
-                <span
-                  className={
-                    trade.position === 'BUY'
-                      ? 'text-emerald-600 dark:text-emerald-400'
-                      : 'text-rose-600 dark:text-rose-400'
-                  }
-                >
-                  {trade.position}
+              <span
+                className={`mt-1 block text-sm font-semibold ${
+                  trade.position === 'BUY'
+                    ? 'text-[#059669] dark:text-[#34D399]'
+                    : 'text-[#E11D48] dark:text-[#FB7185]'
+                }`}
+              >
+                {trade.position === 'BUY' ? 'Bullish (Buy)' : 'Bearish (Sell)'}
+              </span>
+            </div>
+
+            <div>
+              <span className="block text-[11px] text-[#697586] dark:text-[#929BA9]">
+                Setup / Strategi
+              </span>
+              <span className="mt-1 block text-sm font-semibold text-[#151D2A] dark:text-[#F2F5F9]">
+                {trade.strategy || '—'}
+              </span>
+            </div>
+
+            <div>
+              <span className="block text-[11px] text-[#697586] dark:text-[#929BA9]">
+                Kondisi Market / Sesi
+              </span>
+              <span className="mt-1 block text-sm font-semibold text-[#151D2A] dark:text-[#F2F5F9]">
+                {trade.session || 'London'}
+                {recordedTimeframe ? ` · ${recordedTimeframe}` : ''}
+              </span>
+            </div>
+
+            <div>
+              <span className="block text-[11px] text-[#697586] dark:text-[#929BA9]">
+                Tipe &amp; Jadwal Rencana
+              </span>
+              <span className="mt-1 block text-sm font-medium font-mono-numbers tabular-nums text-[#151D2A] dark:text-[#F2F5F9]">
+                {resolved.orderType} · {(resolved.plannedDateTime || '').slice(0, 16).replace('T', ' ')}
+              </span>
+            </div>
+          </div>
+
+          {/* 2. Parameter Harga Rencana & Risk:Reward */}
+          <div className="pt-5 border-t border-[#DDE3EA] dark:border-[#252B34] grid grid-cols-2 sm:grid-cols-3 gap-y-5 gap-x-6">
+            <div>
+              <span className="block text-[11px] text-[#697586] dark:text-[#929BA9]">
+                Entry Plan
+              </span>
+              <span className="mt-1 block text-base font-semibold font-mono-numbers tabular-nums text-[#151D2A] dark:text-[#F2F5F9]">
+                {formatActualPrice(resolved.plannedEntry, trade.instrument)}
+              </span>
+              <span className="mt-0.5 block text-[11px] font-mono-numbers tabular-nums text-[#697586] dark:text-[#929BA9]">
+                Ukuran: {resolved.plannedLot.toFixed(2)} Lot
+              </span>
+            </div>
+
+            <div>
+              <span className="block text-[11px] text-[#697586] dark:text-[#929BA9]">
+                Stop Loss Plan
+              </span>
+              <span className="mt-1 block text-base font-semibold font-mono-numbers tabular-nums text-[#E11D48] dark:text-[#FB7185]">
+                {formatActualPrice(resolved.plannedStopLoss, trade.instrument)}
+              </span>
+              {planLotMetrics.slDistancePips !== null && (
+                <span className="mt-0.5 block text-[11px] font-mono-numbers tabular-nums text-[#697586] dark:text-[#929BA9]">
+                  Jarak: {planLotMetrics.slDistancePips} pips
                 </span>
-              </span>
+              )}
             </div>
 
-            <div className="p-3 rounded-lg bg-[#F5F7FA] dark:bg-[#171D26] border border-[#DDE3EA] dark:border-[#252B34]">
-              <span className="block text-[10px] uppercase text-[#697586] dark:text-[#929BA9] font-sans">
-                Order Type
+            <div>
+              <span className="block text-[11px] text-[#697586] dark:text-[#929BA9]">
+                Take Profit Plan
               </span>
-              <span className="mt-0.5 block font-bold text-sm font-sans">
-                {resolved.orderType}
+              <span className="mt-1 block text-base font-semibold font-mono-numbers tabular-nums text-[#059669] dark:text-[#34D399]">
+                {formatActualPrice(resolved.plannedTakeProfit, trade.instrument)}
               </span>
-            </div>
-
-            <div className="p-3 rounded-lg bg-[#F5F7FA] dark:bg-[#171D26] border border-[#DDE3EA] dark:border-[#252B34]">
-              <span className="block text-[10px] uppercase text-[#697586] dark:text-[#929BA9] font-sans">
-                Planned Entry
-              </span>
-              <span className="mt-0.5 block font-bold text-sm">
-                {resolved.plannedEntry.toFixed(2)}
-              </span>
-            </div>
-
-            <div className="p-3 rounded-lg bg-[#F5F7FA] dark:bg-[#171D26] border border-[#DDE3EA] dark:border-[#252B34]">
-              <span className="block text-[10px] uppercase text-[#697586] dark:text-[#929BA9] font-sans">
-                Planned Lot
-              </span>
-              <span className="mt-0.5 block font-bold text-sm">
-                {resolved.plannedLot.toFixed(2)} Lot
-              </span>
-            </div>
-
-            <div className="p-3 rounded-lg bg-[#F5F7FA] dark:bg-[#171D26] border border-[#DDE3EA] dark:border-[#252B34]">
-              <span className="block text-[10px] uppercase text-rose-600 dark:text-rose-400 font-sans">
-                Stop Loss (SL)
-              </span>
-              <span className="mt-0.5 block font-bold text-sm text-rose-600 dark:text-rose-400">
-                {resolved.plannedStopLoss ? resolved.plannedStopLoss.toFixed(2) : '-'}
-              </span>
-            </div>
-
-            <div className="p-3 rounded-lg bg-[#F5F7FA] dark:bg-[#171D26] border border-[#DDE3EA] dark:border-[#252B34]">
-              <span className="block text-[10px] uppercase text-emerald-600 dark:text-emerald-400 font-sans">
-                Take Profit (TP)
-              </span>
-              <span className="mt-0.5 block font-bold text-sm text-emerald-600 dark:text-emerald-400">
-                {resolved.plannedTakeProfit ? resolved.plannedTakeProfit.toFixed(2) : '-'}
-              </span>
-            </div>
-
-            <div className="p-3 rounded-lg bg-[#F5F7FA] dark:bg-[#171D26] border border-[#DDE3EA] dark:border-[#252B34]">
-              <span className="block text-[10px] uppercase text-[#697586] dark:text-[#929BA9] font-sans">
-                Risk / Reward ({preferredCurrency === 'IDR' ? 'Rp' : '$'})
-              </span>
-              <span className="mt-0.5 block font-semibold text-xs">
-                <span className="text-rose-600 dark:text-rose-400">
-                  {planLotMetrics.riskAmount !== null
-                    ? preferredCurrency === 'IDR'
-                      ? formatDynamic(planLotMetrics.riskAmount)
-                      : formatCurrency(planLotMetrics.riskAmount, settings)
-                    : preferredCurrency === 'IDR'
-                    ? formatDynamic(trade.riskAmount)
-                    : formatCurrency(trade.riskAmount, settings)}
+              {planLotMetrics.tpDistancePips !== null && (
+                <span className="mt-0.5 block text-[11px] font-mono-numbers tabular-nums text-[#697586] dark:text-[#929BA9]">
+                  Target: {planLotMetrics.tpDistancePips} pips
                 </span>
-                {' / '}
-                <span className="text-emerald-600 dark:text-emerald-400">
-                  {planLotMetrics.potentialProfit !== null
-                    ? preferredCurrency === 'IDR'
-                      ? formatDynamic(planLotMetrics.potentialProfit)
-                      : formatCurrency(planLotMetrics.potentialProfit, settings)
-                    : '-'}
-                </span>
-              </span>
+              )}
             </div>
 
-            <div className="p-3 rounded-lg bg-[#F5F7FA] dark:bg-[#171D26] border border-[#DDE3EA] dark:border-[#252B34]">
-              <span className="block text-[10px] uppercase text-[#697586] dark:text-[#929BA9] font-sans">
-                Risk/Reward Ratio
+            <div>
+              <span className="block text-[11px] text-[#697586] dark:text-[#929BA9]">
+                Risk:Reward
               </span>
-              <span className="mt-0.5 block font-bold text-sm text-[#1769E8]">
+              <span className="mt-1 block text-base font-semibold font-mono-numbers tabular-nums text-[#1769E8] dark:text-[#38BDF8]">
                 {formatPlannedRR(plannedRR)}
               </span>
             </div>
 
-            <div className="p-3 rounded-lg bg-[#F5F7FA] dark:bg-[#171D26] border border-[#DDE3EA] dark:border-[#252B34] col-span-2">
-              <span className="block text-[10px] uppercase text-[#697586] dark:text-[#929BA9] font-sans">
-                Trading Session &amp; Strategy
+            <div>
+              <span className="block text-[11px] text-[#697586] dark:text-[#929BA9]">
+                Estimasi Risiko
               </span>
-              <span className="mt-0.5 block font-semibold text-xs font-sans">
-                {trade.session || 'London'} • {trade.strategy || 'Umum'}
+              <span className="mt-1 block text-sm font-semibold font-mono-numbers tabular-nums text-[#E11D48] dark:text-[#FB7185]">
+                {planLotMetrics.riskAmount !== null
+                  ? preferredCurrency === 'IDR'
+                    ? formatDynamic(planLotMetrics.riskAmount)
+                    : formatCurrency(planLotMetrics.riskAmount, settings)
+                  : preferredCurrency === 'IDR'
+                  ? formatDynamic(trade.riskAmount)
+                  : formatCurrency(trade.riskAmount, settings)}
+                {trade.riskPercentage > 0 ? ` (${trade.riskPercentage.toFixed(2)}%)` : ''}
               </span>
             </div>
 
-            <div className="p-3 rounded-lg bg-[#F5F7FA] dark:bg-[#171D26] border border-[#DDE3EA] dark:border-[#252B34] col-span-2">
-              <span className="block text-[10px] uppercase text-[#697586] dark:text-[#929BA9] font-sans">
-                Planned Date &amp; Time
+            <div>
+              <span className="block text-[11px] text-[#697586] dark:text-[#929BA9]">
+                Potensi Target Profit
               </span>
-              <span className="mt-0.5 block font-semibold text-xs">
-                {resolved.plannedDateTime.replace('T', ' ')}
+              <span className="mt-1 block text-sm font-semibold font-mono-numbers tabular-nums text-[#059669] dark:text-[#34D399]">
+                {planLotMetrics.potentialProfit !== null
+                  ? preferredCurrency === 'IDR'
+                    ? formatDynamic(planLotMetrics.potentialProfit)
+                    : formatCurrency(planLotMetrics.potentialProfit, settings)
+                  : '—'}
               </span>
             </div>
           </div>
-        )}
-      </div>
 
-      {/* ACCORDION 2: 02 — EKSEKUSI */}
-      <div
-        data-testid="accordion-execution"
-        className="rounded-2xl border border-[#DDE3EA] dark:border-[#252B34] bg-white dark:bg-[#11151B] overflow-hidden transition-colors duration-150"
-      >
-        <button
-          type="button"
-          onClick={() => toggleAccordion('execution')}
-          aria-expanded={openSections.execution}
-          className="w-full px-5 py-4 flex items-center justify-between text-left bg-[#F5F7FA] dark:bg-[#171D26] border-b border-[#DDE3EA] dark:border-[#252B34] cursor-pointer"
-        >
-          <div>
-            <h2 className="text-sm font-bold text-[#151D2A] dark:text-[#F2F5F9]">
-              02 — Eksekusi
-            </h2>
-            <p className="text-[11px] text-[#697586] dark:text-[#929BA9]">
-              Data realisasi entry, lot, penutupan, dan hasil bersih
-            </p>
-          </div>
-          <ChevronDown
-            className={`h-4 w-4 stroke-[1.75] text-[#697586] dark:text-[#929BA9] transition-transform ${
-              openSections.execution ? 'rotate-180' : ''
-            }`}
-          />
-        </button>
-
-        {openSections.execution && (
-          <div className="p-4">
-            {isPlanned ? (
-              <div className="p-4 rounded-lg bg-[#F5F7FA] dark:bg-[#171D26] border border-[#DDE3EA] dark:border-[#252B34] text-xs text-[#697586] dark:text-[#929BA9]">
-                Transaksi ini masih berstatus <strong className="text-[#1769E8]">PLANNED</strong> dan belum dieksekusi di pasar. Data eksekusi akan tercatat saat posisi dikonfirmasi menjadi OPEN.
-              </div>
-            ) : isCancelled ? (
-              <div className="p-4 rounded-lg bg-[#F5F7FA] dark:bg-[#171D26] border border-[#DDE3EA] dark:border-[#252B34] text-xs text-[#697586] dark:text-[#929BA9] space-y-1">
-                <div className="font-semibold text-[#151D2A] dark:text-[#F2F5F9]">
-                  Transaksi Dibatalkan (CANCELLED)
+          {/* 3. Alasan Entry, Kondisi Market & Catatan Tambahan */}
+          <div className="pt-5 border-t border-[#DDE3EA] dark:border-[#252B34]">
+            {isEditingPlanNotes ? (
+              <form onSubmit={handleSavePlanDetails} className="space-y-4 text-xs">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-[11px] text-[#697586] dark:text-[#929BA9] mb-1">
+                      Setup / Strategi
+                    </label>
+                    <input
+                      type="text"
+                      value={planStrategyInput}
+                      onChange={(e) => setPlanStrategyInput(e.target.value)}
+                      placeholder="Contoh: Order Block + FVG"
+                      className="w-full rounded-lg bg-[#F5F7FA] dark:bg-[#161B22] border border-[#DDE3EA] dark:border-[#252B34] px-3 py-2 text-xs text-[#151D2A] dark:text-[#F2F5F9] focus:border-[#1769E8] focus:outline-none"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[11px] text-[#697586] dark:text-[#929BA9] mb-1">
+                      Sesi / Kondisi Market
+                    </label>
+                    <select
+                      value={planSessionInput}
+                      onChange={(e) => setPlanSessionInput(e.target.value)}
+                      className="w-full rounded-lg bg-[#F5F7FA] dark:bg-[#161B22] border border-[#DDE3EA] dark:border-[#252B34] px-3 py-2 text-xs text-[#151D2A] dark:text-[#F2F5F9] focus:border-[#1769E8] focus:outline-none"
+                    >
+                      <option value="Asian">Asian Session</option>
+                      <option value="London">London Session</option>
+                      <option value="New York">New York Session</option>
+                      <option value="Overlap">London / NY Overlap</option>
+                      <option value="Other">Lainnya</option>
+                    </select>
+                  </div>
                 </div>
-                <p>
-                  Order rencana dibatalkan sebelum tereksekusi dan tidak dihitung sebagai kerugian (LOSS).
+
+                <div>
+                  <label className="block text-[11px] text-[#697586] dark:text-[#929BA9] mb-1">
+                    Alasan Entry &amp; Thesis Analisis
+                  </label>
+                  <textarea
+                    rows={3}
+                    value={planEntryReasonInput}
+                    onChange={(e) => setPlanEntryReasonInput(e.target.value)}
+                    placeholder="Jelaskan konfluensi teknikal, struktur market, dan alasan mengambil setup ini..."
+                    className="w-full rounded-lg bg-[#F5F7FA] dark:bg-[#161B22] border border-[#DDE3EA] dark:border-[#252B34] p-3 text-xs text-[#151D2A] dark:text-[#F2F5F9] leading-relaxed focus:border-[#1769E8] focus:outline-none"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[11px] text-[#697586] dark:text-[#929BA9] mb-1">
+                    Catatan Tambahan
+                  </label>
+                  <textarea
+                    rows={2}
+                    value={planNotesInput}
+                    onChange={(e) => setPlanNotesInput(e.target.value)}
+                    placeholder="Catatan manajemen posisi atau kondisi berita makro..."
+                    className="w-full rounded-lg bg-[#F5F7FA] dark:bg-[#161B22] border border-[#DDE3EA] dark:border-[#252B34] p-3 text-xs text-[#151D2A] dark:text-[#F2F5F9] leading-relaxed focus:border-[#1769E8] focus:outline-none"
+                  />
+                </div>
+
+                <div className="flex items-center justify-end gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setIsEditingPlanNotes(false)}
+                    className="px-3.5 py-1.5 rounded-lg border border-[#DDE3EA] dark:border-[#252B34] bg-[#F5F7FA] dark:bg-[#161B22] text-xs font-medium text-[#697586] dark:text-[#929BA9] cursor-pointer"
+                  >
+                    Batal
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={isSavingPlanNotes}
+                    className="inline-flex items-center gap-1.5 px-4 py-1.5 rounded-lg bg-[#1769E8] hover:bg-[#1458C4] text-white text-xs font-medium cursor-pointer"
+                  >
+                    <Save className="h-3.5 w-3.5 stroke-[1.75]" />
+                    <span>{isSavingPlanNotes ? 'Menyimpan...' : 'Simpan Rencana'}</span>
+                  </button>
+                </div>
+              </form>
+            ) : (
+              <div className="space-y-4">
+                <div>
+                  <span className="block text-[11px] text-[#697586] dark:text-[#929BA9] mb-1">
+                    Alasan Entry
+                  </span>
+                  {trade.entryReason ? (
+                    <p className="text-xs sm:text-sm text-[#151D2A] dark:text-[#F2F5F9] whitespace-pre-line leading-relaxed max-w-3xl">
+                      {trade.entryReason}
+                    </p>
+                  ) : (
+                    <p className="text-xs text-[#697586] dark:text-[#929BA9]">
+                      Belum ada alasan entry yang dicatat.
+                    </p>
+                  )}
+                </div>
+
+                <div className="pt-4 border-t border-[#DDE3EA] dark:border-[#252B34]">
+                  <span className="block text-[11px] text-[#697586] dark:text-[#929BA9] mb-1">
+                    Catatan Tambahan
+                  </span>
+                  {trade.notes ? (
+                    <p className="text-xs sm:text-sm text-[#151D2A] dark:text-[#F2F5F9] whitespace-pre-line leading-relaxed max-w-3xl">
+                      {trade.notes}
+                    </p>
+                  ) : (
+                    <p className="text-xs text-[#697586] dark:text-[#929BA9]">
+                      Tidak ada catatan tambahan pada rencana ini.
+                    </p>
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* B. EKSEKUSI */}
+      {activeSectionTab === 'execution' && (
+        <div
+          data-testid="accordion-execution"
+          role="tabpanel"
+          className="rounded-2xl border border-[#DDE3EA] dark:border-[#252B34] bg-white dark:bg-[#11151B] p-5 sm:p-6 space-y-6 transition-colors duration-150"
+        >
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <h2 className="text-sm font-semibold text-[#151D2A] dark:text-[#F2F5F9]">
+                Realisasi Eksekusi
+              </h2>
+              <p className="text-xs text-[#697586] dark:text-[#929BA9]">
+                Data aktual pembukaan posisi, penutupan, biaya transaksi, dan hasil bersih
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => onEdit(trade)}
+              className="text-xs font-medium text-[#1769E8] dark:text-[#38BDF8] hover:underline whitespace-nowrap shrink-0 cursor-pointer"
+            >
+              Edit Data Eksekusi
+            </button>
+          </div>
+
+          {isPlanned ? (
+            <div className="py-6 border-t border-[#DDE3EA] dark:border-[#252B34] space-y-2">
+              <p className="text-xs font-medium text-[#151D2A] dark:text-[#F2F5F9]">
+                Posisi Belum Dieksekusi (Status: PLANNED)
+              </p>
+              <p className="text-xs text-[#697586] dark:text-[#929BA9] max-w-xl leading-relaxed">
+                Catatan ini masih berupa rencana order ({resolved.orderType} @{' '}
+                <span className="font-mono-numbers tabular-nums font-medium text-[#151D2A] dark:text-[#F2F5F9]">
+                  {formatActualPrice(resolved.plannedEntry, trade.instrument)}
+                </span>
+                ). Gunakan tombol <strong>Konfirmasi Entry</strong> di bagian atas saat order tereksekusi di pasar.
+              </p>
+            </div>
+          ) : isCancelled ? (
+            <div className="py-6 border-t border-[#DDE3EA] dark:border-[#252B34] space-y-2">
+              <p className="text-xs font-medium text-[#151D2A] dark:text-[#F2F5F9]">
+                Rencana Order Dibatalkan (CANCELLED)
+              </p>
+              <p className="text-xs text-[#697586] dark:text-[#929BA9] max-w-xl leading-relaxed">
+                Order dibatalkan sebelum tereksekusi di pasar dan tidak memengaruhi perhitungan Win Rate maupun kerugian akun.
+              </p>
+              {resolved.cancellationReason && (
+                <p className="text-xs text-[#151D2A] dark:text-[#F2F5F9] pt-1">
+                  Alasan Pembatalan: {resolved.cancellationReason}
                 </p>
-                {resolved.cancellationReason && (
-                  <p className="pt-1 text-[#151D2A] dark:text-[#F2F5F9]">
-                    Alasan: {resolved.cancellationReason}
+              )}
+            </div>
+          ) : (
+            <>
+              {/* Primary Execution Numeric Grid (2 Columns on Mobile, 4 on Desktop) */}
+              <div className="pt-4 border-t border-[#DDE3EA] dark:border-[#252B34] grid grid-cols-2 sm:grid-cols-4 gap-y-5 gap-x-6">
+                <div>
+                  <span className="block text-[11px] text-[#697586] dark:text-[#929BA9]">
+                    Actual Entry
+                  </span>
+                  <span className="mt-1 block text-base font-semibold font-mono-numbers tabular-nums text-[#151D2A] dark:text-[#F2F5F9]">
+                    {formatActualPrice(resolved.actualEntry, trade.instrument)}
+                  </span>
+                </div>
+
+                <div>
+                  <span className="block text-[11px] text-[#697586] dark:text-[#929BA9]">
+                    Actual Exit
+                  </span>
+                  <span className="mt-1 block text-base font-semibold font-mono-numbers tabular-nums text-[#151D2A] dark:text-[#F2F5F9]">
+                    {isClosed ? formatActualPrice(resolved.actualExit, trade.instrument) : '—'}
+                  </span>
+                </div>
+
+                <div>
+                  <span className="block text-[11px] text-[#697586] dark:text-[#929BA9]">
+                    Position Size (Lot)
+                  </span>
+                  <span className="mt-1 block text-base font-semibold font-mono-numbers tabular-nums text-[#151D2A] dark:text-[#F2F5F9]">
+                    {resolved.actualLot !== undefined
+                      ? `${resolved.actualLot.toFixed(2)} Lot`
+                      : `${trade.lotSize.toFixed(2)} Lot`}
+                  </span>
+                </div>
+
+                <div>
+                  <span className="block text-[11px] text-[#697586] dark:text-[#929BA9]">
+                    Risk Aktual
+                  </span>
+                  <span className="mt-1 block text-base font-semibold font-mono-numbers tabular-nums text-[#151D2A] dark:text-[#F2F5F9]">
+                    {preferredCurrency === 'IDR'
+                      ? formatDynamic(trade.riskAmount)
+                      : formatCurrency(trade.riskAmount, settings)}
+                    {trade.riskPercentage > 0 ? ` (${trade.riskPercentage.toFixed(2)}%)` : ''}
+                  </span>
+                </div>
+
+                <div>
+                  <span className="block text-[11px] text-[#697586] dark:text-[#929BA9]">
+                    Waktu Entry
+                  </span>
+                  <span className="mt-1 block text-xs sm:text-sm font-medium font-mono-numbers tabular-nums text-[#151D2A] dark:text-[#F2F5F9]">
+                    {(resolved.entryTime || trade.dateTime || '').slice(0, 16).replace('T', ' ')}
+                  </span>
+                </div>
+
+                <div>
+                  <span className="block text-[11px] text-[#697586] dark:text-[#929BA9]">
+                    Waktu Exit
+                  </span>
+                  <span className="mt-1 block text-xs sm:text-sm font-medium font-mono-numbers tabular-nums text-[#151D2A] dark:text-[#F2F5F9]">
+                    {isClosed && resolved.exitTime
+                      ? resolved.exitTime.slice(0, 16).replace('T', ' ')
+                      : '—'}
+                  </span>
+                </div>
+
+                <div>
+                  <span className="block text-[11px] text-[#697586] dark:text-[#929BA9]">
+                    Metode Penutupan
+                  </span>
+                  <span className="mt-1 block text-xs sm:text-sm font-semibold text-[#151D2A] dark:text-[#F2F5F9]">
+                    {isClosed
+                      ? resolved.closeType ||
+                        (trade.outcome === 'WIN'
+                          ? 'Take Profit (TP)'
+                          : trade.outcome === 'LOSS'
+                          ? 'Stop Loss (SL)'
+                          : 'Manual / BE')
+                      : 'Masih Terbuka (Active)'}
+                  </span>
+                </div>
+
+                <div>
+                  <span className="block text-[11px] text-[#697586] dark:text-[#929BA9]">
+                    Hasil Aktual (Net P/L)
+                  </span>
+                  {isClosed ? (
+                    <span
+                      className={`mt-1 block text-base font-bold font-mono-numbers tabular-nums ${
+                        isProfit
+                          ? 'text-[#059669] dark:text-[#34D399]'
+                          : isLoss
+                          ? 'text-[#E11D48] dark:text-[#FB7185]'
+                          : 'text-[#151D2A] dark:text-[#F2F5F9]'
+                      }`}
+                    >
+                      {preferredCurrency === 'IDR'
+                        ? formatTradeFinancial(trade, 'netProfit', false, true)
+                        : `${isProfit ? '+' : ''}${formatCurrency(trade.netProfit, settings)}`}
+                      {realizedR !== null ? ` (${formatRMultiple(realizedR)})` : ''}
+                    </span>
+                  ) : (
+                    <span className="mt-1 block text-xs font-medium text-[#D97706] dark:text-[#F59E0B]">
+                      Posisi Sedang Berjalan
+                    </span>
+                  )}
+                </div>
+              </div>
+
+              {/* Financial Breakdown (Gross Profit, Commission, Swap) when Closed */}
+              {isClosed && (
+                <div className="pt-4 border-t border-[#DDE3EA] dark:border-[#252B34] grid grid-cols-3 gap-4 text-xs">
+                  <div>
+                    <span className="block text-[11px] text-[#697586] dark:text-[#929BA9]">
+                      Gross P/L
+                    </span>
+                    <span className="mt-0.5 block font-mono-numbers tabular-nums font-medium text-[#151D2A] dark:text-[#F2F5F9]">
+                      {preferredCurrency === 'IDR'
+                        ? formatTradeFinancial(trade, 'grossProfit', false, true)
+                        : formatCurrency(trade.grossProfit, settings)}
+                    </span>
+                  </div>
+                  <div>
+                    <span className="block text-[11px] text-[#697586] dark:text-[#929BA9]">
+                      Komisi Broker
+                    </span>
+                    <span className="mt-0.5 block font-mono-numbers tabular-nums font-medium text-[#151D2A] dark:text-[#F2F5F9]">
+                      {preferredCurrency === 'IDR'
+                        ? formatDynamic(trade.commission || 0)
+                        : formatCurrency(trade.commission || 0, settings)}
+                    </span>
+                  </div>
+                  <div>
+                    <span className="block text-[11px] text-[#697586] dark:text-[#929BA9]">
+                      Biaya Swap
+                    </span>
+                    <span className="mt-0.5 block font-mono-numbers tabular-nums font-medium text-[#151D2A] dark:text-[#F2F5F9]">
+                      {preferredCurrency === 'IDR'
+                        ? formatDynamic(trade.swap || 0)
+                        : formatCurrency(trade.swap || 0, settings)}
+                    </span>
+                  </div>
+                </div>
+              )}
+
+              {/* Explicit Planned vs Actual Comparison if Deviation Exists */}
+              {(hasEntryDeviation || hasLotDeviation) && (
+                <div className="pt-4 border-t border-[#DDE3EA] dark:border-[#252B34] space-y-2">
+                  <span className="block text-[11px] font-semibold uppercase tracking-[0.06em] text-[#697586] dark:text-[#929BA9]">
+                    Perbandingan Rencana vs Aktual
+                  </span>
+                  <div className="grid grid-cols-2 gap-4 text-xs font-mono-numbers tabular-nums">
+                    <div>
+                      <span className="block text-[11px] text-[#697586] dark:text-[#929BA9] font-sans">
+                        Planned Entry vs Actual Entry
+                      </span>
+                      <span className="mt-0.5 block font-medium text-[#151D2A] dark:text-[#F2F5F9]">
+                        {formatActualPrice(resolved.plannedEntry, trade.instrument)} →{' '}
+                        {formatActualPrice(resolved.actualEntry, trade.instrument)}
+                      </span>
+                    </div>
+                    <div>
+                      <span className="block text-[11px] text-[#697586] dark:text-[#929BA9] font-sans">
+                        Planned Lot vs Actual Lot
+                      </span>
+                      <span className="mt-0.5 block font-medium text-[#151D2A] dark:text-[#F2F5F9]">
+                        {resolved.plannedLot.toFixed(2)} Lot →{' '}
+                        {resolved.actualLot !== undefined
+                          ? `${resolved.actualLot.toFixed(2)} Lot`
+                          : '—'}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Execution Notes separated cleanly from numeric metrics */}
+              <div className="pt-4 border-t border-[#DDE3EA] dark:border-[#252B34]">
+                <span className="block text-[11px] text-[#697586] dark:text-[#929BA9] mb-1">
+                  Catatan Eksekusi
+                </span>
+                {cleanExecutionNotes ? (
+                  <p className="text-xs sm:text-sm text-[#151D2A] dark:text-[#F2F5F9] whitespace-pre-line leading-relaxed max-w-3xl">
+                    {cleanExecutionNotes}
+                  </p>
+                ) : (
+                  <p className="text-xs text-[#697586] dark:text-[#929BA9]">
+                    {compliance.label} — {compliance.reason}
                   </p>
                 )}
               </div>
-            ) : (
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs font-mono-numbers tabular-nums">
-                <div className="p-3 rounded-lg bg-[#F5F7FA] dark:bg-[#171D26] border border-[#DDE3EA] dark:border-[#252B34]">
-                  <span className="block text-[10px] uppercase text-[#697586] dark:text-[#929BA9] font-sans">
-                    Actual Entry
-                  </span>
-                  <span className="mt-0.5 block font-bold text-sm">
-                    {resolved.actualEntry !== undefined ? resolved.actualEntry.toFixed(2) : '-'}
-                  </span>
-                </div>
+            </>
+          )}
+        </div>
+      )}
 
-                <div className="p-3 rounded-lg bg-[#F5F7FA] dark:bg-[#171D26] border border-[#DDE3EA] dark:border-[#252B34]">
-                  <span className="block text-[10px] uppercase text-[#697586] dark:text-[#929BA9] font-sans">
-                    Actual Lot
-                  </span>
-                  <span className="mt-0.5 block font-bold text-sm">
-                    {resolved.actualLot !== undefined
-                      ? `${resolved.actualLot.toFixed(2)} Lot`
-                      : '-'}
-                  </span>
-                </div>
+      {/* C. CHART & SCREENSHOT */}
+      {activeSectionTab === 'screenshots' && (
+        <div
+          data-testid="accordion-screenshots"
+          role="tabpanel"
+          className="rounded-2xl border border-[#DDE3EA] dark:border-[#252B34] bg-white dark:bg-[#11151B] p-5 sm:p-6 space-y-5 transition-colors duration-150"
+        >
+          {/* Header: Title + File Count + Add Screenshot Actions */}
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <div className="flex items-center gap-2">
+                <h2 className="text-sm font-semibold text-[#151D2A] dark:text-[#F2F5F9]">
+                  Chart &amp; Screenshot
+                </h2>
+                <span className="text-xs text-[#697586] dark:text-[#929BA9] font-mono-numbers tabular-nums">
+                  · {screenshotCount} file
+                </span>
+              </div>
+              <p className="text-xs text-[#697586] dark:text-[#929BA9]">
+                Dokumentasi chart sebelum entry (Before Trade) dan sesudah posisi selesai (After Trade)
+              </p>
+            </div>
 
-                <div className="p-3 rounded-lg bg-[#F5F7FA] dark:bg-[#171D26] border border-[#DDE3EA] dark:border-[#252B34] col-span-2">
-                  <span className="block text-[10px] uppercase text-[#697586] dark:text-[#929BA9] font-sans">
-                    Waktu Entry
-                  </span>
-                  <span className="mt-0.5 block font-semibold text-xs">
-                    {(resolved.entryTime || trade.dateTime).replace('T', ' ')}
-                  </span>
-                </div>
+            {onSaveTradeUpdate && (
+              <div className="flex items-center gap-2">
+                <label className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#F5F7FA] dark:bg-[#161B22] border border-[#DDE3EA] dark:border-[#252B34] hover:border-[#1769E8] dark:hover:border-[#38BDF8] text-xs font-medium text-[#151D2A] dark:text-[#F2F5F9] transition-colors cursor-pointer">
+                  <Plus className="h-3.5 w-3.5 stroke-[1.75] text-[#1769E8] dark:text-[#38BDF8]" />
+                  <span>{beforeDisplayUrl ? 'Ganti Before' : 'Tambah Before'}</span>
+                  <input
+                    type="file"
+                    accept="image/*"
+                    onChange={(e) => handleScreenshotSlotUpload('BEFORE', e)}
+                    className="hidden"
+                  />
+                </label>
 
-                {/* Only display Close Data when status is CLOSED */}
-                {isClosed ? (
-                  <>
-                    <div className="p-3 rounded-lg bg-[#F5F7FA] dark:bg-[#171D26] border border-[#DDE3EA] dark:border-[#252B34]">
-                      <span className="block text-[10px] uppercase text-[#697586] dark:text-[#929BA9] font-sans">
-                        Actual Exit
+                <label className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#F5F7FA] dark:bg-[#161B22] border border-[#DDE3EA] dark:border-[#252B34] hover:border-[#1769E8] dark:hover:border-[#38BDF8] text-xs font-medium text-[#151D2A] dark:text-[#F2F5F9] transition-colors cursor-pointer">
+                  <Upload className="h-3.5 w-3.5 stroke-[1.75] text-[#1769E8] dark:text-[#38BDF8]" />
+                  <span>{afterDisplayUrl ? 'Ganti After' : 'Tambah After'}</span>
+                  <input
+                    type="file"
+                    accept="image/*"
+                    onChange={(e) => handleScreenshotSlotUpload('AFTER', e)}
+                    className="hidden"
+                  />
+                </label>
+              </div>
+            )}
+          </div>
+
+          {isBeforeLoading || isAfterLoading || isUploadingImage ? (
+            <div className="py-16 border-t border-[#DDE3EA] dark:border-[#252B34] flex flex-col items-center justify-center gap-2 text-xs text-[#697586] dark:text-[#929BA9]">
+              <Loader2 className="h-5 w-5 animate-spin text-[#1769E8] dark:text-[#38BDF8]" />
+              <span>Memproses gambar chart...</span>
+            </div>
+          ) : screenshotCount === 0 ? (
+            /* Minimalist Empty State when no screenshot is attached */
+            <div className="py-12 px-4 border-t border-[#DDE3EA] dark:border-[#252B34] text-center space-y-3">
+              <ImageIcon className="h-6 w-6 mx-auto stroke-[1.5] text-[#697586] dark:text-[#929BA9]" />
+              <div className="space-y-1 max-w-sm mx-auto">
+                <p className="text-xs font-medium text-[#151D2A] dark:text-[#F2F5F9]">
+                  Belum ada dokumentasi chart pada transaksi ini
+                </p>
+                <p className="text-[11px] text-[#697586] dark:text-[#929BA9] leading-relaxed">
+                  Tambahkan screenshot chart Before Trade atau After Trade untuk menyimpan bukti visual setup dan eksekusi.
+                </p>
+              </div>
+              {onSaveTradeUpdate && (
+                <div className="pt-1 flex items-center justify-center gap-2">
+                  <label className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg bg-[#1769E8] hover:bg-[#1458C4] text-white text-xs font-medium transition-colors cursor-pointer">
+                    <Upload className="h-3.5 w-3.5 stroke-[1.75]" />
+                    <span>Unggah Screenshot Chart</span>
+                    <input
+                      type="file"
+                      accept="image/*"
+                      onChange={(e) => handleScreenshotSlotUpload('BEFORE', e)}
+                      className="hidden"
+                    />
+                  </label>
+                </div>
+              )}
+            </div>
+          ) : (
+            <div className="pt-4 border-t border-[#DDE3EA] dark:border-[#252B34] space-y-4">
+              {/* Primary Proportional Chart Stage (object-contain so no price levels or axes are cut off) */}
+              {(() => {
+                const activeUrl =
+                  activePrimarySlot === 'AFTER' && afterDisplayUrl
+                    ? afterDisplayUrl
+                    : beforeDisplayUrl || afterDisplayUrl;
+                const activeRawRef =
+                  activePrimarySlot === 'AFTER' && resolved.afterScreenshotUrl
+                    ? resolved.afterScreenshotUrl
+                    : resolved.beforeScreenshotUrl || trade.screenshotUrl || resolved.afterScreenshotUrl;
+                const activeTitle =
+                  activePrimarySlot === 'AFTER' && afterDisplayUrl
+                    ? `After Trade — ${trade.instrument}`
+                    : `Before Trade — ${trade.instrument}`;
+
+                if (!activeUrl || !activeRawRef) return null;
+
+                return (
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between gap-2 text-xs">
+                      <span className="font-medium text-[#151D2A] dark:text-[#F2F5F9]">
+                        {activePrimarySlot === 'AFTER' && afterDisplayUrl
+                          ? 'Chart Utama · After Trade'
+                          : 'Chart Utama · Before Trade'}
                       </span>
-                      <span className="mt-0.5 block font-bold text-sm">
-                        {resolved.actualExit !== undefined ? resolved.actualExit.toFixed(2) : '-'}
-                      </span>
+                      <div className="flex items-center gap-3">
+                        <button
+                          type="button"
+                          onClick={() => onViewScreenshot(activeRawRef, activeTitle)}
+                          className="inline-flex items-center gap-1 text-xs font-medium text-[#1769E8] dark:text-[#38BDF8] hover:underline cursor-pointer"
+                        >
+                          <Maximize2 className="h-3.5 w-3.5 stroke-[1.75]" />
+                          <span>Layar Penuh</span>
+                        </button>
+                      </div>
                     </div>
 
-                    <div className="p-3 rounded-lg bg-[#F5F7FA] dark:bg-[#171D26] border border-[#DDE3EA] dark:border-[#252B34]">
-                      <span className="block text-[10px] uppercase text-[#697586] dark:text-[#929BA9] font-sans">
-                        Jenis Penutupan
-                      </span>
-                      <span className="mt-0.5 block font-bold text-sm font-sans">
-                        {resolved.closeType ||
-                          (trade.outcome === 'WIN'
-                            ? 'TP / Profit'
-                            : trade.outcome === 'LOSS'
-                            ? 'SL / Cut Loss'
-                            : 'Manual / BE')}
-                      </span>
+                    <div
+                      onClick={() => onViewScreenshot(activeRawRef, activeTitle)}
+                      className="relative rounded-xl overflow-hidden border border-[#DDE3EA] dark:border-[#252B34] bg-[#F5F7FA] dark:bg-[#080A0E] aspect-[16/10] sm:aspect-[16/9] flex items-center justify-center cursor-pointer group"
+                    >
+                      <img
+                        src={activeUrl}
+                        alt={activeTitle}
+                        referrerPolicy="no-referrer"
+                        className="w-full h-full object-contain"
+                      />
+                      <div className="absolute inset-0 bg-black/25 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity">
+                        <span className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg bg-[#11151B]/90 text-white text-xs font-medium">
+                          <ZoomIn className="h-3.5 w-3.5 stroke-[1.75]" />
+                          <span>Buka Layar Penuh</span>
+                        </span>
+                      </div>
                     </div>
+                  </div>
+                );
+              })()}
 
-                    <div className="p-3 rounded-lg bg-[#F5F7FA] dark:bg-[#171D26] border border-[#DDE3EA] dark:border-[#252B34]">
-                      <span className="block text-[10px] uppercase text-[#697586] dark:text-[#929BA9] font-sans">
-                        Waktu Exit
-                      </span>
-                      <span className="mt-0.5 block font-semibold text-xs">
-                        {resolved.exitTime
-                          ? resolved.exitTime.slice(0, 16).replace('T', ' ')
-                          : '-'}
-                      </span>
+              {/* Responsive Thumbnail Grid for Before & After Slots */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-2">
+                {/* Slot 1: Before Trade */}
+                <div
+                  className={`p-3.5 rounded-xl border transition-colors ${
+                    activePrimarySlot === 'BEFORE' && beforeDisplayUrl
+                      ? 'border-[#1769E8] dark:border-[#38BDF8] bg-[#F5F7FA] dark:bg-[#161B22]'
+                      : 'border-[#DDE3EA] dark:border-[#252B34] bg-[#F5F7FA]/60 dark:bg-[#161B22]/60'
+                  }`}
+                >
+                  <div className="flex items-center justify-between gap-2 mb-2.5">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (beforeDisplayUrl) setActivePrimarySlot('BEFORE');
+                      }}
+                      className="text-xs font-semibold text-[#151D2A] dark:text-[#F2F5F9] text-left cursor-pointer"
+                    >
+                      Before Trade (Setup Awal)
+                    </button>
+                    <div className="flex items-center gap-2 text-[11px]">
+                      {beforeDisplayUrl && (
+                        <button
+                          type="button"
+                          onClick={() =>
+                            onViewScreenshot(
+                              resolved.beforeScreenshotUrl || trade.screenshotUrl!,
+                              `BEFORE TRADE — ${trade.instrument}`
+                            )
+                          }
+                          className="text-[#1769E8] dark:text-[#38BDF8] hover:underline font-medium cursor-pointer"
+                        >
+                          Perbesar
+                        </button>
+                      )}
+                      {onSaveTradeUpdate && (resolved.beforeScreenshotUrl || trade.screenshotUrl) && (
+                        <button
+                          type="button"
+                          onClick={() => handleDeleteScreenshotSlot('BEFORE')}
+                          className="text-[#E11D48] dark:text-[#FB7185] hover:underline font-medium cursor-pointer"
+                        >
+                          Hapus
+                        </button>
+                      )}
                     </div>
+                  </div>
 
-                    <div className="p-3 rounded-lg bg-[#F5F7FA] dark:bg-[#171D26] border border-[#DDE3EA] dark:border-[#252B34]">
-                      <span className="block text-[10px] uppercase text-[#697586] dark:text-[#929BA9] font-sans">
-                        Realized P/L
-                      </span>
-                      <span
-                        className={`mt-0.5 block font-bold text-sm ${
-                          isProfit
-                            ? 'text-emerald-600 dark:text-emerald-400'
-                            : isLoss
-                            ? 'text-rose-600 dark:text-rose-400'
-                            : ''
+                  {beforeDisplayUrl ? (
+                    <div
+                      onClick={() => setActivePrimarySlot('BEFORE')}
+                      className="rounded-lg overflow-hidden border border-[#DDE3EA] dark:border-[#252B34] bg-white dark:bg-[#080A0E] aspect-[16/9] cursor-pointer"
+                    >
+                      <img
+                        src={beforeDisplayUrl}
+                        alt="Before Trade Thumbnail"
+                        referrerPolicy="no-referrer"
+                        className="w-full h-full object-contain"
+                      />
+                    </div>
+                  ) : (
+                    <div className="rounded-lg border border-dashed border-[#DDE3EA] dark:border-[#252B34] aspect-[16/9] flex flex-col items-center justify-center gap-1.5 text-xs text-[#697586] dark:text-[#929BA9]">
+                      <span>Belum ada gambar Before Trade</span>
+                      {onSaveTradeUpdate && (
+                        <label className="text-[#1769E8] dark:text-[#38BDF8] font-medium hover:underline cursor-pointer">
+                          + Unggah Before Trade
+                          <input
+                            type="file"
+                            accept="image/*"
+                            onChange={(e) => handleScreenshotSlotUpload('BEFORE', e)}
+                            className="hidden"
+                          />
+                        </label>
+                      )}
+                    </div>
+                  )}
+                </div>
+
+                {/* Slot 2: After Trade */}
+                <div
+                  className={`p-3.5 rounded-xl border transition-colors ${
+                    activePrimarySlot === 'AFTER' && afterDisplayUrl
+                      ? 'border-[#1769E8] dark:border-[#38BDF8] bg-[#F5F7FA] dark:bg-[#161B22]'
+                      : 'border-[#DDE3EA] dark:border-[#252B34] bg-[#F5F7FA]/60 dark:bg-[#161B22]/60'
+                  }`}
+                >
+                  <div className="flex items-center justify-between gap-2 mb-2.5">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (afterDisplayUrl) setActivePrimarySlot('AFTER');
+                      }}
+                      className="text-xs font-semibold text-[#151D2A] dark:text-[#F2F5F9] text-left cursor-pointer"
+                    >
+                      After Trade (Hasil Akhir)
+                    </button>
+                    <div className="flex items-center gap-2 text-[11px]">
+                      {afterDisplayUrl && (
+                        <button
+                          type="button"
+                          onClick={() =>
+                            onViewScreenshot(
+                              resolved.afterScreenshotUrl!,
+                              `AFTER TRADE — ${trade.instrument}`
+                            )
+                          }
+                          className="text-[#1769E8] dark:text-[#38BDF8] hover:underline font-medium cursor-pointer"
+                        >
+                          Perbesar
+                        </button>
+                      )}
+                      {onSaveTradeUpdate && resolved.afterScreenshotUrl && (
+                        <button
+                          type="button"
+                          onClick={() => handleDeleteScreenshotSlot('AFTER')}
+                          className="text-[#E11D48] dark:text-[#FB7185] hover:underline font-medium cursor-pointer"
+                        >
+                          Hapus
+                        </button>
+                      )}
+                    </div>
+                  </div>
+
+                  {afterDisplayUrl ? (
+                    <div
+                      onClick={() => setActivePrimarySlot('AFTER')}
+                      className="rounded-lg overflow-hidden border border-[#DDE3EA] dark:border-[#252B34] bg-white dark:bg-[#080A0E] aspect-[16/9] cursor-pointer"
+                    >
+                      <img
+                        src={afterDisplayUrl}
+                        alt="After Trade Thumbnail"
+                        referrerPolicy="no-referrer"
+                        className="w-full h-full object-contain"
+                      />
+                    </div>
+                  ) : (
+                    <div className="rounded-lg border border-dashed border-[#DDE3EA] dark:border-[#252B34] aspect-[16/9] flex flex-col items-center justify-center gap-1.5 text-xs text-[#697586] dark:text-[#929BA9]">
+                      <span>Belum ada gambar After Trade</span>
+                      {onSaveTradeUpdate && (
+                        <label className="text-[#1769E8] dark:text-[#38BDF8] font-medium hover:underline cursor-pointer">
+                          + Unggah After Trade
+                          <input
+                            type="file"
+                            accept="image/*"
+                            onChange={(e) => handleScreenshotSlotUpload('AFTER', e)}
+                            className="hidden"
+                          />
+                        </label>
+                      )}
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* D. EVALUASI */}
+      {activeSectionTab === 'evaluation' && (
+        <div
+          data-testid="accordion-evaluation"
+          role="tabpanel"
+          className="rounded-2xl border border-[#DDE3EA] dark:border-[#252B34] bg-white dark:bg-[#11151B] p-5 sm:p-6 space-y-6 transition-colors duration-150"
+        >
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <h2 className="text-sm font-semibold text-[#151D2A] dark:text-[#F2F5F9]">
+                Evaluasi &amp; Refleksi Trade
+              </h2>
+              <p className="text-xs text-[#697586] dark:text-[#929BA9]">
+                Tinjauan objektif hasil, kepatuhan rencana, psikologi, dan pembelajaran pasca-trade
+              </p>
+            </div>
+            {onSaveTradeUpdate && !isEditingEval && (
+              <button
+                type="button"
+                onClick={() => setIsEditingEval(true)}
+                className="text-xs font-medium text-[#1769E8] dark:text-[#38BDF8] hover:underline whitespace-nowrap shrink-0 cursor-pointer"
+              >
+                {trade.postTradeEvaluation || trade.notes ? 'Ubah Evaluasi' : '+ Tulis Evaluasi'}
+              </button>
+            )}
+          </div>
+
+          {/* 1. Hasil Trade & 2. Disiplin terhadap Rencana */}
+          <div className="pt-4 border-t border-[#DDE3EA] dark:border-[#252B34] grid grid-cols-1 sm:grid-cols-2 gap-6">
+            {/* Group 1: Hasil Trade */}
+            <div className="space-y-3">
+              <span className="block text-[11px] font-semibold uppercase tracking-[0.06em] text-[#697586] dark:text-[#929BA9]">
+                1. Hasil Trade
+              </span>
+              <div className="grid grid-cols-2 gap-4 text-xs">
+                <div>
+                  <span className="block text-[11px] text-[#697586] dark:text-[#929BA9]">
+                    Status &amp; Outcome
+                  </span>
+                  <span
+                    className={`mt-0.5 block text-sm font-semibold ${
+                      isClosed
+                        ? isProfit
+                          ? 'text-[#059669] dark:text-[#34D399]'
+                          : isLoss
+                          ? 'text-[#E11D48] dark:text-[#FB7185]'
+                          : 'text-[#151D2A] dark:text-[#F2F5F9]'
+                        : 'text-[#151D2A] dark:text-[#F2F5F9]'
+                    }`}
+                  >
+                    {headerStatusLabel}
+                  </span>
+                </div>
+                <div>
+                  <span className="block text-[11px] text-[#697586] dark:text-[#929BA9]">
+                    Realisasi R / Net P/L
+                  </span>
+                  <span className="mt-0.5 block text-sm font-semibold font-mono-numbers tabular-nums text-[#151D2A] dark:text-[#F2F5F9]">
+                    {isClosed
+                      ? `${realizedR !== null ? `${formatRMultiple(realizedR)} · ` : ''}${
+                          preferredCurrency === 'IDR'
+                            ? formatTradeFinancial(trade, 'netProfit', false, true)
+                            : `${isProfit ? '+' : ''}${formatCurrency(trade.netProfit, settings)}`
+                        }`
+                      : 'Belum Ditutup'}
+                  </span>
+                </div>
+              </div>
+              <div className="pt-2 grid grid-cols-3 gap-2 text-[11px] font-mono-numbers tabular-nums text-[#697586] dark:text-[#929BA9]">
+                <div>
+                  <span className="block font-sans">Plan vs Actual Entry</span>
+                  <span className="font-medium text-[#151D2A] dark:text-[#F2F5F9]">
+                    {formatActualPrice(resolved.plannedEntry, trade.instrument)} /{' '}
+                    {formatActualPrice(resolved.actualEntry, trade.instrument)}
+                  </span>
+                </div>
+                <div>
+                  <span className="block font-sans">Plan vs Actual Lot</span>
+                  <span className="font-medium text-[#151D2A] dark:text-[#F2F5F9]">
+                    {resolved.plannedLot.toFixed(2)} /{' '}
+                    {resolved.actualLot !== undefined ? resolved.actualLot.toFixed(2) : '—'}
+                  </span>
+                </div>
+                <div>
+                  <span className="block font-sans">Plan vs Actual R:R</span>
+                  <span className="font-medium text-[#151D2A] dark:text-[#F2F5F9]">
+                    {formatPlannedRR(plannedRR)} / {formatRMultiple(realizedR)}
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            {/* Group 2: Disiplin terhadap Rencana */}
+            <div className="space-y-2.5 sm:border-l sm:border-[#DDE3EA] sm:dark:border-[#252B34] sm:pl-6">
+              <div className="flex items-center justify-between gap-2">
+                <span className="block text-[11px] font-semibold uppercase tracking-[0.06em] text-[#697586] dark:text-[#929BA9]">
+                  2. Disiplin terhadap Rencana
+                </span>
+                <span className="text-xs font-semibold font-mono-numbers tabular-nums text-[#151D2A] dark:text-[#F2F5F9]">
+                  {trade.disciplineRating
+                    ? `Skor Manual: ${trade.disciplineRating}/5`
+                    : compliance.rating !== null
+                    ? `Audit Sistem: ${compliance.rating}/5`
+                    : 'Belum Dinilai'}
+                </span>
+              </div>
+              <p className="text-xs font-semibold text-[#151D2A] dark:text-[#F2F5F9]">
+                {compliance.label}
+              </p>
+              <p className="text-xs text-[#697586] dark:text-[#929BA9] leading-relaxed">
+                {compliance.reason}
+              </p>
+            </div>
+          </div>
+
+          {/* Qualitative Reflection Sections (3..7) or Inline Editor */}
+          <div className="pt-5 border-t border-[#DDE3EA] dark:border-[#252B34]">
+            {isEditingEval ? (
+              <form onSubmit={handleSaveEvaluation} className="space-y-4 text-xs">
+                <div>
+                  <label className="block text-[11px] text-[#697586] dark:text-[#929BA9] mb-1.5">
+                    Skor Disiplin Pribadi (Opsional — Jangan pilih jika belum ingin memberi skor)
+                  </label>
+                  <div className="flex items-center gap-2">
+                    {[1, 2, 3, 4, 5].map((score) => (
+                      <button
+                        key={score}
+                        type="button"
+                        onClick={() =>
+                          setEvalDisciplineRatingInput((prev) => (prev === score ? null : score))
+                        }
+                        className={`px-3 py-1.5 rounded-lg border font-mono-numbers tabular-nums font-medium transition-colors cursor-pointer ${
+                          evalDisciplineRatingInput === score
+                            ? 'border-[#1769E8] bg-[#1769E8] text-white'
+                            : 'border-[#DDE3EA] dark:border-[#252B34] bg-[#F5F7FA] dark:bg-[#161B22] text-[#151D2A] dark:text-[#F2F5F9]'
                         }`}
                       >
-                        {preferredCurrency === 'IDR'
-                          ? formatTradeFinancial(trade, 'netProfit', false, true)
-                          : `${isProfit ? '+' : ''}${formatCurrency(trade.netProfit, settings)}`}
-                      </span>
-                    </div>
-                  </>
-                ) : (
-                  <div className="col-span-2 sm:col-span-4 p-3 rounded-lg bg-[#F5F7FA] dark:bg-[#171D26] border border-[#DDE3EA] dark:border-[#252B34] font-sans text-xs text-[#697586] dark:text-[#929BA9]">
-                    Posisi saat ini masih <strong className="text-amber-600 dark:text-amber-400">OPEN</strong>. Data penutupan (Actual Exit, Waktu Exit, dan Realized P/L) akan ditampilkan setelah posisi ditutup.
+                        {score} / 5
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-[11px] text-[#697586] dark:text-[#929BA9] mb-1">
+                      3. Kualitas Entry
+                    </label>
+                    <textarea
+                      rows={2}
+                      value={evalEntryQualityInput}
+                      onChange={(e) => setEvalEntryQualityInput(e.target.value)}
+                      placeholder="Apakah timing dan level harga entry sesuai konfirmasi setup?"
+                      className="w-full rounded-lg bg-[#F5F7FA] dark:bg-[#161B22] border border-[#DDE3EA] dark:border-[#252B34] p-2.5 text-xs text-[#151D2A] dark:text-[#F2F5F9] leading-relaxed focus:border-[#1769E8] focus:outline-none"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-[11px] text-[#697586] dark:text-[#929BA9] mb-1">
+                      4. Kontrol Emosi
+                    </label>
+                    <textarea
+                      rows={2}
+                      value={evalEmotionalControlInput}
+                      onChange={(e) => setEvalEmotionalControlInput(e.target.value)}
+                      placeholder="Bagaimana kondisi psikologis saat floating profit/loss?"
+                      className="w-full rounded-lg bg-[#F5F7FA] dark:bg-[#161B22] border border-[#DDE3EA] dark:border-[#252B34] p-2.5 text-xs text-[#151D2A] dark:text-[#F2F5F9] leading-relaxed focus:border-[#1769E8] focus:outline-none"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-[11px] text-[#697586] dark:text-[#929BA9] mb-1">
+                      5. Hal yang Berjalan Baik
+                    </label>
+                    <textarea
+                      rows={2}
+                      value={evalWentWellInput}
+                      onChange={(e) => setEvalWentWellInput(e.target.value)}
+                      placeholder="Apa langkah disiplin yang sudah tepat pada transaksi ini?"
+                      className="w-full rounded-lg bg-[#F5F7FA] dark:bg-[#161B22] border border-[#DDE3EA] dark:border-[#252B34] p-2.5 text-xs text-[#151D2A] dark:text-[#F2F5F9] leading-relaxed focus:border-[#1769E8] focus:outline-none"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-[11px] text-[#697586] dark:text-[#929BA9] mb-1">
+                      6. Hal yang Perlu Diperbaiki
+                    </label>
+                    <textarea
+                      rows={2}
+                      value={evalNeedsImprovementInput}
+                      onChange={(e) => setEvalNeedsImprovementInput(e.target.value)}
+                      placeholder="Apa kesalahan atau celah eksekusi yang perlu dihindari ke depan?"
+                      className="w-full rounded-lg bg-[#F5F7FA] dark:bg-[#161B22] border border-[#DDE3EA] dark:border-[#252B34] p-2.5 text-xs text-[#151D2A] dark:text-[#F2F5F9] leading-relaxed focus:border-[#1769E8] focus:outline-none"
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-[11px] text-[#697586] dark:text-[#929BA9] mb-1">
+                    7. Pelajaran dari Trade (Refleksi Utama)
+                  </label>
+                  <textarea
+                    rows={3}
+                    value={evalReflectionInput}
+                    onChange={(e) => setEvalReflectionInput(e.target.value)}
+                    placeholder="Tuliskan kesimpulan utama dan pelajaran dari transaksi ini..."
+                    className="w-full rounded-lg bg-[#F5F7FA] dark:bg-[#161B22] border border-[#DDE3EA] dark:border-[#252B34] p-3 text-xs text-[#151D2A] dark:text-[#F2F5F9] leading-relaxed focus:border-[#1769E8] focus:outline-none"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[11px] text-[#697586] dark:text-[#929BA9] mb-1">
+                    Catatan Evaluasi &amp; Konfluensi Tambahan
+                  </label>
+                  <textarea
+                    rows={2}
+                    value={evalNotesInput}
+                    onChange={(e) => setEvalNotesInput(e.target.value)}
+                    placeholder="Catatan tambahan..."
+                    className="w-full rounded-lg bg-[#F5F7FA] dark:bg-[#161B22] border border-[#DDE3EA] dark:border-[#252B34] p-3 text-xs text-[#151D2A] dark:text-[#F2F5F9] leading-relaxed focus:border-[#1769E8] focus:outline-none"
+                  />
+                </div>
+
+                <div className="flex items-center justify-end gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setIsEditingEval(false)}
+                    className="px-3.5 py-1.5 rounded-lg border border-[#DDE3EA] dark:border-[#252B34] bg-[#F5F7FA] dark:bg-[#161B22] font-medium text-[#697586] dark:text-[#929BA9] cursor-pointer"
+                  >
+                    Batal
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={isSavingEval}
+                    className="inline-flex items-center gap-1.5 px-4 py-1.5 rounded-lg bg-[#1769E8] hover:bg-[#1458C4] text-white font-medium cursor-pointer"
+                  >
+                    <Save className="h-3.5 w-3.5 stroke-[1.75]" />
+                    <span>{isSavingEval ? 'Menyimpan...' : 'Simpan Evaluasi'}</span>
+                  </button>
+                </div>
+              </form>
+            ) : (
+              <div className="space-y-5">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
+                  <div>
+                    <span className="block text-[11px] font-semibold uppercase tracking-[0.06em] text-[#697586] dark:text-[#929BA9] mb-1">
+                      3. Kualitas Entry
+                    </span>
+                    <p className="text-xs sm:text-sm text-[#151D2A] dark:text-[#F2F5F9] whitespace-pre-line leading-relaxed">
+                      {parsedEvalView.entryQuality ||
+                        (hasEntryDeviation
+                          ? `Actual Entry (${formatActualPrice(
+                              resolved.actualEntry,
+                              trade.instrument
+                            )}) memiliki selisih terhadap Planned Entry (${formatActualPrice(
+                              resolved.plannedEntry,
+                              trade.instrument
+                            )}).`
+                          : 'Belum ada catatan evaluasi kualitas entry.')}
+                    </p>
+                  </div>
+
+                  <div>
+                    <span className="block text-[11px] font-semibold uppercase tracking-[0.06em] text-[#697586] dark:text-[#929BA9] mb-1">
+                      4. Kontrol Emosi
+                    </span>
+                    <p className="text-xs sm:text-sm text-[#151D2A] dark:text-[#F2F5F9] whitespace-pre-line leading-relaxed">
+                      {parsedEvalView.emotionalControl || 'Belum ada catatan evaluasi kontrol emosi.'}
+                    </p>
+                  </div>
+
+                  <div>
+                    <span className="block text-[11px] font-semibold uppercase tracking-[0.06em] text-[#697586] dark:text-[#929BA9] mb-1">
+                      5. Hal yang Berjalan Baik
+                    </span>
+                    <p className="text-xs sm:text-sm text-[#151D2A] dark:text-[#F2F5F9] whitespace-pre-line leading-relaxed">
+                      {parsedEvalView.wentWell || 'Belum diisi.'}
+                    </p>
+                  </div>
+
+                  <div>
+                    <span className="block text-[11px] font-semibold uppercase tracking-[0.06em] text-[#697586] dark:text-[#929BA9] mb-1">
+                      6. Hal yang Perlu Diperbaiki
+                    </span>
+                    <p className="text-xs sm:text-sm text-[#151D2A] dark:text-[#F2F5F9] whitespace-pre-line leading-relaxed">
+                      {parsedEvalView.needsImprovement || 'Belum diisi.'}
+                    </p>
+                  </div>
+                </div>
+
+                <div className="pt-4 border-t border-[#DDE3EA] dark:border-[#252B34]">
+                  <span className="block text-[11px] font-semibold uppercase tracking-[0.06em] text-[#697586] dark:text-[#929BA9] mb-1.5">
+                    7. Pelajaran dari Trade
+                  </span>
+                  {parsedEvalView.lessonsLearned ? (
+                    <p className="text-xs sm:text-sm text-[#151D2A] dark:text-[#F2F5F9] whitespace-pre-line leading-relaxed max-w-3xl">
+                      {parsedEvalView.lessonsLearned}
+                    </p>
+                  ) : (
+                    <p className="text-xs text-[#697586] dark:text-[#929BA9]">
+                      Belum ada refleksi atau pelajaran pasca-trade yang ditulis untuk transaksi ini.
+                    </p>
+                  )}
+                </div>
+
+                {(trade.notes || trade.entryReason) && (
+                  <div className="pt-4 border-t border-[#DDE3EA] dark:border-[#252B34]">
+                    <span className="block text-[11px] font-semibold uppercase tracking-[0.06em] text-[#697586] dark:text-[#929BA9] mb-1.5">
+                      Catatan Konfluensi &amp; Jurnal
+                    </span>
+                    <p className="text-xs sm:text-sm text-[#151D2A] dark:text-[#F2F5F9] whitespace-pre-line leading-relaxed max-w-3xl">
+                      {trade.notes || trade.entryReason}
+                    </p>
                   </div>
                 )}
               </div>
             )}
           </div>
-        )}
-      </div>
+        </div>
+      )}
 
-      {/* ACCORDION 3: 03 — CHART & SCREENSHOT */}
-      <div
-        data-testid="accordion-screenshots"
-        className="rounded-2xl border border-[#DDE3EA] dark:border-[#252B34] bg-white dark:bg-[#11151B] overflow-hidden transition-colors duration-150"
-      >
-        <button
-          type="button"
-          onClick={() => toggleAccordion('screenshots')}
-          aria-expanded={openSections.screenshots}
-          className="w-full px-5 py-4 flex items-center justify-between text-left bg-[#F5F7FA] dark:bg-[#171D26] border-b border-[#DDE3EA] dark:border-[#252B34] cursor-pointer"
+      {/* E. RIWAYAT AKTIVITAS */}
+      {activeSectionTab === 'activity' && (
+        <div
+          data-testid="accordion-activity-history"
+          role="tabpanel"
+          className="rounded-2xl border border-[#DDE3EA] dark:border-[#252B34] bg-white dark:bg-[#11151B] p-5 sm:p-6 space-y-5 transition-colors duration-150"
         >
-          <div>
-            <h2 className="text-sm font-bold text-[#151D2A] dark:text-[#F2F5F9]">
-              03 — Chart &amp; Screenshot
-            </h2>
-            <p className="text-[11px] text-[#697586] dark:text-[#929BA9]">
-              Dokumentasi visual Before Trade dan After Trade
-            </p>
-          </div>
-          <ChevronDown
-            className={`h-4 w-4 stroke-[1.75] text-[#697586] dark:text-[#929BA9] transition-transform ${
-              openSections.screenshots ? 'rotate-180' : ''
-            }`}
-          />
-        </button>
-
-        {openSections.screenshots && (
-          <div className="p-4 grid grid-cols-1 md:grid-cols-2 gap-4">
-            {/* Slot 1: BEFORE TRADE */}
-            <div className="p-3.5 rounded-xl bg-[#F5F7FA] dark:bg-[#171D26] border border-[#DDE3EA] dark:border-[#252B34] space-y-2.5">
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-bold uppercase tracking-wider text-[#151D2A] dark:text-[#F2F5F9]">
-                  BEFORE TRADE (Opsional)
-                </span>
-                {onSaveTradeUpdate && (
-                  <div className="flex items-center gap-1.5">
-                    <label className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md bg-white dark:bg-[#11151B] border border-[#DDE3EA] dark:border-[#252B34] hover:border-[#1769E8] text-[11px] font-semibold cursor-pointer">
-                      <Upload className="h-3 w-3 stroke-[1.75] text-[#1769E8]" />
-                      <span>{beforeDisplayUrl ? 'Ganti' : 'Tambah Gambar'}</span>
-                      <input
-                        type="file"
-                        accept="image/*"
-                        onChange={(e) => handleScreenshotSlotUpload('BEFORE', e)}
-                        className="hidden"
-                      />
-                    </label>
-                    {(resolved.beforeScreenshotUrl || trade.screenshotUrl) && (
-                      <button
-                        type="button"
-                        onClick={() => handleDeleteScreenshotSlot('BEFORE')}
-                        className="px-2 py-1 rounded-md bg-white dark:bg-[#11151B] border border-[#DDE3EA] dark:border-[#252B34] text-[11px] font-semibold text-rose-600 dark:text-rose-400 cursor-pointer"
-                      >
-                        Hapus
-                      </button>
-                    )}
-                  </div>
-                )}
-              </div>
-
-              <div className="relative rounded-lg overflow-hidden border border-[#DDE3EA] dark:border-[#252B34] h-48 bg-white dark:bg-[#080A0E] flex items-center justify-center">
-                {isBeforeLoading || isUploadingImage ? (
-                  <div className="flex items-center gap-2 text-xs text-[#1769E8]">
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                    <span>Memuat gambar...</span>
-                  </div>
-                ) : beforeDisplayUrl ? (
-                  <div
-                    onClick={() =>
-                      onViewScreenshot(
-                        resolved.beforeScreenshotUrl || trade.screenshotUrl!,
-                        `BEFORE TRADE — ${trade.instrument}`
-                      )
-                    }
-                    className="w-full h-full cursor-pointer group relative"
-                  >
-                    <img
-                      src={beforeDisplayUrl}
-                      alt="Before Trade Chart"
-                      className="w-full h-48 object-cover"
-                    />
-                    <div className="absolute inset-0 bg-black/30 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity">
-                      <span className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-[#11151B]/90 text-white text-xs font-semibold">
-                        <ZoomIn className="h-3.5 w-3.5" />
-                        <span>Perbesar</span>
-                      </span>
-                    </div>
-                  </div>
-                ) : (
-                  <div className="text-center text-xs text-[#697586] dark:text-[#929BA9] space-y-1">
-                    <Image className="h-6 w-6 mx-auto stroke-[1.5]" />
-                    <p>Belum ada screenshot Before Trade</p>
-                  </div>
-                )}
-              </div>
-            </div>
-
-            {/* Slot 2: AFTER TRADE */}
-            <div className="p-3.5 rounded-xl bg-[#F5F7FA] dark:bg-[#171D26] border border-[#DDE3EA] dark:border-[#252B34] space-y-2.5">
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-bold uppercase tracking-wider text-[#151D2A] dark:text-[#F2F5F9]">
-                  AFTER TRADE (Opsional)
-                </span>
-                {onSaveTradeUpdate && (
-                  <div className="flex items-center gap-1.5">
-                    <label className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md bg-white dark:bg-[#11151B] border border-[#DDE3EA] dark:border-[#252B34] hover:border-[#1769E8] text-[11px] font-semibold cursor-pointer">
-                      <Upload className="h-3 w-3 stroke-[1.75] text-[#1769E8]" />
-                      <span>{afterDisplayUrl ? 'Ganti' : 'Tambah Gambar'}</span>
-                      <input
-                        type="file"
-                        accept="image/*"
-                        onChange={(e) => handleScreenshotSlotUpload('AFTER', e)}
-                        className="hidden"
-                      />
-                    </label>
-                    {resolved.afterScreenshotUrl && (
-                      <button
-                        type="button"
-                        onClick={() => handleDeleteScreenshotSlot('AFTER')}
-                        className="px-2 py-1 rounded-md bg-white dark:bg-[#11151B] border border-[#DDE3EA] dark:border-[#252B34] text-[11px] font-semibold text-rose-600 dark:text-rose-400 cursor-pointer"
-                      >
-                        Hapus
-                      </button>
-                    )}
-                  </div>
-                )}
-              </div>
-
-              <div className="relative rounded-lg overflow-hidden border border-[#DDE3EA] dark:border-[#252B34] h-48 bg-white dark:bg-[#080A0E] flex items-center justify-center">
-                {isAfterLoading || isUploadingImage ? (
-                  <div className="flex items-center gap-2 text-xs text-[#1769E8]">
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                    <span>Memuat gambar...</span>
-                  </div>
-                ) : afterDisplayUrl ? (
-                  <div
-                    onClick={() =>
-                      onViewScreenshot(
-                        resolved.afterScreenshotUrl!,
-                        `AFTER TRADE — ${trade.instrument}`
-                      )
-                    }
-                    className="w-full h-full cursor-pointer group relative"
-                  >
-                    <img
-                      src={afterDisplayUrl}
-                      alt="After Trade Chart"
-                      className="w-full h-48 object-cover"
-                    />
-                    <div className="absolute inset-0 bg-black/30 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity">
-                      <span className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-[#11151B]/90 text-white text-xs font-semibold">
-                        <ZoomIn className="h-3.5 w-3.5" />
-                        <span>Perbesar</span>
-                      </span>
-                    </div>
-                  </div>
-                ) : (
-                  <div className="text-center text-xs text-[#697586] dark:text-[#929BA9] space-y-1">
-                    <Image className="h-6 w-6 mx-auto stroke-[1.5]" />
-                    <p>Belum ada screenshot After Trade</p>
-                  </div>
-                )}
-              </div>
-            </div>
-          </div>
-        )}
-      </div>
-
-      {/* ACCORDION 4: 04 — EVALUASI */}
-      <div
-        data-testid="accordion-evaluation"
-        className="rounded-2xl border border-[#DDE3EA] dark:border-[#252B34] bg-white dark:bg-[#11151B] overflow-hidden transition-colors duration-150"
-      >
-        <button
-          type="button"
-          onClick={() => toggleAccordion('evaluation')}
-          aria-expanded={openSections.evaluation}
-          className="w-full px-5 py-4 flex items-center justify-between text-left bg-[#F5F7FA] dark:bg-[#171D26] border-b border-[#DDE3EA] dark:border-[#252B34] cursor-pointer"
-        >
-          <div>
-            <h2 className="text-sm font-bold text-[#151D2A] dark:text-[#F2F5F9]">
-              04 — Evaluasi
-            </h2>
-            <p className="text-[11px] text-[#697586] dark:text-[#929BA9]">
-              Kepatuhan rencana, rating disiplin, perbandingan Plan vs Actual, dan refleksi
-            </p>
-          </div>
-          <ChevronDown
-            className={`h-4 w-4 stroke-[1.75] text-[#697586] dark:text-[#929BA9] transition-transform ${
-              openSections.evaluation ? 'rotate-180' : ''
-            }`}
-          />
-        </button>
-
-        {openSections.evaluation && (
-          <div className="p-4 space-y-3 text-xs">
-            {/* Discipline Rating & Plan Adherence */}
-            <div className="p-3.5 rounded-xl bg-[#F5F7FA] dark:bg-[#171D26] border border-[#DDE3EA] dark:border-[#252B34] space-y-1.5">
-              <div className="flex items-center justify-between flex-wrap gap-2">
-                <span className="font-semibold">
-                  Kepatuhan Rencana &amp; Rating Disiplin
-                </span>
-                <span className="font-mono-numbers tabular-nums font-bold px-2.5 py-0.5 rounded border border-[#DDE3EA] dark:border-[#252B34] bg-white dark:bg-[#11151B]">
-                  {compliance.rating !== null
-                    ? `${compliance.rating}/5 — ${compliance.label}`
-                    : compliance.label}
-                </span>
-              </div>
-              <p className="text-[11px] text-[#697586] dark:text-[#929BA9] leading-relaxed">
-                {compliance.reason}
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <h2 className="text-sm font-semibold text-[#151D2A] dark:text-[#F2F5F9]">
+                Riwayat Aktivitas
+              </h2>
+              <p className="text-xs text-[#697586] dark:text-[#929BA9]">
+                Jejak kronologis pembuatan rencana, eksekusi posisi, dokumentasi chart, dan evaluasi
               </p>
             </div>
-
-            {/* Plan vs Actual Comparison */}
-            <div className="p-3.5 rounded-xl bg-[#F5F7FA] dark:bg-[#171D26] border border-[#DDE3EA] dark:border-[#252B34]">
-              <span className="block text-[11px] font-bold uppercase tracking-wider text-[#697586] dark:text-[#929BA9] mb-2">
-                Perbandingan Plan vs Actual
-              </span>
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 font-mono-numbers tabular-nums">
-                <div className="p-2.5 rounded-lg bg-white dark:bg-[#11151B] border border-[#DDE3EA] dark:border-[#252B34]">
-                  <span className="block text-[10px] text-[#697586] dark:text-[#929BA9] font-sans">
-                    Entry (Plan vs Actual)
-                  </span>
-                  <span className="font-semibold">
-                    {resolved.plannedEntry.toFixed(2)} vs{' '}
-                    {resolved.actualEntry !== undefined
-                      ? resolved.actualEntry.toFixed(2)
-                      : '-'}
-                  </span>
-                </div>
-                <div className="p-2.5 rounded-lg bg-white dark:bg-[#11151B] border border-[#DDE3EA] dark:border-[#252B34]">
-                  <span className="block text-[10px] text-[#697586] dark:text-[#929BA9] font-sans">
-                    Lot (Plan vs Actual)
-                  </span>
-                  <span className="font-semibold">
-                    {resolved.plannedLot.toFixed(2)} vs{' '}
-                    {resolved.actualLot !== undefined
-                      ? resolved.actualLot.toFixed(2)
-                      : '-'}
-                  </span>
-                </div>
-                <div className="p-2.5 rounded-lg bg-white dark:bg-[#11151B] border border-[#DDE3EA] dark:border-[#252B34]">
-                  <span className="block text-[10px] text-[#697586] dark:text-[#929BA9] font-sans">
-                    RR (Planned vs Realized)
-                  </span>
-                  <span className="font-semibold">
-                    {formatPlannedRR(plannedRR)} vs {formatRMultiple(realizedR)}
-                  </span>
-                </div>
-              </div>
-            </div>
-
-            {/* Post-trade Reflection & Evaluation Notes */}
-            <div className="p-3.5 rounded-xl bg-[#F5F7FA] dark:bg-[#171D26] border border-[#DDE3EA] dark:border-[#252B34] space-y-2.5">
-              <div className="flex items-center justify-between">
-                <span className="font-semibold">
-                  Refleksi Pasca-Trade &amp; Catatan Evaluasi
-                </span>
-                {onSaveTradeUpdate && !isEditingEval && (
-                  <button
-                    type="button"
-                    onClick={() => setIsEditingEval(true)}
-                    className="text-[11px] font-semibold text-[#1769E8] hover:underline cursor-pointer"
-                  >
-                    {trade.postTradeEvaluation || trade.notes
-                      ? 'Ubah Evaluasi'
-                      : '+ Tambah Evaluasi'}
-                  </button>
-                )}
-              </div>
-
-              {isEditingEval ? (
-                <form onSubmit={handleSaveEvaluation} className="space-y-2.5">
-                  <div>
-                    <label className="block text-[11px] text-[#697586] dark:text-[#929BA9] mb-1">
-                      Refleksi Pasca-Trade
-                    </label>
-                    <textarea
-                      rows={2}
-                      value={evalReflectionInput}
-                      onChange={(e) => setEvalReflectionInput(e.target.value)}
-                      placeholder="Apakah eksekusi sudah sesuai rencana? Apa pelajaran dari transaksi ini?"
-                      className="w-full rounded-lg bg-white dark:bg-[#080A0E] border border-[#DDE3EA] dark:border-[#252B34] p-2.5 text-xs focus:border-[#1769E8] focus:outline-none"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-[11px] text-[#697586] dark:text-[#929BA9] mb-1">
-                      Catatan Evaluasi &amp; Konfluensi
-                    </label>
-                    <textarea
-                      rows={2}
-                      value={evalNotesInput}
-                      onChange={(e) => setEvalNotesInput(e.target.value)}
-                      placeholder="Catatan tambahan..."
-                      className="w-full rounded-lg bg-white dark:bg-[#080A0E] border border-[#DDE3EA] dark:border-[#252B34] p-2.5 text-xs focus:border-[#1769E8] focus:outline-none"
-                    />
-                  </div>
-                  <div className="flex items-center justify-end gap-2">
-                    <button
-                      type="button"
-                      onClick={() => setIsEditingEval(false)}
-                      className="px-3 py-1.5 rounded-lg border border-[#DDE3EA] dark:border-[#252B34] bg-white dark:bg-[#11151B] font-semibold cursor-pointer"
-                    >
-                      Batal
-                    </button>
-                    <button
-                      type="submit"
-                      disabled={isSavingEval}
-                      className="inline-flex items-center gap-1 px-3.5 py-1.5 rounded-lg bg-[#1769E8] text-white font-semibold cursor-pointer"
-                    >
-                      <Save className="h-3.5 w-3.5 stroke-[1.75]" />
-                      <span>Simpan Evaluasi</span>
-                    </button>
-                  </div>
-                </form>
-              ) : trade.postTradeEvaluation || trade.notes || trade.entryReason ? (
-                <div className="space-y-2">
-                  {trade.postTradeEvaluation && (
-                    <div className="p-2.5 rounded-lg bg-white dark:bg-[#11151B] border border-[#DDE3EA] dark:border-[#252B34]">
-                      <span className="block text-[10px] uppercase text-[#697586] dark:text-[#929BA9] mb-0.5">
-                        Refleksi Pasca-Trade
-                      </span>
-                      <p className="whitespace-pre-line leading-relaxed">
-                        {trade.postTradeEvaluation}
-                      </p>
-                    </div>
-                  )}
-                  {(trade.notes || trade.entryReason) && (
-                    <div className="p-2.5 rounded-lg bg-white dark:bg-[#11151B] border border-[#DDE3EA] dark:border-[#252B34]">
-                      <span className="block text-[10px] uppercase text-[#697586] dark:text-[#929BA9] mb-0.5">
-                        Catatan Evaluasi / Konfluensi
-                      </span>
-                      <p className="whitespace-pre-line leading-relaxed">
-                        {trade.notes || trade.entryReason}
-                      </p>
-                    </div>
-                  )}
-                </div>
-              ) : (
-                <p className="text-[#697586] dark:text-[#929BA9] text-[11px]">
-                  Belum ada catatan refleksi atau evaluasi manual untuk transaksi ini.
-                </p>
-              )}
-            </div>
+            <span className="text-xs text-[#697586] dark:text-[#929BA9] font-mono-numbers tabular-nums">
+              {timelineEvents.length} aktivitas
+            </span>
           </div>
-        )}
-      </div>
 
-      {/* ACCORDION 5: 05 — RIWAYAT AKTIVITAS */}
-      <div
-        data-testid="accordion-activity-history"
-        className="rounded-2xl border border-[#DDE3EA] dark:border-[#252B34] bg-white dark:bg-[#11151B] overflow-hidden transition-colors duration-150"
-      >
-        <button
-          type="button"
-          onClick={() => toggleAccordion('activity')}
-          aria-expanded={openSections.activity}
-          className="w-full px-5 py-4 flex items-center justify-between text-left bg-[#F5F7FA] dark:bg-[#171D26] border-b border-[#DDE3EA] dark:border-[#252B34] cursor-pointer"
-        >
-          <div>
-            <h2 className="text-sm font-bold text-[#151D2A] dark:text-[#F2F5F9]">
-              05 — Riwayat Aktivitas
-            </h2>
-            <p className="text-[11px] text-[#697586] dark:text-[#929BA9]">
-              Timeline kronologis seluruh aktivitas dan perubahan status
-            </p>
-          </div>
-          <ChevronDown
-            className={`h-4 w-4 stroke-[1.75] text-[#697586] dark:text-[#929BA9] transition-transform ${
-              openSections.activity ? 'rotate-180' : ''
-            }`}
-          />
-        </button>
-
-        {openSections.activity && (
-          <div className="p-4">
-            <div className="relative pl-5 space-y-4 before:content-[''] before:absolute before:left-1.5 before:top-1.5 before:bottom-1.5 before:w-px before:bg-[#DDE3EA] dark:before:bg-[#252B34]">
-              {timelineEvents.map((ev) => (
-                <div key={ev.id} className="relative text-xs">
-                  <span className="absolute -left-[17px] top-1 h-2.5 w-2.5 rounded-full bg-[#1769E8] ring-4 ring-white dark:ring-[#11151B]" />
-                  <div className="p-3 rounded-lg bg-[#F5F7FA] dark:bg-[#171D26] border border-[#DDE3EA] dark:border-[#252B34] space-y-1">
-                    <div className="flex items-center justify-between flex-wrap gap-2">
-                      <span className="font-bold text-[#151D2A] dark:text-[#F2F5F9]">
+          {timelineEvents.length === 0 ? (
+            <div className="py-10 border-t border-[#DDE3EA] dark:border-[#252B34] text-center space-y-1.5">
+              <Activity className="h-5 w-5 mx-auto stroke-[1.5] text-[#697586] dark:text-[#929BA9]" />
+              <p className="text-xs font-medium text-[#151D2A] dark:text-[#F2F5F9]">
+                Belum ada riwayat aktivitas tercatat
+              </p>
+            </div>
+          ) : (
+            <div className="pt-4 border-t border-[#DDE3EA] dark:border-[#252B34]">
+              <div className="relative pl-6 space-y-6 before:content-[''] before:absolute before:left-[7px] before:top-2 before:bottom-2 before:w-px before:bg-[#DDE3EA] dark:before:bg-[#252B34]">
+                {timelineEvents.map((ev) => (
+                  <div key={ev.id} className="relative text-xs">
+                    {/* Minimalist timeline node */}
+                    <span
+                      className="absolute -left-[21px] top-1.5 h-2.5 w-2.5 rounded-full bg-[#1769E8] dark:bg-[#38BDF8] ring-4 ring-white dark:ring-[#11151B]"
+                      aria-hidden="true"
+                    />
+                    <div className="space-y-1">
+                      <div className="font-semibold text-[#151D2A] dark:text-[#F2F5F9]">
                         {ev.label}
-                      </span>
-                      <span className="text-[11px] font-mono-numbers tabular-nums text-[#697586] dark:text-[#929BA9] inline-flex items-center gap-1">
-                        <Clock className="h-3 w-3 stroke-[1.75]" />
-                        {ev.timestamp.slice(0, 16).replace('T', ' ')}
-                      </span>
-                    </div>
-                    {(ev.previousValue || ev.newValue) && (
-                      <div className="text-[11px] font-mono-numbers tabular-nums text-[#697586] dark:text-[#929BA9]">
-                        {ev.previousValue ? `${ev.previousValue} → ` : ''}
-                        <strong className="text-[#151D2A] dark:text-[#F2F5F9]">
-                          {ev.newValue}
-                        </strong>
                       </div>
-                    )}
-                    {ev.note && (
-                      <p className="text-[11px] text-[#697586] dark:text-[#929BA9]">
-                        {ev.note}
-                      </p>
-                    )}
+                      <div className="text-[11px] font-mono-numbers tabular-nums text-[#697586] dark:text-[#929BA9] flex items-center gap-1.5">
+                        <Clock className="h-3 w-3 stroke-[1.75] shrink-0" />
+                        <span>{(ev.timestamp || '').slice(0, 16).replace('T', ' ')}</span>
+                      </div>
+                      {(ev.previousValue || ev.newValue) && (
+                        <div className="text-xs font-mono-numbers tabular-nums text-[#151D2A] dark:text-[#F2F5F9] pt-0.5">
+                          {ev.previousValue ? (
+                            <span className="text-[#697586] dark:text-[#929BA9]">
+                              {ev.previousValue} →{' '}
+                            </span>
+                          ) : null}
+                          <span>{ev.newValue}</span>
+                        </div>
+                      )}
+                      {ev.note && (
+                        <p className="text-xs text-[#697586] dark:text-[#929BA9] leading-relaxed">
+                          {ev.note}
+                        </p>
+                      )}
+                    </div>
                   </div>
-                </div>
-              ))}
+                ))}
+              </div>
             </div>
-          </div>
-        )}
-      </div>
+          )}
+        </div>
+      )}
     </div>
   );
 };
