@@ -156,3 +156,34 @@ CREATE POLICY "Pengguna dapat menghapus screenshot miliknya"
         (storage.foldername(name))[1] = auth.uid()::text
     );
 
+-- ====================================================================
+-- 5. TABEL CACHE ANALISIS MAKRO & BERITA XAU/USD (macro_news_snapshots)
+-- ====================================================================
+
+CREATE TABLE IF NOT EXISTS public.macro_news_snapshots (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    instrument TEXT NOT NULL DEFAULT 'XAUUSD',
+    data_fingerprint TEXT NOT NULL,
+    snapshot_payload JSONB NOT NULL,
+    impact_level TEXT NOT NULL DEFAULT 'MEDIUM',
+    dominant_bias TEXT NOT NULL DEFAULT 'MIXED',
+    source_mode TEXT NOT NULL DEFAULT 'AI',
+    analyzed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_macro_news_snapshots_analyzed_at
+    ON public.macro_news_snapshots(instrument, analyzed_at DESC);
+
+ALTER TABLE public.macro_news_snapshots ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Semua pengguna dapat membaca cache macro_news_snapshots" ON public.macro_news_snapshots;
+CREATE POLICY "Semua pengguna dapat membaca cache macro_news_snapshots"
+    ON public.macro_news_snapshots FOR SELECT
+    USING (true);
+
+DROP POLICY IF EXISTS "Semua pengguna dapat menyimpan cache macro_news_snapshots" ON public.macro_news_snapshots;
+CREATE POLICY "Semua pengguna dapat menyimpan cache macro_news_snapshots"
+    ON public.macro_news_snapshots FOR INSERT
+    WITH CHECK (true);
+

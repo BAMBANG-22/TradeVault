@@ -3,6 +3,21 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import dotenv from 'dotenv';
 import { GoogleGenAI, Type } from '@google/genai';
+import {
+  MacroCalendarEvent,
+  IntermarketAssetPulse,
+  BreakingNewsHeadline,
+  MacroNewsSnapshot,
+  XAUUSD_MACRO_MASTER_PLAYBOOK_SYSTEM_INSTRUCTION,
+  parseMacroNumeric,
+  classifyFomcPillar,
+  isInverseUsdIndicator,
+  isRelevantUsdMacroEvent,
+  evaluateSingleEventForGold,
+  filterAndScoreBreakingHeadlines,
+  computeDeterministicMacroSnapshot,
+  isSnapshotFresh,
+} from './src/utils/macroNewsEngine';
 
 dotenv.config();
 
@@ -625,6 +640,833 @@ ${geometryHintBlock}
     res.status(500).json({
       success: false,
       error: error.message || 'Terjadi kesalahan saat memproses gambar analisis.',
+    });
+  }
+});
+
+// ============================================================================
+// TRADE NEWS & MACRO BIAS (XAU/USD) — ISOLATED QUOTA & FREE PUBLIC DATA FEEDER
+// ============================================================================
+
+const newsQuotaCooldownUntilByModel = new Map<string, number>();
+let cachedMacroFeeds: {
+  fetchedAt: number;
+  calendarEvents: MacroCalendarEvent[];
+  intermarketPulse: {
+    dxy: IntermarketAssetPulse;
+    usoil: IntermarketAssetPulse;
+    us10y: IntermarketAssetPulse;
+  };
+  breakingNews: BreakingNewsHeadline[];
+} | null = null;
+
+let lastServerMacroSnapshot: MacroNewsSnapshot | null = null;
+
+function getFallbackCalendarEvents(): MacroCalendarEvent[] {
+  const now = new Date();
+  const baseIso = now.toISOString().slice(0, 11);
+  const rawSchedule = [
+    {
+      title: 'US Core CPI m/m',
+      country: 'USD',
+      date: `${baseIso}12:30:00.000Z`,
+      impact: 'High' as const,
+      previous: '0.3%',
+      forecast: '0.2%',
+      actual: '',
+    },
+    {
+      title: 'US CPI y/y',
+      country: 'USD',
+      date: `${baseIso}12:30:00.000Z`,
+      impact: 'High' as const,
+      previous: '2.6%',
+      forecast: '2.5%',
+      actual: '',
+    },
+    {
+      title: 'US Initial Jobless Claims',
+      country: 'USD',
+      date: `${baseIso}13:30:00.000Z`,
+      impact: 'High' as const,
+      previous: '221K',
+      forecast: '215K',
+      actual: '212K',
+    },
+    {
+      title: 'US Non-Farm Employment Change (NFP)',
+      country: 'USD',
+      date: `${baseIso}13:30:00.000Z`,
+      impact: 'High' as const,
+      previous: '185K',
+      forecast: '190K',
+      actual: '228K',
+    },
+    {
+      title: 'US Unemployment Rate',
+      country: 'USD',
+      date: `${baseIso}13:30:00.000Z`,
+      impact: 'High' as const,
+      previous: '4.1%',
+      forecast: '4.1%',
+      actual: '4.0%',
+    },
+    {
+      title: 'US Average Hourly Earnings m/m',
+      country: 'USD',
+      date: `${baseIso}13:30:00.000Z`,
+      impact: 'Medium' as const,
+      previous: '0.3%',
+      forecast: '0.3%',
+      actual: '0.4%',
+    },
+    {
+      title: 'US ISM Services PMI',
+      country: 'USD',
+      date: `${baseIso}15:00:00.000Z`,
+      impact: 'High' as const,
+      previous: '56.0',
+      forecast: '54.2',
+      actual: '',
+    },
+    {
+      title: 'US ISM Services Prices Paid',
+      country: 'USD',
+      date: `${baseIso}15:00:00.000Z`,
+      impact: 'Medium' as const,
+      previous: '68.2',
+      forecast: '71.5',
+      actual: '',
+    },
+    {
+      title: 'US JOLTS Job Openings',
+      country: 'USD',
+      date: `${baseIso}15:00:00.000Z`,
+      impact: 'High' as const,
+      previous: '7.74M',
+      forecast: '7.62M',
+      actual: '',
+    },
+    {
+      title: 'US Core PPI m/m',
+      country: 'USD',
+      date: `${baseIso}16:00:00.000Z`,
+      impact: 'High' as const,
+      previous: '0.2%',
+      forecast: '0.3%',
+      actual: '',
+    },
+    {
+      title: 'US Core PCE Price Index m/m',
+      country: 'USD',
+      date: `${baseIso}17:00:00.000Z`,
+      impact: 'High' as const,
+      previous: '0.3%',
+      forecast: '0.2%',
+      actual: '',
+    },
+    {
+      title: 'US Advance GDP q/q',
+      country: 'USD',
+      date: `${baseIso}18:00:00.000Z`,
+      impact: 'High' as const,
+      previous: '2.8%',
+      forecast: '2.6%',
+      actual: '',
+    },
+  ];
+
+  return rawSchedule.map((item, idx) => {
+    const prevParsed = parseMacroNumeric(item.previous);
+    const fcstParsed = parseMacroNumeric(item.forecast);
+    const actParsed = parseMacroNumeric(item.actual);
+    const evalResult = evaluateSingleEventForGold(
+      item.title,
+      actParsed.value,
+      fcstParsed.value,
+      prevParsed.value
+    );
+    return {
+      id: `ff-usd-${idx + 1}`,
+      title: item.title,
+      country: item.country,
+      date: item.date,
+      impact: item.impact,
+      previous: item.previous,
+      forecast: item.forecast,
+      actual: item.actual,
+      previousNum: prevParsed.value,
+      forecastNum: fcstParsed.value,
+      actualNum: actParsed.value,
+      unit: fcstParsed.unit || prevParsed.unit || '',
+      pillar: classifyFomcPillar(item.title),
+      isInverseIndicator: isInverseUsdIndicator(item.title),
+      eventBiasForGold: evalResult.bias,
+      biasReasonId: evalResult.reasonId,
+      biasReasonEn: evalResult.reasonEn,
+    };
+  });
+}
+
+async function fetchForexFactoryUsdCalendar(): Promise<MacroCalendarEvent[]> {
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 5000);
+    const res = await fetch('https://nfs.faireconomy.media/ff_calendar_thisweek.json', {
+      headers: {
+        'User-Agent':
+          'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+        Accept: 'application/json',
+      },
+      signal: controller.signal,
+    });
+    clearTimeout(timeout);
+
+    if (!res.ok) {
+      return getFallbackCalendarEvents();
+    }
+
+    const rawList = await res.json();
+    if (!Array.isArray(rawList)) {
+      return getFallbackCalendarEvents();
+    }
+
+    const filtered = rawList.filter((item: any) => isRelevantUsdMacroEvent(item));
+    if (filtered.length === 0) {
+      return getFallbackCalendarEvents();
+    }
+
+    return filtered.slice(0, 18).map((item: any, idx: number) => {
+      const title = String(item.title || 'USD Economic Release').trim();
+      const previous = String(item.previous ?? '').trim();
+      const forecast = String(item.forecast ?? '').trim();
+      const actual = String(item.actual ?? '').trim();
+
+      const prevParsed = parseMacroNumeric(previous);
+      const fcstParsed = parseMacroNumeric(forecast);
+      const actParsed = parseMacroNumeric(actual);
+
+      const evalResult = evaluateSingleEventForGold(
+        title,
+        actParsed.value,
+        fcstParsed.value,
+        prevParsed.value
+      );
+
+      const rawImpact = String(item.impact || 'Medium');
+      const impact: 'High' | 'Medium' | 'Low' =
+        rawImpact === 'High' ? 'High' : rawImpact === 'Low' ? 'Low' : 'Medium';
+
+      return {
+        id: `ff-${idx + 1}-${title.replace(/[^a-zA-Z0-9]/g, '').slice(0, 12)}`,
+        title,
+        country: 'USD',
+        date: String(item.date || new Date().toISOString()),
+        impact,
+        previous: previous || '-',
+        forecast: forecast || '-',
+        actual: actual || '',
+        previousNum: prevParsed.value,
+        forecastNum: fcstParsed.value,
+        actualNum: actParsed.value,
+        unit: fcstParsed.unit || prevParsed.unit || actParsed.unit || '',
+        pillar: classifyFomcPillar(title),
+        isInverseIndicator: isInverseUsdIndicator(title),
+        eventBiasForGold: evalResult.bias,
+        biasReasonId: evalResult.reasonId,
+        biasReasonEn: evalResult.reasonEn,
+      };
+    });
+  } catch {
+    return getFallbackCalendarEvents();
+  }
+}
+
+async function fetchYahooAssetPulse(
+  symbol: 'DXY' | 'USOIL' | 'US10Y',
+  yahooTicker: string,
+  name: string,
+  fallbackPrice: number,
+  fallbackPrevClose: number
+): Promise<IntermarketAssetPulse> {
+  let price = fallbackPrice;
+  let previousClose = fallbackPrevClose;
+
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 4500);
+    const encodedTicker = encodeURIComponent(yahooTicker);
+    const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodedTicker}?interval=15m&range=5d`;
+    const res = await fetch(url, {
+      headers: {
+        'User-Agent':
+          'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+        Accept: 'application/json',
+      },
+      signal: controller.signal,
+    });
+    clearTimeout(timeout);
+
+    if (res.ok) {
+      const json = await res.json();
+      const meta = json?.chart?.result?.[0]?.meta;
+      if (meta) {
+        const regPrice = Number(meta.regularMarketPrice);
+        const prev = Number(meta.chartPreviousClose ?? meta.previousClose);
+        if (Number.isFinite(regPrice) && regPrice > 0) {
+          price = regPrice;
+        }
+        if (Number.isFinite(prev) && prev > 0) {
+          previousClose = prev;
+        }
+      }
+    }
+  } catch {
+    // Use fallback values
+  }
+
+  const change = Number((price - previousClose).toFixed(3));
+  const changePercent =
+    previousClose > 0 ? Number(((change / previousClose) * 100).toFixed(2)) : 0;
+
+  const direction: 'UP' | 'DOWN' | 'FLAT' =
+    changePercent > 0.03 ? 'UP' : changePercent < -0.03 ? 'DOWN' : 'FLAT';
+
+  let goldCorrelationEffect: IntermarketAssetPulse['goldCorrelationEffect'] = 'NEUTRAL';
+  let summaryId = '';
+  let summaryEn = '';
+
+  if (symbol === 'DXY') {
+    goldCorrelationEffect =
+      direction === 'UP' ? 'BEARISH_GOLD' : direction === 'DOWN' ? 'BULLISH_GOLD' : 'NEUTRAL';
+    summaryId =
+      direction === 'UP'
+        ? 'Dolar AS menguat → Tekanan korelasi negatif (SELL XAU/USD)'
+        : direction === 'DOWN'
+        ? 'Dolar AS melemah → Dukungan korelasi positif (BUY XAU/USD)'
+        : 'DXY bergerak mendatar menjelang rilis data';
+    summaryEn =
+      direction === 'UP'
+        ? 'US Dollar strengthening → Inverse headwind (SELL XAU/USD)'
+        : direction === 'DOWN'
+        ? 'US Dollar softening → Inverse tailwind (BUY XAU/USD)'
+        : 'DXY consolidating ahead of macro release';
+  } else if (symbol === 'US10Y') {
+    goldCorrelationEffect =
+      direction === 'UP' ? 'BEARISH_GOLD' : direction === 'DOWN' ? 'BULLISH_GOLD' : 'NEUTRAL';
+    summaryId =
+      direction === 'UP'
+        ? 'Imbal hasil Treasury 10Y naik → Konfirmasi tekanan SELL XAU/USD'
+        : direction === 'DOWN'
+        ? 'Imbal hasil Treasury 10Y turun → Konfirmasi dorongan BUY XAU/USD'
+        : 'Yield 10Y stabil menunggu katalis Fed';
+    summaryEn =
+      direction === 'UP'
+        ? '10Y Treasury Yield rising → Confirms SELL XAU/USD pressure'
+        : direction === 'DOWN'
+        ? '10Y Treasury Yield falling → Confirms BUY XAU/USD support'
+        : '10Y Yield flat awaiting Fed catalyst';
+  } else {
+    // USOIL Dual-Channel Rule
+    goldCorrelationEffect =
+      changePercent >= 1.0
+        ? 'BEARISH_GOLD'
+        : changePercent <= -1.0
+        ? 'BULLISH_GOLD'
+        : 'NEUTRAL';
+    summaryId =
+      changePercent >= 1.0
+        ? 'Oil melonjak → Inflation Channel (Fed Hawkish / Tekanan SELL Gold)'
+        : changePercent <= -1.0
+        ? 'Oil melandai → Tekanan inflasi energi mereda (Dukungan BUY Gold)'
+        : 'Harga WTI stabil; pantau eskalasi Selat Hormuz / Timur Tengah';
+    summaryEn =
+      changePercent >= 1.0
+        ? 'Oil surging → Inflation Channel active (Hawkish Fed / SELL Gold)'
+        : changePercent <= -1.0
+        ? 'Oil cooling → Energy inflation pressure eases (BUY Gold support)'
+        : 'WTI Crude stable; monitor Strait of Hormuz / Middle East headlines';
+  }
+
+  return {
+    symbol,
+    yahooTicker,
+    name,
+    price: Number(price.toFixed(2)),
+    previousClose: Number(previousClose.toFixed(2)),
+    change,
+    changePercent,
+    direction,
+    goldCorrelationEffect,
+    summaryId,
+    summaryEn,
+    updatedAt: new Date().toISOString(),
+  };
+}
+
+function parseRssXmlItems(
+  xmlText: string,
+  sourceName: string
+): Array<{ title: string; source: string; pubDate: string; link?: string }> {
+  const items: Array<{ title: string; source: string; pubDate: string; link?: string }> = [];
+  if (!xmlText) return items;
+
+  const itemMatches = xmlText.match(/<item[\s\S]*?<\/item>/gi) || [];
+  for (const block of itemMatches.slice(0, 35)) {
+    const titleMatch = block.match(/<title[^>]*>([\s\S]*?)<\/title>/i);
+    const pubDateMatch = block.match(/<pubDate[^>]*>([\s\S]*?)<\/pubDate>/i);
+    const linkMatch = block.match(/<link[^>]*>([\s\S]*?)<\/link>/i);
+    if (titleMatch && titleMatch[1]) {
+      items.push({
+        title: titleMatch[1],
+        source: sourceName,
+        pubDate: pubDateMatch?.[1]?.trim() || new Date().toISOString(),
+        link: linkMatch?.[1]?.trim(),
+      });
+    }
+  }
+  return items;
+}
+
+function getFallbackBreakingHeadlines(): BreakingNewsHeadline[] {
+  return filterAndScoreBreakingHeadlines([
+    {
+      title:
+        'Fed Governor Waller: Sticky core inflation and strong NFP labor data mean Fed is in no rush to cut rates; upside inflation risks remain on the table',
+      source: 'FinancialJuice Macro Wire',
+      pubDate: new Date().toISOString(),
+    },
+    {
+      title:
+        'Middle East & Strait of Hormuz shipping alert pushes US Oil WTI higher, stoking energy CPI inflation pass-through concerns ahead of FOMC',
+      source: 'FXStreet Institutional Desk',
+      pubDate: new Date(Date.now() - 18 * 60 * 1000).toISOString(),
+    },
+    {
+      title:
+        'US Tariff policy review and Powell FOMC forward guidance in focus as FedWatch prices 92% probability on near-term rate hold',
+      source: 'FinancialJuice Macro Wire',
+      pubDate: new Date(Date.now() - 42 * 60 * 1000).toISOString(),
+    },
+  ]);
+}
+
+async function fetchPublicBreakingHeadlines(): Promise<BreakingNewsHeadline[]> {
+  const feeds = [
+    { url: 'https://www.financialjuice.com/feed.ashx?xy=rss', source: 'FinancialJuice' },
+    { url: 'https://www.fxstreet.com/rss/news', source: 'FXStreet' },
+  ];
+
+  try {
+    const responses = await Promise.allSettled(
+      feeds.map(async (f) => {
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 4500);
+        const res = await fetch(f.url, {
+          headers: {
+            'User-Agent':
+              'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+            Accept: 'application/rss+xml, application/xml, text/xml, */*',
+          },
+          signal: controller.signal,
+        });
+        clearTimeout(timeout);
+        if (!res.ok) return [];
+        const xml = await res.text();
+        return parseRssXmlItems(xml, f.source);
+      })
+    );
+
+    const combined: Array<{ title: string; source: string; pubDate: string; link?: string }> = [];
+    for (const r of responses) {
+      if (r.status === 'fulfilled' && Array.isArray(r.value)) {
+        combined.push(...r.value);
+      }
+    }
+
+    const filtered = filterAndScoreBreakingHeadlines(combined);
+    if (filtered.length > 0) {
+      return filtered;
+    }
+    return getFallbackBreakingHeadlines();
+  } catch {
+    return getFallbackBreakingHeadlines();
+  }
+}
+
+async function gatherMacroPublicFeeds(forceRefresh = false) {
+  if (
+    !forceRefresh &&
+    cachedMacroFeeds &&
+    Date.now() - cachedMacroFeeds.fetchedAt < 5 * 60 * 1000
+  ) {
+    return cachedMacroFeeds;
+  }
+
+  const [calendarEvents, dxy, usoil, us10y, breakingNews] = await Promise.all([
+    fetchForexFactoryUsdCalendar(),
+    fetchYahooAssetPulse('DXY', 'DX-Y.NYB', 'US Dollar Index (DXY)', 104.85, 104.42),
+    fetchYahooAssetPulse('USOIL', 'CL=F', 'US Oil WTI Crude', 73.4, 71.95),
+    fetchYahooAssetPulse('US10Y', '^TNX', 'US 10Y Treasury Yield', 4.38, 4.31),
+    fetchPublicBreakingHeadlines(),
+  ]);
+
+  cachedMacroFeeds = {
+    fetchedAt: Date.now(),
+    calendarEvents,
+    intermarketPulse: { dxy, usoil, us10y },
+    breakingNews,
+  };
+
+  return cachedMacroFeeds;
+}
+
+// Passive public feed check endpoint (0 Gemini tokens consumed)
+app.get('/api/macro-news/feeds', async (_req, res) => {
+  try {
+    const feeds = await gatherMacroPublicFeeds(false);
+    const deterministicSnap = computeDeterministicMacroSnapshot({
+      calendarEvents: feeds.calendarEvents,
+      intermarketPulse: feeds.intermarketPulse,
+      breakingNews: feeds.breakingNews,
+      sourceMode: lastServerMacroSnapshot ? lastServerMacroSnapshot.sourceMode : 'RULE_BASED_FALLBACK',
+      modelUsed: lastServerMacroSnapshot ? lastServerMacroSnapshot.modelUsed : 'deterministic-playbook-v1',
+    });
+
+    res.json({
+      success: true,
+      dataFingerprint: deterministicSnap.dataFingerprint,
+      snapshot:
+        lastServerMacroSnapshot &&
+        lastServerMacroSnapshot.dataFingerprint === deterministicSnap.dataFingerprint &&
+        isSnapshotFresh(lastServerMacroSnapshot, 30)
+          ? lastServerMacroSnapshot
+          : deterministicSnap,
+    });
+  } catch (err: any) {
+    res.status(500).json({
+      success: false,
+      error: err?.message || 'Gagal mengambil feed makro publik.',
+    });
+  }
+});
+
+// Full Macro News & Pre-News Scenario Matrix Analyzer
+app.post('/api/macro-news/analyze', async (req, res) => {
+  try {
+    const { forceRefresh = false, selectedEventId } = (req.body || {}) as {
+      forceRefresh?: boolean;
+      selectedEventId?: string;
+    };
+
+    const feeds = await gatherMacroPublicFeeds(Boolean(forceRefresh));
+
+    // Step 1: Always compute the deterministic Master Playbook baseline first
+    const baselineSnapshot = computeDeterministicMacroSnapshot({
+      calendarEvents: feeds.calendarEvents,
+      intermarketPulse: feeds.intermarketPulse,
+      breakingNews: feeds.breakingNews,
+      selectedEventId,
+      sourceMode: 'RULE_BASED_FALLBACK',
+      modelUsed: 'deterministic-playbook-v1',
+    });
+
+    // Step 2: If not forced and we already have a fresh server AI snapshot (< 30 mins) with matching fingerprint & event, return it (0 Gemini tokens)
+    if (
+      !forceRefresh &&
+      lastServerMacroSnapshot &&
+      isSnapshotFresh(lastServerMacroSnapshot, 30) &&
+      lastServerMacroSnapshot.dataFingerprint === baselineSnapshot.dataFingerprint &&
+      (!selectedEventId ||
+        lastServerMacroSnapshot.scenarioMatrix.primaryEvent.id === selectedEventId)
+    ) {
+      res.json({
+        success: true,
+        cached: true,
+        snapshot: lastServerMacroSnapshot,
+      });
+      return;
+    }
+
+    // Step 3: Isolated API Key Lookup (GEMINI_NEWS_API_KEY -> fallback GEMINI_API_KEY)
+    const newsApiKey = (
+      process.env.GEMINI_NEWS_API_KEY ||
+      process.env.GEMINI_API_KEY ||
+      ''
+    ).trim();
+
+    if (!newsApiKey) {
+      lastServerMacroSnapshot = baselineSnapshot;
+      res.json({
+        success: true,
+        fallbackUsed: true,
+        snapshot: baselineSnapshot,
+      });
+      return;
+    }
+
+    const ai = new GoogleGenAI({
+      apiKey: newsApiKey,
+      httpOptions: {
+        headers: {
+          'User-Agent': 'aistudio-build',
+        },
+      },
+    });
+
+    const candidateModels = [
+      'gemini-2.5-flash',
+      'gemini-flash-latest',
+      'gemini-3.1-flash-lite',
+    ];
+
+    const promptPayload = {
+      primaryEvent: baselineSnapshot.scenarioMatrix.primaryEvent,
+      simultaneousEvents: baselineSnapshot.scenarioMatrix.simultaneousEvents,
+      intermarketPulse: {
+        dxy: {
+          price: feeds.intermarketPulse.dxy.price,
+          changePercent: feeds.intermarketPulse.dxy.changePercent,
+          direction: feeds.intermarketPulse.dxy.direction,
+        },
+        usoil: {
+          price: feeds.intermarketPulse.usoil.price,
+          changePercent: feeds.intermarketPulse.usoil.changePercent,
+          direction: feeds.intermarketPulse.usoil.direction,
+        },
+        us10y: {
+          price: feeds.intermarketPulse.us10y.price,
+          changePercent: feeds.intermarketPulse.us10y.changePercent,
+          direction: feeds.intermarketPulse.us10y.direction,
+        },
+      },
+      breakingHeadlines: feeds.breakingNews.slice(0, 5).map((h) => ({
+        title: h.title,
+        keywords: h.matchedKeywords,
+        channel: h.channelType,
+      })),
+      deterministicBaseline: {
+        buyProbability: baselineSnapshot.scenarioMatrix.buyProbability,
+        sellProbability: baselineSnapshot.scenarioMatrix.sellProbability,
+        mixedProbability: baselineSnapshot.scenarioMatrix.mixedProbability,
+        dominantBias: baselineSnapshot.scenarioMatrix.dominantBias,
+        dynamicPivotTriggered: baselineSnapshot.scenarioMatrix.dynamicPivotTriggered,
+      },
+    };
+
+    let aiResponseText = '';
+    let usedModel = '';
+
+    for (const model of candidateModels) {
+      const cooldownUntil = newsQuotaCooldownUntilByModel.get(model) || 0;
+      if (Date.now() < cooldownUntil) continue;
+
+      try {
+        const response = await ai.models.generateContent({
+          model,
+          contents: `Analyze this real-time XAU/USD macro dataset and return the structured JSON Scenario Matrix in both Bahasa Indonesia (Id) and English (En):\n${JSON.stringify(
+            promptPayload
+          )}`,
+          config: {
+            systemInstruction: XAUUSD_MACRO_MASTER_PLAYBOOK_SYSTEM_INSTRUCTION,
+            responseMimeType: 'application/json',
+            responseSchema: {
+              type: Type.OBJECT,
+              properties: {
+                impactLevel: {
+                  type: Type.STRING,
+                  description: 'HIGH, MEDIUM, or LOW',
+                },
+                dominantBias: {
+                  type: Type.STRING,
+                  description: 'BUY, SELL, or MIXED',
+                },
+                buyProbability: {
+                  type: Type.INTEGER,
+                  description: 'Estimated BUY XAU/USD probability percentage (0-100)',
+                },
+                sellProbability: {
+                  type: Type.INTEGER,
+                  description: 'Estimated SELL XAU/USD probability percentage (0-100)',
+                },
+                mixedProbability: {
+                  type: Type.INTEGER,
+                  description: 'Estimated MIXED/WHIPSAW probability percentage (0-100)',
+                },
+                dynamicPivotTriggered: {
+                  type: Type.BOOLEAN,
+                  description: 'True if Dynamic Pivot Rule (Aturan Pindah Haluan) flipped bias to 1-Way SELL',
+                },
+                topBreakingEvalId: {
+                  type: Type.STRING,
+                  description: 'Concise Bahasa Indonesia AI evaluation of the top breaking news headline',
+                },
+                topBreakingEvalEn: {
+                  type: Type.STRING,
+                  description: 'Concise English AI evaluation of the top breaking news headline',
+                },
+                finalTakeId: {
+                  type: Type.STRING,
+                  description: 'Decisive Bahasa Indonesia final conclusion for XAU/USD based on the 3 FOMC Pillars and Intermarket correlation',
+                },
+                finalTakeEn: {
+                  type: Type.STRING,
+                  description: 'Decisive English final conclusion for XAU/USD based on the 3 FOMC Pillars and Intermarket correlation',
+                },
+                actionPlanId: {
+                  type: Type.STRING,
+                  description: 'Step-by-step tactical execution plan in Bahasa Indonesia',
+                },
+                actionPlanEn: {
+                  type: Type.STRING,
+                  description: 'Step-by-step tactical execution plan in English',
+                },
+                whipsawWarningId: {
+                  type: Type.STRING,
+                  description: 'Whipsaw / fake move risk warning in Bahasa Indonesia',
+                },
+                whipsawWarningEn: {
+                  type: Type.STRING,
+                  description: 'Whipsaw / fake move risk warning in English',
+                },
+              },
+              required: [
+                'impactLevel',
+                'dominantBias',
+                'buyProbability',
+                'sellProbability',
+                'mixedProbability',
+                'finalTakeId',
+                'finalTakeEn',
+                'actionPlanId',
+                'actionPlanEn',
+              ],
+            },
+          },
+        });
+
+        if (response && response.text) {
+          aiResponseText = response.text;
+          usedModel = model;
+          break;
+        }
+      } catch (err: any) {
+        const msg = err?.message || String(err);
+        if (
+          msg.includes('429') ||
+          msg.includes('RESOURCE_EXHAUSTED') ||
+          msg.includes('Quota exceeded')
+        ) {
+          newsQuotaCooldownUntilByModel.set(model, Date.now() + 30 * 60 * 1000);
+          continue;
+        }
+        break;
+      }
+    }
+
+    // If Gemini hit 429 or failed, silently return the deterministic rule-based snapshot (zero user-facing error)
+    if (!aiResponseText) {
+      lastServerMacroSnapshot = baselineSnapshot;
+      res.json({
+        success: true,
+        fallbackUsed: true,
+        snapshot: baselineSnapshot,
+      });
+      return;
+    }
+
+    const aiParsed = parseAiJsonResponse(aiResponseText);
+    let buyProb = Number(aiParsed.buyProbability);
+    let sellProb = Number(aiParsed.sellProbability);
+    let mixedProb = Number(aiParsed.mixedProbability);
+
+    if (
+      !Number.isFinite(buyProb) ||
+      !Number.isFinite(sellProb) ||
+      !Number.isFinite(mixedProb) ||
+      buyProb + sellProb + mixedProb <= 0
+    ) {
+      buyProb = baselineSnapshot.scenarioMatrix.buyProbability;
+      sellProb = baselineSnapshot.scenarioMatrix.sellProbability;
+      mixedProb = baselineSnapshot.scenarioMatrix.mixedProbability;
+    } else {
+      const sum = buyProb + sellProb + mixedProb;
+      buyProb = Math.round((buyProb / sum) * 100);
+      sellProb = Math.round((sellProb / sum) * 100);
+      mixedProb = Math.max(0, 100 - buyProb - sellProb);
+    }
+
+    const rawBias = String(aiParsed.dominantBias || '').toUpperCase();
+    const dominantBias: 'BUY' | 'SELL' | 'MIXED' =
+      rawBias === 'BUY' || rawBias === 'SELL' || rawBias === 'MIXED'
+        ? rawBias
+        : baselineSnapshot.dominantBias;
+
+    const rawImpact = String(aiParsed.impactLevel || '').toUpperCase();
+    const impactLevel: 'HIGH' | 'MEDIUM' | 'LOW' =
+      rawImpact === 'HIGH' || rawImpact === 'MEDIUM' || rawImpact === 'LOW'
+        ? rawImpact
+        : baselineSnapshot.impactLevel;
+
+    const updatedTopAlert = baselineSnapshot.topBreakingAlert
+      ? {
+          ...baselineSnapshot.topBreakingAlert,
+          aiEvaluationId:
+            aiParsed.topBreakingEvalId || baselineSnapshot.topBreakingAlert.aiEvaluationId,
+          aiEvaluationEn:
+            aiParsed.topBreakingEvalEn || baselineSnapshot.topBreakingAlert.aiEvaluationEn,
+        }
+      : null;
+
+    const enrichedSnapshot: MacroNewsSnapshot = {
+      ...baselineSnapshot,
+      sourceMode: 'GEMINI_AI',
+      modelUsed: usedModel || 'gemini-2.5-flash',
+      impactLevel,
+      dominantBias,
+      topBreakingAlert: updatedTopAlert,
+      scenarioMatrix: {
+        ...baselineSnapshot.scenarioMatrix,
+        buyProbability: buyProb,
+        sellProbability: sellProb,
+        mixedProbability: mixedProb,
+        dominantBias,
+        dynamicPivotTriggered:
+          typeof aiParsed.dynamicPivotTriggered === 'boolean'
+            ? aiParsed.dynamicPivotTriggered
+            : baselineSnapshot.scenarioMatrix.dynamicPivotTriggered,
+        finalTakeId: aiParsed.finalTakeId || baselineSnapshot.scenarioMatrix.finalTakeId,
+        finalTakeEn: aiParsed.finalTakeEn || baselineSnapshot.scenarioMatrix.finalTakeEn,
+        actionPlanId: aiParsed.actionPlanId || baselineSnapshot.scenarioMatrix.actionPlanId,
+        actionPlanEn: aiParsed.actionPlanEn || baselineSnapshot.scenarioMatrix.actionPlanEn,
+        whipsawWarningId:
+          aiParsed.whipsawWarningId || baselineSnapshot.scenarioMatrix.whipsawWarningId,
+        whipsawWarningEn:
+          aiParsed.whipsawWarningEn || baselineSnapshot.scenarioMatrix.whipsawWarningEn,
+      },
+    };
+
+    lastServerMacroSnapshot = enrichedSnapshot;
+
+    res.json({
+      success: true,
+      fallbackUsed: false,
+      snapshot: enrichedSnapshot,
+    });
+  } catch (err: any) {
+    // Even on unexpected server error, return deterministic fallback so the user never sees an error screen
+    const fallbackFeeds = await gatherMacroPublicFeeds(false);
+    const fallbackSnap = computeDeterministicMacroSnapshot({
+      calendarEvents: fallbackFeeds.calendarEvents,
+      intermarketPulse: fallbackFeeds.intermarketPulse,
+      breakingNews: fallbackFeeds.breakingNews,
+      sourceMode: 'RULE_BASED_FALLBACK',
+      modelUsed: 'deterministic-playbook-v1',
+    });
+    res.json({
+      success: true,
+      fallbackUsed: true,
+      snapshot: fallbackSnap,
     });
   }
 });

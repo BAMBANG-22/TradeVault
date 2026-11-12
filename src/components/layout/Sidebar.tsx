@@ -11,6 +11,7 @@ import {
   BarChart3,
   ShieldAlert,
   CandlestickChart,
+  Newspaper,
   User,
   ChevronRight,
   Moon,
@@ -59,6 +60,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
     { id: 'add-trade', label: tr('Catat Trade Baru', 'New Trade'), icon: PlusCircle },
     { id: 'analytics', label: tr('Analitik', 'Analytics'), icon: BarChart3 },
     { id: 'risk', label: tr('Manajemen Risiko', 'Risk Management'), icon: ShieldAlert },
+    { id: 'macro-news', label: tr('Trade News & Macro Bias', 'Trade News & Macro Bias'), icon: Newspaper },
     { id: 'market-chart', label: tr('Chart Pasar', 'Market Chart'), icon: CandlestickChart },
   ];
 

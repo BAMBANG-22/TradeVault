@@ -53,6 +53,7 @@ import { TradeForm } from './components/trades/TradeForm';
 import { AnalyticsView } from './components/analytics/AnalyticsView';
 import { RiskCalculatorView } from './components/risk/RiskCalculatorView';
 import { MarketChartView } from './components/chart/MarketChartView';
+import { MacroNewsView } from './components/news/MacroNewsView';
 import { SettingsView } from './components/settings/SettingsView';
 
 // Modals
@@ -1774,6 +1775,12 @@ export default function App() {
                   onOpenAccount={() => setIsAccountModalOpen(true)}
                   onCreateTradeFromPosition={handleCreateTradeFromChart}
                 />
+              </div>
+            )}
+
+            {(activeTab === 'macro-news' || visitedTabs['macro-news']) && (
+              <div className={activeTab === 'macro-news' ? 'block' : 'hidden'} aria-hidden={activeTab !== 'macro-news'}>
+                <MacroNewsView />
               </div>
             )}
 

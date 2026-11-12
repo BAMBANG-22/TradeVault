@@ -17,6 +17,7 @@
     "@capacitor/android": "8.6.0",
     "@capacitor/cli": "8.6.0",
     "@capacitor/core": "8.6.0",
+    "@capacitor/local-notifications": "^8.3.1",
     "@google/genai": "^3.0.0",
     "@remotion/player": "^4.0.541",
     "@supabase/supabase-js": "^2.118.0",
