@@ -12,7 +12,7 @@ import {
 
 /**
  * Robust CORS proxy fetcher.
- * Automatically tries direct fetch, then allorigins.win, then corsproxy.io,
+ * Automatically tries local proxy, corsproxy.io, api.allorigins.win, and direct fetch,
  * with strict timeout abort (max 8 seconds per feed) so the UI never hangs.
  */
 export async function fetchWithCorsProxy(
@@ -20,7 +20,67 @@ export async function fetchWithCorsProxy(
   timeoutMs = 8000,
   acceptHeader = 'application/json, text/plain, */*'
 ): Promise<string> {
-  // Strategy 1: Direct fetch
+  // Strategy 1: Local server proxy endpoint (fastest and 100% reliable in browser dev & cloud run)
+  try {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), Math.min(3000, timeoutMs));
+    const localProxyUrl = `/api/proxy?url=${encodeURIComponent(targetUrl)}`;
+    const res = await fetch(localProxyUrl, {
+      headers: { Accept: acceptHeader },
+      signal: controller.signal,
+    });
+    clearTimeout(timer);
+    if (res.ok) {
+      const text = await res.text();
+      if (text && text.trim().length > 10 && !text.trim().startsWith('<!doctype') && !text.trim().startsWith('<html')) {
+        return text;
+      }
+    }
+  } catch {
+    // Proceed to next proxy strategy
+  }
+
+  // Strategy 2: corsproxy.io
+  try {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), Math.min(4000, timeoutMs));
+    const proxyUrl = `https://corsproxy.io/?${encodeURIComponent(targetUrl)}`;
+    const res = await fetch(proxyUrl, {
+      headers: { Accept: acceptHeader },
+      signal: controller.signal,
+    });
+    clearTimeout(timer);
+    if (res.ok) {
+      const text = await res.text();
+      if (text && text.trim().length > 10 && !text.trim().startsWith('<!doctype') && !text.includes('keyless_legacy_url')) {
+        return text;
+      }
+    }
+  } catch {
+    // try next proxy
+  }
+
+  // Strategy 3: api.allorigins.win raw proxy
+  try {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    const proxyUrl = `https://api.allorigins.win/raw?url=${encodeURIComponent(targetUrl)}`;
+    const res = await fetch(proxyUrl, {
+      headers: { Accept: acceptHeader },
+      signal: controller.signal,
+    });
+    clearTimeout(timer);
+    if (res.ok) {
+      const text = await res.text();
+      if (text && text.trim().length > 10 && !text.trim().startsWith('<!doctype')) {
+        return text;
+      }
+    }
+  } catch {
+    // try direct fetch
+  }
+
+  // Strategy 4: Direct fetch
   try {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), Math.min(3000, timeoutMs));
@@ -34,52 +94,12 @@ export async function fetchWithCorsProxy(
     clearTimeout(timer);
     if (res.ok) {
       const text = await res.text();
-      if (text && text.trim().length > 10) {
+      if (text && text.trim().length > 10 && !text.trim().startsWith('<!doctype')) {
         return text;
       }
     }
   } catch {
-    // CORS or network error -> fallback to proxy
-  }
-
-  // Strategy 2: allorigins.win raw proxy
-  try {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), timeoutMs);
-    const proxyUrl = `https://api.allorigins.win/raw?url=${encodeURIComponent(targetUrl)}`;
-    const res = await fetch(proxyUrl, {
-      headers: { Accept: acceptHeader },
-      signal: controller.signal,
-    });
-    clearTimeout(timer);
-    if (res.ok) {
-      const text = await res.text();
-      if (text && text.trim().length > 10) {
-        return text;
-      }
-    }
-  } catch {
-    // try next proxy
-  }
-
-  // Strategy 3: corsproxy.io fallback
-  try {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), timeoutMs);
-    const proxyUrl = `https://corsproxy.io/?${encodeURIComponent(targetUrl)}`;
-    const res = await fetch(proxyUrl, {
-      headers: { Accept: acceptHeader },
-      signal: controller.signal,
-    });
-    clearTimeout(timer);
-    if (res.ok) {
-      const text = await res.text();
-      if (text && text.trim().length > 10) {
-        return text;
-      }
-    }
-  } catch {
-    // failed
+    // all strategies failed
   }
 
   throw new Error(`Semua jalur proxy gagal mengunduh data dari: ${targetUrl}`);
@@ -87,12 +107,43 @@ export async function fetchWithCorsProxy(
 
 export function getClientFallbackCalendarEvents(): MacroCalendarEvent[] {
   const now = new Date();
-  const baseIso = now.toISOString().slice(0, 11);
+  // Distribute fallback events realistically across the current week (Monday to Friday)
+  const currentDay = now.getUTCDay(); // 0 = Sun, 1 = Mon ...
+  const diffToMonday = (currentDay === 0 ? -6 : 1) - currentDay;
+  const monday = new Date(now);
+  monday.setUTCDate(now.getUTCDate() + diffToMonday);
+  monday.setUTCHours(12, 0, 0, 0);
+
+  const getWeekDayIso = (dayOffset: number, utcHour: number, utcMinute: number): string => {
+    const d = new Date(monday);
+    d.setUTCDate(monday.getUTCDate() + dayOffset);
+    d.setUTCHours(utcHour, utcMinute, 0, 0);
+    return d.toISOString();
+  };
+
   const rawSchedule = [
+    {
+      title: 'US ISM Manufacturing PMI',
+      country: 'USD',
+      date: getWeekDayIso(0, 15, 0), // Monday 15:00 UTC (22:00 WIB)
+      impact: 'High' as const,
+      previous: '48.5',
+      forecast: '49.2',
+      actual: '49.0',
+    },
+    {
+      title: 'US JOLTS Job Openings',
+      country: 'USD',
+      date: getWeekDayIso(1, 15, 0), // Tuesday 15:00 UTC (22:00 WIB)
+      impact: 'High' as const,
+      previous: '7.74M',
+      forecast: '7.62M',
+      actual: '',
+    },
     {
       title: 'US Core CPI m/m',
       country: 'USD',
-      date: `${baseIso}12:30:00.000Z`,
+      date: getWeekDayIso(2, 13, 30), // Wednesday 13:30 UTC (20:30 WIB)
       impact: 'High' as const,
       previous: '0.3%',
       forecast: '0.2%',
@@ -101,7 +152,7 @@ export function getClientFallbackCalendarEvents(): MacroCalendarEvent[] {
     {
       title: 'US CPI y/y',
       country: 'USD',
-      date: `${baseIso}12:30:00.000Z`,
+      date: getWeekDayIso(2, 13, 30), // Wednesday 13:30 UTC (20:30 WIB)
       impact: 'High' as const,
       previous: '2.6%',
       forecast: '2.5%',
@@ -110,91 +161,64 @@ export function getClientFallbackCalendarEvents(): MacroCalendarEvent[] {
     {
       title: 'US Initial Jobless Claims',
       country: 'USD',
-      date: `${baseIso}13:30:00.000Z`,
+      date: getWeekDayIso(3, 13, 30), // Thursday 13:30 UTC (20:30 WIB)
       impact: 'High' as const,
       previous: '221K',
       forecast: '215K',
       actual: '212K',
     },
     {
-      title: 'US Non-Farm Employment Change (NFP)',
-      country: 'USD',
-      date: `${baseIso}13:30:00.000Z`,
-      impact: 'High' as const,
-      previous: '185K',
-      forecast: '190K',
-      actual: '228K',
-    },
-    {
-      title: 'US Unemployment Rate',
-      country: 'USD',
-      date: `${baseIso}13:30:00.000Z`,
-      impact: 'High' as const,
-      previous: '4.1%',
-      forecast: '4.1%',
-      actual: '4.0%',
-    },
-    {
-      title: 'US Average Hourly Earnings m/m',
-      country: 'USD',
-      date: `${baseIso}13:30:00.000Z`,
-      impact: 'Medium' as const,
-      previous: '0.3%',
-      forecast: '0.3%',
-      actual: '0.4%',
-    },
-    {
-      title: 'US ISM Services PMI',
-      country: 'USD',
-      date: `${baseIso}15:00:00.000Z`,
-      impact: 'High' as const,
-      previous: '56.0',
-      forecast: '54.2',
-      actual: '',
-    },
-    {
-      title: 'US ISM Services Prices Paid',
-      country: 'USD',
-      date: `${baseIso}15:00:00.000Z`,
-      impact: 'Medium' as const,
-      previous: '68.2',
-      forecast: '71.5',
-      actual: '',
-    },
-    {
-      title: 'US JOLTS Job Openings',
-      country: 'USD',
-      date: `${baseIso}15:00:00.000Z`,
-      impact: 'High' as const,
-      previous: '7.74M',
-      forecast: '7.62M',
-      actual: '',
-    },
-    {
       title: 'US Core PPI m/m',
       country: 'USD',
-      date: `${baseIso}16:00:00.000Z`,
+      date: getWeekDayIso(3, 13, 30), // Thursday 13:30 UTC (20:30 WIB)
       impact: 'High' as const,
       previous: '0.2%',
       forecast: '0.3%',
       actual: '',
     },
     {
-      title: 'US Core PCE Price Index m/m',
+      title: 'US ISM Services PMI',
       country: 'USD',
-      date: `${baseIso}17:00:00.000Z`,
+      date: getWeekDayIso(3, 15, 0), // Thursday 15:00 UTC (22:00 WIB)
       impact: 'High' as const,
-      previous: '0.3%',
-      forecast: '0.2%',
+      previous: '56.0',
+      forecast: '54.2',
       actual: '',
     },
     {
-      title: 'US Advance GDP q/q',
+      title: 'US Non-Farm Employment Change (NFP)',
       country: 'USD',
-      date: `${baseIso}18:00:00.000Z`,
+      date: getWeekDayIso(4, 13, 30), // Friday 13:30 UTC (20:30 WIB)
       impact: 'High' as const,
-      previous: '2.8%',
-      forecast: '2.6%',
+      previous: '185K',
+      forecast: '190K',
+      actual: '',
+    },
+    {
+      title: 'US Unemployment Rate',
+      country: 'USD',
+      date: getWeekDayIso(4, 13, 30), // Friday 13:30 UTC (20:30 WIB)
+      impact: 'High' as const,
+      previous: '4.1%',
+      forecast: '4.1%',
+      actual: '',
+    },
+    {
+      title: 'US Average Hourly Earnings m/m',
+      country: 'USD',
+      date: getWeekDayIso(4, 13, 30), // Friday 13:30 UTC (20:30 WIB)
+      impact: 'Medium' as const,
+      previous: '0.3%',
+      forecast: '0.3%',
+      actual: '',
+    },
+    {
+      title: 'US Core PCE Price Index m/m',
+      country: 'USD',
+      date: getWeekDayIso(4, 13, 30), // Friday 13:30 UTC (20:30 WIB)
+      impact: 'High' as const,
+      previous: '0.3%',
+      forecast: '0.2%',
       actual: '',
     },
   ];
@@ -227,6 +251,7 @@ export function getClientFallbackCalendarEvents(): MacroCalendarEvent[] {
       eventBiasForGold: evalResult.bias,
       biasReasonId: evalResult.reasonId,
       biasReasonEn: evalResult.reasonEn,
+      isLiveFeed: false,
     };
   });
 }
@@ -269,11 +294,24 @@ export async function fetchClientForexFactoryCalendar(): Promise<MacroCalendarEv
       const impact: 'High' | 'Medium' | 'Low' =
         rawImpact === 'High' ? 'High' : rawImpact === 'Low' ? 'Low' : 'Medium';
 
+      // Parse date accurately into ISO UTC timestamp
+      let isoDate = new Date().toISOString();
+      if (item.date) {
+        try {
+          const parsed = new Date(item.date);
+          if (!isNaN(parsed.getTime())) {
+            isoDate = parsed.toISOString();
+          }
+        } catch {
+          isoDate = String(item.date);
+        }
+      }
+
       return {
         id: `ff-${idx + 1}-${title.replace(/[^a-zA-Z0-9]/g, '').slice(0, 12)}`,
         title,
         country: 'USD',
-        date: String(item.date || new Date().toISOString()),
+        date: isoDate,
         impact,
         previous: previous || '-',
         forecast: forecast || '-',
@@ -287,6 +325,7 @@ export async function fetchClientForexFactoryCalendar(): Promise<MacroCalendarEv
         eventBiasForGold: evalResult.bias,
         biasReasonId: evalResult.reasonId,
         biasReasonEn: evalResult.reasonEn,
+        isLiveFeed: true,
       };
     });
   } catch (err) {

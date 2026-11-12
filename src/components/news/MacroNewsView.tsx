@@ -179,6 +179,55 @@ export const MacroNewsView: React.FC = () => {
     return customSnap.scenarioMatrix;
   }, [snapshot, selectedEventId]);
 
+  const nowMs = Date.now();
+  const TWO_HOURS_MS = 2 * 60 * 60 * 1000;
+
+  // Next upcoming event (the earliest pending event with evTime >= nowMs)
+  const nextUpcomingEvent = useMemo(() => {
+    if (!snapshot) return null;
+    const pending = snapshot.calendarEvents
+      .filter((ev) => {
+        const t = new Date(ev.date).getTime();
+        return !isNaN(t) && t >= nowMs;
+      })
+      .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+    return pending[0] || null;
+  }, [snapshot, nowMs]);
+
+  // Candidate events for selector chips: ONLY unreleased (evTime >= nowMs) OR recently released (evTime >= nowMs - 2h)
+  const candidateChipEvents = useMemo(() => {
+    if (!snapshot) return [];
+    const filtered = snapshot.calendarEvents.filter((ev) => {
+      const t = new Date(ev.date).getTime();
+      return isNaN(t) || t >= nowMs - TWO_HOURS_MS;
+    });
+    // If all events in the week have passed, fallback to full calendar list
+    const baseList = filtered.length > 0 ? filtered : snapshot.calendarEvents;
+    return [...baseList].sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+  }, [snapshot, nowMs, TWO_HOURS_MS]);
+
+  // Keep selectedEventId pointing to active/upcoming event (never stay stuck on events passed > 2 hours ago)
+  useEffect(() => {
+    if (!snapshot) return;
+    if (!selectedEventId && nextUpcomingEvent?.id) {
+      setSelectedEventId(nextUpcomingEvent.id);
+      return;
+    }
+    if (selectedEventId) {
+      const currentSelected = snapshot.calendarEvents.find((e) => e.id === selectedEventId);
+      if (currentSelected) {
+        const t = new Date(currentSelected.date).getTime();
+        if (!isNaN(t) && t < nowMs - TWO_HOURS_MS && nextUpcomingEvent && nextUpcomingEvent.id !== selectedEventId) {
+          setSelectedEventId(nextUpcomingEvent.id);
+        }
+      }
+    }
+  }, [snapshot, selectedEventId, nextUpcomingEvent, nowMs, TWO_HOURS_MS]);
+
+  const isLiveCalendar = Boolean(
+    snapshot?.isCalendarLiveFeed ?? snapshot?.calendarEvents?.some((e) => e.isLiveFeed)
+  );
+
   const pillarBadgeLabel = (pillar: string) => {
     switch (pillar) {
       case 'INFLATION':
@@ -620,19 +669,23 @@ export const MacroNewsView: React.FC = () => {
         </div>
 
         {/* Economic Calendar Event Selector (Segmented Minimalist Horizontal Track) */}
-        {snapshot.calendarEvents.length > 0 && (
+        {candidateChipEvents.length > 0 && (
           <div className="space-y-2">
             <div className="text-xs font-medium text-[#697586] dark:text-[#929BA9] flex items-center justify-between">
               <span>{tr('Pilih Jadwal Rilis USD:', 'Select USD Release:')}</span>
               <span className="font-mono text-[11px] text-[#697586] dark:text-[#929BA9]">
-                {snapshot.calendarEvents.length} {tr('Jadwal Aktif', 'Active Events')}
+                {candidateChipEvents.length} {tr('Jadwal Aktif', 'Active Events')}
               </span>
             </div>
             <div className="flex items-center gap-2 overflow-x-auto pb-1.5 no-scrollbar">
-              {snapshot.calendarEvents.map((ev) => {
+              {candidateChipEvents.map((ev) => {
                 const isSelected =
                   (selectedEventId && ev.id === selectedEventId) ||
-                  (!selectedEventId && ev.id === primaryEv.id);
+                  (!selectedEventId && (ev.id === nextUpcomingEvent?.id || ev.id === primaryEv.id));
+                const evTime = new Date(ev.date).getTime();
+                const isNext = ev.id === nextUpcomingEvent?.id;
+                const isRecent = !isNaN(evTime) && evTime < nowMs && evTime >= nowMs - TWO_HOURS_MS;
+
                 return (
                   <button
                     key={ev.id}
@@ -656,7 +709,18 @@ export const MacroNewsView: React.FC = () => {
                       }`}
                     />
                     <span>{ev.title}</span>
-                    {ev.actual && (
+                    {isNext && (
+                      <span
+                        className={`text-[9px] font-bold uppercase px-1.5 py-0.5 rounded ${
+                          isSelected
+                            ? 'bg-white/20 text-white'
+                            : 'bg-[#1769E8]/10 dark:bg-[#3478DC]/20 text-[#1769E8] dark:text-[#3478DC]'
+                        }`}
+                      >
+                        {tr('BERIKUTNYA', 'NEXT')}
+                      </span>
+                    )}
+                    {isRecent && ev.actual && (
                       <span
                         className={`text-[10px] font-mono px-1.5 py-0.5 rounded ${
                           isSelected
@@ -989,20 +1053,136 @@ export const MacroNewsView: React.FC = () => {
 
       {/* 5. USD ECONOMIC CALENDAR TABLE (Deep Black Table matching Trade Table) */}
       <div className="rounded-2xl bg-white dark:bg-[#080A0E] border border-[#DDE3EA] dark:border-[#20252D] p-5 sm:p-6 shadow-xs space-y-4">
-        <div className="flex items-center justify-between">
-          <h3 className="text-xs sm:text-sm font-bold uppercase tracking-wider text-[#151D2A] dark:text-[#F2F4F7]">
-            {tr(
-              'Jadwal Kalender Ekonomi USD Minggu Ini',
-              'This Week USD Economic Calendar'
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div className="flex flex-wrap items-center gap-2">
+            <h3 className="text-xs sm:text-sm font-bold uppercase tracking-wider text-[#151D2A] dark:text-[#F2F4F7]">
+              {tr(
+                'Jadwal Kalender Ekonomi USD Minggu Ini',
+                'This Week USD Economic Calendar'
+              )}
+            </h3>
+            {/* Small corner status badge: LIVE FEED vs OFFLINE FALLBACK */}
+            {isLiveCalendar ? (
+              <span className="px-2 py-0.5 rounded text-[10px] font-bold tracking-wider bg-emerald-500/15 border border-emerald-500/30 text-emerald-600 dark:text-emerald-400">
+                LIVE FEED
+              </span>
+            ) : (
+              <span className="px-2 py-0.5 rounded text-[10px] font-bold tracking-wider bg-neutral-200 dark:bg-neutral-800 border border-neutral-300 dark:border-neutral-700 text-[#697586] dark:text-[#929BA9]">
+                OFFLINE FALLBACK
+              </span>
             )}
-          </h3>
-          <span className="text-[11px] text-[#697586] dark:text-[#929BA9]">ForexFactory Open Feed</span>
+          </div>
+          <span className="text-[11px] text-[#697586] dark:text-[#929BA9] whitespace-nowrap">ForexFactory Open Feed</span>
         </div>
 
-        <div className="overflow-x-auto">
-          <table className="w-full text-left border-collapse text-xs">
+        {/* Mobile View: 2-3 Row Structured Cards (No text clipping on mobile screens) */}
+        <div className="block sm:hidden divide-y divide-[#DDE3EA] dark:divide-[#20252D]">
+          {snapshot.calendarEvents.map((ev: MacroCalendarEvent) => {
+            const evTime = new Date(ev.date).getTime();
+            const isPassedOver2Hours = !isNaN(evTime) && evTime < nowMs - TWO_HOURS_MS;
+            const isNextUpcoming = ev.id === nextUpcomingEvent?.id;
+            const isJustReleased = !isNaN(evTime) && evTime >= nowMs - TWO_HOURS_MS && evTime < nowMs;
+
+            return (
+              <div
+                key={ev.id}
+                onClick={() => setSelectedEventId(ev.id)}
+                className={`py-3.5 px-2.5 rounded-xl transition-all cursor-pointer ${
+                  isNextUpcoming
+                    ? 'bg-[#1769E8]/5 dark:bg-[#3478DC]/10 border-l-2 border-l-[#1769E8] dark:border-l-[#3478DC]'
+                    : isPassedOver2Hours
+                    ? 'opacity-50 hover:opacity-100'
+                    : 'hover:bg-[#F5F7FA] dark:hover:bg-[#101318]'
+                }`}
+              >
+                {/* Row 1: Status Pill + Time WIB + Bias */}
+                <div className="flex items-center justify-between text-[11px] gap-2 mb-1.5">
+                  <div className="flex items-center gap-1.5 min-w-0">
+                    {isNextUpcoming ? (
+                      <span className="px-2 py-0.5 rounded text-[9.5px] font-bold bg-[#1769E8] dark:bg-[#3478DC] text-white shrink-0">
+                        {tr('BERIKUTNYA', 'NEXT')}
+                      </span>
+                    ) : isPassedOver2Hours ? (
+                      <span className="px-2 py-0.5 rounded text-[9.5px] font-semibold bg-[#E2E8F0] dark:bg-[#1C2330] text-[#697586] dark:text-[#929BA9] shrink-0">
+                        {tr('SELESAI', 'COMPLETED')}
+                      </span>
+                    ) : isJustReleased ? (
+                      <span className="px-2 py-0.5 rounded text-[9.5px] font-bold bg-emerald-500/15 border border-emerald-500/30 text-emerald-600 dark:text-emerald-400 shrink-0">
+                        {tr('RILIS', 'RELEASED')}
+                      </span>
+                    ) : (
+                      <span className="px-2 py-0.5 rounded text-[9.5px] font-medium bg-[#F5F7FA] dark:bg-[#101318] text-[#697586] dark:text-[#929BA9] border border-[#DDE3EA] dark:border-[#20252D] shrink-0">
+                        {tr('MENUNGGU', 'PENDING')}
+                      </span>
+                    )}
+
+                    <span className="font-mono text-[#697586] dark:text-[#929BA9] text-[10.5px] truncate">
+                      {formatTimestampWib(ev.date, language)}
+                    </span>
+                  </div>
+
+                  <span
+                    className={`text-[10px] font-bold font-mono px-2 py-0.5 rounded shrink-0 ${
+                      ev.eventBiasForGold === 'BUY'
+                        ? 'text-[#059669] dark:text-[#00A878] bg-emerald-500/10'
+                        : ev.eventBiasForGold === 'SELL'
+                        ? 'text-[#E11D48] dark:text-[#E05260] bg-rose-500/10'
+                        : 'text-[#697586] dark:text-[#929BA9] bg-neutral-500/10'
+                    }`}
+                  >
+                    {ev.eventBiasForGold}
+                  </span>
+                </div>
+
+                {/* Row 2: Impact Dot + Title + FOMC Pillar */}
+                <div className="flex items-center justify-between gap-2 mb-2">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <span
+                      className={`w-1.5 h-1.5 rounded-full shrink-0 ${
+                        ev.impact === 'High' ? 'bg-rose-500' : 'bg-amber-500'
+                      }`}
+                    />
+                    <span className="font-bold text-xs text-[#151D2A] dark:text-[#F2F4F7] truncate">
+                      {ev.title}
+                    </span>
+                  </div>
+                  <span className="text-[9.5px] font-mono text-[#697586] dark:text-[#929BA9] bg-[#F5F7FA] dark:bg-[#101318] px-1.5 py-0.5 rounded border border-[#DDE3EA] dark:border-[#20252D] shrink-0">
+                    {ev.pillar}
+                  </span>
+                </div>
+
+                {/* Row 3: Compact 3-Column Metrics (Prev | Forecast | Actual) with zero clipping */}
+                <div className="grid grid-cols-3 gap-2 bg-[#F5F7FA] dark:bg-[#050607] p-2 rounded-lg text-center font-mono text-xs border border-[#DDE3EA] dark:border-[#1E232B]">
+                  <div>
+                    <div className="text-[9px] uppercase tracking-wider text-[#697586] dark:text-[#929BA9]">Prev</div>
+                    <div className="font-semibold text-[#697586] dark:text-[#929BA9] mt-0.5 tabular-nums">
+                      {ev.previous || '—'}
+                    </div>
+                  </div>
+                  <div className="border-x border-[#DDE3EA] dark:border-[#1E232B]">
+                    <div className="text-[9px] uppercase tracking-wider text-[#1769E8] dark:text-[#3478DC] font-bold">Fcst</div>
+                    <div className="font-black text-[#1769E8] dark:text-[#3478DC] mt-0.5 tabular-nums">
+                      {ev.forecast || '—'}
+                    </div>
+                  </div>
+                  <div>
+                    <div className="text-[9px] uppercase tracking-wider text-[#151D2A] dark:text-[#F2F4F7] font-semibold">Act</div>
+                    <div className="font-black text-[#151D2A] dark:text-[#F2F4F7] mt-0.5 tabular-nums">
+                      {ev.actual || '—'}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+
+        {/* Desktop View: Full Responsive Financial Table */}
+        <div className="hidden sm:block overflow-x-auto">
+          <table className="min-w-[700px] w-full text-left border-collapse text-xs">
             <thead>
               <tr className="border-b border-[#DDE3EA] dark:border-[#20252D] text-[10px] uppercase tracking-wider text-[#697586] dark:text-[#929BA9]">
+                <th className="py-3 pr-3 font-semibold w-24">Status</th>
                 <th className="py-3 pr-3 font-semibold">{tr('Waktu (WIB)', 'Time (WIB)')}</th>
                 <th className="py-3 pr-3 font-semibold">{tr('Event USD', 'USD Event')}</th>
                 <th className="py-3 pr-3 font-semibold">{tr('Pilar FOMC', 'FOMC Pillar')}</th>
@@ -1013,54 +1193,86 @@ export const MacroNewsView: React.FC = () => {
               </tr>
             </thead>
             <tbody className="divide-y divide-[#DDE3EA] dark:divide-[#20252D]">
-              {snapshot.calendarEvents.map((ev: MacroCalendarEvent) => (
-                <tr
-                  key={ev.id}
-                  onClick={() => setSelectedEventId(ev.id)}
-                  className="hover:bg-[#F5F7FA] dark:hover:bg-[#101318] cursor-pointer transition-colors"
-                >
-                  <td className="py-3 pr-3 font-mono text-[11px] text-[#697586] dark:text-[#929BA9] whitespace-nowrap">
-                    {formatTimestampWib(ev.date, language)}
-                  </td>
-                  <td className="py-3 pr-3 font-semibold text-[#151D2A] dark:text-[#F2F4F7]">
-                    <div className="flex items-center gap-2">
+              {snapshot.calendarEvents.map((ev: MacroCalendarEvent) => {
+                const evTime = new Date(ev.date).getTime();
+                const isPassedOver2Hours = !isNaN(evTime) && evTime < nowMs - TWO_HOURS_MS;
+                const isNextUpcoming = ev.id === nextUpcomingEvent?.id;
+                const isJustReleased = !isNaN(evTime) && evTime >= nowMs - TWO_HOURS_MS && evTime < nowMs;
+
+                return (
+                  <tr
+                    key={ev.id}
+                    onClick={() => setSelectedEventId(ev.id)}
+                    className={`cursor-pointer transition-colors ${
+                      isNextUpcoming
+                        ? 'bg-[#1769E8]/5 dark:bg-[#3478DC]/10 border-l-2 border-l-[#1769E8] dark:border-l-[#3478DC]'
+                        : isPassedOver2Hours
+                        ? 'opacity-50 hover:opacity-100 hover:bg-[#F5F7FA] dark:hover:bg-[#101318]'
+                        : 'hover:bg-[#F5F7FA] dark:hover:bg-[#101318]'
+                    }`}
+                  >
+                    <td className="py-3.5 pr-3 whitespace-nowrap">
+                      {isNextUpcoming ? (
+                        <span className="px-2 py-0.5 rounded text-[9.5px] font-bold bg-[#1769E8] dark:bg-[#3478DC] text-white">
+                          {tr('BERIKUTNYA', 'NEXT')}
+                        </span>
+                      ) : isPassedOver2Hours ? (
+                        <span className="px-2 py-0.5 rounded text-[9.5px] font-semibold bg-[#E2E8F0] dark:bg-[#1C2330] text-[#697586] dark:text-[#929BA9]">
+                          {tr('SELESAI', 'COMPLETED')}
+                        </span>
+                      ) : isJustReleased ? (
+                        <span className="px-2 py-0.5 rounded text-[9.5px] font-bold bg-emerald-500/15 border border-emerald-500/30 text-emerald-600 dark:text-emerald-400">
+                          {tr('RILIS', 'RELEASED')}
+                        </span>
+                      ) : (
+                        <span className="px-2 py-0.5 rounded text-[9.5px] font-medium bg-[#F5F7FA] dark:bg-[#101318] text-[#697586] dark:text-[#929BA9] border border-[#DDE3EA] dark:border-[#20252D]">
+                          {tr('MENUNGGU', 'PENDING')}
+                        </span>
+                      )}
+                    </td>
+                    <td className="py-3.5 pr-3 font-mono text-[11px] text-[#697586] dark:text-[#929BA9] whitespace-nowrap">
+                      {formatTimestampWib(ev.date, language)}
+                    </td>
+                    <td className="py-3.5 pr-3 font-semibold text-[#151D2A] dark:text-[#F2F4F7]">
+                      <div className="flex items-center gap-2">
+                        <span
+                          className={`w-1.5 h-1.5 rounded-full shrink-0 ${
+                            ev.impact === 'High' ? 'bg-rose-500' : 'bg-amber-500'
+                          }`}
+                        />
+                        <span>{ev.title}</span>
+                      </div>
+                    </td>
+                    <td className="py-3.5 pr-3">
+                      <span className="text-[10px] font-mono text-[#697586] dark:text-[#929BA9] bg-[#F5F7FA] dark:bg-[#101318] px-2 py-0.5 rounded border border-[#DDE3EA] dark:border-[#20252D]">
+                        {ev.pillar}
+                      </span>
+                    </td>
+                    <td className="py-3.5 pr-3 text-right font-mono tabular-nums text-[#697586] dark:text-[#929BA9]">
+                      {ev.previous || '—'}
+                    </td>
+                    <td className="py-3.5 pr-3 text-right font-mono tabular-nums font-bold text-[#1769E8] dark:text-[#3478DC]">
+                      {ev.forecast || '—'}
+                    </td>
+                    <td className="py-3.5 pr-3 text-right font-mono tabular-nums font-bold text-[#151D2A] dark:text-[#F2F4F7]">
+                      {ev.actual || '—'}
+                    </td>
+                    <td className="py-3.5 text-right font-mono">
                       <span
-                        className={`w-1.5 h-1.5 rounded-full shrink-0 ${
-                          ev.impact === 'High' ? 'bg-rose-500' : 'bg-amber-500'
+                        className={`text-[11px] font-bold ${
+                          ev.eventBiasForGold === 'BUY'
+                            ? 'text-[#059669] dark:text-[#00A878]'
+                            : ev.eventBiasForGold === 'SELL'
+                            ? 'text-[#E11D48] dark:text-[#E05260]'
+                            : 'text-[#697586] dark:text-[#929BA9]'
                         }`}
-                      />
-                      <span>{ev.title}</span>
-                    </div>
-                  </td>
-                  <td className="py-3 pr-3">
-                    <span className="text-[10px] font-mono text-[#697586] dark:text-[#929BA9] bg-[#F5F7FA] dark:bg-[#101318] px-2 py-0.5 rounded border border-[#DDE3EA] dark:border-[#20252D]">
-                      {ev.pillar}
-                    </span>
-                  </td>
-                  <td className="py-3 pr-3 text-right font-mono tabular-nums text-[#697586] dark:text-[#929BA9]">
-                    {ev.previous || '—'}
-                  </td>
-                  <td className="py-3 pr-3 text-right font-mono tabular-nums font-bold text-[#1769E8] dark:text-[#3478DC]">
-                    {ev.forecast || '—'}
-                  </td>
-                  <td className="py-3 pr-3 text-right font-mono tabular-nums font-bold text-[#151D2A] dark:text-[#F2F4F7]">
-                    {ev.actual || '—'}
-                  </td>
-                  <td className="py-3 text-right font-mono">
-                    <span
-                      className={`text-[11px] font-bold ${
-                        ev.eventBiasForGold === 'BUY'
-                          ? 'text-[#059669] dark:text-[#00A878]'
-                          : ev.eventBiasForGold === 'SELL'
-                          ? 'text-[#E11D48] dark:text-[#E05260]'
-                          : 'text-[#697586] dark:text-[#929BA9]'
-                      }`}
-                    >
-                      {ev.eventBiasForGold}
-                    </span>
-                  </td>
-                </tr>
-              ))}
+                      >
+                        {ev.eventBiasForGold}
+                      </span>
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>

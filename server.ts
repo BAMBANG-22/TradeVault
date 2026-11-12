@@ -41,6 +41,32 @@ app.use('/api', (req, res, next) => {
   next();
 });
 
+// Resilient backend proxy endpoint for public financial feeds
+app.get('/api/proxy', async (req, res) => {
+  const targetUrl = req.query.url as string;
+  if (!targetUrl) {
+    return res.status(400).json({ error: 'Missing target url parameter' });
+  }
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 9000);
+    const upstreamRes = await fetch(targetUrl, {
+      headers: {
+        'User-Agent':
+          'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+        Accept: 'application/json, text/plain, text/xml, application/rss+xml, */*',
+      },
+      signal: controller.signal,
+    });
+    clearTimeout(timeout);
+    const text = await upstreamRes.text();
+    res.setHeader('Content-Type', upstreamRes.headers.get('content-type') || 'application/json');
+    return res.status(upstreamRes.status).send(text);
+  } catch (err: any) {
+    return res.status(502).json({ error: err?.message || 'Proxy fetch failed' });
+  }
+});
+
 interface ExtractScreenshotRequest {
   imageBase64?: string;
   imageUrl?: string;
@@ -857,11 +883,23 @@ async function fetchForexFactoryUsdCalendar(): Promise<MacroCalendarEvent[]> {
       const impact: 'High' | 'Medium' | 'Low' =
         rawImpact === 'High' ? 'High' : rawImpact === 'Low' ? 'Low' : 'Medium';
 
+      let isoDate = new Date().toISOString();
+      if (item.date) {
+        try {
+          const parsed = new Date(item.date);
+          if (!isNaN(parsed.getTime())) {
+            isoDate = parsed.toISOString();
+          }
+        } catch {
+          isoDate = String(item.date);
+        }
+      }
+
       return {
         id: `ff-${idx + 1}-${title.replace(/[^a-zA-Z0-9]/g, '').slice(0, 12)}`,
         title,
         country: 'USD',
-        date: String(item.date || new Date().toISOString()),
+        date: isoDate,
         impact,
         previous: previous || '-',
         forecast: forecast || '-',
@@ -875,6 +913,7 @@ async function fetchForexFactoryUsdCalendar(): Promise<MacroCalendarEvent[]> {
         eventBiasForGold: evalResult.bias,
         biasReasonId: evalResult.reasonId,
         biasReasonEn: evalResult.reasonEn,
+        isLiveFeed: true,
       };
     });
   } catch {

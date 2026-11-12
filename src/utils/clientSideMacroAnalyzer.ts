@@ -149,6 +149,12 @@ export async function executeClientSideMacroAnalysis(
     forceRefresh,
   });
 
+  // Preserve isCalendarLiveFeed metadata
+  analyzedSnapshot.isCalendarLiveFeed = calendarEvents.some((e) => e.isLiveFeed);
+  if (calendarEvents.length > 0) {
+    analyzedSnapshot.calendarEvents = calendarEvents;
+  }
+
   // Step 3: Insert directly into Supabase `macro_news_snapshots`
   const supabaseResult = await saveMacroSnapshotToCache(analyzedSnapshot);
 

@@ -24,6 +24,7 @@ export interface MacroCalendarEvent {
   eventBiasForGold: MacroBiasDirection;
   biasReasonId: string;
   biasReasonEn: string;
+  isLiveFeed?: boolean;
 }
 
 export interface IntermarketAssetPulse {
@@ -103,6 +104,7 @@ export interface MacroNewsSnapshot {
   };
   calendarEvents: MacroCalendarEvent[];
   scenarioMatrix: PreNewsScenarioMatrix;
+  isCalendarLiveFeed?: boolean;
 }
 
 export const MACRO_SNAPSHOT_LOCAL_STORAGE_KEY = 'tradevault_macro_news_snapshot_v1';
