@@ -417,15 +417,6 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           {tr('DASBOR', 'DASHBOARD')}
         </h1>
         <div className="flex items-center gap-2.5">
-          <button
-            type="button"
-            data-testid="dashboard-macro-news-shortcut"
-            onClick={() => onNavigate('macro-news')}
-            className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-[#0F1419] border border-[#22D3EE]/40 text-[#22D3EE] hover:bg-slate-900 text-[10px] font-extrabold uppercase tracking-wider transition-colors cursor-pointer"
-          >
-            <span className="w-1.5 h-1.5 rounded-full bg-[#22D3EE] animate-pulse" />
-            <span>{tr('XAU/USD Macro Bias', 'XAU/USD Macro Bias')}</span>
-          </button>
           <span className="text-[11px] font-medium text-[#697586] dark:text-[#929BA9]">
             {todayFormattedDate}
           </span>
