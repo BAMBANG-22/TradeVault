@@ -17,6 +17,8 @@ import {
   ArrowUpRight,
   ArrowDownRight,
   Minus,
+  Sparkles,
+  Info,
 } from 'lucide-react';
 import { useLanguage } from '../../utils/language';
 import {
@@ -161,15 +163,15 @@ export const MacroNewsView: React.FC = () => {
   const pillarBadgeLabel = (pillar: string) => {
     switch (pillar) {
       case 'INFLATION':
-        return tr('Pilar 3: Inflasi', 'Pillar 3: Inflation');
+        return tr('Pilar Inflasi', 'Inflation Pillar');
       case 'LABOR':
-        return tr('Pilar 2: Tenaga Kerja', 'Pillar 2: Labor Market');
+        return tr('Pilar Tenaga Kerja', 'Labor Market Pillar');
       case 'GROWTH':
-        return tr('Pilar 1: Pertumbuhan', 'Pillar 1: Growth');
+        return tr('Pilar Pertumbuhan', 'Growth Pillar');
       case 'GEOPOLITICS':
-        return tr('Dual-Channel: Geopolitik & Oil', 'Dual-Channel: Geopolitics & Oil');
+        return tr('Dual-Channel Oil', 'Dual-Channel Oil');
       case 'INTERMARKET':
-        return tr('Konfirmasi Intermarket', 'Intermarket Confirmation');
+        return tr('Intermarket Pulse', 'Intermarket Pulse');
       default:
         return tr('Kebijakan FOMC', 'FOMC Policy');
     }
@@ -177,20 +179,20 @@ export const MacroNewsView: React.FC = () => {
 
   if (isLoading && !snapshot) {
     return (
-      <div className="min-h-[60vh] flex flex-col items-center justify-center p-6 text-center">
-        <div className="w-10 h-10 rounded-xl bg-[#0F1419] border border-[#20252D] flex items-center justify-center mb-3">
-          <RefreshCw className="w-4 h-4 text-[#22D3EE] animate-spin" />
+      <div className="min-h-[65vh] flex flex-col items-center justify-center p-8 text-center">
+        <div className="w-12 h-12 rounded-2xl bg-[#0F1419] border border-white/[0.08] flex items-center justify-center mb-4 shadow-xl">
+          <RefreshCw className="w-5 h-5 text-[#22D3EE] animate-spin" />
         </div>
-        <h3 className="text-sm font-semibold text-[#F2F4F7] tracking-tight">
+        <h3 className="text-sm sm:text-base font-semibold text-[#FFFFFF] tracking-tight">
           {tr(
-            'Memuat Snapshot Trade News (XAU/USD)...',
-            'Loading Trade News (XAU/USD) Snapshot...'
+            'Memuat Snapshot Macro & Trade News...',
+            'Loading Macro & Trade News Snapshot...'
           )}
         </h3>
-        <p className="text-xs text-[#929BA9] mt-1 max-w-sm">
+        <p className="text-xs text-[#94A3B8] mt-1.5 max-w-sm leading-relaxed">
           {tr(
-            'Membaca cache snapshot Supabase (0 token Gemini) & sinkronisasi data kalender.',
-            'Reading Supabase snapshot cache (0 Gemini tokens) & syncing calendar feeds.'
+            'Menghubungkan ke cache Supabase (0 token Gemini) & sinkronisasi data kalender USD.',
+            'Connecting to Supabase cache (0 Gemini tokens) & syncing USD calendar data.'
           )}
         </p>
       </div>
@@ -214,64 +216,73 @@ export const MacroNewsView: React.FC = () => {
   return (
     <div
       data-testid="macro-news-view"
-      className="space-y-4 pb-12 text-[#F2F4F7]"
+      className="space-y-4 pb-14 text-[#FFFFFF]"
     >
-      {/* 1. TOP HEADER & COMPACT CONTROLS (Institutional Minimalist Layout) */}
-      <div className="rounded-xl bg-[#0F1419] border border-[#20252D] p-4 sm:p-5">
+      {/* 1. TOP EXECUTIVE HEADER (High-End Monochrome Black & White with Subtle Cyan Precision) */}
+      <div className="rounded-2xl bg-[#0F1419] border border-white/[0.08] p-5 sm:p-6 shadow-xl relative overflow-hidden">
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-          <div className="space-y-1">
-            <div className="flex items-center gap-2">
-              <h1 className="text-base sm:text-lg font-bold text-[#F2F4F7] tracking-tight">
-                {tr('Trade News', 'Trade News')}
-              </h1>
-              <span className="text-xs font-semibold px-2 py-0.5 rounded bg-[#161A22] border border-[#20252D] text-[#22D3EE]">
+          <div className="space-y-1.5">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-[10px] font-bold tracking-[0.14em] uppercase px-2.5 py-0.5 rounded-full bg-white text-black">
                 XAU/USD
               </span>
+
               <span
                 data-testid="macro-quota-isolation-badge"
-                className="text-[11px] text-[#929BA9] font-medium hidden sm:inline"
+                className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-[#141923] border border-white/[0.08] text-[11px] text-[#94A3B8] font-medium"
               >
                 {snapshot.sourceMode === 'SUPABASE_CACHE' ? (
-                  <span className="inline-flex items-center gap-1">
+                  <>
                     <Database className="w-3 h-3 text-[#22D3EE]" />
-                    {tr('Supabase Cache', 'Supabase Cache')}
-                  </span>
+                    <span>{tr('Cache Supabase (0 Token)', 'Supabase Cache (0 Token)')}</span>
+                  </>
                 ) : snapshot.sourceMode === 'GEMINI_AI' ? (
-                  <span className="inline-flex items-center gap-1">
+                  <>
                     <Cpu className="w-3 h-3 text-[#22D3EE]" />
-                    {snapshot.modelUsed || 'Gemini 2.5'}
-                  </span>
+                    <span>{tr(`Gemini Live (${snapshot.modelUsed || '2.5 Flash'})`, `Gemini Live (${snapshot.modelUsed || '2.5 Flash'})`)}</span>
+                  </>
                 ) : (
-                  <span className="inline-flex items-center gap-1">
-                    <Scale className="w-3 h-3 text-[#929BA9]" />
-                    {tr('Rule Engine', 'Rule Engine')}
-                  </span>
+                  <>
+                    <Scale className="w-3 h-3 text-[#94A3B8]" />
+                    <span>{tr('Rule Engine Playbook', 'Rule Engine Playbook')}</span>
+                  </>
                 )}
               </span>
+
+              {snapshot.impactLevel === 'HIGH' && (
+                <span className="px-2 py-0.5 rounded-full bg-rose-500/15 border border-rose-500/30 text-rose-300 text-[10px] font-bold uppercase tracking-wider">
+                  HIGH IMPACT
+                </span>
+              )}
             </div>
 
-            <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-[#929BA9]">
+            <h1 className="text-xl sm:text-2xl font-extrabold text-[#FFFFFF] tracking-tight">
+              Trade News &amp; Macro Bias
+            </h1>
+
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-[#94A3B8]">
               <span className="inline-flex items-center gap-1.5">
-                <Clock className="w-3.5 h-3.5 text-[#929BA9]" />
-                <span>{tr('Update Terakhir:', 'Last Updated:')}</span>
-                <span className="text-[#F2F4F7] font-mono tabular-nums">
+                <Clock className="w-3.5 h-3.5 text-[#94A3B8]" />
+                <span>{tr('Pembaruan:', 'Updated:')}</span>
+                <span className="text-[#FFFFFF] font-mono tabular-nums font-medium">
                   {formatTimestampWib(snapshot.analyzedAt, language)}
                 </span>
               </span>
-              <span className="text-[#20252D] hidden sm:inline">|</span>
-              <span className="text-[11px] text-[#929BA9]">
-                {tr('Macro Bias & FOMC Playbook', 'Macro Bias & FOMC Playbook')}
+              <span className="text-white/20 hidden sm:inline">•</span>
+              <span className="text-[11px] text-[#94A3B8]">
+                {tr('Model Analisis Fundamental 3 Pilar FOMC', '3 FOMC Pillars Fundamental Analysis')}
               </span>
             </div>
           </div>
 
-          {/* Action Buttons */}
-          <div className="flex items-center gap-2 self-start sm:self-center">
+          {/* Header Action Controls */}
+          <div className="flex items-center gap-2.5 self-start sm:self-center">
             <button
               type="button"
               onClick={() => setShowPlaybookGuide((prev) => !prev)}
-              className="px-3 py-1.5 rounded-lg bg-[#101318] hover:bg-[#161A22] border border-[#20252D] text-xs font-medium text-[#929BA9] hover:text-[#F2F4F7] transition-colors cursor-pointer"
+              className="px-3.5 py-2 rounded-xl bg-[#141923] hover:bg-[#1A202C] border border-white/[0.08] text-xs font-semibold text-[#D1D5DB] hover:text-[#FFFFFF] transition-all cursor-pointer flex items-center gap-1.5"
             >
+              <Info className="w-3.5 h-3.5 text-[#94A3B8]" />
               <span>{tr('Panduan Playbook', 'Playbook Guide')}</span>
             </button>
 
@@ -280,7 +291,7 @@ export const MacroNewsView: React.FC = () => {
               data-testid="macro-news-refresh-btn"
               disabled={isRefreshing}
               onClick={() => runLiveAnalysis(true, snapshot, selectedEventId)}
-              className="px-3.5 py-1.5 rounded-lg bg-[#22D3EE] hover:bg-[#38BDF8] disabled:opacity-60 text-[#0F1419] font-bold text-xs transition-colors flex items-center gap-1.5 cursor-pointer active:scale-[0.98]"
+              className="px-4 py-2 rounded-xl bg-[#FFFFFF] hover:bg-neutral-200 text-[#080A0E] font-bold text-xs tracking-wide transition-all shadow-md active:scale-[0.98] disabled:opacity-60 flex items-center gap-1.5 cursor-pointer"
             >
               <RefreshCw className={`w-3.5 h-3.5 ${isRefreshing ? 'animate-spin' : ''}`} />
               <span>
@@ -296,15 +307,15 @@ export const MacroNewsView: React.FC = () => {
         {supabaseFeedback && (
           <div
             data-testid="macro-supabase-feedback-banner"
-            className={`mt-3.5 p-3 rounded-lg border text-xs flex items-center justify-between gap-3 transition-colors ${
+            className={`mt-4 p-3.5 rounded-xl border text-xs flex items-center justify-between gap-3 transition-all ${
               supabaseFeedback.type === 'success'
-                ? 'bg-[#101318] border-[#22D3EE]/40 text-[#F2F4F7]'
+                ? 'bg-[#141923] border-[#22D3EE]/40 text-[#FFFFFF]'
                 : supabaseFeedback.type === 'warning'
-                ? 'bg-[#101318] border-amber-500/40 text-amber-200'
-                : 'bg-[#101318] border-rose-500/40 text-rose-200'
+                ? 'bg-[#141923] border-amber-400/40 text-amber-200'
+                : 'bg-[#141923] border-rose-400/40 text-rose-200'
             }`}
           >
-            <div className="flex items-center gap-2 min-w-0">
+            <div className="flex items-center gap-2.5 min-w-0">
               {supabaseFeedback.type === 'success' ? (
                 <CheckCircle2 className="w-4 h-4 text-[#22D3EE] shrink-0" />
               ) : supabaseFeedback.type === 'warning' ? (
@@ -312,51 +323,51 @@ export const MacroNewsView: React.FC = () => {
               ) : (
                 <ShieldAlert className="w-4 h-4 text-rose-400 shrink-0" />
               )}
-              <span className="truncate">{supabaseFeedback.message}</span>
+              <span className="truncate leading-relaxed">{supabaseFeedback.message}</span>
             </div>
             <button
               type="button"
               onClick={() => setSupabaseFeedback(null)}
-              className="text-[11px] font-semibold text-[#929BA9] hover:text-[#F2F4F7] shrink-0 cursor-pointer"
+              className="text-[11px] font-semibold text-[#94A3B8] hover:text-[#FFFFFF] underline shrink-0 cursor-pointer"
             >
               {tr('Tutup', 'Dismiss')}
             </button>
           </div>
         )}
 
-        {/* Collapsible Master Playbook Reference */}
+        {/* Collapsible Playbook Reference */}
         {showPlaybookGuide && (
-          <div className="mt-4 pt-3.5 border-t border-[#20252D] grid grid-cols-1 md:grid-cols-3 gap-3 text-xs text-[#929BA9]">
-            <div className="p-3 rounded-lg bg-[#101318] border border-[#20252D]">
-              <div className="font-semibold text-[#F2F4F7] mb-1">
+          <div className="mt-4 pt-4 border-t border-white/[0.08] grid grid-cols-1 md:grid-cols-3 gap-3 text-xs text-[#94A3B8]">
+            <div className="p-3.5 rounded-xl bg-[#141923] border border-white/[0.06] space-y-1">
+              <div className="font-bold text-[#FFFFFF] text-xs">
                 {tr('1. 3 Pilar FOMC & Klaim Terbalik', '1. Three FOMC Pillars & Inverse Claims')}
               </div>
-              <p className="leading-relaxed text-[11px]">
+              <p className="leading-relaxed text-[11px] text-[#94A3B8]">
                 {tr(
-                  'Growth (GDP, ISM PMI > 50 ekspansi; GDP Price Index masuk Inflasi), Labor (Unemployment Claims Actual < Forecast = USD Kuat / SELL Gold), & Inflation (CPI, PPI, Core PCE).',
-                  'Growth (GDP, ISM PMI > 50 expansion; GDP Price Index in Inflation), Labor (Unemployment Claims Actual < Forecast = Strong USD / SELL Gold), & Inflation (CPI, PPI, Core PCE).'
+                  'Growth (GDP & ISM PMI > 50 ekspansi), Labor (Unemployment Claims Actual < Forecast = USD Bullish / SELL Gold), & Inflation (CPI, PPI, Core PCE).',
+                  'Growth (GDP & ISM PMI > 50 expansion), Labor (Unemployment Claims Actual < Forecast = Bullish USD / SELL Gold), & Inflation (CPI, PPI, Core PCE).'
                 )}
               </p>
             </div>
-            <div className="p-3 rounded-lg bg-[#101318] border border-[#20252D]">
-              <div className="font-semibold text-[#F2F4F7] mb-1">
-                {tr('2. Dual-Channel Oil & Yield 10Y', '2. Dual-Channel Oil & 10Y Yield')}
+            <div className="p-3.5 rounded-xl bg-[#141923] border border-white/[0.06] space-y-1">
+              <div className="font-bold text-[#FFFFFF] text-xs">
+                {tr('2. Dual-Channel USOIL & Yield', '2. Dual-Channel USOIL & Yield')}
               </div>
-              <p className="leading-relaxed text-[11px]">
+              <p className="leading-relaxed text-[11px] text-[#94A3B8]">
                 {tr(
-                  'Jika eskalasi Timur Tengah mendorong USOIL naik saat inflasi tinggi, Inflation Channel mendominasi (Hawkish Fed -> SELL Gold). Konfirmasi SELL valid jika US10Y & DXY naik.',
-                  'When oil surges during high inflation, the Inflation Channel dominates (Hawkish Fed -> SELL Gold). Valid SELL requires rising 10Y Yield & DXY.'
+                  'Saat lonjakan minyak mendorong inflasi energi, Inflation Channel mendominasi (Hawkish Fed -> SELL Gold). Wajib dikonfirmasi oleh tren naik DXY & US10Y.',
+                  'When oil spikes drive energy inflation, the Inflation Channel dominates (Hawkish Fed -> SELL Gold). Validated by rising DXY & 10Y Yields.'
                 )}
               </p>
             </div>
-            <div className="p-3 rounded-lg bg-[#101318] border border-[#20252D]">
-              <div className="font-semibold text-[#F2F4F7] mb-1">
+            <div className="p-3.5 rounded-xl bg-[#141923] border border-white/[0.06] space-y-1">
+              <div className="font-bold text-[#FFFFFF] text-xs">
                 {tr('3. Pindah Haluan & Whipsaw', '3. Dynamic Pivot & Whipsaw')}
               </div>
-              <p className="leading-relaxed text-[11px]">
+              <p className="leading-relaxed text-[11px] text-[#94A3B8]">
                 {tr(
-                  'Jika forecast CPI melambat namun pejabat Fed (Waller/Warsh) dukung rate hike + NFP kuat -> Balikkan bias ke SELL 1 Arah. Rilis data jam sama berlawanan memicu whipsaw.',
-                  'If CPI cools but Fed officials back rate hike + strong NFP -> Flip bias to 1-Way SELL. Conflicting simultaneous releases trigger whipsaws.'
+                  'Jika data CPI mendingin namun pejabat Fed mendukung kenaikan suku bunga + NFP kuat -> Pindah Haluan menjadi SELL 1 Arah. Rilis ganda berlawanan memicu whipsaw.',
+                  'If CPI cools but Fed officials advocate rate hike + strong NFP -> Dynamic Pivot to 1-Way SELL. Conflicting simultaneous releases trigger whipsaws.'
                 )}
               </p>
             </div>
@@ -364,59 +375,62 @@ export const MacroNewsView: React.FC = () => {
         )}
       </div>
 
-      {/* 2. BREAKING SENTIMENT (Clean structured card with left vertical blue accent line) */}
+      {/* 2. BREAKING SENTIMENT (Clean Structured Block with Left Hairline Accent) */}
       {topBreaking && (
         <div
           data-testid="macro-breaking-sentiment-card"
-          className="rounded-xl bg-[#0F1419] border border-[#20252D] p-4 sm:p-5"
+          className="rounded-2xl bg-[#0F1419] border border-white/[0.08] p-5 shadow-lg"
         >
-          <div className="border-l-2 border-[#22D3EE] pl-3.5 space-y-2">
-            <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
-              <div className="flex items-center gap-2">
-                <span className="font-bold text-[#22D3EE] uppercase tracking-wider text-[11px]">
-                  {tr('Sentimen Berita Terkini', 'Breaking News Sentiment')}
+          <div className="border-l-2 border-[#22D3EE] pl-4 space-y-2.5">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-[10px] font-bold uppercase tracking-[0.12em] text-[#22D3EE]">
+                  {tr('Sentimen Berita Terkini', 'Breaking Headline Sentiment')}
                 </span>
+
                 <span
                   data-testid="breaking-impact-badge"
-                  className="px-2 py-0.5 rounded text-[10px] font-semibold bg-[#161A22] border border-[#20252D] text-[#F2F4F7]"
+                  className="px-2 py-0.5 rounded-md text-[10px] font-semibold bg-[#141923] border border-white/[0.08] text-[#D1D5DB]"
                 >
                   {topBreaking.impact === 'HIGH' ? 'HIGH IMPACT' : 'LOW IMPACT'}
                 </span>
+
                 <span
                   data-testid="breaking-sentiment-badge"
-                  className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                  className={`px-2 py-0.5 rounded-md text-[10px] font-bold ${
                     topBreaking.sentimentForGold === 'BULLISH'
-                      ? 'text-emerald-400 bg-emerald-500/10 border border-emerald-500/20'
+                      ? 'text-emerald-300 bg-emerald-500/10 border border-emerald-500/20'
                       : topBreaking.sentimentForGold === 'BEARISH'
-                      ? 'text-rose-400 bg-rose-500/10 border border-rose-500/20'
-                      : 'text-slate-300 bg-slate-800'
+                      ? 'text-rose-300 bg-rose-500/10 border border-rose-500/20'
+                      : 'text-neutral-300 bg-neutral-800'
                   }`}
                 >
                   XAU/USD: {topBreaking.sentimentForGold}
                 </span>
               </div>
-              <span className="text-[11px] text-[#929BA9] font-mono">
+
+              <span className="text-[11px] font-mono text-[#94A3B8]">
                 {topBreaking.source}
               </span>
             </div>
 
-            <h2 className="text-sm sm:text-base font-semibold text-[#F2F4F7] leading-snug">
+            <h2 className="text-sm sm:text-base font-bold text-[#FFFFFF] leading-snug">
               {topBreaking.title}
             </h2>
 
-            <p className="text-xs text-[#929BA9] leading-relaxed">
-              <strong className="text-[#F2F4F7] font-semibold mr-1">
-                {tr('Evaluasi Pasar:', 'Market Evaluation:')}
+            <div className="p-3.5 rounded-xl bg-[#141923] border border-white/[0.06] text-xs text-[#D1D5DB] leading-relaxed">
+              <strong className="text-[#FFFFFF] font-semibold mr-1.5">
+                {tr('Evaluasi Makro:', 'Macro Evaluation:')}
               </strong>
               {isEn ? topBreaking.aiEvaluationEn : topBreaking.aiEvaluationId}
-            </p>
+            </div>
 
             <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
               <div className="flex flex-wrap items-center gap-1.5">
                 {topBreaking.matchedKeywords.map((kw) => (
                   <span
                     key={kw}
-                    className="text-[11px] font-mono text-[#929BA9] bg-[#101318] px-1.5 py-0.5 rounded border border-[#20252D]"
+                    className="text-[10px] font-mono text-[#94A3B8] bg-[#141923] px-2 py-0.5 rounded border border-white/[0.06]"
                   >
                     #{kw}
                   </span>
@@ -427,11 +441,11 @@ export const MacroNewsView: React.FC = () => {
                 <button
                   type="button"
                   onClick={() => setShowAllHeadlines((prev) => !prev)}
-                  className="text-xs text-[#22D3EE] hover:underline inline-flex items-center gap-1 cursor-pointer"
+                  className="text-xs font-semibold text-[#22D3EE] hover:underline inline-flex items-center gap-1 cursor-pointer"
                 >
                   <span>
                     {showAllHeadlines
-                      ? tr('Tutup Headline Lain', 'Hide Other Headlines')
+                      ? tr('Sembunyikan Headline Lain', 'Hide Other Headlines')
                       : tr(
                           `Lihat ${snapshot.breakingNews.length - 1} Headline Lainnya`,
                           `View ${snapshot.breakingNews.length - 1} Other Headlines`
@@ -448,28 +462,28 @@ export const MacroNewsView: React.FC = () => {
           </div>
 
           {showAllHeadlines && snapshot.breakingNews.length > 1 && (
-            <div className="mt-4 pt-3.5 border-t border-[#20252D] space-y-2.5">
+            <div className="mt-4 pt-4 border-t border-white/[0.08] space-y-2.5">
               {snapshot.breakingNews.slice(1, 6).map((item) => (
                 <div
                   key={item.id}
-                  className="p-3 rounded-lg bg-[#101318] border border-[#20252D] space-y-1"
+                  className="p-3.5 rounded-xl bg-[#141923] border border-white/[0.06] space-y-1.5"
                 >
-                  <div className="flex items-center justify-between text-[11px] text-[#929BA9]">
-                    <span className="font-semibold text-[#F2F4F7]">{item.source}</span>
+                  <div className="flex items-center justify-between text-[11px] text-[#94A3B8]">
+                    <span className="font-semibold text-[#FFFFFF]">{item.source}</span>
                     <span
                       className={`font-semibold ${
                         item.sentimentForGold === 'BULLISH'
-                          ? 'text-emerald-400'
+                          ? 'text-emerald-300'
                           : item.sentimentForGold === 'BEARISH'
-                          ? 'text-rose-400'
-                          : 'text-[#929BA9]'
+                          ? 'text-rose-300'
+                          : 'text-[#94A3B8]'
                       }`}
                     >
                       {item.sentimentForGold}
                     </span>
                   </div>
-                  <p className="text-xs text-[#F2F4F7] font-medium leading-snug">{item.title}</p>
-                  <p className="text-[11px] text-[#929BA9] leading-relaxed">
+                  <p className="text-xs font-medium text-[#FFFFFF] leading-snug">{item.title}</p>
+                  <p className="text-[11px] text-[#94A3B8] leading-relaxed">
                     {isEn ? item.aiEvaluationEn : item.aiEvaluationId}
                   </p>
                 </div>
@@ -479,24 +493,24 @@ export const MacroNewsView: React.FC = () => {
         </div>
       )}
 
-      {/* 3. INTERMARKET PULSE (Clean 3-Column Tabular Grid) */}
+      {/* 3. INTERMARKET PULSE (Luxury Tabular 3-Column Financial Grid) */}
       <div
         data-testid="macro-intermarket-pulse-grid"
-        className="rounded-xl bg-[#0F1419] border border-[#20252D] p-4 sm:p-5"
+        className="rounded-2xl bg-[#0F1419] border border-white/[0.08] p-5 shadow-lg"
       >
-        <div className="flex items-center justify-between mb-3">
+        <div className="flex items-center justify-between mb-3.5">
           <div className="flex items-center gap-2">
             <Activity className="w-4 h-4 text-[#22D3EE]" />
-            <h2 className="text-xs sm:text-sm font-bold uppercase tracking-wider text-[#F2F4F7]">
+            <h2 className="text-xs sm:text-sm font-bold uppercase tracking-wider text-[#FFFFFF]">
               {tr('Intermarket Pulse Real-Time', 'Real-Time Intermarket Pulse')}
             </h2>
           </div>
-          <span className="text-[11px] text-[#929BA9]">
-            {tr('Korelasi XAU/USD', 'XAU/USD Correlation')}
+          <span className="text-[11px] text-[#94A3B8]">
+            {tr('Korelasi Langsung XAU/USD', 'Direct XAU/USD Correlation')}
           </span>
         </div>
 
-        <div className="grid grid-cols-3 gap-2.5 sm:gap-3">
+        <div className="grid grid-cols-3 gap-3">
           {intermarketList.map((item) => {
             const isUp = item.direction === 'UP';
             const isDown = item.direction === 'DOWN';
@@ -505,11 +519,11 @@ export const MacroNewsView: React.FC = () => {
               <div
                 key={item.symbol}
                 data-testid={`intermarket-card-${item.symbol}`}
-                className="rounded-lg bg-[#101318] border border-[#20252D] p-3 flex flex-col justify-between"
+                className="rounded-xl bg-[#141923] border border-white/[0.06] p-3.5 sm:p-4 flex flex-col justify-between"
               >
                 <div>
                   <div className="flex items-center justify-between gap-1 text-[11px]">
-                    <span className="font-semibold text-[#929BA9] truncate">
+                    <span className="font-semibold text-[#94A3B8] uppercase tracking-wide truncate">
                       {item.symbol === 'USOIL'
                         ? 'US OIL (WTI)'
                         : item.symbol === 'US10Y'
@@ -517,20 +531,20 @@ export const MacroNewsView: React.FC = () => {
                         : 'DXY'}
                     </span>
                     <span
-                      className={`inline-flex items-center font-mono tabular-nums text-[11px] font-semibold ${
+                      className={`inline-flex items-center font-mono tabular-nums text-[11px] font-bold ${
                         isUp
                           ? 'text-emerald-400'
                           : isDown
                           ? 'text-rose-400'
-                          : 'text-[#929BA9]'
+                          : 'text-[#94A3B8]'
                       }`}
                     >
                       {isUp ? (
-                        <ArrowUpRight className="w-3 h-3 mr-0.5" />
+                        <ArrowUpRight className="w-3.5 h-3.5 mr-0.5" />
                       ) : isDown ? (
-                        <ArrowDownRight className="w-3 h-3 mr-0.5" />
+                        <ArrowDownRight className="w-3.5 h-3.5 mr-0.5" />
                       ) : (
-                        <Minus className="w-3 h-3 mr-0.5" />
+                        <Minus className="w-3.5 h-3.5 mr-0.5" />
                       )}
                       {item.changePercent > 0
                         ? `+${item.changePercent.toFixed(2)}%`
@@ -538,7 +552,7 @@ export const MacroNewsView: React.FC = () => {
                     </span>
                   </div>
 
-                  <div className="mt-1.5 text-base sm:text-lg font-bold text-[#F2F4F7] font-mono tabular-nums">
+                  <div className="mt-2 text-lg sm:text-2xl font-black text-[#FFFFFF] font-mono tabular-nums tracking-tight">
                     {item.symbol === 'USOIL'
                       ? `$${item.price.toFixed(2)}`
                       : item.symbol === 'US10Y'
@@ -547,7 +561,7 @@ export const MacroNewsView: React.FC = () => {
                   </div>
                 </div>
 
-                <p className="mt-2 pt-2 border-t border-[#20252D] text-[11px] text-[#929BA9] leading-snug line-clamp-2">
+                <p className="mt-2.5 pt-2 border-t border-white/[0.06] text-[11px] text-[#94A3B8] leading-snug line-clamp-2">
                   {isEn ? item.summaryEn : item.summaryId}
                 </p>
               </div>
@@ -556,42 +570,42 @@ export const MacroNewsView: React.FC = () => {
         </div>
       </div>
 
-      {/* 4. PRE-NEWS SCENARIO MATRIX (Core Clean Analysis Card) */}
+      {/* 4. PRE-NEWS SCENARIO MATRIX (Flagship Aesthetic Layout) */}
       <div
         data-testid="macro-scenario-matrix-card"
-        className="rounded-xl bg-[#0F1419] border border-[#20252D] p-4 sm:p-5 space-y-4"
+        className="rounded-2xl bg-[#0F1419] border border-white/[0.08] p-5 sm:p-6 shadow-xl space-y-5"
       >
         {/* Matrix Header */}
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-[#20252D] pb-3">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-white/[0.08] pb-4">
           <div>
             <div className="flex items-center gap-2">
               <Layers className="w-4 h-4 text-[#22D3EE]" />
-              <h2 className="text-sm sm:text-base font-bold text-[#F2F4F7] uppercase tracking-wide">
+              <h2 className="text-sm sm:text-base font-bold text-[#FFFFFF] uppercase tracking-wide">
                 {tr('Pre-News Scenario Matrix (XAU/USD)', 'Pre-News Scenario Matrix (XAU/USD)')}
               </h2>
             </div>
-            <p className="text-xs text-[#929BA9] mt-0.5">
+            <p className="text-xs text-[#94A3B8] mt-0.5">
               {tr(
-                'Komparasi kalender USD, probabilitas bias, dan evaluasi 3 Pilar FOMC',
-                'USD calendar comparison, bias probabilities, and 3 FOMC Pillars evaluation'
+                'Komparasi kalender ekonomi USD, estimasi probabilitas skenario, & evaluasi 3 Pilar FOMC',
+                'USD economic calendar comparison, scenario probabilities, & 3 FOMC Pillars argument matrix'
               )}
             </p>
           </div>
 
-          <div className="flex items-center gap-1.5 self-start sm:self-auto">
-            <span className="px-2.5 py-1 rounded bg-[#161A22] border border-[#20252D] text-[11px] font-semibold text-[#22D3EE]">
+          <div className="flex items-center gap-2 self-start sm:self-auto">
+            <span className="px-3 py-1 rounded-full bg-[#141923] border border-white/[0.08] text-[11px] font-semibold text-[#FFFFFF]">
               {pillarBadgeLabel(primaryEv.pillar)}
             </span>
           </div>
         </div>
 
-        {/* Economic Calendar Event Selector (Clean Segmented Horizontal Scroll) */}
+        {/* Economic Calendar Event Selector (Segmented Minimalist Horizontal Track) */}
         {snapshot.calendarEvents.length > 0 && (
-          <div className="space-y-1.5">
-            <div className="text-xs font-medium text-[#929BA9] flex items-center justify-between">
-              <span>{tr('Jadwal Kalender Terpilih:', 'Selected Calendar Release:')}</span>
-              <span className="font-mono text-[11px] text-[#929BA9]">
-                {snapshot.calendarEvents.length} {tr('Event', 'Events')}
+          <div className="space-y-2">
+            <div className="text-xs font-medium text-[#94A3B8] flex items-center justify-between">
+              <span>{tr('Pilih Jadwal Rilis USD:', 'Select USD Release:')}</span>
+              <span className="font-mono text-[11px] text-[#94A3B8]">
+                {snapshot.calendarEvents.length} {tr('Jadwal Aktif', 'Active Events')}
               </span>
             </div>
             <div className="flex items-center gap-2 overflow-x-auto pb-1.5 no-scrollbar">
@@ -604,28 +618,30 @@ export const MacroNewsView: React.FC = () => {
                     key={ev.id}
                     type="button"
                     onClick={() => setSelectedEventId(ev.id)}
-                    className={`shrink-0 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors cursor-pointer flex items-center gap-1.5 ${
+                    className={`shrink-0 px-3.5 py-2 rounded-xl text-xs font-medium transition-all cursor-pointer flex items-center gap-2 ${
                       isSelected
-                        ? 'bg-[#22D3EE] text-[#0F1419] font-bold'
-                        : 'bg-[#101318] text-[#929BA9] border border-[#20252D] hover:text-[#F2F4F7] hover:border-slate-700'
+                        ? 'bg-[#FFFFFF] text-[#080A0E] font-bold shadow-md'
+                        : 'bg-[#141923] text-[#94A3B8] border border-white/[0.06] hover:text-[#FFFFFF] hover:border-white/[0.14]'
                     }`}
                   >
                     <span
                       className={`w-1.5 h-1.5 rounded-full ${
                         ev.impact === 'High'
                           ? isSelected
-                            ? 'bg-[#0F1419]'
+                            ? 'bg-rose-600'
                             : 'bg-rose-400'
+                          : isSelected
+                          ? 'bg-amber-600'
                           : 'bg-amber-400'
                       }`}
                     />
                     <span>{ev.title}</span>
                     {ev.actual && (
                       <span
-                        className={`text-[10px] font-mono px-1 rounded ${
+                        className={`text-[10px] font-mono px-1.5 py-0.5 rounded ${
                           isSelected
-                            ? 'bg-[#0F1419]/20 text-[#0F1419]'
-                            : 'bg-[#161A22] text-[#F2F4F7]'
+                            ? 'bg-black/10 text-[#080A0E] font-bold'
+                            : 'bg-[#0B0E14] text-[#D1D5DB]'
                         }`}
                       >
                         {ev.actual}
@@ -640,13 +656,13 @@ export const MacroNewsView: React.FC = () => {
 
         {/* Dynamic Alerts: Pivot or Simultaneous Release */}
         {(activeMatrix.dynamicPivotTriggered || activeMatrix.isSimultaneousRelease) && (
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
             {activeMatrix.dynamicPivotTriggered && (
-              <div className="p-3 rounded-lg bg-[#101318] border border-rose-500/40 border-l-2 border-l-rose-500 text-xs text-rose-200 leading-relaxed">
+              <div className="p-3.5 rounded-xl bg-[#141923] border border-rose-500/30 border-l-2 border-l-rose-500 text-xs text-rose-200 leading-relaxed">
                 <div className="font-bold text-rose-300 mb-0.5">
                   {tr(
                     'Aturan Dinamis "Pindah Haluan" Aktif (1-Way SELL)',
-                    'Dynamic Pivot Rule Triggered (1-Way SELL)'
+                    'Dynamic Pivot Rule Active (1-Way SELL)'
                   )}
                 </div>
                 {isEn ? activeMatrix.dynamicPivotReasonEn : activeMatrix.dynamicPivotReasonId}
@@ -655,17 +671,17 @@ export const MacroNewsView: React.FC = () => {
 
             {activeMatrix.isSimultaneousRelease && (
               <div
-                className={`p-3 rounded-lg bg-[#101318] border text-xs leading-relaxed ${
+                className={`p-3.5 rounded-xl bg-[#141923] border text-xs leading-relaxed ${
                   activeMatrix.simultaneousAlignment === 'CONFLICTING_WHIPSAW'
-                    ? 'border-amber-500/40 border-l-2 border-l-amber-400 text-amber-200'
-                    : 'border-emerald-500/40 border-l-2 border-l-emerald-400 text-emerald-200'
+                    ? 'border-amber-400/30 border-l-2 border-l-amber-400 text-amber-200'
+                    : 'border-emerald-400/30 border-l-2 border-l-emerald-400 text-emerald-200'
                 }`}
               >
                 <div className="font-bold mb-0.5">
                   {activeMatrix.simultaneousAlignment === 'CONFLICTING_WHIPSAW'
                     ? tr(
                         `Simultaneous Release (${simultaneousCount} Data Berlawanan -> Awas Whipsaw)`,
-                        `Simultaneous Release (${simultaneousCount} Conflicting Releases -> Whipsaw Risk)`
+                        `Simultaneous Release (${simultaneousCount} Conflicting Releases -> Whipsaw Alert)`
                       )
                     : tr(
                         `Simultaneous Release (${simultaneousCount} Data Searah -> Konfirmasi Kuat)`,
@@ -673,61 +689,61 @@ export const MacroNewsView: React.FC = () => {
                       )}
                 </div>
                 {tr(
-                  'Periksa keselarasan sub-komponen pada jam rilis yang sama sebelum mengambil posisi.',
-                  'Verify alignment across all sub-components at this exact release time before entry.'
+                  'Harap verifikasi keselarasan seluruh sub-komponen pada jam rilis yang sama.',
+                  'Please verify alignment across all sub-components at this exact release time.'
                 )}
               </div>
             )}
           </div>
         )}
 
-        {/* High-Contrast Focused Numbers: Prev | Forecast | Actual (Scannable in 2 Seconds) */}
-        <div className="rounded-lg bg-[#101318] border border-[#20252D] p-3.5 sm:p-4 space-y-3">
+        {/* Focused Numbers Grid: Previous | Forecast | Actual (Readable in 2 Seconds) */}
+        <div className="rounded-xl bg-[#141923] border border-white/[0.06] p-4 sm:p-5 space-y-3.5">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div>
-              <div className="text-[11px] font-semibold text-[#22D3EE] uppercase tracking-wider">
+              <div className="text-xs font-bold text-[#FFFFFF] uppercase tracking-wide">
                 {primaryEv.title}
               </div>
-              <div className="text-xs text-[#929BA9]">
+              <div className="text-xs text-[#94A3B8] mt-0.5">
                 {primaryEv.impact} Impact • {formatTimestampWib(primaryEv.date, language)}
               </div>
             </div>
             {primaryEv.isInverseIndicator && (
-              <span className="text-[11px] font-medium text-amber-400">
-                {tr('Aturan Terbalik: Actual < Forecast = USD Naik / Gold Turun', 'Inverse Rule: Actual < Forecast = Strong USD / Sell Gold')}
+              <span className="text-[11px] font-semibold text-amber-300">
+                {tr('Aturan Terbalik: Actual < Forecast = USD Menguat (SELL Gold)', 'Inverse Rule: Actual < Forecast = Strong USD (SELL Gold)')}
               </span>
             )}
           </div>
 
           <div
             data-testid="macro-event-numbers-grid"
-            className="grid grid-cols-3 gap-2.5 pt-1"
+            className="grid grid-cols-3 gap-3 pt-1"
           >
-            <div className="rounded-lg bg-[#0F1419] border border-[#20252D] p-3 text-center">
-              <div className="text-[11px] font-medium uppercase text-[#929BA9] tracking-wider">
+            <div className="rounded-xl bg-[#0B0E14] border border-white/[0.06] p-3.5 text-center">
+              <div className="text-[10px] font-semibold uppercase tracking-wider text-[#94A3B8]">
                 Previous
               </div>
-              <div className="mt-1 text-base sm:text-xl font-bold text-[#F2F4F7] font-mono tabular-nums">
+              <div className="mt-1 text-base sm:text-xl font-black text-[#D1D5DB] font-mono tabular-nums">
                 {primaryEv.previous || '—'}
               </div>
             </div>
 
-            <div className="rounded-lg bg-[#0F1419] border border-[#20252D] p-3 text-center">
-              <div className="text-[11px] font-semibold uppercase text-[#22D3EE] tracking-wider">
+            <div className="rounded-xl bg-[#0B0E14] border border-[#22D3EE]/30 p-3.5 text-center">
+              <div className="text-[10px] font-bold uppercase tracking-wider text-[#22D3EE]">
                 Forecast
               </div>
-              <div className="mt-1 text-base sm:text-xl font-bold text-[#22D3EE] font-mono tabular-nums">
+              <div className="mt-1 text-base sm:text-xl font-black text-[#22D3EE] font-mono tabular-nums">
                 {primaryEv.forecast || '—'}
               </div>
             </div>
 
-            <div className="rounded-lg bg-[#0F1419] border border-[#20252D] p-3 text-center">
-              <div className="text-[11px] font-medium uppercase text-[#929BA9] tracking-wider">
+            <div className="rounded-xl bg-[#0B0E14] border border-white/[0.06] p-3.5 text-center">
+              <div className="text-[10px] font-semibold uppercase tracking-wider text-[#94A3B8]">
                 Actual
               </div>
-              <div className="mt-1 text-base sm:text-xl font-bold text-[#F2F4F7] font-mono tabular-nums">
+              <div className="mt-1 text-base sm:text-xl font-black text-[#FFFFFF] font-mono tabular-nums">
                 {primaryEv.actual || (
-                  <span className="text-xs text-[#929BA9] font-normal">
+                  <span className="text-xs text-[#94A3B8] font-normal">
                     {tr('Menunggu Rilis', 'Pending')}
                   </span>
                 )}
@@ -736,36 +752,25 @@ export const MacroNewsView: React.FC = () => {
           </div>
         </div>
 
-        {/* Minimalist Visual Probability Bar */}
+        {/* Minimalist Monochrome Probability Bar */}
         <div
           data-testid="macro-probability-bar"
-          className="rounded-lg bg-[#101318] border border-[#20252D] p-3.5 sm:p-4 space-y-3"
+          className="rounded-xl bg-[#141923] border border-white/[0.06] p-4 sm:p-5 space-y-4"
         >
           <div className="flex items-center justify-between">
-            <span className="text-xs font-semibold uppercase tracking-wider text-[#929BA9]">
+            <span className="text-xs font-bold uppercase tracking-wider text-[#94A3B8]">
               {tr('Distribusi Probabilitas Skenario', 'Scenario Probability Distribution')}
             </span>
             <span
               data-testid="macro-dominant-bias-badge"
-              className="px-2.5 py-0.5 rounded text-xs font-bold uppercase tracking-wider bg-[#0F1419] border border-[#20252D] text-[#F2F4F7]"
+              className="px-3 py-1 rounded-full text-xs font-black uppercase tracking-wider bg-[#FFFFFF] text-[#080A0E] shadow-sm"
             >
-              {tr('Bias:', 'Bias:')}{' '}
-              <strong
-                className={
-                  activeMatrix.dominantBias === 'BUY'
-                    ? 'text-emerald-400'
-                    : activeMatrix.dominantBias === 'SELL'
-                    ? 'text-rose-400'
-                    : 'text-[#22D3EE]'
-                }
-              >
-                {activeMatrix.dominantBias}
-              </strong>
+              {tr('Bias Utama:', 'Dominant Bias:')} {activeMatrix.dominantBias}
             </span>
           </div>
 
-          {/* Thin Minimal Horizontal Bar */}
-          <div className="w-full h-2 rounded-full bg-[#161A22] border border-[#20252D] overflow-hidden flex">
+          {/* Clean Thin Single Bar */}
+          <div className="w-full h-2.5 rounded-full bg-[#0B0E14] border border-white/[0.08] overflow-hidden flex">
             <div
               style={{ width: `${activeMatrix.buyProbability}%` }}
               className="bg-[#22D3EE] h-full"
@@ -773,63 +778,63 @@ export const MacroNewsView: React.FC = () => {
             />
             <div
               style={{ width: `${activeMatrix.sellProbability}%` }}
-              className="bg-[#F2F4F7] h-full opacity-80"
+              className="bg-[#FFFFFF] h-full"
               title={`SELL XAU/USD: ${activeMatrix.sellProbability}%`}
             />
             <div
               style={{ width: `${activeMatrix.mixedProbability}%` }}
-              className="bg-[#929BA9] h-full opacity-40"
+              className="bg-[#475569] h-full"
               title={`MIXED / WHIPSAW: ${activeMatrix.mixedProbability}%`}
             />
           </div>
 
-          {/* Clean Numerical Stats Row (No Neon Badges) */}
-          <div className="grid grid-cols-3 gap-2 pt-1 text-center font-mono tabular-nums text-xs">
-            <div className="p-2 rounded bg-[#0F1419] border border-[#20252D]">
-              <div className="text-[11px] font-medium text-[#929BA9]">BUY XAU/USD</div>
-              <div className="text-sm font-bold text-[#22D3EE] mt-0.5">
+          {/* Clean Numerical Stats Row */}
+          <div className="grid grid-cols-3 gap-3 text-center font-mono tabular-nums">
+            <div className="p-3 rounded-xl bg-[#0B0E14] border border-white/[0.06]">
+              <div className="text-[10px] font-semibold text-[#94A3B8] uppercase">BUY XAU/USD</div>
+              <div className="text-base sm:text-lg font-black text-[#22D3EE] mt-0.5">
                 {activeMatrix.buyProbability}%
               </div>
             </div>
 
-            <div className="p-2 rounded bg-[#0F1419] border border-[#20252D]">
-              <div className="text-[11px] font-medium text-[#929BA9]">SELL XAU/USD</div>
-              <div className="text-sm font-bold text-[#F2F4F7] mt-0.5">
+            <div className="p-3 rounded-xl bg-[#0B0E14] border border-white/[0.06]">
+              <div className="text-[10px] font-semibold text-[#94A3B8] uppercase">SELL XAU/USD</div>
+              <div className="text-base sm:text-lg font-black text-[#FFFFFF] mt-0.5">
                 {activeMatrix.sellProbability}%
               </div>
             </div>
 
-            <div className="p-2 rounded bg-[#0F1419] border border-[#20252D]">
-              <div className="text-[11px] font-medium text-[#929BA9]">MIXED / WHIPSAW</div>
-              <div className="text-sm font-bold text-[#929BA9] mt-0.5">
+            <div className="p-3 rounded-xl bg-[#0B0E14] border border-white/[0.06]">
+              <div className="text-[10px] font-semibold text-[#94A3B8] uppercase">MIXED / WHIPSAW</div>
+              <div className="text-base sm:text-lg font-black text-[#94A3B8] mt-0.5">
                 {activeMatrix.mixedProbability}%
               </div>
             </div>
           </div>
         </div>
 
-        {/* Adu Argumen Fundamental (Clean Segmented Tabs & High Legibility) */}
+        {/* Adu Argumen Fundamental (Clean Segmented Tabs) */}
         <div
           data-testid="macro-arguments-section"
-          className="rounded-lg bg-[#101318] border border-[#20252D] p-3.5 sm:p-4 space-y-3"
+          className="rounded-xl bg-[#141923] border border-white/[0.06] p-4 sm:p-5 space-y-4"
         >
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-            <span className="text-xs font-bold uppercase tracking-wider text-[#F2F4F7]">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <span className="text-xs font-bold uppercase tracking-wider text-[#FFFFFF]">
               {tr(
                 'Adu Argumen Fundamental (3 Pilar FOMC)',
                 'Fundamental Arguments (3 FOMC Pillars)'
               )}
             </span>
 
-            {/* Segmented Control */}
-            <div className="inline-flex rounded-lg bg-[#0F1419] p-0.5 border border-[#20252D] self-start sm:self-auto">
+            {/* Segmented Controls in Crisp Monochrome */}
+            <div className="inline-flex rounded-xl bg-[#0B0E14] p-1 border border-white/[0.08] self-start sm:self-auto">
               <button
                 type="button"
                 onClick={() => setArgumentTab('BOTH')}
-                className={`px-3 py-1 rounded-md text-xs font-medium transition-colors cursor-pointer ${
+                className={`px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
                   argumentTab === 'BOTH'
-                    ? 'bg-[#161A22] text-[#F2F4F7] font-semibold'
-                    : 'text-[#929BA9] hover:text-[#F2F4F7]'
+                    ? 'bg-[#FFFFFF] text-[#080A0E] shadow-sm'
+                    : 'text-[#94A3B8] hover:text-[#FFFFFF]'
                 }`}
               >
                 {tr('Semua', 'Both')}
@@ -837,10 +842,10 @@ export const MacroNewsView: React.FC = () => {
               <button
                 type="button"
                 onClick={() => setArgumentTab('BUY')}
-                className={`px-3 py-1 rounded-md text-xs font-medium transition-colors cursor-pointer ${
+                className={`px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
                   argumentTab === 'BUY'
-                    ? 'bg-[#161A22] text-[#22D3EE] font-semibold'
-                    : 'text-[#929BA9] hover:text-[#F2F4F7]'
+                    ? 'bg-[#FFFFFF] text-[#080A0E] shadow-sm'
+                    : 'text-[#94A3B8] hover:text-[#FFFFFF]'
                 }`}
               >
                 BUY ({activeMatrix.buyArguments.length})
@@ -848,10 +853,10 @@ export const MacroNewsView: React.FC = () => {
               <button
                 type="button"
                 onClick={() => setArgumentTab('SELL')}
-                className={`px-3 py-1 rounded-md text-xs font-medium transition-colors cursor-pointer ${
+                className={`px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
                   argumentTab === 'SELL'
-                    ? 'bg-[#161A22] text-[#F2F4F7] font-semibold'
-                    : 'text-[#929BA9] hover:text-[#F2F4F7]'
+                    ? 'bg-[#FFFFFF] text-[#080A0E] shadow-sm'
+                    : 'text-[#94A3B8] hover:text-[#FFFFFF]'
                 }`}
               >
                 SELL ({activeMatrix.sellArguments.length})
@@ -865,24 +870,24 @@ export const MacroNewsView: React.FC = () => {
             }`}
           >
             {(argumentTab === 'BOTH' || argumentTab === 'BUY') && (
-              <div className="rounded-lg bg-[#0F1419] border border-[#20252D] p-3 space-y-2">
-                <div className="flex items-center gap-1.5 text-[#22D3EE] font-semibold text-xs">
-                  <TrendingUp className="w-3.5 h-3.5" />
+              <div className="rounded-xl bg-[#0B0E14] border border-white/[0.06] p-4 space-y-3">
+                <div className="flex items-center gap-2 text-[#22D3EE] font-bold text-xs uppercase tracking-wider">
+                  <TrendingUp className="w-4 h-4" />
                   <span>{tr('Argumen Pendukung BUY', 'Arguments Supporting BUY')}</span>
                 </div>
-                <div className="space-y-2">
+                <div className="space-y-2.5">
                   {activeMatrix.buyArguments.map((arg, idx) => (
                     <div
                       key={idx}
-                      className="p-2.5 rounded bg-[#101318] border border-[#20252D] space-y-1"
+                      className="p-3 rounded-lg bg-[#141923] border border-white/[0.06] space-y-1"
                     >
                       <div className="flex items-center justify-between gap-2 text-xs">
-                        <span className="font-semibold text-[#F2F4F7]">{arg.tag}</span>
-                        <span className="text-[10px] text-[#929BA9] uppercase font-mono">
+                        <span className="font-semibold text-[#FFFFFF]">{arg.tag}</span>
+                        <span className="text-[10px] text-[#94A3B8] uppercase font-mono">
                           {arg.pillar}
                         </span>
                       </div>
-                      <p className="text-xs text-[#929BA9] leading-relaxed">
+                      <p className="text-xs text-[#D1D5DB] leading-relaxed">
                         {isEn ? arg.textEn : arg.textId}
                       </p>
                     </div>
@@ -892,24 +897,24 @@ export const MacroNewsView: React.FC = () => {
             )}
 
             {(argumentTab === 'BOTH' || argumentTab === 'SELL') && (
-              <div className="rounded-lg bg-[#0F1419] border border-[#20252D] p-3 space-y-2">
-                <div className="flex items-center gap-1.5 text-[#F2F4F7] font-semibold text-xs">
-                  <TrendingDown className="w-3.5 h-3.5 text-[#929BA9]" />
+              <div className="rounded-xl bg-[#0B0E14] border border-white/[0.06] p-4 space-y-3">
+                <div className="flex items-center gap-2 text-[#FFFFFF] font-bold text-xs uppercase tracking-wider">
+                  <TrendingDown className="w-4 h-4 text-[#94A3B8]" />
                   <span>{tr('Argumen Pendukung SELL', 'Arguments Supporting SELL')}</span>
                 </div>
-                <div className="space-y-2">
+                <div className="space-y-2.5">
                   {activeMatrix.sellArguments.map((arg, idx) => (
                     <div
                       key={idx}
-                      className="p-2.5 rounded bg-[#101318] border border-[#20252D] space-y-1"
+                      className="p-3 rounded-lg bg-[#141923] border border-white/[0.06] space-y-1"
                     >
                       <div className="flex items-center justify-between gap-2 text-xs">
-                        <span className="font-semibold text-[#F2F4F7]">{arg.tag}</span>
-                        <span className="text-[10px] text-[#929BA9] uppercase font-mono">
+                        <span className="font-semibold text-[#FFFFFF]">{arg.tag}</span>
+                        <span className="text-[10px] text-[#94A3B8] uppercase font-mono">
                           {arg.pillar}
                         </span>
                       </div>
-                      <p className="text-xs text-[#929BA9] leading-relaxed">
+                      <p className="text-xs text-[#D1D5DB] leading-relaxed">
                         {isEn ? arg.textEn : arg.textId}
                       </p>
                     </div>
@@ -920,39 +925,39 @@ export const MacroNewsView: React.FC = () => {
           </div>
         </div>
 
-        {/* Action Plan & Final Take (Structured Text with Left Blue Accent Border) */}
+        {/* Action Plan & Final Take (Executive Block with Left Cyan Accent) */}
         <div
           data-testid="macro-final-take-box"
-          className="rounded-lg bg-[#101318] border border-[#20252D] p-4 space-y-3"
+          className="rounded-xl bg-[#141923] border border-white/[0.08] p-5 space-y-3.5"
         >
-          <div className="border-l-2 border-[#22D3EE] pl-3.5 space-y-2">
+          <div className="border-l-2 border-[#22D3EE] pl-4 space-y-2">
             <div className="flex items-center justify-between gap-2">
               <h3 className="text-xs font-bold uppercase tracking-wider text-[#22D3EE]">
                 {tr('Kesimpulan & Rencana Aksi', 'Final Take & Action Plan')}
               </h3>
-              <span className="text-[11px] font-mono text-[#929BA9]">
+              <span className="text-[11px] font-mono text-[#94A3B8]">
                 XAU/USD • {activeMatrix.dominantBias}
               </span>
             </div>
 
-            <p className="text-sm font-semibold text-[#F2F4F7] leading-relaxed">
+            <p className="text-sm font-bold text-[#FFFFFF] leading-relaxed">
               {isEn ? activeMatrix.finalTakeEn : activeMatrix.finalTakeId}
             </p>
           </div>
 
           {/* Action Plan Details */}
-          <div className="p-3 rounded bg-[#0F1419] border border-[#20252D] text-xs text-[#929BA9] leading-relaxed whitespace-pre-line">
-            <strong className="text-[#F2F4F7] block mb-1 uppercase text-[10px] tracking-wider">
+          <div className="p-4 rounded-xl bg-[#0B0E14] border border-white/[0.06] text-xs text-[#D1D5DB] leading-relaxed whitespace-pre-line">
+            <strong className="text-[#FFFFFF] block mb-1.5 uppercase text-[10px] tracking-wider">
               {tr('Taktik Eksekusi:', 'Execution Tactics:')}
             </strong>
             {isEn ? activeMatrix.actionPlanEn : activeMatrix.actionPlanId}
           </div>
 
           {/* Whipsaw Warning */}
-          <div className="p-3 rounded bg-[#0F1419] border border-[#20252D] flex items-start gap-2.5 text-xs">
+          <div className="p-3.5 rounded-xl bg-[#0B0E14] border border-amber-400/20 flex items-start gap-3 text-xs">
             <ShieldAlert className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
-            <div className="text-[#929BA9] leading-relaxed">
-              <strong className="text-amber-300 font-semibold uppercase text-[11px] mr-1">
+            <div className="text-[#D1D5DB] leading-relaxed">
+              <strong className="text-amber-300 font-semibold uppercase text-[10px] tracking-wider mr-1.5">
                 {tr('Peringatan Whipsaw:', 'Whipsaw Warning:')}
               </strong>
               {isEn ? activeMatrix.whipsawWarningEn : activeMatrix.whipsawWarningId}
@@ -961,43 +966,43 @@ export const MacroNewsView: React.FC = () => {
         </div>
       </div>
 
-      {/* 5. USD ECONOMIC CALENDAR TABLE (Clean Institutional Table) */}
-      <div className="rounded-xl bg-[#0F1419] border border-[#20252D] p-4 sm:p-5 space-y-3">
+      {/* 5. USD ECONOMIC CALENDAR TABLE (Sleek Institutional Financial Table) */}
+      <div className="rounded-2xl bg-[#0F1419] border border-white/[0.08] p-5 sm:p-6 shadow-xl space-y-4">
         <div className="flex items-center justify-between">
-          <h3 className="text-xs sm:text-sm font-bold uppercase tracking-wider text-[#F2F4F7]">
+          <h3 className="text-xs sm:text-sm font-bold uppercase tracking-wider text-[#FFFFFF]">
             {tr(
               'Jadwal Kalender Ekonomi USD Minggu Ini',
               'This Week USD Economic Calendar'
             )}
           </h3>
-          <span className="text-[11px] text-[#929BA9]">ForexFactory Open Feed</span>
+          <span className="text-[11px] text-[#94A3B8]">ForexFactory Open Feed</span>
         </div>
 
         <div className="overflow-x-auto">
           <table className="w-full text-left border-collapse text-xs">
             <thead>
-              <tr className="border-b border-[#20252D] text-[11px] uppercase tracking-wider text-[#929BA9]">
-                <th className="py-2.5 pr-3 font-semibold">{tr('Waktu (WIB)', 'Time (WIB)')}</th>
-                <th className="py-2.5 pr-3 font-semibold">{tr('Event USD', 'USD Event')}</th>
-                <th className="py-2.5 pr-3 font-semibold">{tr('Pilar FOMC', 'FOMC Pillar')}</th>
-                <th className="py-2.5 pr-3 text-right font-semibold">Prev</th>
-                <th className="py-2.5 pr-3 text-right font-semibold text-[#22D3EE]">Forecast</th>
-                <th className="py-2.5 pr-3 text-right font-semibold">Actual</th>
-                <th className="py-2.5 text-right font-semibold">{tr('Bias XAU/USD', 'XAU/USD Bias')}</th>
+              <tr className="border-b border-white/[0.08] text-[10px] uppercase tracking-wider text-[#94A3B8]">
+                <th className="py-3 pr-3 font-semibold">{tr('Waktu (WIB)', 'Time (WIB)')}</th>
+                <th className="py-3 pr-3 font-semibold">{tr('Event USD', 'USD Event')}</th>
+                <th className="py-3 pr-3 font-semibold">{tr('Pilar FOMC', 'FOMC Pillar')}</th>
+                <th className="py-3 pr-3 text-right font-semibold">Prev</th>
+                <th className="py-3 pr-3 text-right font-semibold text-[#22D3EE]">Forecast</th>
+                <th className="py-3 pr-3 text-right font-semibold">Actual</th>
+                <th className="py-3 text-right font-semibold">{tr('Bias XAU/USD', 'XAU/USD Bias')}</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-[#20252D]/60">
+            <tbody className="divide-y divide-white/[0.04]">
               {snapshot.calendarEvents.map((ev: MacroCalendarEvent) => (
                 <tr
                   key={ev.id}
                   onClick={() => setSelectedEventId(ev.id)}
-                  className="hover:bg-[#101318] cursor-pointer transition-colors"
+                  className="hover:bg-white/[0.03] cursor-pointer transition-colors"
                 >
-                  <td className="py-2.5 pr-3 font-mono text-[11px] text-[#929BA9] whitespace-nowrap">
+                  <td className="py-3 pr-3 font-mono text-[11px] text-[#94A3B8] whitespace-nowrap">
                     {formatTimestampWib(ev.date, language)}
                   </td>
-                  <td className="py-2.5 pr-3 font-medium text-[#F2F4F7]">
-                    <div className="flex items-center gap-1.5">
+                  <td className="py-3 pr-3 font-semibold text-[#FFFFFF]">
+                    <div className="flex items-center gap-2">
                       <span
                         className={`w-1.5 h-1.5 rounded-full shrink-0 ${
                           ev.impact === 'High' ? 'bg-rose-400' : 'bg-amber-400'
@@ -1006,28 +1011,28 @@ export const MacroNewsView: React.FC = () => {
                       <span>{ev.title}</span>
                     </div>
                   </td>
-                  <td className="py-2.5 pr-3">
-                    <span className="text-[10px] font-mono text-[#929BA9]">
+                  <td className="py-3 pr-3">
+                    <span className="text-[10px] font-mono text-[#94A3B8] bg-[#141923] px-2 py-0.5 rounded border border-white/[0.06]">
                       {ev.pillar}
                     </span>
                   </td>
-                  <td className="py-2.5 pr-3 text-right font-mono tabular-nums text-[#929BA9]">
+                  <td className="py-3 pr-3 text-right font-mono tabular-nums text-[#94A3B8]">
                     {ev.previous || '—'}
                   </td>
-                  <td className="py-2.5 pr-3 text-right font-mono tabular-nums font-semibold text-[#22D3EE]">
+                  <td className="py-3 pr-3 text-right font-mono tabular-nums font-bold text-[#22D3EE]">
                     {ev.forecast || '—'}
                   </td>
-                  <td className="py-2.5 pr-3 text-right font-mono tabular-nums text-[#F2F4F7]">
+                  <td className="py-3 pr-3 text-right font-mono tabular-nums font-bold text-[#FFFFFF]">
                     {ev.actual || '—'}
                   </td>
-                  <td className="py-2.5 text-right font-mono">
+                  <td className="py-3 text-right font-mono">
                     <span
                       className={`text-[11px] font-bold ${
                         ev.eventBiasForGold === 'BUY'
-                          ? 'text-emerald-400'
+                          ? 'text-emerald-300'
                           : ev.eventBiasForGold === 'SELL'
-                          ? 'text-rose-400'
-                          : 'text-[#929BA9]'
+                          ? 'text-rose-300'
+                          : 'text-[#94A3B8]'
                       }`}
                     >
                       {ev.eventBiasForGold}
