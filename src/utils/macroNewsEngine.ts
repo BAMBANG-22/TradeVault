@@ -75,6 +75,9 @@ export interface PreNewsScenarioMatrix {
   dynamicPivotTriggered: boolean;
   dynamicPivotReasonId?: string;
   dynamicPivotReasonEn?: string;
+  dynamicPivotType?: 'HAWKISH_OVERRIDE' | 'DOVISH_OVERRIDE';
+  fedSpeechAlertNoteId?: string;
+  fedSpeechAlertNoteEn?: string;
   oilChannelDominance: 'INFLATION_CHANNEL_SELL_GOLD' | 'SAFE_HAVEN_BUY_GOLD' | 'NEUTRAL';
   buyArguments: PillarArgumentItem[];
   sellArguments: PillarArgumentItem[];
@@ -350,6 +353,9 @@ export function evaluateSingleEventForGold(
     if (inverse) {
       extraNoteId = ' (Aturan Terbalik Klaim/Pengangguran: angka lebih rendah = pasar kerja ketat = USD menguat)';
       extraNoteEn = ' (Inverse Claims/Unemployment Rule: lower figure = tighter labor = stronger USD)';
+    } else if (pillar === 'INFLATION' && hasActual && forecastNum !== null && previousNum !== null && primaryVal < previousNum) {
+      extraNoteId = ` (Prioritas Rilis: Aktual ${primaryVal} > Forecast ${referenceVal} → Inflasi mengalahkan konsensus memicu ekspektasi Hawkish SELL XAU/USD, meskipun angka Aktual lebih rendah dari Previous ${previousNum})`;
+      extraNoteEn = ` (Release Priority: Actual ${primaryVal} > Forecast ${referenceVal} → Hotter than consensus fuels Hawkish SELL XAU/USD, even though Actual is lower than Previous ${previousNum})`;
     } else if (isIsmPrices && primaryVal >= 70) {
       extraNoteId = ' (ISM Prices Paid ≥ 70: tekanan harga hulu ekstrem memicu ekspektasi Fed Hawkish)';
       extraNoteEn = ' (ISM Prices Paid ≥ 70: extreme upstream price pressure fuels Hawkish Fed expectations)';
@@ -369,6 +375,9 @@ export function evaluateSingleEventForGold(
     if (inverse) {
       extraNoteId = ' (Aturan Terbalik Klaim/Pengangguran: angka naik = pasar tenaga kerja melambat = USD melemah)';
       extraNoteEn = ' (Inverse Claims/Unemployment Rule: higher figure = cooling labor market = weaker USD)';
+    } else if (pillar === 'INFLATION' && hasActual && forecastNum !== null) {
+      extraNoteId = ` (Prioritas Rilis: Aktual ${primaryVal} < Forecast ${referenceVal} → Inflasi mendingin di bawah proyeksi membuka ruang pemangkasan Fed)`;
+      extraNoteEn = ` (Release Priority: Actual ${primaryVal} < Forecast ${referenceVal} → Softer inflation opens door to Fed rate cuts)`;
     } else if (isIsmPmi && primaryVal < 55) {
       extraNoteId =
         primaryVal < 50
@@ -529,6 +538,93 @@ export function filterAndScoreBreakingHeadlines(
 }
 
 /**
+ * Checks if a calendar event is a Fed speech or testimony.
+ */
+export function isFedSpeechEvent(title: string): boolean {
+  const t = (title || '').toUpperCase();
+  return (
+    t.includes('SPEAKS') ||
+    t.includes('SPEECH') ||
+    t.includes('TESTIFIES') ||
+    t.includes('TESTIMONY') ||
+    t.includes('POWELL') ||
+    t.includes('FOMC MEMBER') ||
+    t.includes('FED CHAIR') ||
+    t.includes('FED GOVERNOR') ||
+    t.includes('FOMC PRESS CONFERENCE') ||
+    t.includes('CENTRAL BANK')
+  );
+}
+
+/**
+ * Analyzes the tone of a Fed speech statement or breaking news headline.
+ */
+export function analyzeStatementTone(statement: string): 'HAWKISH' | 'DOVISH' | 'NEUTRAL' {
+  if (!statement || !statement.trim()) return 'NEUTRAL';
+  const clean = statement.toUpperCase();
+
+  const isHawkish =
+    /\b(HIKE|HIKES|HAWKISH|25\s*BPS|50\s*BPS|75\s*BPS|HIGHER FOR LONGER|NO RUSH TO CUT|RESTRICTIVE|STICKY|TIGHTEN|TIGHTENING|MORE WORK TO DO|UPSIDE INFLATION|ABOVE TARGET|INFLATION PERSISTENT|NO RATE CUT|PAUSE CUTS|MORE RATE HIKES)\b/i.test(
+      clean
+    ) ||
+    /\b(NAIK|KENAIKAN|SUKU BUNGA NAIK|LENGKET|PENGETATAN|TIDAK BURU-BURU PANGKAS|INFLASI TINGGI)\b/i.test(
+      clean
+    );
+
+  const isDovish =
+    /\b(CUT|CUTS|DOVISH|EASING|LOWER RATES|COOLING|WEAKENING LABOR|PAUSE HIKE|RATE CUTS|UNEMPLOYMENT RISING|DISINFLATION|SLOWDOWN|TIME TO CUT|READY TO CUT|CUTTING CYCLE)\b/i.test(
+      clean
+    ) ||
+    /\b(TURUN|PEMOTONGAN|PANGKAS|PELONGGARAN|JEDA|MELAMBAT|SIAP PANGKAS)\b/i.test(clean);
+
+  if (isHawkish && !isDovish) return 'HAWKISH';
+  if (isDovish && !isHawkish) return 'DOVISH';
+  return 'NEUTRAL';
+}
+
+/**
+ * Creates a BreakingNewsHeadline from user-pasted speech quote or breaking headline.
+ */
+export function createCustomBreakingHeadline(text: string): BreakingNewsHeadline {
+  const tone = analyzeStatementTone(text);
+  const matchedKeywords: string[] = [];
+  for (const kw of BREAKING_NEWS_KEYWORDS) {
+    if (new RegExp(`\\b${kw}\\b`, 'i').test(text)) {
+      matchedKeywords.push(kw);
+    }
+  }
+  if (matchedKeywords.length === 0) {
+    matchedKeywords.push('Fed', 'Rate');
+  }
+
+  const sentimentForGold: BreakingSentimentType =
+    tone === 'HAWKISH' ? 'BEARISH' : tone === 'DOVISH' ? 'BULLISH' : 'NEUTRAL';
+
+  return {
+    id: `custom-headline-${Date.now()}`,
+    title: text,
+    source: 'User Input / Breaking Wire',
+    pubDate: new Date().toISOString(),
+    matchedKeywords,
+    impact: 'HIGH',
+    sentimentForGold,
+    channelType: 'FED_SPEECH',
+    aiEvaluationId:
+      tone === 'HAWKISH'
+        ? 'Pernyataan bernada Hawkish: memicu kenaikan imbal hasil obligasi & DXY → Tekanan SELL kuat pada XAU/USD (Pindah Haluan: Hawkish Override).'
+        : tone === 'DOVISH'
+        ? 'Pernyataan bernada Dovish: memicu ekspektasi penurunan imbal hasil & pelemahan DXY → Dorongan BUY kuat pada XAU/USD (Pindah Haluan: Dovish Override).'
+        : 'Pernyataan pejabat Fed dipantau; perhatikan reaksi respons US10Y & DXY.',
+    aiEvaluationEn:
+      tone === 'HAWKISH'
+        ? 'Hawkish statement: pushes yields & DXY higher → Strong SELL pressure on XAU/USD (Dynamic Pivot: Hawkish Override).'
+        : tone === 'DOVISH'
+        ? 'Dovish statement: drives yields & DXY lower → Strong BUY momentum on XAU/USD (Dynamic Pivot: Dovish Override).'
+        : 'Fed remarks monitored; observe US10Y & DXY market reaction.',
+  };
+}
+
+/**
  * Computes a deterministic fingerprint from calendar events and top breaking news headlines.
  * Used to determine whether there is new calendar/news data in the last 30 minutes.
  */
@@ -569,6 +665,8 @@ export function computeDeterministicMacroSnapshot(params: {
   selectedEventId?: string;
   sourceMode?: MacroNewsSnapshot['sourceMode'];
   modelUsed?: string;
+  customHeadlineText?: string;
+  customActualOverrides?: Record<string, string | number>;
 }): MacroNewsSnapshot {
   const {
     calendarEvents,
@@ -577,12 +675,48 @@ export function computeDeterministicMacroSnapshot(params: {
     selectedEventId,
     sourceMode = 'RULE_BASED_FALLBACK',
     modelUsed = 'deterministic-playbook-v1',
+    customHeadlineText,
+    customActualOverrides,
   } = params;
 
   const nowMs = Date.now();
 
+  // Apply quick actual overrides if provided (re-evaluating individual event bias)
+  let workingCalendarEvents = [...calendarEvents];
+  if (customActualOverrides && Object.keys(customActualOverrides).length > 0) {
+    workingCalendarEvents = workingCalendarEvents.map((ev) => {
+      const overrideVal = customActualOverrides[ev.id] ?? customActualOverrides[ev.title];
+      if (overrideVal !== undefined && overrideVal !== null && String(overrideVal).trim() !== '') {
+        const parsed = parseMacroNumeric(overrideVal);
+        const evalRes = evaluateSingleEventForGold(
+          ev.title,
+          parsed.value,
+          ev.forecastNum,
+          ev.previousNum
+        );
+        return {
+          ...ev,
+          actual: String(overrideVal).trim(),
+          actualNum: parsed.value,
+          unit: parsed.unit || ev.unit,
+          eventBiasForGold: evalRes.bias,
+          biasReasonId: evalRes.reasonId,
+          biasReasonEn: evalRes.reasonEn,
+        };
+      }
+      return ev;
+    });
+  }
+
+  // Prepend custom breaking headline if supplied
+  let workingBreakingNews = [...breakingNews];
+  if (customHeadlineText && customHeadlineText.trim()) {
+    const customHl = createCustomBreakingHeadline(customHeadlineText.trim());
+    workingBreakingNews.unshift(customHl);
+  }
+
   // Pick the primary event: either matching selectedEventId, or the closest upcoming/recent High Impact USD event
-  const sortedEvents = [...calendarEvents].sort((a, b) => {
+  const sortedEvents = [...workingCalendarEvents].sort((a, b) => {
     const aTime = new Date(a.date).getTime() || nowMs;
     const bTime = new Date(b.date).getTime() || nowMs;
     return Math.abs(aTime - nowMs) - Math.abs(bTime - nowMs);
@@ -590,7 +724,7 @@ export function computeDeterministicMacroSnapshot(params: {
 
   const highImpactNearest = sortedEvents.find((e) => e.impact === 'High');
   const primaryEvent: MacroCalendarEvent =
-    calendarEvents.find((e) => e.id === selectedEventId) ||
+    workingCalendarEvents.find((e) => e.id === selectedEventId) ||
     highImpactNearest ||
     sortedEvents[0] || {
       id: 'fallback-cpi-event',
@@ -614,7 +748,7 @@ export function computeDeterministicMacroSnapshot(params: {
 
   // Detect Simultaneous Releases (other USD events within 15 minutes of primaryEvent)
   const primaryTimeMs = new Date(primaryEvent.date).getTime();
-  const simultaneousEvents = calendarEvents.filter((e) => {
+  const simultaneousEvents = workingCalendarEvents.filter((e) => {
     if (e.id === primaryEvent.id) return false;
     const tMs = new Date(e.date).getTime();
     if (!Number.isFinite(primaryTimeMs) || !Number.isFinite(tMs)) return false;
@@ -656,7 +790,7 @@ export function computeDeterministicMacroSnapshot(params: {
   }
 
   // Also include broader weekly FOMC Pillar context from other key calendar events
-  for (const ev of calendarEvents) {
+  for (const ev of workingCalendarEvents) {
     if (allClusterEvents.some((c) => c.id === ev.id)) continue;
     if (ev.impact !== 'High') continue;
     if (ev.eventBiasForGold === 'BUY' && buyArguments.length < 4) {
@@ -719,7 +853,7 @@ export function computeDeterministicMacroSnapshot(params: {
 
   // Dual-Channel Oil & Geopolitics Evaluation
   let oilChannelDominance: PreNewsScenarioMatrix['oilChannelDominance'] = 'NEUTRAL';
-  const hasOilHeadline = breakingNews.some(
+  const hasOilHeadline = workingBreakingNews.some(
     (b) => b.channelType === 'OIL_INFLATION_CHANNEL' || b.matchedKeywords.includes('Hormuz') || b.matchedKeywords.includes('Oil')
   );
   if (usoil.changePercent >= 1.25 || hasOilHeadline) {
@@ -742,8 +876,33 @@ export function computeDeterministicMacroSnapshot(params: {
   }
 
   // 4. Evaluate Dynamic Pivot Rule ("Aturan Dinamis Pindah Haluan")
-  // Condition: CPI forecast cools (initial BUY), but Breaking News has Hawkish Fed official (Waller/Warsh/Powell/Fed) AND NFP is strong
-  const hasCoolingCpiForecast = calendarEvents.some(
+  // Check if Fed speech is scheduled on the calendar today or on the primary event's date
+  const fedSpeechEvents = workingCalendarEvents.filter((e) => isFedSpeechEvent(e.title));
+  const primaryDayStr = (primaryEvent?.date || '').slice(0, 10);
+  const nowDayStr = new Date().toISOString().slice(0, 10);
+  const hasFedSpeechTodayOrSameDay = fedSpeechEvents.some((e) => {
+    const eDay = (e.date || '').slice(0, 10);
+    return eDay === primaryDayStr || eDay === nowDayStr;
+  });
+
+  // Evaluate Tone of Speech / Headlines
+  let statementTone: 'HAWKISH' | 'DOVISH' | 'NEUTRAL' = 'NEUTRAL';
+  let speechToneSource: BreakingNewsHeadline | null = null;
+
+  for (const b of workingBreakingNews) {
+    const tone = analyzeStatementTone(b.title);
+    if (tone !== 'NEUTRAL') {
+      statementTone = tone;
+      speechToneSource = b;
+      break;
+    }
+  }
+
+  if (statementTone === 'NEUTRAL' && customHeadlineText) {
+    statementTone = analyzeStatementTone(customHeadlineText);
+  }
+
+  const hasCoolingCpiForecast = workingCalendarEvents.some(
     (e) =>
       e.pillar === 'INFLATION' &&
       e.title.toUpperCase().includes('CPI') &&
@@ -751,10 +910,10 @@ export function computeDeterministicMacroSnapshot(params: {
       e.previousNum !== null &&
       e.forecastNum < e.previousNum
   );
-  const hawkishFedNews = breakingNews.find(
+  const hawkishFedNews = workingBreakingNews.find(
     (b) => b.channelType === 'FED_SPEECH' && b.sentimentForGold === 'BEARISH'
   );
-  const strongNfpEvent = calendarEvents.find(
+  const strongNfpEvent = workingCalendarEvents.find(
     (e) =>
       e.pillar === 'LABOR' &&
       (e.title.toUpperCase().includes('NON-FARM') || e.title.toUpperCase().includes('NFP')) &&
@@ -762,21 +921,53 @@ export function computeDeterministicMacroSnapshot(params: {
   );
 
   let dynamicPivotTriggered = false;
+  let dynamicPivotType: 'HAWKISH_OVERRIDE' | 'DOVISH_OVERRIDE' | undefined;
   let dynamicPivotReasonId: string | undefined;
   let dynamicPivotReasonEn: string | undefined;
+  let fedSpeechAlertNoteId: string | undefined;
+  let fedSpeechAlertNoteEn: string | undefined;
 
-  if (hawkishFedNews && (hasCoolingCpiForecast || strongNfpEvent)) {
+  // HAWKISH OVERRIDE: Fed official backs rate hike / tightening / sticky inflation, OR classic playbook pivot
+  if (statementTone === 'HAWKISH' || (hawkishFedNews && (hasCoolingCpiForecast || strongNfpEvent))) {
     dynamicPivotTriggered = true;
-    sellScore += 35;
-    buyScore = Math.max(10, Math.round(buyScore * 0.45));
-    dynamicPivotReasonId = `ATURAN PINDAH HALUAN AKTIF: Meskipun konsensus CPI bulanan melambat, Breaking News pejabat Fed (${hawkishFedNews.matchedKeywords.join(', ')}) yang Hawkish ditambah ketahanan pasar tenaga kerja (NFP) membalikkan skenario menjadi SELL 1 Arah pada XAU/USD.`;
-    dynamicPivotReasonEn = `DYNAMIC PIVOT RULE ACTIVE: Despite a softer monthly CPI consensus, Hawkish Fed official commentary (${hawkishFedNews.matchedKeywords.join(', ')}) combined with resilient NFP labor data flips the decision into a 1-Way SELL on XAU/USD.`;
+    dynamicPivotType = 'HAWKISH_OVERRIDE';
+    sellScore += 45;
+    buyScore = Math.max(5, Math.min(buyScore, 15));
+    const officialName =
+      speechToneSource?.matchedKeywords?.join(', ') ||
+      hawkishFedNews?.matchedKeywords?.join(', ') ||
+      'Pejabat Fed';
+    dynamicPivotReasonId = `PINDAH HALUAN: HAWKISH OVERRIDE — Pernyataan pejabat Fed (${officialName}) bernada Hawkish (sinyal suku bunga tinggi / pengetatan moneter) membalikkan arah skenario menjadi SELL 1 ARAH pada XAU/USD.`;
+    dynamicPivotReasonEn = `DYNAMIC PIVOT: HAWKISH OVERRIDE — Fed official remarks (${officialName}) tilt Hawkish (rate hike/higher-for-longer guidance), flipping the scenario into a 1-WAY SELL on XAU/USD.`;
     sellArguments.unshift({
       pillar: 'POLICY',
-      tag: 'PINDAH HALUAN • FED HAWKISH PIVOT',
+      tag: 'PINDAH HALUAN • HAWKISH OVERRIDE',
       textId: dynamicPivotReasonId,
       textEn: dynamicPivotReasonEn,
     });
+  } else if (statementTone === 'DOVISH') {
+    // DOVISH OVERRIDE: Fed official signals rate cuts / easing / pause
+    dynamicPivotTriggered = true;
+    dynamicPivotType = 'DOVISH_OVERRIDE';
+    buyScore += 45;
+    sellScore = Math.max(5, Math.min(sellScore, 15));
+    const officialName = speechToneSource?.matchedKeywords?.join(', ') || 'Pejabat Fed';
+    dynamicPivotReasonId = `PINDAH HALUAN: DOVISH OVERRIDE — Pernyataan pejabat Fed (${officialName}) bernada Dovish (sinyal pemangkasan suku bunga / pelonggaran moneter) membalikkan arah skenario menjadi BUY 1 ARAH pada XAU/USD.`;
+    dynamicPivotReasonEn = `DYNAMIC PIVOT: DOVISH OVERRIDE — Fed official remarks (${officialName}) tilt Dovish (rate cuts / monetary easing guidance), flipping the scenario into a 1-WAY BUY on XAU/USD.`;
+    buyArguments.unshift({
+      pillar: 'POLICY',
+      tag: 'PINDAH HALUAN • DOVISH OVERRIDE',
+      textId: dynamicPivotReasonId,
+      textEn: dynamicPivotReasonEn,
+    });
+  }
+
+  // Fed Speech Cautionary Note if Fed speech is on calendar today but no speech statement entered yet
+  if (hasFedSpeechTodayOrSameDay && !dynamicPivotTriggered) {
+    fedSpeechAlertNoteId =
+      'Waspada jadwal pidato pejabat Fed hari ini — pantau DXY & US02Y sebelum entry';
+    fedSpeechAlertNoteEn =
+      'Caution: Fed official speech scheduled today — monitor DXY & US02Y before entry';
   }
 
   // Ensure both argument lists have at least 2 structured points for balanced tactical review
@@ -814,7 +1005,9 @@ export function computeDeterministicMacroSnapshot(params: {
 
   // Determine Dominant Bias
   let dominantBias: MacroBiasDirection = 'MIXED';
-  if (simultaneousAlignment === 'CONFLICTING_WHIPSAW' && mixedProbability >= 30) {
+  if (dynamicPivotTriggered) {
+    dominantBias = dynamicPivotType === 'HAWKISH_OVERRIDE' ? 'SELL' : 'BUY';
+  } else if (simultaneousAlignment === 'CONFLICTING_WHIPSAW' && mixedProbability >= 30) {
     dominantBias = 'MIXED';
   } else if (sellProbability >= buyProbability + 8) {
     dominantBias = 'SELL';
@@ -825,7 +1018,7 @@ export function computeDeterministicMacroSnapshot(params: {
   }
 
   // Impact Level
-  const hasHighImpactNews = breakingNews.some((b) => b.impact === 'HIGH');
+  const hasHighImpactNews = workingBreakingNews.some((b) => b.impact === 'HIGH');
   const hasHighImpactEvent = primaryEvent.impact === 'High';
   const impactLevel: MacroImpactLevel =
     hasHighImpactNews || hasHighImpactEvent || dynamicPivotTriggered ? 'HIGH' : 'MEDIUM';
@@ -874,9 +1067,9 @@ export function computeDeterministicMacroSnapshot(params: {
       : `Watch for initial liquidity spikes if Actuals print close to Forecast or if prior-month revisions conflict with the headline number.`;
 
   const topBreakingAlert =
-    breakingNews.find((b) => b.impact === 'HIGH') || breakingNews[0] || null;
+    workingBreakingNews.find((b) => b.impact === 'HIGH') || workingBreakingNews[0] || null;
 
-  const dataFingerprint = computeMacroDataFingerprint(calendarEvents, breakingNews);
+  const dataFingerprint = computeMacroDataFingerprint(workingCalendarEvents, workingBreakingNews);
 
   return {
     id: `macro-snap-${Date.now()}`,
@@ -887,10 +1080,10 @@ export function computeDeterministicMacroSnapshot(params: {
     modelUsed,
     impactLevel,
     dominantBias,
-    breakingNews,
+    breakingNews: workingBreakingNews,
     topBreakingAlert,
     intermarketPulse,
-    calendarEvents,
+    calendarEvents: workingCalendarEvents,
     scenarioMatrix: {
       primaryEvent,
       simultaneousEvents,
@@ -903,6 +1096,9 @@ export function computeDeterministicMacroSnapshot(params: {
       dynamicPivotTriggered,
       dynamicPivotReasonId,
       dynamicPivotReasonEn,
+      dynamicPivotType,
+      fedSpeechAlertNoteId,
+      fedSpeechAlertNoteEn,
       oilChannelDominance,
       buyArguments,
       sellArguments,

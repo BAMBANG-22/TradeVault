@@ -18,6 +18,9 @@ import {
   ArrowDownRight,
   Minus,
   Info,
+  Sliders,
+  Edit3,
+  Check,
 } from 'lucide-react';
 import { useLanguage } from '../../utils/language';
 import {
@@ -28,6 +31,7 @@ import {
   loadLatestCachedMacroSnapshot,
   isSnapshotFresh,
   computeDeterministicMacroSnapshot,
+  saveMacroSnapshotToCache,
   triggerHighImpactMacroNotification,
   formatTimestampWib,
 } from '../../utils/macroNewsEngine';
@@ -69,6 +73,10 @@ export const MacroNewsView: React.FC = () => {
   const [argumentTab, setArgumentTab] = useState<'BUY' | 'SELL' | 'BOTH'>('BOTH');
   const [showAllHeadlines, setShowAllHeadlines] = useState<boolean>(false);
   const [showPlaybookGuide, setShowPlaybookGuide] = useState<boolean>(false);
+  const [showActualInput, setShowActualInput] = useState<boolean>(false);
+  const [actualInputMap, setActualInputMap] = useState<Record<string, string>>({});
+  const [breakingSpeechInput, setBreakingSpeechInput] = useState<string>('');
+  const [isRecalculating, setIsRecalculating] = useState<boolean>(false);
 
   const runLiveAnalysis = useCallback(
     async (_forceRefresh: boolean, _existingSnap?: MacroNewsSnapshot | null, targetEventId?: string | null) => {
@@ -132,6 +140,57 @@ export const MacroNewsView: React.FC = () => {
     },
     [language, tr]
   );
+
+  const handleRecalculateBias = useCallback(async () => {
+    if (!snapshot) return;
+    setIsRecalculating(true);
+    setSupabaseFeedback(null);
+    try {
+      const updatedSnap = computeDeterministicMacroSnapshot({
+        calendarEvents: snapshot.calendarEvents,
+        intermarketPulse: snapshot.intermarketPulse,
+        breakingNews: snapshot.breakingNews,
+        selectedEventId: selectedEventId || snapshot.scenarioMatrix.primaryEvent.id,
+        sourceMode: 'RULE_BASED_FALLBACK',
+        modelUsed: 'playbook-live-override',
+        customHeadlineText: breakingSpeechInput.trim() || undefined,
+        customActualOverrides: actualInputMap,
+      });
+
+      setSnapshot(updatedSnap);
+
+      // Persist to Supabase and cache immediately
+      const saveRes = await saveMacroSnapshotToCache(updatedSnap);
+      if (saveRes.remoteSaved) {
+        setSupabaseFeedback({
+          type: 'success',
+          message: tr(
+            'Evaluasi Post-News & override Actual berhasil dihitung ulang dan disimpan ke Supabase!',
+            'Post-News evaluation & Actual overrides successfully recalculated and stored in Supabase!'
+          ),
+        });
+      } else {
+        setSupabaseFeedback({
+          type: 'success',
+          message: tr(
+            'Evaluasi Post-News berhasil dihitung ulang secara real-time!',
+            'Post-News evaluation successfully recalculated real-time!'
+          ),
+        });
+      }
+    } catch (err: any) {
+      console.error('[MacroNewsView] Error recalculating bias:', err);
+      setSupabaseFeedback({
+        type: 'error',
+        message: tr(
+          `Gagal menghitung ulang bias: ${err?.message || 'Error tidak diketahui'}`,
+          `Failed to recalculate bias: ${err?.message || 'Unknown error'}`
+        ),
+      });
+    } finally {
+      setIsRecalculating(false);
+    }
+  }, [snapshot, selectedEventId, actualInputMap, breakingSpeechInput, tr]);
 
   // On mount: strictly read latest snapshot from Supabase / local cache first (0 Gemini tokens)
   useEffect(() => {
@@ -738,27 +797,68 @@ export const MacroNewsView: React.FC = () => {
           </div>
         )}
 
-        {/* Dynamic Alerts: Pivot or Simultaneous Release */}
-        {(activeMatrix.dynamicPivotTriggered || activeMatrix.isSimultaneousRelease) && (
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+        {/* Dynamic Alerts: Pivot, Fed Speech Caution, or Simultaneous Release */}
+        {(activeMatrix.dynamicPivotTriggered ||
+          activeMatrix.fedSpeechAlertNoteId ||
+          activeMatrix.isSimultaneousRelease) && (
+          <div className="space-y-3">
             {activeMatrix.dynamicPivotTriggered && (
-              <div className="p-3.5 rounded-xl bg-rose-500/10 dark:bg-[#050607] border border-rose-500/30 border-l-2 border-l-rose-500 text-xs text-rose-800 dark:text-rose-200 leading-relaxed">
-                <div className="font-bold text-[#E11D48] dark:text-[#E05260] mb-0.5">
-                  {tr(
-                    'Aturan Dinamis "Pindah Haluan" Aktif (1-Way SELL)',
-                    'Dynamic Pivot Rule Active (1-Way SELL)'
-                  )}
+              <div
+                data-testid="macro-dynamic-pivot-banner"
+                className="p-4 rounded-xl bg-[#F5F7FA] dark:bg-[#080A0E] border border-[#DDE3EA] dark:border-[#20252D] border-l-4 border-l-rose-500 text-xs leading-relaxed space-y-1.5"
+              >
+                <div className="flex flex-wrap items-center gap-2">
+                  <span
+                    className={`px-2.5 py-0.5 rounded text-[10px] font-black uppercase tracking-wider ${
+                      activeMatrix.dynamicPivotType === 'DOVISH_OVERRIDE'
+                        ? 'bg-[#1769E8]/15 dark:bg-[#3478DC]/20 border border-[#1769E8]/30 dark:border-[#3478DC]/40 text-[#1769E8] dark:text-[#3478DC]'
+                        : 'bg-rose-500/15 border border-rose-500/30 text-[#E11D48] dark:text-[#E05260]'
+                    }`}
+                  >
+                    {activeMatrix.dynamicPivotType === 'DOVISH_OVERRIDE'
+                      ? 'PINDAH HALUAN: DOVISH OVERRIDE'
+                      : 'PINDAH HALUAN: HAWKISH OVERRIDE'}
+                  </span>
+                  <span className="text-[10px] font-semibold text-[#697586] dark:text-[#929BA9]">
+                    {tr('Aturan Master Playbook', 'Master Playbook Rule')}
+                  </span>
                 </div>
-                {isEn ? activeMatrix.dynamicPivotReasonEn : activeMatrix.dynamicPivotReasonId}
+                <p className="text-xs text-[#151D2A] dark:text-[#F2F4F7] font-medium leading-relaxed">
+                  {isEn ? activeMatrix.dynamicPivotReasonEn : activeMatrix.dynamicPivotReasonId}
+                </p>
+              </div>
+            )}
+
+            {/* Neutral Fed Speech Alert Note if speech is on calendar today with no statement headline yet */}
+            {activeMatrix.fedSpeechAlertNoteId && !activeMatrix.dynamicPivotTriggered && (
+              <div
+                data-testid="macro-fed-speech-alert-note"
+                className="p-3.5 rounded-xl bg-[#F5F7FA] dark:bg-[#080A0E] border border-[#DDE3EA] dark:border-[#20252D] border-l-4 border-l-[#1769E8] dark:border-l-[#3478DC] text-xs text-[#151D2A] dark:text-[#F2F4F7] leading-relaxed flex items-center justify-between gap-3"
+              >
+                <div className="flex items-center gap-2.5">
+                  <Info className="w-4 h-4 text-[#1769E8] dark:text-[#3478DC] shrink-0" />
+                  <span className="font-medium">
+                    {isEn
+                      ? activeMatrix.fedSpeechAlertNoteEn
+                      : activeMatrix.fedSpeechAlertNoteId}
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setShowActualInput(true)}
+                  className="px-2.5 py-1 rounded-lg text-[11px] font-semibold bg-[#1769E8]/10 dark:bg-[#3478DC]/20 text-[#1769E8] dark:text-[#3478DC] hover:underline shrink-0 cursor-pointer"
+                >
+                  {tr('Input Pidato', 'Add Speech')}
+                </button>
               </div>
             )}
 
             {activeMatrix.isSimultaneousRelease && (
               <div
-                className={`p-3.5 rounded-xl dark:bg-[#050607] border text-xs leading-relaxed ${
+                className={`p-3.5 rounded-xl bg-[#F5F7FA] dark:bg-[#080A0E] border border-[#DDE3EA] dark:border-[#20252D] text-xs leading-relaxed border-l-4 ${
                   activeMatrix.simultaneousAlignment === 'CONFLICTING_WHIPSAW'
-                    ? 'bg-amber-500/10 border-amber-500/30 border-l-2 border-l-amber-500 text-amber-800 dark:text-amber-200'
-                    : 'bg-emerald-500/10 border-emerald-500/30 border-l-2 border-l-emerald-500 text-emerald-800 dark:text-emerald-200'
+                    ? 'border-l-amber-500 text-amber-900 dark:text-amber-200'
+                    : 'border-l-[#1769E8] dark:border-l-[#3478DC] text-[#151D2A] dark:text-[#F2F4F7]'
                 }`}
               >
                 <div className="font-bold mb-0.5">
@@ -772,68 +872,243 @@ export const MacroNewsView: React.FC = () => {
                         `Simultaneous Release (${simultaneousCount} Aligned Releases -> High Conviction)`
                       )}
                 </div>
-                {tr(
-                  'Harap verifikasi keselarasan seluruh sub-komponen pada jam rilis yang sama.',
-                  'Please verify alignment across all sub-components at this exact release time.'
-                )}
+                <p className="text-[11px] text-[#697586] dark:text-[#929BA9]">
+                  {tr(
+                    'Seluruh indikator pada jam rilis yang sama telah dikelompokkan di bawah ini. Harap verifikasi keselarasan setiap angka aktual.',
+                    'All indicators for this exact release slot are grouped below. Please check alignment for each actual print.'
+                  )}
+                </p>
               </div>
             )}
           </div>
         )}
 
-        {/* Focused Numbers Grid: Previous | Forecast | Actual (Readable in 2 Seconds) */}
-        <div className="rounded-xl bg-[#F5F7FA] dark:bg-[#050607] border border-[#DDE3EA] dark:border-[#1E232B] p-4 sm:p-5 space-y-3.5">
-          <div className="flex flex-wrap items-center justify-between gap-2">
+        {/* Grouped Release Card (Simultaneous Release Grouping & Quick Actual Override) */}
+        <div className="rounded-xl bg-[#F5F7FA] dark:bg-[#050607] border border-[#DDE3EA] dark:border-[#1E232B] p-4 sm:p-5 space-y-4">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-[#DDE3EA] dark:border-[#1E232B] pb-3.5">
             <div>
-              <div className="text-xs font-bold text-[#151D2A] dark:text-[#F2F4F7] uppercase tracking-wide">
-                {primaryEv.title}
+              <div className="flex items-center gap-2">
+                <span className="text-xs font-bold text-[#151D2A] dark:text-[#F2F4F7] uppercase tracking-wide">
+                  {1 + (activeMatrix.simultaneousEvents?.length || 0) > 1
+                    ? tr(
+                        `Rilis Bersamaan (${1 + (activeMatrix.simultaneousEvents?.length || 0)} Indikator USD)`,
+                        `Simultaneous Release (${1 + (activeMatrix.simultaneousEvents?.length || 0)} USD Indicators)`
+                      )
+                    : primaryEv.title}
+                </span>
+                <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-white dark:bg-[#101318] border border-[#DDE3EA] dark:border-[#20252D] text-[#697586] dark:text-[#929BA9]">
+                  {formatTimestampWib(primaryEv.date, language)}
+                </span>
               </div>
               <div className="text-xs text-[#697586] dark:text-[#929BA9] mt-0.5">
-                {primaryEv.impact} Impact • {formatTimestampWib(primaryEv.date, language)}
-              </div>
-            </div>
-            {primaryEv.isInverseIndicator && (
-              <span className="text-[11px] font-semibold text-amber-600 dark:text-amber-400">
-                {tr('Aturan Terbalik: Actual < Forecast = USD Menguat (SELL Gold)', 'Inverse Rule: Actual < Forecast = Strong USD (SELL Gold)')}
-              </span>
-            )}
-          </div>
-
-          <div
-            data-testid="macro-event-numbers-grid"
-            className="grid grid-cols-3 gap-3 pt-1"
-          >
-            <div className="rounded-xl bg-white dark:bg-[#080A0E] border border-[#DDE3EA] dark:border-[#20252D] p-3.5 text-center">
-              <div className="text-[10px] font-semibold uppercase tracking-wider text-[#697586] dark:text-[#929BA9]">
-                Previous
-              </div>
-              <div className="mt-1 text-base sm:text-xl font-black text-[#4B5565] dark:text-[#D1D5DB] font-mono tabular-nums">
-                {primaryEv.previous || '—'}
-              </div>
-            </div>
-
-            {/* Forecast Highlight with Deep Dashboard Blue */}
-            <div className="rounded-xl bg-[#EEF2F6] dark:bg-[#1C2330] border border-[#3478DC]/30 p-3.5 text-center">
-              <div className="text-[10px] font-bold uppercase tracking-wider text-[#1769E8] dark:text-[#3478DC]">
-                Forecast
-              </div>
-              <div className="mt-1 text-base sm:text-xl font-black text-[#1769E8] dark:text-[#3478DC] font-mono tabular-nums">
-                {primaryEv.forecast || '—'}
-              </div>
-            </div>
-
-            <div className="rounded-xl bg-white dark:bg-[#080A0E] border border-[#DDE3EA] dark:border-[#20252D] p-3.5 text-center">
-              <div className="text-[10px] font-semibold uppercase tracking-wider text-[#697586] dark:text-[#929BA9]">
-                Actual
-              </div>
-              <div className="mt-1 text-base sm:text-xl font-black text-[#151D2A] dark:text-[#F2F4F7] font-mono tabular-nums">
-                {primaryEv.actual || (
-                  <span className="text-xs text-[#697586] dark:text-[#929BA9] font-normal">
-                    {tr('Menunggu Rilis', 'Pending')}
-                  </span>
+                {tr(
+                  'Perbandingan vertikal Previous | Forecast | Actual untuk evaluasi fundamental instan',
+                  'Vertical Previous | Forecast | Actual comparison for instant fundamental appraisal'
                 )}
               </div>
             </div>
+
+            {/* Quick Actual Override Toggle Button */}
+            <button
+              type="button"
+              data-testid="toggle-input-actual-btn"
+              onClick={() => setShowActualInput((prev) => !prev)}
+              className="px-3.5 py-1.5 rounded-xl bg-white dark:bg-[#080A0E] hover:bg-[#EEF2F6] dark:hover:bg-[#161A22] border border-[#DDE3EA] dark:border-[#20252D] text-xs font-semibold text-[#1769E8] dark:text-[#3478DC] transition-all cursor-pointer flex items-center gap-1.5 self-start sm:self-auto shadow-xs"
+            >
+              <Edit3 className="w-3.5 h-3.5" />
+              <span>{showActualInput ? tr('Tutup Input', 'Close Input') : tr('Input Actual', 'Input Actual')}</span>
+            </button>
+          </div>
+
+          {/* Quick Input Actual & Breaking News Headline Override Panel */}
+          {showActualInput && (
+            <div
+              data-testid="macro-actual-input-drawer"
+              className="p-4 rounded-xl bg-white dark:bg-[#080A0E] border border-[#3478DC]/30 space-y-3.5"
+            >
+              <div className="flex items-center justify-between border-b border-[#DDE3EA] dark:border-[#20252D] pb-2">
+                <span className="text-xs font-bold text-[#151D2A] dark:text-[#F2F4F7] uppercase tracking-wide flex items-center gap-1.5">
+                  <Sliders className="w-3.5 h-3.5 text-[#1769E8] dark:text-[#3478DC]" />
+                  <span>{tr('Override Angka Actual & Breaking News', 'Override Actual Values & Breaking News')}</span>
+                </span>
+                <span className="text-[10px] text-[#697586] dark:text-[#929BA9]">
+                  {tr('Ketik angka saat rilis di web', 'Type values upon live release')}
+                </span>
+              </div>
+
+              {/* Indicator Inputs */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                {[primaryEv, ...(activeMatrix.simultaneousEvents || [])].map((ev) => (
+                  <div
+                    key={ev.id}
+                    className="p-3 rounded-lg bg-[#F5F7FA] dark:bg-[#050607] border border-[#DDE3EA] dark:border-[#1E232B] space-y-1.5"
+                  >
+                    <div className="flex items-center justify-between text-xs">
+                      <span className="font-bold text-[#151D2A] dark:text-[#F2F4F7] truncate">{ev.title}</span>
+                      <span className="text-[10px] font-mono text-[#697586] dark:text-[#929BA9]">
+                        Fcst: {ev.forecast || '—'}
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="text"
+                        value={actualInputMap[ev.id] ?? (ev.actual || '')}
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          setActualInputMap((prev) => ({
+                            ...prev,
+                            [ev.id]: val,
+                            [ev.title]: val,
+                          }));
+                        }}
+                        placeholder={`Contoh: ${ev.forecast || '0.3%'}`}
+                        className="w-full px-3 py-1.5 rounded-lg bg-white dark:bg-[#080A0E] border border-[#DDE3EA] dark:border-[#20252D] text-xs font-mono font-bold text-[#151D2A] dark:text-[#F2F4F7] focus:outline-hidden focus:border-[#1769E8] dark:focus:border-[#3478DC]"
+                      />
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              {/* Breaking Speech / Headline Input */}
+              <div className="space-y-1.5">
+                <label className="block text-xs font-semibold text-[#151D2A] dark:text-[#F2F4F7]">
+                  {tr(
+                    'Tempel Breaking News / Pidato Fed (Opsional)',
+                    'Paste Breaking News / Fed Speech (Optional)'
+                  )}
+                </label>
+                <input
+                  type="text"
+                  value={breakingSpeechInput}
+                  onChange={(e) => setBreakingSpeechInput(e.target.value)}
+                  placeholder={tr(
+                    'Contoh: Waller: Fed can take time to cut rates / Powell: Inflation remains sticky...',
+                    'Example: Waller: Fed can take time to cut rates / Powell: Inflation remains sticky...'
+                  )}
+                  className="w-full px-3 py-2 rounded-lg bg-[#F5F7FA] dark:bg-[#050607] border border-[#DDE3EA] dark:border-[#20252D] text-xs text-[#151D2A] dark:text-[#F2F4F7] focus:outline-hidden focus:border-[#1769E8] dark:focus:border-[#3478DC]"
+                />
+              </div>
+
+              {/* Action Buttons */}
+              <div className="flex items-center justify-end gap-2.5 pt-1">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setActualInputMap({});
+                    setBreakingSpeechInput('');
+                    setShowActualInput(false);
+                  }}
+                  className="px-3 py-1.5 rounded-lg text-xs font-medium text-[#697586] dark:text-[#929BA9] hover:text-[#151D2A] dark:hover:text-[#F2F4F7] cursor-pointer"
+                >
+                  {tr('Batal', 'Cancel')}
+                </button>
+
+                <button
+                  type="button"
+                  data-testid="recalculate-bias-btn"
+                  disabled={isRecalculating}
+                  onClick={handleRecalculateBias}
+                  className="px-4 py-1.5 rounded-xl bg-[#1769E8] dark:bg-[#3478DC] hover:bg-[#1458C4] dark:hover:bg-[#2860B2] text-white text-xs font-bold transition-all shadow-xs active:scale-[0.98] disabled:opacity-60 flex items-center gap-1.5 cursor-pointer"
+                >
+                  <RefreshCw className={`w-3.5 h-3.5 ${isRecalculating ? 'animate-spin' : ''}`} />
+                  <span>
+                    {isRecalculating
+                      ? tr('Menghitung...', 'Calculating...')
+                      : tr('Hitung Ulang Bias', 'Recalculate Bias')}
+                  </span>
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* Vertical Cluster Comparison of All Indicators in this Release Slot */}
+          <div className="space-y-3.5">
+            {[primaryEv, ...(activeMatrix.simultaneousEvents || [])].map((ev, idx) => (
+              <div
+                key={ev.id}
+                className="p-4 rounded-xl bg-white dark:bg-[#080A0E] border border-[#DDE3EA] dark:border-[#20252D] space-y-3"
+              >
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="flex items-center gap-2">
+                    <span
+                      className={`w-2 h-2 rounded-full shrink-0 ${
+                        ev.impact === 'High' ? 'bg-rose-500' : 'bg-amber-500'
+                      }`}
+                    />
+                    <span className="text-xs sm:text-sm font-bold text-[#151D2A] dark:text-[#F2F4F7]">
+                      {ev.title}
+                    </span>
+                    <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-[#F5F7FA] dark:bg-[#101318] border border-[#DDE3EA] dark:border-[#20252D] text-[#697586] dark:text-[#929BA9]">
+                      {ev.pillar}
+                    </span>
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    {ev.isInverseIndicator && (
+                      <span className="text-[10px] font-semibold text-amber-600 dark:text-amber-400">
+                        {tr('Aturan Terbalik', 'Inverse Rule')}
+                      </span>
+                    )}
+                    <span
+                      className={`text-[10px] font-bold font-mono px-2.5 py-0.5 rounded ${
+                        ev.eventBiasForGold === 'BUY'
+                          ? 'text-[#059669] dark:text-[#00A878] bg-emerald-500/10 border border-emerald-500/20'
+                          : ev.eventBiasForGold === 'SELL'
+                          ? 'text-[#E11D48] dark:text-[#E05260] bg-rose-500/10 border border-rose-500/20'
+                          : 'text-[#697586] dark:text-[#929BA9] bg-neutral-500/10'
+                      }`}
+                    >
+                      {ev.eventBiasForGold}
+                    </span>
+                  </div>
+                </div>
+
+                {/* 3-Column Numbers Grid (Previous | Forecast | Actual) */}
+                <div
+                  {...(idx === 0 ? { 'data-testid': 'macro-event-numbers-grid' } : {})}
+                  className="grid grid-cols-3 gap-3"
+                >
+                  <div className="rounded-lg bg-[#F5F7FA] dark:bg-[#050607] border border-[#DDE3EA] dark:border-[#1E232B] p-3 text-center">
+                    <div className="text-[10px] font-semibold uppercase tracking-wider text-[#697586] dark:text-[#929BA9]">
+                      Previous
+                    </div>
+                    <div className="mt-1 text-base sm:text-lg font-black text-[#4B5565] dark:text-[#D1D5DB] font-mono tabular-nums">
+                      {ev.previous || '—'}
+                    </div>
+                  </div>
+
+                  {/* Forecast Highlight with Deep Dashboard Blue */}
+                  <div className="rounded-lg bg-[#EEF2F6] dark:bg-[#1C2330] border border-[#3478DC]/30 p-3 text-center">
+                    <div className="text-[10px] font-bold uppercase tracking-wider text-[#1769E8] dark:text-[#3478DC]">
+                      Forecast
+                    </div>
+                    <div className="mt-1 text-base sm:text-lg font-black text-[#1769E8] dark:text-[#3478DC] font-mono tabular-nums">
+                      {ev.forecast || '—'}
+                    </div>
+                  </div>
+
+                  <div className="rounded-lg bg-[#F5F7FA] dark:bg-[#050607] border border-[#DDE3EA] dark:border-[#1E232B] p-3 text-center">
+                    <div className="text-[10px] font-semibold uppercase tracking-wider text-[#697586] dark:text-[#929BA9]">
+                      Actual
+                    </div>
+                    <div className="mt-1 text-base sm:text-lg font-black text-[#151D2A] dark:text-[#F2F4F7] font-mono tabular-nums">
+                      {ev.actual || (
+                        <span className="text-xs text-[#697586] dark:text-[#929BA9] font-normal">
+                          {tr('Menunggu Rilis', 'Pending')}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Event Bias Evaluation Reason */}
+                {ev.biasReasonId && (
+                  <p className="text-[11px] text-[#697586] dark:text-[#929BA9] leading-relaxed pt-1 border-t border-[#DDE3EA] dark:border-[#1E232B]">
+                    {isEn ? ev.biasReasonEn : ev.biasReasonId}
+                  </p>
+                )}
+              </div>
+            ))}
           </div>
         </div>
 
