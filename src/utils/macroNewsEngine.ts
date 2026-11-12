@@ -1012,23 +1012,24 @@ export function computeDeterministicMacroSnapshot(params: {
     nearestUpcomingPrimary ||
     highImpactNearest ||
     sortedPrimaryEvents[0] || {
-      id: 'fallback-ppi-event',
-      title: 'US Core PPI m/m',
+      id: 'live-calendar-unavailable',
+      title: 'Gagal memuat kalender live — periksa koneksi atau coba refresh',
       country: 'USD',
-      date: new Date(nowMs + 25 * 60 * 1000).toISOString(),
+      date: new Date(nowMs).toISOString(),
       impact: 'High',
-      previous: '0.2%',
-      forecast: '0.3%',
+      previous: '—',
+      forecast: '—',
       actual: '',
-      previousNum: 0.2,
-      forecastNum: 0.3,
+      previousNum: null,
+      forecastNum: null,
       actualNum: null,
-      unit: '%',
-      pillar: 'INFLATION',
+      unit: '',
+      pillar: 'POLICY',
       isInverseIndicator: false,
-      eventBiasForGold: 'SELL',
-      biasReasonId: '[Pilar INFLATION] US Core PPI m/m (Forecast vs Previous: 0.3% vs 0.2%) mengindikasikan kenaikan tekanan inflasi produsen → Dorongan awal SELL XAU/USD.',
-      biasReasonEn: '[INFLATION Pillar] US Core PPI m/m (Forecast vs Previous: 0.3% vs 0.2%) indicates rising producer inflation → Initial SELL XAU/USD catalyst.',
+      eventBiasForGold: 'MIXED',
+      biasReasonId: 'Gagal memuat kalender live — periksa koneksi atau coba refresh',
+      biasReasonEn: 'Failed to load live calendar — check connection or try refreshing',
+      isLiveFeed: false,
       eventCategory: 'PRIMARY_HIGH_IMPACT',
     };
 
@@ -1712,7 +1713,27 @@ export function isSnapshotFresh(
 }
 
 /**
+ * Verifies that a MacroNewsSnapshot contains 100% authentic live ForexFactory calendar data
+ * and zero legacy/mock fallback items.
+ */
+export function isVerifiedLiveCalendarSnapshot(
+  snap: MacroNewsSnapshot | null | undefined
+): boolean {
+  if (!snap || !snap.scenarioMatrix || !snap.intermarketPulse) return false;
+  if (!snap.isCalendarLiveFeed) return false;
+  if (!Array.isArray(snap.calendarEvents) || snap.calendarEvents.length === 0) return false;
+  return snap.calendarEvents.every(
+    (e) =>
+      e.isLiveFeed === true &&
+      !String(e.id || '').startsWith('ff-usd-') &&
+      e.id !== 'fallback-ppi-event' &&
+      e.id !== 'live-calendar-unavailable'
+  );
+}
+
+/**
  * Loads the latest cached MacroNewsSnapshot from localStorage and/or Supabase (`macro_news_snapshots`).
+ * Strictly rejects any legacy/non-live mock snapshot so only verified live ForexFactory data is used.
  * Uses 0 Gemini tokens!
  */
 export async function loadLatestCachedMacroSnapshot(): Promise<MacroNewsSnapshot | null> {
@@ -1722,8 +1743,12 @@ export async function loadLatestCachedMacroSnapshot(): Promise<MacroNewsSnapshot
       const raw = localStorage.getItem(MACRO_SNAPSHOT_LOCAL_STORAGE_KEY);
       if (raw) {
         const parsed = JSON.parse(raw) as MacroNewsSnapshot;
-        if (parsed && parsed.scenarioMatrix && parsed.intermarketPulse) {
+        if (isVerifiedLiveCalendarSnapshot(parsed)) {
           localSnap = parsed;
+        } else {
+          // Purge stale mock snapshot from localStorage
+          localStorage.removeItem(MACRO_SNAPSHOT_LOCAL_STORAGE_KEY);
+          localStorage.removeItem(MACRO_GROUP_SNAPSHOT_CACHE_KEY);
         }
       }
     } catch {
@@ -1740,26 +1765,31 @@ export async function loadLatestCachedMacroSnapshot(): Promise<MacroNewsSnapshot
           .select('id, data_fingerprint, snapshot_payload, analyzed_at')
           .eq('instrument', 'XAUUSD')
           .order('analyzed_at', { ascending: false })
-          .limit(1)
-          .maybeSingle();
+          .limit(5);
 
-        if (!error && data && data.snapshot_payload) {
-          const remoteSnap = data.snapshot_payload as MacroNewsSnapshot;
-          if (remoteSnap && remoteSnap.scenarioMatrix && remoteSnap.intermarketPulse) {
-            const remoteTime = new Date(data.analyzed_at || remoteSnap.analyzedAt).getTime();
-            const localTime = localSnap ? new Date(localSnap.analyzedAt).getTime() : 0;
+        if (!error && Array.isArray(data)) {
+          for (const row of data) {
+            const remoteSnap = row.snapshot_payload as MacroNewsSnapshot;
+            if (isVerifiedLiveCalendarSnapshot(remoteSnap)) {
+              const remoteTime = new Date(row.analyzed_at || remoteSnap.analyzedAt).getTime();
+              const localTime = localSnap ? new Date(localSnap.analyzedAt).getTime() : 0;
 
-            if (!localSnap || remoteTime >= localTime) {
-              const hydrated: MacroNewsSnapshot = {
-                ...remoteSnap,
-                sourceMode: 'SUPABASE_CACHE',
-              };
-              if (typeof window !== 'undefined' && typeof localStorage !== 'undefined') {
-                try {
-                  localStorage.setItem(MACRO_SNAPSHOT_LOCAL_STORAGE_KEY, JSON.stringify(hydrated));
-                } catch {}
+              if (!localSnap || remoteTime >= localTime) {
+                const hydrated: MacroNewsSnapshot = {
+                  ...remoteSnap,
+                  sourceMode: 'SUPABASE_CACHE',
+                };
+                if (typeof window !== 'undefined' && typeof localStorage !== 'undefined') {
+                  try {
+                    localStorage.setItem(
+                      MACRO_SNAPSHOT_LOCAL_STORAGE_KEY,
+                      JSON.stringify(hydrated)
+                    );
+                  } catch {}
+                }
+                return hydrated;
               }
-              return hydrated;
+              break;
             }
           }
         }
@@ -1787,7 +1817,11 @@ export async function loadCachedSnapshotByFingerprint(
       if (rawMap) {
         const parsedMap = JSON.parse(rawMap) as Record<string, MacroNewsSnapshot>;
         const candidate = parsedMap[dataFingerprint];
-        if (candidate && isSnapshotFresh(candidate, maxAgeMinutes)) {
+        if (
+          candidate &&
+          isVerifiedLiveCalendarSnapshot(candidate) &&
+          isSnapshotFresh(candidate, maxAgeMinutes)
+        ) {
           return { ...candidate, sourceMode: 'SUPABASE_CACHE' };
         }
       }
@@ -1811,7 +1845,11 @@ export async function loadCachedSnapshotByFingerprint(
 
         if (!error && data && data.snapshot_payload) {
           const remoteSnap = data.snapshot_payload as MacroNewsSnapshot;
-          if (remoteSnap && isSnapshotFresh(remoteSnap, maxAgeMinutes)) {
+          if (
+            remoteSnap &&
+            isVerifiedLiveCalendarSnapshot(remoteSnap) &&
+            isSnapshotFresh(remoteSnap, maxAgeMinutes)
+          ) {
             return {
               ...remoteSnap,
               sourceMode: 'SUPABASE_CACHE',
@@ -1830,11 +1868,19 @@ export async function loadCachedSnapshotByFingerprint(
 /**
  * Saves a newly analyzed MacroNewsSnapshot to both localStorage (latest + per-fingerprint map)
  * and Supabase (`macro_news_snapshots` keyed with `data_fingerprint`).
- * Returns an explicit status object so callers can detect and display any Supabase schema/network errors.
+ * Strictly refuses to cache any snapshot whose calendar data is not verified live.
  */
 export async function saveMacroSnapshotToCache(
   snapshot: MacroNewsSnapshot
 ): Promise<{ success: boolean; error?: string; remoteSaved: boolean }> {
+  if (!isVerifiedLiveCalendarSnapshot(snapshot)) {
+    return {
+      success: false,
+      remoteSaved: false,
+      error: 'Gagal memuat kalender live — periksa koneksi atau coba refresh',
+    };
+  }
+
   if (typeof window !== 'undefined' && typeof localStorage !== 'undefined') {
     try {
       localStorage.setItem(MACRO_SNAPSHOT_LOCAL_STORAGE_KEY, JSON.stringify(snapshot));

@@ -11,41 +11,136 @@ import {
   isPrimaryHighImpactEvent,
 } from './macroNewsEngine';
 
+const BACKEND_PROXY_ENDPOINTS = [
+  '/api/proxy?url=',
+  'https://ais-pre-qmgrbl6vkm3qzsovjavbgc-342426605045.asia-southeast1.run.app/api/proxy?url=',
+  'https://ais-dev-qmgrbl6vkm3qzsovjavbgc-342426605045.asia-southeast1.run.app/api/proxy?url=',
+];
+
+function isValidFeedPayload(text: string): boolean {
+  if (!text) return false;
+  const trimmed = text.trim();
+  if (trimmed.length < 15) return false;
+  const lower = trimmed.slice(0, 200).toLowerCase();
+  if (
+    lower.startsWith('<!doctype') ||
+    lower.startsWith('<html') ||
+    lower.includes('keyless_legacy_url') ||
+    lower.includes('"error":"a valid api key is required') ||
+    lower.includes('error 522') ||
+    lower.includes('cloudflare')
+  ) {
+    return false;
+  }
+  return true;
+}
+
 /**
- * Robust CORS proxy fetcher.
- * Automatically tries local proxy, corsproxy.io, api.allorigins.win, and direct fetch,
- * with strict timeout abort (max 8 seconds per feed) so the UI never hangs.
+ * Multi-layered real-time CORS proxy fetcher for ForexFactory & public feeds.
+ * Tries in sequential/race fallback order:
+ * 1) https://api.codetabs.com/v1/proxy?quest= + encodeURIComponent(url)
+ * 2) https://corsproxy.io/?url= + encodeURIComponent(url)
+ * 3) https://api.allorigins.win/get?url= + encodeURIComponent(url) (parsing JSON `.contents`)
+ * 4) TradeVault backend proxy endpoints (/api/proxy?url= on local & Cloud Run for Android APK/Web)
+ * 5) Direct fetch
  */
 export async function fetchWithCorsProxy(
   targetUrl: string,
   timeoutMs = 8000,
-  acceptHeader = 'application/json, text/plain, */*'
+  acceptHeader = 'application/json, application/xml, text/xml, text/plain, */*'
 ): Promise<string> {
-  // Strategy 1: Local server proxy endpoint (fastest and 100% reliable in browser dev & cloud run)
+  const encodedUrl = encodeURIComponent(targetUrl);
+
+  // Fast path: TradeVault server proxy (works in Web & Android APK without 3rd-party proxy rate limits)
+  for (const proxyPrefix of BACKEND_PROXY_ENDPOINTS) {
+    try {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), Math.min(3500, timeoutMs));
+      const res = await fetch(`${proxyPrefix}${encodedUrl}`, {
+        headers: { Accept: acceptHeader },
+        signal: controller.signal,
+      });
+      clearTimeout(timer);
+      if (res.ok) {
+        const text = await res.text();
+        if (isValidFeedPayload(text)) {
+          return text;
+        }
+      }
+    } catch {
+      // Try next proxy
+    }
+  }
+
+  // Proxy 1: CodeTabs Proxy
   try {
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), Math.min(3000, timeoutMs));
-    const localProxyUrl = `/api/proxy?url=${encodeURIComponent(targetUrl)}`;
-    const res = await fetch(localProxyUrl, {
+    const timer = setTimeout(() => controller.abort(), Math.min(4500, timeoutMs));
+    const proxyUrl = `https://api.codetabs.com/v1/proxy?quest=${encodedUrl}`;
+    const res = await fetch(proxyUrl, {
       headers: { Accept: acceptHeader },
       signal: controller.signal,
     });
     clearTimeout(timer);
     if (res.ok) {
       const text = await res.text();
-      if (text && text.trim().length > 10 && !text.trim().startsWith('<!doctype') && !text.trim().startsWith('<html')) {
+      if (isValidFeedPayload(text)) {
         return text;
       }
     }
   } catch {
-    // Proceed to next proxy strategy
+    // Try Proxy 2
   }
 
-  // Strategy 2: corsproxy.io
+  // Proxy 2: CorsProxy.io (?url= format)
+  try {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), Math.min(4500, timeoutMs));
+    const proxyUrl = `https://corsproxy.io/?url=${encodedUrl}`;
+    const res = await fetch(proxyUrl, {
+      headers: { Accept: acceptHeader },
+      signal: controller.signal,
+    });
+    clearTimeout(timer);
+    if (res.ok) {
+      const text = await res.text();
+      if (isValidFeedPayload(text)) {
+        return text;
+      }
+    }
+  } catch {
+    // Try Proxy 3
+  }
+
+  // Proxy 3: AllOrigins JSON wrapper (/get?url= -> parse `.contents`)
+  try {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), Math.min(5000, timeoutMs));
+    const proxyUrl = `https://api.allorigins.win/get?url=${encodedUrl}`;
+    const res = await fetch(proxyUrl, {
+      headers: { Accept: 'application/json' },
+      signal: controller.signal,
+    });
+    clearTimeout(timer);
+    if (res.ok) {
+      const wrapperJson = await res.json();
+      const contents =
+        wrapperJson && typeof wrapperJson.contents === 'string'
+          ? wrapperJson.contents
+          : '';
+      if (isValidFeedPayload(contents)) {
+        return contents;
+      }
+    }
+  } catch {
+    // Try AllOrigins raw & direct fetch
+  }
+
+  // Proxy 3b: AllOrigins raw endpoint
   try {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), Math.min(4000, timeoutMs));
-    const proxyUrl = `https://corsproxy.io/?${encodeURIComponent(targetUrl)}`;
+    const proxyUrl = `https://api.allorigins.win/raw?url=${encodedUrl}`;
     const res = await fetch(proxyUrl, {
       headers: { Accept: acceptHeader },
       signal: controller.signal,
@@ -53,330 +148,182 @@ export async function fetchWithCorsProxy(
     clearTimeout(timer);
     if (res.ok) {
       const text = await res.text();
-      if (text && text.trim().length > 10 && !text.trim().startsWith('<!doctype') && !text.includes('keyless_legacy_url')) {
+      if (isValidFeedPayload(text)) {
         return text;
       }
     }
   } catch {
-    // try next proxy
+    // Try Direct Fetch
   }
 
-  // Strategy 3: api.allorigins.win raw proxy
+  // Strategy 5: Direct fetch (works in Node/SSR & native Capacitor HTTP)
   try {
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), timeoutMs);
-    const proxyUrl = `https://api.allorigins.win/raw?url=${encodeURIComponent(targetUrl)}`;
-    const res = await fetch(proxyUrl, {
-      headers: { Accept: acceptHeader },
-      signal: controller.signal,
-    });
-    clearTimeout(timer);
-    if (res.ok) {
-      const text = await res.text();
-      if (text && text.trim().length > 10 && !text.trim().startsWith('<!doctype')) {
-        return text;
-      }
-    }
-  } catch {
-    // try direct fetch
-  }
-
-  // Strategy 4: Direct fetch
-  try {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), Math.min(3000, timeoutMs));
+    const timer = setTimeout(() => controller.abort(), Math.min(4000, timeoutMs));
     const res = await fetch(targetUrl, {
       headers: {
         Accept: acceptHeader,
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko)',
+        'User-Agent':
+          'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko)',
       },
       signal: controller.signal,
     });
     clearTimeout(timer);
     if (res.ok) {
       const text = await res.text();
-      if (text && text.trim().length > 10 && !text.trim().startsWith('<!doctype')) {
+      if (isValidFeedPayload(text)) {
         return text;
       }
     }
   } catch {
-    // all strategies failed
+    // All strategies exhausted
   }
 
   throw new Error(`Semua jalur proxy gagal mengunduh data dari: ${targetUrl}`);
 }
 
-export function getClientFallbackCalendarEvents(): MacroCalendarEvent[] {
-  const now = new Date();
-  // Distribute fallback events realistically across the current week (Monday to Friday)
-  const currentDay = now.getUTCDay(); // 0 = Sun, 1 = Mon ...
-  const diffToMonday = (currentDay === 0 ? -6 : 1) - currentDay;
-  const monday = new Date(now);
-  monday.setUTCDate(now.getUTCDate() + diffToMonday);
-  monday.setUTCHours(12, 0, 0, 0);
+/**
+ * Parses ForexFactory XML calendar feed (`ff_calendar_thisweek.xml` / `ff_calendar_nextweek.xml`)
+ * into the same raw item structure as `ff_calendar_thisweek.json`.
+ */
+export function parseForexFactoryXml(xmlText: string): Array<{
+  title: string;
+  country: string;
+  date: string;
+  impact: string;
+  forecast: string;
+  previous: string;
+  actual?: string;
+}> {
+  if (!xmlText || !xmlText.includes('<event>')) return [];
+  const items: Array<{
+    title: string;
+    country: string;
+    date: string;
+    impact: string;
+    forecast: string;
+    previous: string;
+    actual?: string;
+  }> = [];
 
-  // If Friday 13:30 UTC of this week has already passed, roll schedule forward to next week
-  // so there are always upcoming Pre-News release slots available.
-  const fridayCheck = new Date(monday);
-  fridayCheck.setUTCDate(monday.getUTCDate() + 4);
-  fridayCheck.setUTCHours(13, 30, 0, 0);
-  if (fridayCheck.getTime() <= now.getTime()) {
-    monday.setUTCDate(monday.getUTCDate() + 7);
-  }
-
-  const getWeekDayIso = (dayOffset: number, utcHour: number, utcMinute: number): string => {
-    const d = new Date(monday);
-    d.setUTCDate(monday.getUTCDate() + dayOffset);
-    d.setUTCHours(utcHour, utcMinute, 0, 0);
-    return d.toISOString();
+  const cleanTag = (block: string, tag: string): string => {
+    const m = block.match(new RegExp(`<${tag}[^>]*>([\\s\\S]*?)<\\/${tag}>`, 'i'));
+    if (!m || !m[1]) return '';
+    return m[1]
+      .replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, '$1')
+      .replace(/<[^>]+>/g, '')
+      .trim();
   };
 
-  const rawSchedule = [
-    // --- THIS WEEK ---
-    {
-      title: 'US ISM Manufacturing PMI',
-      country: 'USD',
-      date: getWeekDayIso(0, 15, 0), // Monday 15:00 UTC (22:00 WIB)
-      impact: 'High' as const,
-      previous: '48.5',
-      forecast: '49.2',
-      actual: '49.0',
-    },
-    {
-      title: 'US JOLTS Job Openings',
-      country: 'USD',
-      date: getWeekDayIso(1, 15, 0), // Tuesday 15:00 UTC (22:00 WIB) — Supporting Reference
-      impact: 'Medium' as const,
-      previous: '7.74M',
-      forecast: '7.62M',
-      actual: '7.65M',
-    },
-    {
-      title: 'US Core CPI m/m',
-      country: 'USD',
-      date: getWeekDayIso(2, 13, 30), // Wednesday 13:30 UTC (20:30 WIB)
-      impact: 'High' as const,
-      previous: '0.3%',
-      forecast: '0.2%',
-      actual: '0.3%',
-    },
-    {
-      title: 'US CPI m/m',
-      country: 'USD',
-      date: getWeekDayIso(2, 13, 30), // Wednesday 13:30 UTC (20:30 WIB)
-      impact: 'High' as const,
-      previous: '0.4%',
-      forecast: '0.3%',
-      actual: '0.4%',
-    },
-    {
-      title: 'US Initial Jobless Claims',
-      country: 'USD',
-      date: getWeekDayIso(3, 13, 30), // Thursday 13:30 UTC (20:30 WIB) — Supporting Reference
-      impact: 'Medium' as const,
-      previous: '221K',
-      forecast: '215K',
-      actual: '',
-    },
-    {
-      title: 'FOMC Member Waller Speaks',
-      country: 'USD',
-      date: getWeekDayIso(3, 18, 0), // Thursday 18:00 UTC (01:00 WIB) — Supporting Reference (Speech)
-      impact: 'Medium' as const,
-      previous: '-',
-      forecast: '-',
-      actual: '',
-    },
-    {
-      title: 'US Core PPI m/m',
-      country: 'USD',
-      date: getWeekDayIso(4, 13, 30), // Friday 13:30 UTC (20:30 WIB) — Primary High-Impact
-      impact: 'High' as const,
-      previous: '0.2%',
-      forecast: '0.3%',
-      actual: '',
-    },
-    {
-      title: 'US PPI m/m',
-      country: 'USD',
-      date: getWeekDayIso(4, 13, 30), // Friday 13:30 UTC (20:30 WIB) — Primary High-Impact
-      impact: 'High' as const,
-      previous: '0.1%',
-      forecast: '0.2%',
-      actual: '',
-    },
-    {
-      title: 'US Core Retail Sales m/m',
-      country: 'USD',
-      date: getWeekDayIso(4, 15, 0), // Friday 15:00 UTC (22:00 WIB) — Primary High-Impact
-      impact: 'High' as const,
-      previous: '0.1%',
-      forecast: '0.3%',
-      actual: '',
-    },
-    {
-      title: 'US Retail Sales m/m',
-      country: 'USD',
-      date: getWeekDayIso(4, 15, 0), // Friday 15:00 UTC (22:00 WIB) — Primary High-Impact
-      impact: 'High' as const,
-      previous: '0.4%',
-      forecast: '0.3%',
-      actual: '',
-    },
-    // --- NEXT WEEK (14-Day Horizon) ---
-    {
-      title: 'US ISM Services PMI',
-      country: 'USD',
-      date: getWeekDayIso(8, 15, 0), // Next Tuesday 15:00 UTC (22:00 WIB) — Primary High-Impact
-      impact: 'High' as const,
-      previous: '56.0',
-      forecast: '54.2',
-      actual: '',
-    },
-    {
-      title: 'US ADP Non-Farm Employment Change',
-      country: 'USD',
-      date: getWeekDayIso(9, 13, 15), // Next Wednesday 13:15 UTC (20:15 WIB) — Supporting Reference
-      impact: 'Medium' as const,
-      previous: '184K',
-      forecast: '150K',
-      actual: '',
-    },
-    {
-      title: 'US Advance GDP q/q',
-      country: 'USD',
-      date: getWeekDayIso(9, 13, 30), // Next Wednesday 13:30 UTC (20:30 WIB) — Primary High-Impact
-      impact: 'High' as const,
-      previous: '2.8%',
-      forecast: '2.6%',
-      actual: '',
-    },
-    {
-      title: 'FOMC Rate Decision (Federal Funds Rate)',
-      country: 'USD',
-      date: getWeekDayIso(9, 19, 0), // Next Wednesday 19:00 UTC (02:00 WIB) — Primary High-Impact
-      impact: 'High' as const,
-      previous: '4.75%',
-      forecast: '4.50%',
-      actual: '',
-    },
-    {
-      title: 'FOMC Statement',
-      country: 'USD',
-      date: getWeekDayIso(9, 19, 0), // Next Wednesday 19:00 UTC (02:00 WIB) — Primary High-Impact
-      impact: 'High' as const,
-      previous: '-',
-      forecast: '-',
-      actual: '',
-    },
-    {
-      title: 'US Core PCE Price Index m/m',
-      country: 'USD',
-      date: getWeekDayIso(10, 13, 30), // Next Thursday 13:30 UTC (20:30 WIB) — Primary High-Impact
-      impact: 'High' as const,
-      previous: '0.3%',
-      forecast: '0.2%',
-      actual: '',
-    },
-    {
-      title: 'US Non-Farm Employment Change (NFP)',
-      country: 'USD',
-      date: getWeekDayIso(11, 13, 30), // Next Friday 13:30 UTC (20:30 WIB) — Primary High-Impact
-      impact: 'High' as const,
-      previous: '185K',
-      forecast: '190K',
-      actual: '',
-    },
-    {
-      title: 'US Unemployment Rate',
-      country: 'USD',
-      date: getWeekDayIso(11, 13, 30), // Next Friday 13:30 UTC (20:30 WIB) — Primary High-Impact
-      impact: 'High' as const,
-      previous: '4.1%',
-      forecast: '4.1%',
-      actual: '',
-    },
-    {
-      title: 'US Average Hourly Earnings m/m',
-      country: 'USD',
-      date: getWeekDayIso(11, 13, 30), // Next Friday 13:30 UTC (20:30 WIB) — Primary High-Impact
-      impact: 'High' as const,
-      previous: '0.3%',
-      forecast: '0.3%',
-      actual: '',
-    },
-  ];
+  const eventBlocks = xmlText.match(/<event>[\s\S]*?<\/event>/gi) || [];
+  for (const block of eventBlocks) {
+    const title = cleanTag(block, 'title');
+    const country = cleanTag(block, 'country');
+    const datePart = cleanTag(block, 'date'); // e.g. 11-13-2026
+    const timePart = cleanTag(block, 'time'); // e.g. 1:30pm or 8:30am
+    const impact = cleanTag(block, 'impact');
+    const forecast = cleanTag(block, 'forecast');
+    const previous = cleanTag(block, 'previous');
+    const actual = cleanTag(block, 'actual');
 
-  return rawSchedule.map((item, idx) => {
-    const prevParsed = parseMacroNumeric(item.previous);
-    const fcstParsed = parseMacroNumeric(item.forecast);
-    const actParsed = parseMacroNumeric(item.actual);
-    const evalResult = evaluateSingleEventForGold(
-      item.title,
-      actParsed.value,
-      fcstParsed.value,
-      prevParsed.value
-    );
-    const eventCategory: MacroCalendarEvent['eventCategory'] = isPrimaryHighImpactEvent({
-      title: item.title,
-      impact: item.impact,
-    })
-      ? 'PRIMARY_HIGH_IMPACT'
-      : 'SUPPORTING_REFERENCE';
+    if (!title || !country) continue;
 
-    return {
-      id: `ff-usd-${idx + 1}`,
-      title: item.title,
-      country: item.country,
-      date: item.date,
-      impact: item.impact,
-      previous: item.previous,
-      forecast: item.forecast,
-      actual: item.actual,
-      previousNum: prevParsed.value,
-      forecastNum: fcstParsed.value,
-      actualNum: actParsed.value,
-      unit: fcstParsed.unit || prevParsed.unit || '',
-      pillar: classifyFomcPillar(item.title),
-      isInverseIndicator: isInverseUsdIndicator(item.title),
-      eventBiasForGold: evalResult.bias,
-      biasReasonId: evalResult.reasonId,
-      biasReasonEn: evalResult.reasonEn,
-      isLiveFeed: false,
-      eventCategory,
-    };
-  });
+    // Parse MM-DD-YYYY + h:mma/p (UTC or EST) into ISO string
+    let isoDate = datePart;
+    const dateMatch = datePart.match(/^(\d{2})-(\d{2})-(\d{4})$/);
+    if (dateMatch) {
+      const [, mm, dd, yyyy] = dateMatch;
+      let hours = 13;
+      let minutes = 30;
+      const timeMatch = timePart.match(/^(\d{1,2}):(\d{2})(am|pm)$/i);
+      if (timeMatch) {
+        hours = parseInt(timeMatch[1], 10);
+        minutes = parseInt(timeMatch[2], 10);
+        const ampm = timeMatch[3].toLowerCase();
+        if (ampm === 'pm' && hours < 12) hours += 12;
+        if (ampm === 'am' && hours === 12) hours = 0;
+      }
+      const pad = (n: number) => String(n).padStart(2, '0');
+      isoDate = `${yyyy}-${mm}-${dd}T${pad(hours)}:${pad(minutes)}:00Z`;
+    }
+
+    items.push({
+      title,
+      country,
+      date: isoDate,
+      impact,
+      forecast,
+      previous,
+      actual,
+    });
+  }
+
+  return items;
 }
 
-export async function fetchClientForexFactoryCalendar(): Promise<MacroCalendarEvent[]> {
-  const calendarUrls = [
-    'https://nfs.faireconomy.media/ff_calendar_thisweek.json',
-    'https://nfs.faireconomy.media/ff_calendar_nextweek.json',
-  ];
+/**
+ * Zero-Mock Policy: Never return fake/hardcoded calendar numbers.
+ * If all live ForexFactory fetch paths fail, return an empty array `[]` so the UI displays
+ * the honest warning: "Gagal memuat kalender live — periksa koneksi atau coba refresh".
+ */
+export function getClientFallbackCalendarEvents(): MacroCalendarEvent[] {
+  return [];
+}
 
+async function fetchSingleCalendarSource(jsonUrl: string, xmlUrl?: string): Promise<any[]> {
   try {
-    const settled = await Promise.allSettled(
-      calendarUrls.map(async (url) => {
-        const jsonStr = await fetchWithCorsProxy(url, 8000, 'application/json');
-        const parsed = JSON.parse(jsonStr);
-        return Array.isArray(parsed) ? parsed : [];
-      })
-    );
+    const rawText = await fetchWithCorsProxy(jsonUrl, 8000, 'application/json');
+    const parsed = JSON.parse(rawText);
+    if (Array.isArray(parsed) && parsed.length > 0) {
+      return parsed;
+    }
+  } catch {
+    // Try XML backup if JSON endpoint failed or was rate-limited
+  }
 
-    const combinedRaw: any[] = [];
-    for (const r of settled) {
-      if (r.status === 'fulfilled' && Array.isArray(r.value)) {
-        combinedRaw.push(...r.value);
+  if (xmlUrl) {
+    try {
+      const xmlText = await fetchWithCorsProxy(xmlUrl, 8000, 'application/xml, text/xml');
+      const parsedXml = parseForexFactoryXml(xmlText);
+      if (parsedXml.length > 0) {
+        return parsedXml;
       }
+    } catch {
+      // XML also failed
     }
+  }
 
+  return [];
+}
+
+/**
+ * Pulls live ForexFactory calendar data across both `thisweek` and `nextweek` feeds
+ * using the multi-proxy + XML/JSON pipeline.
+ * Maps `title`, `country === 'USD'`, `impact`, `previous`, `forecast`, and `actual` 100% faithfully.
+ * Returns `[]` if all live feeds fail (never fabricates numbers).
+ */
+export async function fetchClientForexFactoryCalendar(): Promise<MacroCalendarEvent[]> {
+  try {
+    const [thisWeekItems, nextWeekItems] = await Promise.all([
+      fetchSingleCalendarSource(
+        'https://nfs.faireconomy.media/ff_calendar_thisweek.json',
+        'https://nfs.faireconomy.media/ff_calendar_thisweek.xml'
+      ),
+      fetchSingleCalendarSource(
+        'https://nfs.faireconomy.media/ff_calendar_nextweek.json',
+        'https://nfs.faireconomy.media/ff_calendar_nextweek.xml'
+      ),
+    ]);
+
+    const combinedRaw = [...thisWeekItems, ...nextWeekItems];
     if (combinedRaw.length === 0) {
-      return getClientFallbackCalendarEvents();
+      return [];
     }
 
+    // Filter strictly for USD macro events (country === 'USD')
     const filtered = combinedRaw.filter((item: any) => isRelevantUsdMacroEvent(item));
     if (filtered.length === 0) {
-      return getClientFallbackCalendarEvents();
+      return [];
     }
 
     // Deduplicate combined thisweek + nextweek entries by normalized title + minute ISO timestamp
@@ -406,7 +353,8 @@ export async function fetchClientForexFactoryCalendar(): Promise<MacroCalendarEv
     });
 
     return dedupedRaw.slice(0, 90).map((item: any, idx: number) => {
-      const title = String(item.title || 'USD Economic Release').trim();
+      // Exact title from ForexFactory feed (e.g., "Core PPI m/m", "PPI m/m")
+      const title = String(item.title || '').trim();
       const previous = String(item.previous ?? '').trim();
       const forecast = String(item.forecast ?? '').trim();
       const actual = String(item.actual ?? '').trim();
@@ -422,11 +370,10 @@ export async function fetchClientForexFactoryCalendar(): Promise<MacroCalendarEv
         prevParsed.value
       );
 
-      const rawImpact = String(item.impact || 'Medium');
+      const rawImpact = String(item.impact || 'Medium').trim();
       const impact: 'High' | 'Medium' | 'Low' =
         rawImpact === 'High' ? 'High' : rawImpact === 'Low' ? 'Low' : 'Medium';
 
-      // Parse date accurately into ISO UTC timestamp
       let isoDate = new Date().toISOString();
       if (item.date) {
         try {
@@ -442,18 +389,19 @@ export async function fetchClientForexFactoryCalendar(): Promise<MacroCalendarEv
       const eventCategory: MacroCalendarEvent['eventCategory'] = isPrimaryHighImpactEvent({
         title,
         impact,
+        country: 'USD',
       })
         ? 'PRIMARY_HIGH_IMPACT'
         : 'SUPPORTING_REFERENCE';
 
       return {
-        id: `ff-${idx + 1}-${title.replace(/[^a-zA-Z0-9]/g, '').slice(0, 12)}`,
+        id: `ff-live-${idx + 1}-${title.replace(/[^a-zA-Z0-9]/g, '').slice(0, 14)}`,
         title,
         country: 'USD',
         date: isoDate,
         impact,
-        previous: previous || '-',
-        forecast: forecast || '-',
+        previous: previous || '—',
+        forecast: forecast || '—',
         actual: actual || '',
         previousNum: prevParsed.value,
         forecastNum: fcstParsed.value,
@@ -469,8 +417,8 @@ export async function fetchClientForexFactoryCalendar(): Promise<MacroCalendarEv
       };
     });
   } catch (err) {
-    console.warn('[MacroClient] ForexFactory feed fallback triggered:', err);
-    return getClientFallbackCalendarEvents();
+    console.warn('[MacroClient] Live ForexFactory calendar fetch failed:', err);
+    return [];
   }
 }
 

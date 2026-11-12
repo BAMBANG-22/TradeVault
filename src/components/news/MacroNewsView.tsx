@@ -342,7 +342,10 @@ export const MacroNewsView: React.FC = () => {
   }, [snapshot, selectedEventId, nearestUpcomingGroup]);
 
   const isLiveCalendar = Boolean(
-    snapshot?.isCalendarLiveFeed ?? snapshot?.calendarEvents?.some((e) => e.isLiveFeed)
+    snapshot?.isCalendarLiveFeed &&
+      Array.isArray(snapshot?.calendarEvents) &&
+      snapshot.calendarEvents.length > 0 &&
+      snapshot.calendarEvents.every((e) => e.isLiveFeed === true)
   );
 
   const pillarBadgeLabel = (pillar: string) => {
@@ -932,7 +935,37 @@ export const MacroNewsView: React.FC = () => {
           </div>
         </div>
 
-        {/* Active Event Group Title */}
+        {/* Honest Live Calendar Error Banner if all multi-proxy routes fail */}
+        {!isLiveCalendar && (
+          <div
+            data-testid="macro-live-calendar-error-banner"
+            className="p-4 rounded-xl bg-[#F5F7FA] dark:bg-[#050607] border border-[#DDE3EA] dark:border-[#20252D] border-l-4 border-l-[#1769E8] dark:border-l-[#3478DC] flex flex-col sm:flex-row sm:items-center justify-between gap-3"
+          >
+            <div className="flex items-start gap-2.5">
+              <AlertTriangle className="w-4 h-4 text-[#1769E8] dark:text-[#3478DC] shrink-0 mt-0.5" />
+              <div className="space-y-0.5">
+                <div className="text-xs sm:text-sm font-bold text-[#151D2A] dark:text-[#F2F4F7]">
+                  Gagal memuat kalender live — periksa koneksi atau coba refresh
+                </div>
+                <p className="text-[11px] text-[#697586] dark:text-[#929BA9]">
+                  {tr(
+                    'Sistem tidak menampilkan angka Previous atau Forecast fiktif. Tekan Analisis Live untuk menarik ulang data asli ForexFactory.',
+                    'The system never displays fictitious Previous or Forecast figures. Press Live Analysis to re-fetch authentic ForexFactory data.'
+                  )}
+                </p>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => runLiveAnalysis(true, snapshot, selectedEventId)}
+              className="px-3.5 py-1.5 rounded-lg bg-[#1769E8] dark:bg-[#3478DC] text-white text-xs font-bold shrink-0 self-start sm:self-center cursor-pointer"
+            >
+              {tr('Coba Refresh', 'Retry Refresh')}
+            </button>
+          </div>
+        )}
+
+        {/* Active Event Group Title + LIVE FEED VERIFIED Badge */}
         <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
           <div>
             <span className="text-[10px] font-bold uppercase tracking-[0.14em] text-[#1769E8] dark:text-[#3478DC]">
@@ -942,11 +975,27 @@ export const MacroNewsView: React.FC = () => {
               {activeClusterTitles}
             </h2>
           </div>
-          {simultaneousCount > 1 && (
-            <span className="px-2.5 py-1 rounded-lg bg-[#F5F7FA] dark:bg-[#050607] border border-[#DDE3EA] dark:border-[#20252D] text-[11px] font-mono text-[#697586] dark:text-[#929BA9]">
-              {simultaneousCount} {tr('Indikator Rilis Bersamaan', 'Simultaneous Indicators')}
-            </span>
-          )}
+          <div className="flex flex-wrap items-center gap-2">
+            {isLiveCalendar ? (
+              <span
+                data-testid="macro-live-feed-verified-badge"
+                className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-[#1769E8] dark:bg-[#3478DC] text-white text-[10px] font-bold tracking-wider uppercase"
+              >
+                <CheckCircle2 className="w-3 h-3 shrink-0" />
+                <span>LIVE FEED VERIFIED</span>
+              </span>
+            ) : (
+              <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-[#F5F7FA] dark:bg-[#050607] border border-[#DDE3EA] dark:border-[#20252D] text-[#697586] dark:text-[#929BA9] text-[10px] font-bold tracking-wider uppercase">
+                <AlertTriangle className="w-3 h-3 shrink-0" />
+                <span>Gagal memuat kalender live — periksa koneksi atau coba refresh</span>
+              </span>
+            )}
+            {simultaneousCount > 1 && (
+              <span className="px-2.5 py-1 rounded-lg bg-[#F5F7FA] dark:bg-[#050607] border border-[#DDE3EA] dark:border-[#20252D] text-[11px] font-mono text-[#697586] dark:text-[#929BA9]">
+                {simultaneousCount} {tr('Indikator Rilis Bersamaan', 'Simultaneous Indicators')}
+              </span>
+            )}
+          </div>
         </div>
 
         {/* Middle Row: Large & Clear Pre-News Probabilities (BUY | SELL | MIXED / WHIPSAW) */}
@@ -1329,7 +1378,7 @@ export const MacroNewsView: React.FC = () => {
         <div className="rounded-xl bg-[#F5F7FA] dark:bg-[#050607] border border-[#DDE3EA] dark:border-[#1E232B] p-4 sm:p-5 space-y-4">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-[#DDE3EA] dark:border-[#1E232B] pb-3.5">
             <div>
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2">
                 <span className="text-xs font-bold text-[#151D2A] dark:text-[#F2F4F7] uppercase tracking-wide">
                   {simultaneousCount > 1
                     ? tr(
@@ -1344,10 +1393,27 @@ export const MacroNewsView: React.FC = () => {
               </div>
               <div className="text-xs text-[#697586] dark:text-[#929BA9] mt-0.5">
                 {tr(
-                  'Perbandingan vertikal Previous | Forecast | Actual secara otomatis (Zero Manual Input)',
-                  'Automatic vertical Previous | Forecast | Actual comparison (Zero Manual Input)'
+                  'Perbandingan vertikal Previous | Forecast | Actual langsung dari feed ForexFactory (Zero Manual Input)',
+                  'Vertical Previous | Forecast | Actual comparison directly from ForexFactory feed (Zero Manual Input)'
                 )}
               </div>
+            </div>
+
+            {/* Corner verification badge on group card header */}
+            <div className="self-start sm:self-center shrink-0">
+              {isLiveCalendar ? (
+                <span
+                  data-testid="macro-group-card-live-verified-badge"
+                  className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-[#1769E8] dark:bg-[#3478DC] text-white text-[10px] font-bold tracking-wider uppercase"
+                >
+                  <CheckCircle2 className="w-3 h-3 shrink-0" />
+                  <span>LIVE FEED VERIFIED</span>
+                </span>
+              ) : (
+                <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-white dark:bg-[#080A0E] border border-[#DDE3EA] dark:border-[#20252D] text-[#697586] dark:text-[#929BA9] text-[10px] font-bold tracking-wider">
+                  <span>Gagal memuat kalender live — periksa koneksi atau coba refresh</span>
+                </span>
+              )}
             </div>
           </div>
 
@@ -1674,19 +1740,19 @@ export const MacroNewsView: React.FC = () => {
                 'This Week USD Economic Calendar'
               )}
             </h3>
-            {/* Small corner status badge: LIVE FEED vs OFFLINE FALLBACK */}
+            {/* Small corner status badge: LIVE FEED VERIFIED vs Honest Live Calendar Warning */}
             {isLiveCalendar ? (
-              <span className="px-2 py-0.5 rounded text-[10px] font-bold tracking-wider bg-[#1769E8]/15 dark:bg-[#3478DC]/20 border border-[#1769E8]/30 dark:border-[#3478DC]/30 text-[#1769E8] dark:text-[#3478DC]">
-                LIVE FEED
+              <span className="px-2.5 py-0.5 rounded text-[10px] font-bold tracking-wider bg-[#1769E8] dark:bg-[#3478DC] text-white">
+                LIVE FEED VERIFIED
               </span>
             ) : (
-              <span className="px-2 py-0.5 rounded text-[10px] font-bold tracking-wider bg-neutral-200 dark:bg-neutral-800 border border-neutral-300 dark:border-neutral-700 text-[#697586] dark:text-[#929BA9]">
-                OFFLINE FALLBACK
+              <span className="px-2.5 py-0.5 rounded text-[10px] font-bold tracking-wider bg-[#F5F7FA] dark:bg-[#050607] border border-[#DDE3EA] dark:border-[#20252D] text-[#151D2A] dark:text-[#F2F4F7]">
+                Gagal memuat kalender live — periksa koneksi atau coba refresh
               </span>
             )}
           </div>
           <span className="text-[11px] text-[#697586] dark:text-[#929BA9] whitespace-nowrap">
-            ForexFactory Open Feed
+            ForexFactory Live Feed
           </span>
         </div>
 

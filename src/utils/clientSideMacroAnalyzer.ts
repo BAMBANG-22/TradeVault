@@ -149,13 +149,18 @@ export async function executeClientSideMacroAnalysis(
     forceRefresh,
   });
 
-  // Preserve isCalendarLiveFeed metadata
-  analyzedSnapshot.isCalendarLiveFeed = calendarEvents.some((e) => e.isLiveFeed);
-  if (calendarEvents.length > 0) {
+  // Preserve live calendar events from client or server
+  if (calendarEvents.length > 0 && calendarEvents.every((e) => e.isLiveFeed)) {
     analyzedSnapshot.calendarEvents = calendarEvents;
+    analyzedSnapshot.isCalendarLiveFeed = true;
+  } else {
+    analyzedSnapshot.isCalendarLiveFeed =
+      Array.isArray(analyzedSnapshot.calendarEvents) &&
+      analyzedSnapshot.calendarEvents.length > 0 &&
+      analyzedSnapshot.calendarEvents.every((e) => e.isLiveFeed === true);
   }
 
-  // Step 3: Insert directly into Supabase `macro_news_snapshots`
+  // Step 3: Insert directly into Supabase `macro_news_snapshots` (only if live calendar is verified)
   const supabaseResult = await saveMacroSnapshotToCache(analyzedSnapshot);
 
   return {

@@ -691,180 +691,59 @@ let cachedMacroFeeds: {
 let lastServerMacroSnapshot: MacroNewsSnapshot | null = null;
 
 function getFallbackCalendarEvents(): MacroCalendarEvent[] {
-  const nowMs = Date.now();
-  const HOUR = 60 * 60 * 1000;
-  const DAY = 24 * HOUR;
-  const isoAtOffset = (offsetMs: number) => new Date(nowMs + offsetMs).toISOString();
-
-  const rawSchedule = [
-    {
-      title: 'US Core CPI m/m',
-      country: 'USD',
-      date: isoAtOffset(-24 * HOUR),
-      impact: 'High' as const,
-      previous: '0.2%',
-      forecast: '0.2%',
-      actual: '0.3%',
-    },
-    {
-      title: 'US CPI m/m',
-      country: 'USD',
-      date: isoAtOffset(-24 * HOUR),
-      impact: 'High' as const,
-      previous: '0.2%',
-      forecast: '0.3%',
-      actual: '0.4%',
-    },
-    {
-      title: 'US Initial Jobless Claims',
-      country: 'USD',
-      date: isoAtOffset(3 * HOUR),
-      impact: 'Medium' as const,
-      previous: '221K',
-      forecast: '215K',
-      actual: '',
-    },
-    {
-      title: 'FOMC Member Waller Speaks',
-      country: 'USD',
-      date: isoAtOffset(5 * HOUR),
-      impact: 'High' as const,
-      previous: '-',
-      forecast: '-',
-      actual: '',
-    },
-    {
-      title: 'US Core PPI m/m',
-      country: 'USD',
-      date: isoAtOffset(20 * HOUR),
-      impact: 'High' as const,
-      previous: '0.2%',
-      forecast: '0.3%',
-      actual: '',
-    },
-    {
-      title: 'US PPI m/m',
-      country: 'USD',
-      date: isoAtOffset(20 * HOUR),
-      impact: 'High' as const,
-      previous: '0.1%',
-      forecast: '0.2%',
-      actual: '',
-    },
-    {
-      title: 'US Retail Sales m/m',
-      country: 'USD',
-      date: isoAtOffset(22 * HOUR),
-      impact: 'High' as const,
-      previous: '0.4%',
-      forecast: '0.3%',
-      actual: '',
-    },
-    {
-      title: 'US ISM Services PMI',
-      country: 'USD',
-      date: isoAtOffset(4 * DAY + 4 * HOUR),
-      impact: 'High' as const,
-      previous: '56.0',
-      forecast: '54.2',
-      actual: '',
-    },
-    {
-      title: 'US Advance GDP q/q',
-      country: 'USD',
-      date: isoAtOffset(5 * DAY + 3 * HOUR),
-      impact: 'High' as const,
-      previous: '2.8%',
-      forecast: '2.6%',
-      actual: '',
-    },
-    {
-      title: 'FOMC Rate Decision & Statement',
-      country: 'USD',
-      date: isoAtOffset(6 * DAY + 9 * HOUR),
-      impact: 'High' as const,
-      previous: '4.75%',
-      forecast: '4.50%',
-      actual: '',
-    },
-    {
-      title: 'US Core PCE Price Index m/m',
-      country: 'USD',
-      date: isoAtOffset(7 * DAY + 3 * HOUR),
-      impact: 'High' as const,
-      previous: '0.3%',
-      forecast: '0.2%',
-      actual: '',
-    },
-    {
-      title: 'US Non-Farm Employment Change (NFP)',
-      country: 'USD',
-      date: isoAtOffset(8 * DAY + 3 * HOUR),
-      impact: 'High' as const,
-      previous: '185K',
-      forecast: '190K',
-      actual: '',
-    },
-    {
-      title: 'US Unemployment Rate',
-      country: 'USD',
-      date: isoAtOffset(8 * DAY + 3 * HOUR),
-      impact: 'High' as const,
-      previous: '4.1%',
-      forecast: '4.1%',
-      actual: '',
-    },
-    {
-      title: 'US Average Hourly Earnings m/m',
-      country: 'USD',
-      date: isoAtOffset(8 * DAY + 3 * HOUR),
-      impact: 'High' as const,
-      previous: '0.3%',
-      forecast: '0.3%',
-      actual: '',
-    },
-  ];
-
-  return rawSchedule.map((item, idx) => {
-    const prevParsed = parseMacroNumeric(item.previous);
-    const fcstParsed = parseMacroNumeric(item.forecast);
-    const actParsed = parseMacroNumeric(item.actual);
-    const evalResult = evaluateSingleEventForGold(
-      item.title,
-      actParsed.value,
-      fcstParsed.value,
-      prevParsed.value
-    );
-    const isPrimary = isPrimaryHighImpactEvent({
-      title: item.title,
-      impact: item.impact,
-      country: item.country,
-    });
-    return {
-      id: `ff-usd-${idx + 1}`,
-      title: item.title,
-      country: item.country,
-      date: item.date,
-      impact: item.impact,
-      previous: item.previous,
-      forecast: item.forecast,
-      actual: item.actual,
-      previousNum: prevParsed.value,
-      forecastNum: fcstParsed.value,
-      actualNum: actParsed.value,
-      unit: fcstParsed.unit || prevParsed.unit || '',
-      pillar: classifyFomcPillar(item.title),
-      isInverseIndicator: isInverseUsdIndicator(item.title),
-      eventBiasForGold: evalResult.bias,
-      biasReasonId: evalResult.reasonId,
-      biasReasonEn: evalResult.reasonEn,
-      isLiveFeed: false,
-      eventCategory: isPrimary ? 'PRIMARY_HIGH_IMPACT' : 'SUPPORTING_REFERENCE',
-    };
-  });
+  // Zero-Mock Policy: Never return fake/hardcoded calendar numbers.
+  return [];
 }
 
-async function fetchSingleForexFactoryFeed(url: string): Promise<any[]> {
+function parseServerForexFactoryXml(xmlText: string): any[] {
+  if (!xmlText || !xmlText.includes('<event>')) return [];
+  const items: any[] = [];
+  const cleanTag = (block: string, tag: string): string => {
+    const m = block.match(new RegExp(`<${tag}[^>]*>([\\s\\S]*?)<\\/${tag}>`, 'i'));
+    if (!m || !m[1]) return '';
+    return m[1]
+      .replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, '$1')
+      .replace(/<[^>]+>/g, '')
+      .trim();
+  };
+
+  const eventBlocks = xmlText.match(/<event>[\s\S]*?<\/event>/gi) || [];
+  for (const block of eventBlocks) {
+    const title = cleanTag(block, 'title');
+    const country = cleanTag(block, 'country');
+    const datePart = cleanTag(block, 'date');
+    const timePart = cleanTag(block, 'time');
+    const impact = cleanTag(block, 'impact');
+    const forecast = cleanTag(block, 'forecast');
+    const previous = cleanTag(block, 'previous');
+    const actual = cleanTag(block, 'actual');
+    if (!title || !country) continue;
+
+    let isoDate = datePart;
+    const dateMatch = datePart.match(/^(\d{2})-(\d{2})-(\d{4})$/);
+    if (dateMatch) {
+      const [, mm, dd, yyyy] = dateMatch;
+      let hours = 13;
+      let minutes = 30;
+      const timeMatch = timePart.match(/^(\d{1,2}):(\d{2})(am|pm)$/i);
+      if (timeMatch) {
+        hours = parseInt(timeMatch[1], 10);
+        minutes = parseInt(timeMatch[2], 10);
+        const ampm = timeMatch[3].toLowerCase();
+        if (ampm === 'pm' && hours < 12) hours += 12;
+        if (ampm === 'am' && hours === 12) hours = 0;
+      }
+      const pad = (n: number) => String(n).padStart(2, '0');
+      isoDate = `${yyyy}-${mm}-${dd}T${pad(hours)}:${pad(minutes)}:00Z`;
+    }
+
+    items.push({ title, country, date: isoDate, impact, forecast, previous, actual });
+  }
+  return items;
+}
+
+async function fetchSingleForexFactoryFeed(url: string, xmlUrl?: string): Promise<any[]> {
+  // 1. Direct server fetch (fastest in Node.js)
   try {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 5000);
@@ -877,29 +756,96 @@ async function fetchSingleForexFactoryFeed(url: string): Promise<any[]> {
       signal: controller.signal,
     });
     clearTimeout(timeout);
-    if (!res.ok) return [];
-    const parsed = await res.json();
-    return Array.isArray(parsed) ? parsed : [];
+    if (res.ok) {
+      const parsed = await res.json();
+      if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+    }
   } catch {
-    return [];
+    // Try multi-proxy fallbacks
   }
+
+  const encoded = encodeURIComponent(url);
+  const proxyCandidates = [
+    { type: 'raw', target: `https://api.codetabs.com/v1/proxy?quest=${encoded}` },
+    { type: 'raw', target: `https://corsproxy.io/?url=${encoded}` },
+    { type: 'allorigins_get', target: `https://api.allorigins.win/get?url=${encoded}` },
+  ];
+
+  for (const p of proxyCandidates) {
+    try {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 5000);
+      const res = await fetch(p.target, {
+        headers: {
+          'User-Agent': 'Mozilla/5.0',
+          Accept: 'application/json',
+        },
+        signal: controller.signal,
+      });
+      clearTimeout(timeout);
+      if (!res.ok) continue;
+      if (p.type === 'allorigins_get') {
+        const wrapper = await res.json();
+        if (wrapper && typeof wrapper.contents === 'string') {
+          const parsed = JSON.parse(wrapper.contents);
+          if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+        }
+      } else {
+        const parsed = await res.json();
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      }
+    } catch {
+      // Try next proxy
+    }
+  }
+
+  // XML fallback
+  if (xmlUrl) {
+    try {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 5000);
+      const res = await fetch(xmlUrl, {
+        headers: {
+          'User-Agent': 'Mozilla/5.0',
+          Accept: 'application/xml, text/xml',
+        },
+        signal: controller.signal,
+      });
+      clearTimeout(timeout);
+      if (res.ok) {
+        const xmlText = await res.text();
+        const parsedXml = parseServerForexFactoryXml(xmlText);
+        if (parsedXml.length > 0) return parsedXml;
+      }
+    } catch {
+      // ignore
+    }
+  }
+
+  return [];
 }
 
 async function fetchForexFactoryUsdCalendar(): Promise<MacroCalendarEvent[]> {
   try {
     const [thisWeekList, nextWeekList] = await Promise.all([
-      fetchSingleForexFactoryFeed('https://nfs.faireconomy.media/ff_calendar_thisweek.json'),
-      fetchSingleForexFactoryFeed('https://nfs.faireconomy.media/ff_calendar_nextweek.json'),
+      fetchSingleForexFactoryFeed(
+        'https://nfs.faireconomy.media/ff_calendar_thisweek.json',
+        'https://nfs.faireconomy.media/ff_calendar_thisweek.xml'
+      ),
+      fetchSingleForexFactoryFeed(
+        'https://nfs.faireconomy.media/ff_calendar_nextweek.json',
+        'https://nfs.faireconomy.media/ff_calendar_nextweek.xml'
+      ),
     ]);
 
     const combinedRaw = [...thisWeekList, ...nextWeekList];
     if (combinedRaw.length === 0) {
-      return getFallbackCalendarEvents();
+      return [];
     }
 
     const filtered = combinedRaw.filter((item: any) => isRelevantUsdMacroEvent(item));
     if (filtered.length === 0) {
-      return getFallbackCalendarEvents();
+      return [];
     }
 
     const seenKeys = new Set<string>();
@@ -928,8 +874,8 @@ async function fetchForexFactoryUsdCalendar(): Promise<MacroCalendarEvent[]> {
       return (isNaN(ta) ? 0 : ta) - (isNaN(tb) ? 0 : tb);
     });
 
-    return dedupedRaw.slice(0, 60).map((item: any, idx: number) => {
-      const title = String(item.title || 'USD Economic Release').trim();
+    return dedupedRaw.slice(0, 90).map((item: any, idx: number) => {
+      const title = String(item.title || '').trim();
       const previous = String(item.previous ?? item.prev ?? '').trim();
       const forecast = String(item.forecast ?? '').trim();
       const actual = String(item.actual ?? '').trim();
@@ -945,7 +891,7 @@ async function fetchForexFactoryUsdCalendar(): Promise<MacroCalendarEvent[]> {
         prevParsed.value
       );
 
-      const rawImpact = String(item.impact || 'Medium');
+      const rawImpact = String(item.impact || 'Medium').trim();
       const impact: 'High' | 'Medium' | 'Low' =
         rawImpact === 'High' ? 'High' : rawImpact === 'Low' ? 'Low' : 'Medium';
 
@@ -968,13 +914,13 @@ async function fetchForexFactoryUsdCalendar(): Promise<MacroCalendarEvent[]> {
       });
 
       return {
-        id: `ff-${idx + 1}-${title.replace(/[^a-zA-Z0-9]/g, '').slice(0, 12)}`,
+        id: `ff-live-${idx + 1}-${title.replace(/[^a-zA-Z0-9]/g, '').slice(0, 14)}`,
         title,
         country: 'USD',
         date: isoDate,
         impact,
-        previous: previous || '-',
-        forecast: forecast || '-',
+        previous: previous || '—',
+        forecast: forecast || '—',
         actual: actual || '',
         previousNum: prevParsed.value,
         forecastNum: fcstParsed.value,
@@ -990,7 +936,7 @@ async function fetchForexFactoryUsdCalendar(): Promise<MacroCalendarEvent[]> {
       };
     });
   } catch {
-    return getFallbackCalendarEvents();
+    return [];
   }
 }
 
@@ -1210,6 +1156,7 @@ async function gatherMacroPublicFeeds(forceRefresh = false) {
   if (
     !forceRefresh &&
     cachedMacroFeeds &&
+    cachedMacroFeeds.calendarEvents.length > 0 &&
     Date.now() - cachedMacroFeeds.fetchedAt < 5 * 60 * 1000
   ) {
     return cachedMacroFeeds;
@@ -1244,12 +1191,15 @@ app.get('/api/macro-news/feeds', async (_req, res) => {
       sourceMode: lastServerMacroSnapshot ? lastServerMacroSnapshot.sourceMode : 'RULE_BASED_FALLBACK',
       modelUsed: lastServerMacroSnapshot ? lastServerMacroSnapshot.modelUsed : 'deterministic-playbook-v1',
     });
+    deterministicSnap.isCalendarLiveFeed =
+      feeds.calendarEvents.length > 0 && feeds.calendarEvents.every((e) => e.isLiveFeed === true);
 
     res.json({
       success: true,
       dataFingerprint: deterministicSnap.dataFingerprint,
       snapshot:
         lastServerMacroSnapshot &&
+        lastServerMacroSnapshot.isCalendarLiveFeed &&
         lastServerMacroSnapshot.dataFingerprint === deterministicSnap.dataFingerprint &&
         isSnapshotFresh(lastServerMacroSnapshot, 30)
           ? lastServerMacroSnapshot
@@ -1294,19 +1244,32 @@ app.post('/api/macro-news/analyze', async (req, res) => {
       breakingNews: BreakingNewsHeadline[];
     };
 
-    if (
+    const hasVerifiedClientLiveCalendar =
       clientFeeds &&
       Array.isArray(clientFeeds.calendarEvents) &&
       clientFeeds.calendarEvents.length > 0 &&
-      clientFeeds.intermarketPulse?.dxy
-    ) {
+      clientFeeds.calendarEvents.every(
+        (e) => e.isLiveFeed === true && !String(e.id || '').startsWith('ff-usd-')
+      );
+
+    if (hasVerifiedClientLiveCalendar && clientFeeds?.intermarketPulse?.dxy) {
       feeds = {
-        calendarEvents: clientFeeds.calendarEvents,
+        calendarEvents: clientFeeds.calendarEvents!,
         intermarketPulse: clientFeeds.intermarketPulse,
         breakingNews: clientFeeds.breakingNews || [],
       };
     } else {
-      feeds = await gatherMacroPublicFeeds(Boolean(forceRefresh));
+      const serverFeeds = await gatherMacroPublicFeeds(Boolean(forceRefresh));
+      feeds = {
+        calendarEvents: serverFeeds.calendarEvents,
+        intermarketPulse: clientFeeds?.intermarketPulse?.dxy
+          ? clientFeeds.intermarketPulse
+          : serverFeeds.intermarketPulse,
+        breakingNews:
+          clientFeeds?.breakingNews && clientFeeds.breakingNews.length > 0
+            ? clientFeeds.breakingNews
+            : serverFeeds.breakingNews,
+      };
     }
 
     // Step 1: Always compute the deterministic Master Playbook baseline first
@@ -1318,6 +1281,8 @@ app.post('/api/macro-news/analyze', async (req, res) => {
       sourceMode: 'RULE_BASED_FALLBACK',
       modelUsed: 'deterministic-playbook-v1',
     });
+    baselineSnapshot.isCalendarLiveFeed =
+      feeds.calendarEvents.length > 0 && feeds.calendarEvents.every((e) => e.isLiveFeed === true);
 
     // Step 2: If not forced and we already have a fresh server AI snapshot (< 30 mins) with matching fingerprint & event, return it (0 Gemini tokens)
     if (
