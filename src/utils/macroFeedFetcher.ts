@@ -114,6 +114,15 @@ export function getClientFallbackCalendarEvents(): MacroCalendarEvent[] {
   monday.setUTCDate(now.getUTCDate() + diffToMonday);
   monday.setUTCHours(12, 0, 0, 0);
 
+  // If Friday 13:30 UTC of this week has already passed, roll schedule forward to next week
+  // so there are always upcoming Pre-News release slots available.
+  const fridayCheck = new Date(monday);
+  fridayCheck.setUTCDate(monday.getUTCDate() + 4);
+  fridayCheck.setUTCHours(13, 30, 0, 0);
+  if (fridayCheck.getTime() <= now.getTime()) {
+    monday.setUTCDate(monday.getUTCDate() + 7);
+  }
+
   const getWeekDayIso = (dayOffset: number, utcHour: number, utcMinute: number): string => {
     const d = new Date(monday);
     d.setUTCDate(monday.getUTCDate() + dayOffset);

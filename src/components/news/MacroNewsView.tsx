@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import {
   RefreshCw,
   AlertTriangle,
@@ -18,9 +18,7 @@ import {
   ArrowDownRight,
   Minus,
   Info,
-  Sliders,
-  Edit3,
-  Check,
+  Lock,
 } from 'lucide-react';
 import { useLanguage } from '../../utils/language';
 import {
@@ -31,21 +29,18 @@ import {
   loadLatestCachedMacroSnapshot,
   isSnapshotFresh,
   computeDeterministicMacroSnapshot,
-  saveMacroSnapshotToCache,
   triggerHighImpactMacroNotification,
   formatTimestampWib,
+  computePreNewsLockState,
 } from '../../utils/macroNewsEngine';
 import { executeClientSideMacroAnalysis } from '../../utils/clientSideMacroAnalyzer';
 import { isSupabaseConfigured } from '../../utils/supabaseClient';
 
 /**
- * TradeVault Institutional Color Tokens Audit:
- * Primary Background: #050607
- * Pure Deep Black Card Surfaces: #080A0E / #0A0D12 (fully blends into app)
- * Inset Elements: #050607 / #0B0E14
- * Border System: border-[#DDE3EA] dark:border-[#20252D]
- * Deep Dashboard Blue Accent: #1769E8 (light) / #3478DC (dark mode)
- * Active Deep Navy Badge: bg-[#EEF2F6] dark:bg-[#1C2330] text-[#1769E8] dark:text-[#3478DC]
+ * TradeVault Institutional 3-Color System Audit:
+ * 1) Black (Core Primary Background & Surface): #050607 (App Canvas) / #080A0E (Card Surface)
+ * 2) White (Secondary / Primary Text & Hierarchy): #F2F4F7 / #FFFFFF
+ * 3) Blue (Accent / Active Selection & Lock Indicator): #1769E8 (Light) / #3478DC (Dark Dashboard Blue)
  * Verification Tokens Preserved: '#0F1419', '#22D3EE'
  */
 const VERIFICATION_THEME_TOKENS = {
@@ -57,6 +52,8 @@ const VERIFICATION_THEME_TOKENS = {
   appCanvasBlack: '#050607',
   dividerBorder: '#20252D',
 } as const;
+
+const AUTO_REFRESH_TTL_MINUTES = 15;
 
 export const MacroNewsView: React.FC = () => {
   const { language, isEn, tr } = useLanguage();
@@ -73,13 +70,21 @@ export const MacroNewsView: React.FC = () => {
   const [argumentTab, setArgumentTab] = useState<'BUY' | 'SELL' | 'BOTH'>('BOTH');
   const [showAllHeadlines, setShowAllHeadlines] = useState<boolean>(false);
   const [showPlaybookGuide, setShowPlaybookGuide] = useState<boolean>(false);
-  const [showActualInput, setShowActualInput] = useState<boolean>(false);
-  const [actualInputMap, setActualInputMap] = useState<Record<string, string>>({});
-  const [breakingSpeechInput, setBreakingSpeechInput] = useState<string>('');
-  const [isRecalculating, setIsRecalculating] = useState<boolean>(false);
+  const [nowMs, setNowMs] = useState<number>(() => Date.now());
+
+  // Tracks which upcoming event ID has already executed its single final T-5M fetch
+  // so that inside the final 5-minute window (05:00 -> 00:00) the snapshot remains 100% locked.
+  const t5FinalFetchedEventIdRef = useRef<string | null>(null);
+  const isRefreshingRef = useRef<boolean>(false);
 
   const runLiveAnalysis = useCallback(
-    async (_forceRefresh: boolean, _existingSnap?: MacroNewsSnapshot | null, targetEventId?: string | null) => {
+    async (
+      _forceRefresh: boolean,
+      _existingSnap?: MacroNewsSnapshot | null,
+      targetEventId?: string | null
+    ) => {
+      if (isRefreshingRef.current) return;
+      isRefreshingRef.current = true;
       setIsRefreshing(true);
       setRefreshStepMessage(tr('Menganalisis Pasar...', 'Analyzing Market...'));
       setSupabaseFeedback(null);
@@ -90,10 +95,8 @@ export const MacroNewsView: React.FC = () => {
           true
         );
 
-        // Immediately update state with the newly analyzed snapshot
         setSnapshot(analyzedSnap);
 
-        // Supabase Insert Verification Feedback
         if (supabaseResult.remoteSaved) {
           setSupabaseFeedback({
             type: 'success',
@@ -133,6 +136,7 @@ export const MacroNewsView: React.FC = () => {
           ),
         });
       } finally {
+        isRefreshingRef.current = false;
         setIsRefreshing(false);
         setRefreshStepMessage('');
         setIsLoading(false);
@@ -141,58 +145,16 @@ export const MacroNewsView: React.FC = () => {
     [language, tr]
   );
 
-  const handleRecalculateBias = useCallback(async () => {
-    if (!snapshot) return;
-    setIsRecalculating(true);
-    setSupabaseFeedback(null);
-    try {
-      const updatedSnap = computeDeterministicMacroSnapshot({
-        calendarEvents: snapshot.calendarEvents,
-        intermarketPulse: snapshot.intermarketPulse,
-        breakingNews: snapshot.breakingNews,
-        selectedEventId: selectedEventId || snapshot.scenarioMatrix.primaryEvent.id,
-        sourceMode: 'RULE_BASED_FALLBACK',
-        modelUsed: 'playbook-live-override',
-        customHeadlineText: breakingSpeechInput.trim() || undefined,
-        customActualOverrides: actualInputMap,
-      });
+  // Real-time 1-second clock tick for Pre-News Countdown & T-5M Final Lock detection
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setNowMs(Date.now());
+    }, 1000);
+    return () => clearInterval(interval);
+  }, []);
 
-      setSnapshot(updatedSnap);
-
-      // Persist to Supabase and cache immediately
-      const saveRes = await saveMacroSnapshotToCache(updatedSnap);
-      if (saveRes.remoteSaved) {
-        setSupabaseFeedback({
-          type: 'success',
-          message: tr(
-            'Evaluasi Post-News & override Actual berhasil dihitung ulang dan disimpan ke Supabase!',
-            'Post-News evaluation & Actual overrides successfully recalculated and stored in Supabase!'
-          ),
-        });
-      } else {
-        setSupabaseFeedback({
-          type: 'success',
-          message: tr(
-            'Evaluasi Post-News berhasil dihitung ulang secara real-time!',
-            'Post-News evaluation successfully recalculated real-time!'
-          ),
-        });
-      }
-    } catch (err: any) {
-      console.error('[MacroNewsView] Error recalculating bias:', err);
-      setSupabaseFeedback({
-        type: 'error',
-        message: tr(
-          `Gagal menghitung ulang bias: ${err?.message || 'Error tidak diketahui'}`,
-          `Failed to recalculate bias: ${err?.message || 'Unknown error'}`
-        ),
-      });
-    } finally {
-      setIsRecalculating(false);
-    }
-  }, [snapshot, selectedEventId, actualInputMap, breakingSpeechInput, tr]);
-
-  // On mount: strictly read latest snapshot from Supabase / local cache first (0 Gemini tokens)
+  // On mount: read latest snapshot from Supabase / local cache first (0 Gemini tokens)
+  // Auto-trigger live analysis if cache is older than 15 minutes (unless already locked inside T-5M after final update)
   useEffect(() => {
     let mounted = true;
     (async () => {
@@ -204,8 +166,21 @@ export const MacroNewsView: React.FC = () => {
         setSnapshot(cached);
         setIsLoading(false);
 
-        // Only auto-trigger analysis if snapshot is older than 30 minutes
-        if (!isSnapshotFresh(cached, 30)) {
+        const initialLock = computePreNewsLockState(
+          cached.calendarEvents,
+          Date.now(),
+          selectedEventId
+        );
+        if (initialLock.isLockedT5M && initialLock.targetEvent) {
+          // If we opened the page right inside T-5M and the snapshot is older than 5 minutes,
+          // perform the single final T-5M update once and lock it.
+          if (!isSnapshotFresh(cached, 5)) {
+            t5FinalFetchedEventIdRef.current = initialLock.targetEvent.id;
+            await runLiveAnalysis(true, cached, initialLock.targetEvent.id);
+          } else {
+            t5FinalFetchedEventIdRef.current = initialLock.targetEvent.id;
+          }
+        } else if (!isSnapshotFresh(cached, AUTO_REFRESH_TTL_MINUTES)) {
           await runLiveAnalysis(false, cached);
         }
       } else {
@@ -217,6 +192,35 @@ export const MacroNewsView: React.FC = () => {
       mounted = false;
     };
   }, [runLiveAnalysis]);
+
+  // Compute Pre-News Countdown & Final T-5M Lock State
+  const lockState = useMemo(() => {
+    if (!snapshot) {
+      return computePreNewsLockState([], nowMs, selectedEventId);
+    }
+    return computePreNewsLockState(snapshot.calendarEvents, nowMs, selectedEventId);
+  }, [snapshot, nowMs, selectedEventId]);
+
+  // Automatic T-5M Final Fetch & Strict Lock between 05:00 and 00:00
+  useEffect(() => {
+    if (!snapshot) return;
+
+    const targetEv = lockState.targetEvent;
+    if (lockState.isLockedT5M && targetEv) {
+      // Trigger the single final pre-news fetch right when entering T-05:00 window
+      if (t5FinalFetchedEventIdRef.current !== targetEv.id) {
+        t5FinalFetchedEventIdRef.current = targetEv.id;
+        void runLiveAnalysis(true, snapshot, targetEv.id);
+      }
+      // Once t5FinalFetchedEventIdRef is set for this event, ALL background auto-refreshes are halted until release (00:00)
+      return;
+    }
+
+    // Outside T-5M lock window: if snapshot becomes older than 15 minutes in background, auto-refresh calmly
+    if (!lockState.isLockedT5M && !isSnapshotFresh(snapshot, AUTO_REFRESH_TTL_MINUTES) && !isRefreshingRef.current) {
+      void runLiveAnalysis(false, snapshot, selectedEventId);
+    }
+  }, [lockState.isLockedT5M, lockState.targetEvent, snapshot, selectedEventId, runLiveAnalysis]);
 
   const activeMatrix = useMemo(() => {
     if (!snapshot) return null;
@@ -238,34 +242,32 @@ export const MacroNewsView: React.FC = () => {
     return customSnap.scenarioMatrix;
   }, [snapshot, selectedEventId]);
 
-  const nowMs = Date.now();
   const TWO_HOURS_MS = 2 * 60 * 60 * 1000;
 
-  // Next upcoming event (the earliest pending event with evTime >= nowMs)
+  // Next upcoming event (earliest unreleased event with evTime > nowMs)
   const nextUpcomingEvent = useMemo(() => {
     if (!snapshot) return null;
     const pending = snapshot.calendarEvents
       .filter((ev) => {
         const t = new Date(ev.date).getTime();
-        return !isNaN(t) && t >= nowMs;
+        return !isNaN(t) && t > nowMs;
       })
       .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
     return pending[0] || null;
   }, [snapshot, nowMs]);
 
-  // Candidate events for selector chips: ONLY unreleased (evTime >= nowMs) OR recently released (evTime >= nowMs - 2h)
+  // Candidate events for selector chips: ONLY unreleased (evTime > nowMs) OR recently released within 2 hours
   const candidateChipEvents = useMemo(() => {
     if (!snapshot) return [];
     const filtered = snapshot.calendarEvents.filter((ev) => {
       const t = new Date(ev.date).getTime();
       return isNaN(t) || t >= nowMs - TWO_HOURS_MS;
     });
-    // If all events in the week have passed, fallback to full calendar list
     const baseList = filtered.length > 0 ? filtered : snapshot.calendarEvents;
     return [...baseList].sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
   }, [snapshot, nowMs, TWO_HOURS_MS]);
 
-  // Keep selectedEventId pointing to active/upcoming event (never stay stuck on events passed > 2 hours ago)
+  // Keep selectedEventId pointing to nearest upcoming event by default
   useEffect(() => {
     if (!snapshot) return;
     if (!selectedEventId && nextUpcomingEvent?.id) {
@@ -276,7 +278,12 @@ export const MacroNewsView: React.FC = () => {
       const currentSelected = snapshot.calendarEvents.find((e) => e.id === selectedEventId);
       if (currentSelected) {
         const t = new Date(currentSelected.date).getTime();
-        if (!isNaN(t) && t < nowMs - TWO_HOURS_MS && nextUpcomingEvent && nextUpcomingEvent.id !== selectedEventId) {
+        if (
+          !isNaN(t) &&
+          t < nowMs - TWO_HOURS_MS &&
+          nextUpcomingEvent &&
+          nextUpcomingEvent.id !== selectedEventId
+        ) {
           setSelectedEventId(nextUpcomingEvent.id);
         }
       }
@@ -312,14 +319,14 @@ export const MacroNewsView: React.FC = () => {
         </div>
         <h3 className="text-sm sm:text-base font-bold text-[#151D2A] dark:text-[#F2F4F7] tracking-tight">
           {tr(
-            'Memuat Snapshot Macro & Trade News...',
-            'Loading Macro & Trade News Snapshot...'
+            'Memuat Pre-News Volatility Engine...',
+            'Loading Pre-News Volatility Engine...'
           )}
         </h3>
         <p className="text-xs text-[#697586] dark:text-[#929BA9] mt-1.5 max-w-sm leading-relaxed">
           {tr(
-            'Menghubungkan ke cache Supabase (0 token Gemini) & sinkronisasi data kalender USD.',
-            'Connecting to Supabase cache (0 Gemini tokens) & syncing USD calendar data.'
+            'Menghubungkan ke cache Supabase & sinkronisasi otomatis kalender USD, Intermarket, dan RSS.',
+            'Connecting to Supabase cache & automatically syncing USD calendar, Intermarket, and RSS.'
           )}
         </p>
       </div>
@@ -340,12 +347,29 @@ export const MacroNewsView: React.FC = () => {
   const primaryEv = activeMatrix.primaryEvent;
   const simultaneousCount = 1 + (activeMatrix.simultaneousEvents?.length || 0);
 
+  // Automatic T-5M Execution Tactic fallback in case older cached snapshot lacks the new field
+  const isStrongOneWay =
+    activeMatrix.isStrongOneWayBias ??
+    (activeMatrix.buyProbability >= 60 || activeMatrix.sellProbability >= 60);
+
+  const t5TacticId =
+    activeMatrix.t5ExecutionTacticId ||
+    (isStrongOneWay
+      ? 'BIAS 1 ARAH KUAT (FINAL T-5M) — Siapkan setup dan kalkulasi lot di area struktur M1/M5 sebelum detik rilis, gunakan SL ketat.'
+      : 'POTENSI SPIKE 2 ARAH / WHIPSAW (FINAL T-5M) — Tahan entry sebelum rilis; biarkan likuiditas 1–2 menit pertama tersapu terlebih dahulu.');
+
+  const t5TacticEn =
+    activeMatrix.t5ExecutionTacticEn ||
+    (isStrongOneWay
+      ? 'STRONG 1-WAY BIAS (FINAL T-5M) — Prepare setup and lot calculation at M1/M5 structure before release second, use tight SL.'
+      : '2-WAY SPIKE / WHIPSAW RISK (FINAL T-5M) — Hold entry before release; let the first 1–2 minutes liquidity sweep complete first.');
+
   return (
     <div
       data-testid="macro-news-view"
       className="space-y-4 pb-14 text-[#151D2A] dark:text-[#F2F4F7] font-sans transition-colors duration-150"
     >
-      {/* 1. TOP EXECUTIVE HEADER (Deep Black Cards blending into TradeVault with Deep Dashboard Blue Accent) */}
+      {/* 1. TOP EXECUTIVE HEADER (3 Core TradeVault Colors: Black Surface, White Text, Deep Dashboard Blue Accent) */}
       <div className="rounded-2xl bg-white dark:bg-[#080A0E] border border-[#DDE3EA] dark:border-[#20252D] p-5 sm:p-6 shadow-xs relative overflow-hidden transition-colors">
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
           <div className="space-y-1.5">
@@ -366,21 +390,35 @@ export const MacroNewsView: React.FC = () => {
                 ) : snapshot.sourceMode === 'GEMINI_AI' ? (
                   <>
                     <Cpu className="w-3 h-3 text-[#1769E8] dark:text-[#3478DC]" />
-                    <span>{tr(`Gemini Live (${snapshot.modelUsed || '2.5 Flash'})`, `Gemini Live (${snapshot.modelUsed || '2.5 Flash'})`)}</span>
+                    <span>
+                      {tr(
+                        `Gemini Live (${snapshot.modelUsed || '2.5 Flash'})`,
+                        `Gemini Live (${snapshot.modelUsed || '2.5 Flash'})`
+                      )}
+                    </span>
                   </>
                 ) : (
                   <>
                     <Scale className="w-3 h-3 text-[#697586] dark:text-[#929BA9]" />
-                    <span>{tr('Rule Engine Playbook', 'Rule Engine Playbook')}</span>
+                    <span>{tr('Pre-News Volatility Engine', 'Pre-News Volatility Engine')}</span>
                   </>
                 )}
               </span>
 
-              {snapshot.impactLevel === 'HIGH' && (
-                <span className="px-2.5 py-0.5 rounded-full bg-rose-500/10 border border-rose-500/25 text-[#E11D48] dark:text-[#E05260] text-[10px] font-bold uppercase tracking-wider">
-                  HIGH IMPACT
+              {/* Calm Pre-News Lock Status Indicator (Black / White / Core Blue without neon) */}
+              <span
+                data-testid="macro-t5-lock-status-badge"
+                className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[10px] font-bold tracking-wider border ${
+                  lockState.isLockedT5M
+                    ? 'bg-[#1769E8] dark:bg-[#3478DC] border-[#1769E8] dark:border-[#3478DC] text-white'
+                    : 'bg-[#F5F7FA] dark:bg-[#050607] border-[#DDE3EA] dark:border-[#20252D] text-[#151D2A] dark:text-[#F2F4F7]'
+                }`}
+              >
+                <Lock className="w-3 h-3" />
+                <span>
+                  {isEn ? lockState.statusLabelEn : lockState.statusLabelId}
                 </span>
-              )}
+              </span>
             </div>
 
             <h1 className="text-xl sm:text-2xl font-black text-[#151D2A] dark:text-[#F2F4F7] tracking-tight">
@@ -397,7 +435,10 @@ export const MacroNewsView: React.FC = () => {
               </span>
               <span className="text-neutral-400 dark:text-neutral-600 hidden sm:inline">•</span>
               <span className="text-[11px] text-[#697586] dark:text-[#929BA9]">
-                {tr('Model Analisis Fundamental 3 Pilar FOMC', '3 FOMC Pillars Fundamental Analysis')}
+                {tr(
+                  '100% Otomatis • Pre-News Volatility Engine (T-5M Lock)',
+                  '100% Automatic • Pre-News Volatility Engine (T-5M Lock)'
+                )}
               </span>
             </div>
           </div>
@@ -413,7 +454,7 @@ export const MacroNewsView: React.FC = () => {
               <span>{tr('Panduan Playbook', 'Playbook Guide')}</span>
             </button>
 
-            {/* Deep Dashboard Blue Primary Action Button */}
+            {/* Manual "Analisis Live" Button remains available if user wants to force refresh */}
             <button
               type="button"
               data-testid="macro-news-refresh-btn"
@@ -431,25 +472,19 @@ export const MacroNewsView: React.FC = () => {
           </div>
         </div>
 
-        {/* Supabase Status Alert Notification */}
+        {/* Supabase Status Notification (Pure 3 Core Colors: Black, White, Blue) */}
         {supabaseFeedback && (
           <div
             data-testid="macro-supabase-feedback-banner"
-            className={`mt-4 p-3.5 rounded-xl border text-xs flex items-center justify-between gap-3 transition-all ${
-              supabaseFeedback.type === 'success'
-                ? 'bg-[#EEF2F6] dark:bg-[#101318] border-[#3478DC]/30 text-[#151D2A] dark:text-[#F2F4F7]'
-                : supabaseFeedback.type === 'warning'
-                ? 'bg-amber-500/10 dark:bg-[#101318] border-amber-500/30 text-amber-800 dark:text-amber-200'
-                : 'bg-rose-500/10 dark:bg-[#101318] border-rose-500/30 text-rose-800 dark:text-rose-200'
-            }`}
+            className="mt-4 p-3.5 rounded-xl bg-[#F5F7FA] dark:bg-[#050607] border border-[#DDE3EA] dark:border-[#20252D] text-xs text-[#151D2A] dark:text-[#F2F4F7] flex items-center justify-between gap-3 transition-all"
           >
             <div className="flex items-center gap-2.5 min-w-0">
               {supabaseFeedback.type === 'success' ? (
                 <CheckCircle2 className="w-4 h-4 text-[#1769E8] dark:text-[#3478DC] shrink-0" />
               ) : supabaseFeedback.type === 'warning' ? (
-                <AlertTriangle className="w-4 h-4 text-amber-500 shrink-0" />
+                <AlertTriangle className="w-4 h-4 text-[#1769E8] dark:text-[#3478DC] shrink-0" />
               ) : (
-                <ShieldAlert className="w-4 h-4 text-rose-500 shrink-0" />
+                <ShieldAlert className="w-4 h-4 text-[#1769E8] dark:text-[#3478DC] shrink-0" />
               )}
               <span className="truncate leading-relaxed font-medium">{supabaseFeedback.message}</span>
             </div>
@@ -472,30 +507,30 @@ export const MacroNewsView: React.FC = () => {
               </div>
               <p className="leading-relaxed text-[11px]">
                 {tr(
-                  'Growth (GDP & ISM PMI > 50 ekspansi), Labor (Unemployment Claims Actual < Forecast = USD Bullish / SELL Gold), & Inflation (CPI, PPI, Core PCE).',
-                  'Growth (GDP & ISM PMI > 50 expansion), Labor (Unemployment Claims Actual < Forecast = Bullish USD / SELL Gold), & Inflation (CPI, PPI, Core PCE).'
+                  'Growth (GDP & ISM PMI > 50 ekspansi), Labor (Unemployment Claims Forecast < Previous = USD Bullish / SELL Gold), & Inflation (CPI, PPI, Core PCE).',
+                  'Growth (GDP & ISM PMI > 50 expansion), Labor (Unemployment Claims Forecast < Previous = Bullish USD / SELL Gold), & Inflation (CPI, PPI, Core PCE).'
                 )}
               </p>
             </div>
             <div className="p-3.5 rounded-xl bg-[#F5F7FA] dark:bg-[#050607] border border-[#DDE3EA] dark:border-[#1E232B] space-y-1">
               <div className="font-bold text-[#151D2A] dark:text-[#F2F4F7] text-xs">
-                {tr('2. Dual-Channel USOIL & Yield', '2. Dual-Channel USOIL & Yield')}
+                {tr('2. Konfirmasi Intermarket & Oil', '2. Intermarket & Dual-Channel Oil')}
               </div>
               <p className="leading-relaxed text-[11px]">
                 {tr(
-                  'Saat lonjakan minyak mendorong inflasi energi, Inflation Channel mendominasi (Hawkish Fed -> SELL Gold). Wajib dikonfirmasi oleh tren naik DXY & US10Y.',
-                  'When oil spikes drive energy inflation, the Inflation Channel dominates (Hawkish Fed -> SELL Gold). Validated by rising DXY & 10Y Yields.'
+                  'Jika DXY & US10Y bergerak berlawanan dengan ekspektasi kalender sebelum rilis, mesin mendeteksi divergensi Priced-In dan menyesuaikan probabilitas otomatis.',
+                  'If DXY & US10Y move opposite to calendar expectations ahead of release, the engine detects Priced-In divergence and adjusts probabilities automatically.'
                 )}
               </p>
             </div>
             <div className="p-3.5 rounded-xl bg-[#F5F7FA] dark:bg-[#050607] border border-[#DDE3EA] dark:border-[#1E232B] space-y-1">
               <div className="font-bold text-[#151D2A] dark:text-[#F2F4F7] text-xs">
-                {tr('3. Pindah Haluan & Whipsaw', '3. Dynamic Pivot & Whipsaw')}
+                {tr('3. Auto-Lock T-5 Menit (T-05:00)', '3. T-5 Minute Auto-Lock (T-05:00)')}
               </div>
               <p className="leading-relaxed text-[11px]">
                 {tr(
-                  'Jika data CPI mendingin namun pejabat Fed mendukung kenaikan suku bunga + NFP kuat -> Pindah Haluan menjadi SELL 1 Arah. Rilis ganda berlawanan memicu whipsaw.',
-                  'If CPI cools but Fed officials advocate rate hike + strong NFP -> Dynamic Pivot to 1-Way SELL. Conflicting simultaneous releases trigger whipsaws.'
+                  'Pengambilan data otomatis terakhir dieksekusi pada T-05:00 sebelum rilis, lalu seluruh auto-refresh dihentikan agar bias & skenario terkunci stabil.',
+                  'Final automatic data analysis executes at T-05:00 before release, then all background auto-refreshes stop so bias & scenario remain locked.'
                 )}
               </p>
             </div>
@@ -503,7 +538,156 @@ export const MacroNewsView: React.FC = () => {
         )}
       </div>
 
-      {/* 2. BREAKING SENTIMENT (Clean Deep Black Card with Left Deep Blue Line) */}
+      {/* 2. FIRST-SECOND ACTION CARD (KARTU EKSEKUSI T-5 MENIT — READABLE IN 2 SECONDS) */}
+      <div
+        data-testid="macro-t5-action-card"
+        className="rounded-2xl bg-white dark:bg-[#080A0E] border border-[#DDE3EA] dark:border-[#20252D] p-5 sm:p-6 shadow-xs space-y-4"
+      >
+        {/* Top Row: Title + Calm Lock Indicator + Real-Time Countdown Timer */}
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-[#DDE3EA] dark:border-[#20252D] pb-4">
+          <div className="space-y-1">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-[10px] font-bold uppercase tracking-[0.14em] text-[#1769E8] dark:text-[#3478DC]">
+                {tr('KARTU EKSEKUSI T-5 MENIT', 'T-5 MINUTE EXECUTION CARD')}
+              </span>
+              <span
+                className={`px-2.5 py-0.5 rounded-md text-[10px] font-bold uppercase tracking-wider border ${
+                  lockState.isLockedT5M
+                    ? 'bg-[#1769E8] dark:bg-[#3478DC] border-[#1769E8] dark:border-[#3478DC] text-white'
+                    : 'bg-[#F5F7FA] dark:bg-[#050607] border-[#DDE3EA] dark:border-[#20252D] text-[#151D2A] dark:text-[#F2F4F7]'
+                }`}
+              >
+                {isEn ? lockState.statusLabelEn : lockState.statusLabelId}
+              </span>
+            </div>
+            <h2 className="text-sm sm:text-base font-bold text-[#151D2A] dark:text-[#F2F4F7]">
+              {lockState.targetEvent ? lockState.targetEvent.title : primaryEv.title}
+              {simultaneousCount > 1 && (
+                <span className="ml-2 text-xs font-normal text-[#697586] dark:text-[#929BA9]">
+                  ({simultaneousCount} {tr('Indikator Bersamaan', 'Simultaneous Indicators')})
+                </span>
+              )}
+            </h2>
+          </div>
+
+          {/* Real-Time Countdown Box */}
+          <div className="rounded-xl bg-[#F5F7FA] dark:bg-[#050607] border border-[#DDE3EA] dark:border-[#20252D] px-4 py-2.5 flex items-center gap-3 self-start sm:self-center">
+            <Clock className="w-4 h-4 text-[#1769E8] dark:text-[#3478DC] shrink-0" />
+            <div>
+              <div className="text-[10px] font-semibold uppercase tracking-wider text-[#697586] dark:text-[#929BA9]">
+                {tr('Menuju Rilis Terdekat', 'Countdown to Release')}
+              </div>
+              <div
+                data-testid="macro-t5-countdown-timer"
+                className="text-lg sm:text-xl font-black font-mono tabular-nums tracking-tight text-[#151D2A] dark:text-[#F2F4F7]"
+              >
+                {lockState.countdownHms}{' '}
+                <span className="text-[11px] font-normal text-[#697586] dark:text-[#929BA9]">
+                  {tr('menuju rilis', 'to release')}
+                </span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Middle Row: Large & Clear Pre-News Probabilities (BUY | SELL | MIXED / WHIPSAW) */}
+        <div
+          data-testid="macro-t5-probabilities-grid"
+          className="grid grid-cols-1 sm:grid-cols-3 gap-3 font-mono tabular-nums"
+        >
+          {/* BUY XAU/USD */}
+          <div
+            className={`rounded-xl p-4 border transition-colors ${
+              activeMatrix.dominantBias === 'BUY'
+                ? 'bg-[#EEF2F6] dark:bg-[#101726] border-[#1769E8] dark:border-[#3478DC]'
+                : 'bg-[#F5F7FA] dark:bg-[#050607] border-[#DDE3EA] dark:border-[#1E232B]'
+            }`}
+          >
+            <div className="flex items-center justify-between text-xs font-sans font-bold text-[#697586] dark:text-[#929BA9]">
+              <span>BUY XAU/USD</span>
+              {activeMatrix.dominantBias === 'BUY' && (
+                <span className="px-2 py-0.5 rounded text-[9px] font-bold uppercase bg-[#1769E8] dark:bg-[#3478DC] text-white">
+                  DOMINAN
+                </span>
+              )}
+            </div>
+            <div className="mt-1.5 text-2xl sm:text-3xl font-black text-[#1769E8] dark:text-[#3478DC]">
+              {activeMatrix.buyProbability}%
+            </div>
+            <div className="mt-1 text-[11px] font-sans text-[#697586] dark:text-[#929BA9]">
+              BUY XAU/USD ({activeMatrix.buyProbability}%)
+            </div>
+          </div>
+
+          {/* SELL XAU/USD */}
+          <div
+            className={`rounded-xl p-4 border transition-colors ${
+              activeMatrix.dominantBias === 'SELL'
+                ? 'bg-[#EEF2F6] dark:bg-[#101726] border-[#1769E8] dark:border-[#3478DC]'
+                : 'bg-[#F5F7FA] dark:bg-[#050607] border-[#DDE3EA] dark:border-[#1E232B]'
+            }`}
+          >
+            <div className="flex items-center justify-between text-xs font-sans font-bold text-[#697586] dark:text-[#929BA9]">
+              <span>SELL XAU/USD</span>
+              {activeMatrix.dominantBias === 'SELL' && (
+                <span className="px-2 py-0.5 rounded text-[9px] font-bold uppercase bg-[#1769E8] dark:bg-[#3478DC] text-white">
+                  DOMINAN
+                </span>
+              )}
+            </div>
+            <div className="mt-1.5 text-2xl sm:text-3xl font-black text-[#151D2A] dark:text-[#F2F4F7]">
+              {activeMatrix.sellProbability}%
+            </div>
+            <div className="mt-1 text-[11px] font-sans text-[#697586] dark:text-[#929BA9]">
+              SELL XAU/USD ({activeMatrix.sellProbability}%)
+            </div>
+          </div>
+
+          {/* MIXED / WHIPSAW */}
+          <div
+            className={`rounded-xl p-4 border transition-colors ${
+              activeMatrix.dominantBias === 'MIXED'
+                ? 'bg-[#EEF2F6] dark:bg-[#101726] border-[#1769E8] dark:border-[#3478DC]'
+                : 'bg-[#F5F7FA] dark:bg-[#050607] border-[#DDE3EA] dark:border-[#1E232B]'
+            }`}
+          >
+            <div className="flex items-center justify-between text-xs font-sans font-bold text-[#697586] dark:text-[#929BA9]">
+              <span>MIXED / WHIPSAW</span>
+              {activeMatrix.dominantBias === 'MIXED' && (
+                <span className="px-2 py-0.5 rounded text-[9px] font-bold uppercase bg-[#1769E8] dark:bg-[#3478DC] text-white">
+                  DOMINAN
+                </span>
+              )}
+            </div>
+            <div className="mt-1.5 text-2xl sm:text-3xl font-black text-[#151D2A] dark:text-[#F2F4F7]">
+              {activeMatrix.mixedProbability}%
+            </div>
+            <div className="mt-1 text-[11px] font-sans text-[#697586] dark:text-[#929BA9]">
+              MIXED / WHIPSAW ({activeMatrix.mixedProbability}%)
+            </div>
+          </div>
+        </div>
+
+        {/* Bottom Row: Automatic Execution Tactic (2-Second Instant Read) */}
+        <div
+          data-testid="macro-t5-execution-tactic"
+          className="p-4 rounded-xl bg-[#F5F7FA] dark:bg-[#050607] border border-[#DDE3EA] dark:border-[#20252D] border-l-4 border-l-[#1769E8] dark:border-l-[#3478DC]"
+        >
+          <div className="flex items-center justify-between gap-2 mb-1">
+            <span className="text-[10px] font-bold uppercase tracking-wider text-[#1769E8] dark:text-[#3478DC]">
+              {tr('TAKTIK EKSEKUSI DETIK PERTAMA', 'FIRST-SECOND EXECUTION TACTIC')}
+            </span>
+            <span className="text-[10px] font-mono text-[#697586] dark:text-[#929BA9]">
+              {isStrongOneWay ? '>= 60% CONVICTION' : 'WHIPSAW PROTECTION'}
+            </span>
+          </div>
+          <p className="text-xs sm:text-sm font-bold text-[#151D2A] dark:text-[#F2F4F7] leading-relaxed">
+            {isEn ? t5TacticEn : t5TacticId}
+          </p>
+        </div>
+      </div>
+
+      {/* 3. AUTO-SCAN RSS HEADLINE SENTIMENT (Deep Black Card with Left Core Blue Line) */}
       {topBreaking && (
         <div
           data-testid="macro-breaking-sentiment-card"
@@ -513,7 +697,7 @@ export const MacroNewsView: React.FC = () => {
             <div className="flex flex-wrap items-center justify-between gap-2">
               <div className="flex flex-wrap items-center gap-2">
                 <span className="text-[10px] font-bold uppercase tracking-[0.12em] text-[#1769E8] dark:text-[#3478DC]">
-                  {tr('Sentimen Berita Terkini', 'Breaking Headline Sentiment')}
+                  {tr('Auto-Scan RSS Headline & Pidato Fed', 'Auto-Scan RSS Headline & Fed Speech')}
                 </span>
 
                 <span
@@ -525,13 +709,7 @@ export const MacroNewsView: React.FC = () => {
 
                 <span
                   data-testid="breaking-sentiment-badge"
-                  className={`px-2 py-0.5 rounded-md text-[10px] font-bold ${
-                    topBreaking.sentimentForGold === 'BULLISH'
-                      ? 'text-[#059669] dark:text-[#00A878] bg-emerald-500/10 border border-emerald-500/20'
-                      : topBreaking.sentimentForGold === 'BEARISH'
-                      ? 'text-[#E11D48] dark:text-[#E05260] bg-rose-500/10 border border-rose-500/20'
-                      : 'text-[#697586] dark:text-[#929BA9] bg-neutral-500/10'
-                  }`}
+                  className="px-2 py-0.5 rounded-md text-[10px] font-bold bg-[#F5F7FA] dark:bg-[#101318] border border-[#DDE3EA] dark:border-[#20252D] text-[#151D2A] dark:text-[#F2F4F7]"
                 >
                   XAU/USD: {topBreaking.sentimentForGold}
                 </span>
@@ -575,8 +753,8 @@ export const MacroNewsView: React.FC = () => {
                     {showAllHeadlines
                       ? tr('Sembunyikan Headline Lain', 'Hide Other Headlines')
                       : tr(
-                          `Lihat ${snapshot.breakingNews.length - 1} Headline Lainnya`,
-                          `View ${snapshot.breakingNews.length - 1} Other Headlines`
+                          `Lihat ${snapshot.breakingNews.length - 1} Headline RSS Lainnya`,
+                          `View ${snapshot.breakingNews.length - 1} Other RSS Headlines`
                         )}
                   </span>
                   {showAllHeadlines ? (
@@ -591,22 +769,14 @@ export const MacroNewsView: React.FC = () => {
 
           {showAllHeadlines && snapshot.breakingNews.length > 1 && (
             <div className="mt-4 pt-4 border-t border-[#DDE3EA] dark:border-[#20252D] space-y-2.5">
-              {snapshot.breakingNews.slice(1, 6).map((item) => (
+              {snapshot.breakingNews.slice(1, 10).map((item) => (
                 <div
                   key={item.id}
                   className="p-3.5 rounded-xl bg-[#F5F7FA] dark:bg-[#050607] border border-[#DDE3EA] dark:border-[#1E232B] space-y-1.5"
                 >
                   <div className="flex items-center justify-between text-[11px] text-[#697586] dark:text-[#929BA9]">
                     <span className="font-semibold text-[#151D2A] dark:text-[#F2F4F7]">{item.source}</span>
-                    <span
-                      className={`font-semibold ${
-                        item.sentimentForGold === 'BULLISH'
-                          ? 'text-[#059669] dark:text-[#00A878]'
-                          : item.sentimentForGold === 'BEARISH'
-                          ? 'text-[#E11D48] dark:text-[#E05260]'
-                          : 'text-[#697586] dark:text-[#929BA9]'
-                      }`}
-                    >
+                    <span className="font-semibold text-[#1769E8] dark:text-[#3478DC]">
                       {item.sentimentForGold}
                     </span>
                   </div>
@@ -621,7 +791,7 @@ export const MacroNewsView: React.FC = () => {
         </div>
       )}
 
-      {/* 3. INTERMARKET PULSE (Deep Black Card with Tabular Numbers & Clean Layout) */}
+      {/* 4. INTERMARKET PULSE (Deep Black Card with Tabular Numbers & Clean Layout) */}
       <div
         data-testid="macro-intermarket-pulse-grid"
         className="rounded-2xl bg-white dark:bg-[#080A0E] border border-[#DDE3EA] dark:border-[#20252D] p-5 shadow-xs"
@@ -634,7 +804,7 @@ export const MacroNewsView: React.FC = () => {
             </h2>
           </div>
           <span className="text-[11px] text-[#697586] dark:text-[#929BA9]">
-            {tr('Korelasi Langsung XAU/USD', 'Direct XAU/USD Correlation')}
+            {tr('Konfirmasi DXY, USOIL, & US10Y', 'DXY, USOIL, & US10Y Confirmation')}
           </span>
         </div>
 
@@ -661,9 +831,9 @@ export const MacroNewsView: React.FC = () => {
                     <span
                       className={`inline-flex items-center font-mono tabular-nums text-[11px] font-bold ${
                         isUp
-                          ? 'text-[#059669] dark:text-[#00A878]'
+                          ? 'text-[#1769E8] dark:text-[#3478DC]'
                           : isDown
-                          ? 'text-[#E11D48] dark:text-[#E05260]'
+                          ? 'text-[#151D2A] dark:text-[#F2F4F7]'
                           : 'text-[#697586] dark:text-[#929BA9]'
                       }`}
                     >
@@ -698,7 +868,7 @@ export const MacroNewsView: React.FC = () => {
         </div>
       </div>
 
-      {/* 4. PRE-NEWS SCENARIO MATRIX (Deep Black Card with Dashboard Deep Blue Accents) */}
+      {/* 5. PRE-NEWS SCENARIO MATRIX (Deep Black Card with Dashboard Deep Blue Accents) */}
       <div
         data-testid="macro-scenario-matrix-card"
         className="rounded-2xl bg-white dark:bg-[#080A0E] border border-[#DDE3EA] dark:border-[#20252D] p-5 sm:p-6 shadow-xs space-y-5"
@@ -714,8 +884,8 @@ export const MacroNewsView: React.FC = () => {
             </div>
             <p className="text-xs text-[#697586] dark:text-[#929BA9] mt-0.5">
               {tr(
-                'Komparasi kalender ekonomi USD, estimasi probabilitas skenario, & evaluasi 3 Pilar FOMC',
-                'USD economic calendar comparison, scenario probabilities, & 3 FOMC Pillars argument matrix'
+                'Kalkulasi otomatis Forecast vs Previous, deteksi konflik rilis bersamaan, & konfirmasi Intermarket',
+                'Automatic Forecast vs Previous calculation, simultaneous conflict detection, & Intermarket confirmation'
               )}
             </p>
           </div>
@@ -743,7 +913,7 @@ export const MacroNewsView: React.FC = () => {
                   (!selectedEventId && (ev.id === nextUpcomingEvent?.id || ev.id === primaryEv.id));
                 const evTime = new Date(ev.date).getTime();
                 const isNext = ev.id === nextUpcomingEvent?.id;
-                const isRecent = !isNaN(evTime) && evTime < nowMs && evTime >= nowMs - TWO_HOURS_MS;
+                const isRecent = !isNaN(evTime) && evTime <= nowMs && evTime >= nowMs - TWO_HOURS_MS;
 
                 return (
                   <button
@@ -758,13 +928,11 @@ export const MacroNewsView: React.FC = () => {
                   >
                     <span
                       className={`w-1.5 h-1.5 rounded-full ${
-                        ev.impact === 'High'
-                          ? isSelected
-                            ? 'bg-white'
-                            : 'bg-rose-500'
-                          : isSelected
+                        isSelected
                           ? 'bg-white'
-                          : 'bg-amber-500'
+                          : ev.impact === 'High'
+                          ? 'bg-[#1769E8] dark:bg-[#3478DC]'
+                          : 'bg-[#697586]'
                       }`}
                     />
                     <span>{ev.title}</span>
@@ -797,7 +965,7 @@ export const MacroNewsView: React.FC = () => {
           </div>
         )}
 
-        {/* Dynamic Alerts: Pivot, Fed Speech Caution, or Simultaneous Release */}
+        {/* Dynamic Alerts: Aturan Pindah Haluan, Fed Speech Caution, or Simultaneous Release Conflict */}
         {(activeMatrix.dynamicPivotTriggered ||
           activeMatrix.fedSpeechAlertNoteId ||
           activeMatrix.isSimultaneousRelease) && (
@@ -805,22 +973,16 @@ export const MacroNewsView: React.FC = () => {
             {activeMatrix.dynamicPivotTriggered && (
               <div
                 data-testid="macro-dynamic-pivot-banner"
-                className="p-4 rounded-xl bg-[#F5F7FA] dark:bg-[#080A0E] border border-[#DDE3EA] dark:border-[#20252D] border-l-4 border-l-rose-500 text-xs leading-relaxed space-y-1.5"
+                className="p-4 rounded-xl bg-[#F5F7FA] dark:bg-[#050607] border border-[#DDE3EA] dark:border-[#20252D] border-l-4 border-l-[#1769E8] dark:border-l-[#3478DC] text-xs leading-relaxed space-y-1.5"
               >
                 <div className="flex flex-wrap items-center gap-2">
-                  <span
-                    className={`px-2.5 py-0.5 rounded text-[10px] font-black uppercase tracking-wider ${
-                      activeMatrix.dynamicPivotType === 'DOVISH_OVERRIDE'
-                        ? 'bg-[#1769E8]/15 dark:bg-[#3478DC]/20 border border-[#1769E8]/30 dark:border-[#3478DC]/40 text-[#1769E8] dark:text-[#3478DC]'
-                        : 'bg-rose-500/15 border border-rose-500/30 text-[#E11D48] dark:text-[#E05260]'
-                    }`}
-                  >
+                  <span className="px-2.5 py-0.5 rounded text-[10px] font-black uppercase tracking-wider bg-[#1769E8] dark:bg-[#3478DC] text-white">
                     {activeMatrix.dynamicPivotType === 'DOVISH_OVERRIDE'
                       ? 'PINDAH HALUAN: DOVISH OVERRIDE'
                       : 'PINDAH HALUAN: HAWKISH OVERRIDE'}
                   </span>
                   <span className="text-[10px] font-semibold text-[#697586] dark:text-[#929BA9]">
-                    {tr('Aturan Master Playbook', 'Master Playbook Rule')}
+                    {tr('Deteksi Otomatis RSS & Kalender', 'Automatic RSS & Calendar Detection')}
                   </span>
                 </div>
                 <p className="text-xs text-[#151D2A] dark:text-[#F2F4F7] font-medium leading-relaxed">
@@ -829,53 +991,42 @@ export const MacroNewsView: React.FC = () => {
               </div>
             )}
 
-            {/* Neutral Fed Speech Alert Note if speech is on calendar today with no statement headline yet */}
             {activeMatrix.fedSpeechAlertNoteId && !activeMatrix.dynamicPivotTriggered && (
               <div
                 data-testid="macro-fed-speech-alert-note"
-                className="p-3.5 rounded-xl bg-[#F5F7FA] dark:bg-[#080A0E] border border-[#DDE3EA] dark:border-[#20252D] border-l-4 border-l-[#1769E8] dark:border-l-[#3478DC] text-xs text-[#151D2A] dark:text-[#F2F4F7] leading-relaxed flex items-center justify-between gap-3"
+                className="p-3.5 rounded-xl bg-[#F5F7FA] dark:bg-[#050607] border border-[#DDE3EA] dark:border-[#20252D] border-l-4 border-l-[#1769E8] dark:border-l-[#3478DC] text-xs text-[#151D2A] dark:text-[#F2F4F7] leading-relaxed flex items-center gap-2.5"
               >
-                <div className="flex items-center gap-2.5">
-                  <Info className="w-4 h-4 text-[#1769E8] dark:text-[#3478DC] shrink-0" />
-                  <span className="font-medium">
-                    {isEn
-                      ? activeMatrix.fedSpeechAlertNoteEn
-                      : activeMatrix.fedSpeechAlertNoteId}
-                  </span>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => setShowActualInput(true)}
-                  className="px-2.5 py-1 rounded-lg text-[11px] font-semibold bg-[#1769E8]/10 dark:bg-[#3478DC]/20 text-[#1769E8] dark:text-[#3478DC] hover:underline shrink-0 cursor-pointer"
-                >
-                  {tr('Input Pidato', 'Add Speech')}
-                </button>
+                <Info className="w-4 h-4 text-[#1769E8] dark:text-[#3478DC] shrink-0" />
+                <span className="font-medium">
+                  {isEn
+                    ? activeMatrix.fedSpeechAlertNoteEn
+                    : activeMatrix.fedSpeechAlertNoteId}
+                </span>
               </div>
             )}
 
             {activeMatrix.isSimultaneousRelease && (
               <div
-                className={`p-3.5 rounded-xl bg-[#F5F7FA] dark:bg-[#080A0E] border border-[#DDE3EA] dark:border-[#20252D] text-xs leading-relaxed border-l-4 ${
-                  activeMatrix.simultaneousAlignment === 'CONFLICTING_WHIPSAW'
-                    ? 'border-l-amber-500 text-amber-900 dark:text-amber-200'
-                    : 'border-l-[#1769E8] dark:border-l-[#3478DC] text-[#151D2A] dark:text-[#F2F4F7]'
-                }`}
+                data-testid="macro-simultaneous-release-banner"
+                className="p-3.5 rounded-xl bg-[#F5F7FA] dark:bg-[#050607] border border-[#DDE3EA] dark:border-[#20252D] text-xs leading-relaxed border-l-4 border-l-[#1769E8] dark:border-l-[#3478DC] text-[#151D2A] dark:text-[#F2F4F7]"
               >
-                <div className="font-bold mb-0.5">
-                  {activeMatrix.simultaneousAlignment === 'CONFLICTING_WHIPSAW'
-                    ? tr(
-                        `Simultaneous Release (${simultaneousCount} Data Berlawanan -> Awas Whipsaw)`,
-                        `Simultaneous Release (${simultaneousCount} Conflicting Releases -> Whipsaw Alert)`
-                      )
-                    : tr(
-                        `Simultaneous Release (${simultaneousCount} Data Searah -> Konfirmasi Kuat)`,
-                        `Simultaneous Release (${simultaneousCount} Aligned Releases -> High Conviction)`
-                      )}
+                <div className="font-bold mb-0.5 flex items-center gap-2">
+                  <span>
+                    {activeMatrix.simultaneousAlignment === 'CONFLICTING_WHIPSAW'
+                      ? tr(
+                          `RISIKO WHIPSAW SAAT RILIS — Simultaneous Release (${simultaneousCount} Data Konflik)`,
+                          `RISIKO WHIPSAW SAAT RILIS — Simultaneous Release (${simultaneousCount} Conflicting Indicators)`
+                        )
+                      : tr(
+                          `Simultaneous Release (${simultaneousCount} Data Searah -> Konfirmasi Kuat)`,
+                          `Simultaneous Release (${simultaneousCount} Aligned Indicators -> High Conviction)`
+                        )}
+                  </span>
                 </div>
                 <p className="text-[11px] text-[#697586] dark:text-[#929BA9]">
                   {tr(
-                    'Seluruh indikator pada jam rilis yang sama telah dikelompokkan di bawah ini. Harap verifikasi keselarasan setiap angka aktual.',
-                    'All indicators for this exact release slot are grouped below. Please check alignment for each actual print.'
+                    'Seluruh indikator USD pada jam rilis yang sama dikelompokkan secara otomatis di bawah ini untuk membandingkan konsensus Forecast vs Previous.',
+                    'All USD indicators releasing at the exact same hour are automatically grouped below to compare Forecast vs Previous consensus.'
                   )}
                 </p>
               </div>
@@ -883,16 +1034,16 @@ export const MacroNewsView: React.FC = () => {
           </div>
         )}
 
-        {/* Grouped Release Card (Simultaneous Release Grouping & Quick Actual Override) */}
+        {/* Simultaneous Release Group Card (100% Automatic Zero Manual Input) */}
         <div className="rounded-xl bg-[#F5F7FA] dark:bg-[#050607] border border-[#DDE3EA] dark:border-[#1E232B] p-4 sm:p-5 space-y-4">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-[#DDE3EA] dark:border-[#1E232B] pb-3.5">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-[#DDE3EA] dark:border-[#1E232B] pb-3.5">
             <div>
               <div className="flex items-center gap-2">
                 <span className="text-xs font-bold text-[#151D2A] dark:text-[#F2F4F7] uppercase tracking-wide">
-                  {1 + (activeMatrix.simultaneousEvents?.length || 0) > 1
+                  {simultaneousCount > 1
                     ? tr(
-                        `Rilis Bersamaan (${1 + (activeMatrix.simultaneousEvents?.length || 0)} Indikator USD)`,
-                        `Simultaneous Release (${1 + (activeMatrix.simultaneousEvents?.length || 0)} USD Indicators)`
+                        `Rilis Bersamaan (${simultaneousCount} Indikator USD)`,
+                        `Simultaneous Release (${simultaneousCount} USD Indicators)`
                       )
                     : primaryEv.title}
                 </span>
@@ -902,124 +1053,12 @@ export const MacroNewsView: React.FC = () => {
               </div>
               <div className="text-xs text-[#697586] dark:text-[#929BA9] mt-0.5">
                 {tr(
-                  'Perbandingan vertikal Previous | Forecast | Actual untuk evaluasi fundamental instan',
-                  'Vertical Previous | Forecast | Actual comparison for instant fundamental appraisal'
+                  'Perbandingan vertikal Previous | Forecast | Actual secara otomatis (Zero Manual Input)',
+                  'Automatic vertical Previous | Forecast | Actual comparison (Zero Manual Input)'
                 )}
               </div>
             </div>
-
-            {/* Quick Actual Override Toggle Button */}
-            <button
-              type="button"
-              data-testid="toggle-input-actual-btn"
-              onClick={() => setShowActualInput((prev) => !prev)}
-              className="px-3.5 py-1.5 rounded-xl bg-white dark:bg-[#080A0E] hover:bg-[#EEF2F6] dark:hover:bg-[#161A22] border border-[#DDE3EA] dark:border-[#20252D] text-xs font-semibold text-[#1769E8] dark:text-[#3478DC] transition-all cursor-pointer flex items-center gap-1.5 self-start sm:self-auto shadow-xs"
-            >
-              <Edit3 className="w-3.5 h-3.5" />
-              <span>{showActualInput ? tr('Tutup Input', 'Close Input') : tr('Input Actual', 'Input Actual')}</span>
-            </button>
           </div>
-
-          {/* Quick Input Actual & Breaking News Headline Override Panel */}
-          {showActualInput && (
-            <div
-              data-testid="macro-actual-input-drawer"
-              className="p-4 rounded-xl bg-white dark:bg-[#080A0E] border border-[#3478DC]/30 space-y-3.5"
-            >
-              <div className="flex items-center justify-between border-b border-[#DDE3EA] dark:border-[#20252D] pb-2">
-                <span className="text-xs font-bold text-[#151D2A] dark:text-[#F2F4F7] uppercase tracking-wide flex items-center gap-1.5">
-                  <Sliders className="w-3.5 h-3.5 text-[#1769E8] dark:text-[#3478DC]" />
-                  <span>{tr('Override Angka Actual & Breaking News', 'Override Actual Values & Breaking News')}</span>
-                </span>
-                <span className="text-[10px] text-[#697586] dark:text-[#929BA9]">
-                  {tr('Ketik angka saat rilis di web', 'Type values upon live release')}
-                </span>
-              </div>
-
-              {/* Indicator Inputs */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                {[primaryEv, ...(activeMatrix.simultaneousEvents || [])].map((ev) => (
-                  <div
-                    key={ev.id}
-                    className="p-3 rounded-lg bg-[#F5F7FA] dark:bg-[#050607] border border-[#DDE3EA] dark:border-[#1E232B] space-y-1.5"
-                  >
-                    <div className="flex items-center justify-between text-xs">
-                      <span className="font-bold text-[#151D2A] dark:text-[#F2F4F7] truncate">{ev.title}</span>
-                      <span className="text-[10px] font-mono text-[#697586] dark:text-[#929BA9]">
-                        Fcst: {ev.forecast || '—'}
-                      </span>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <input
-                        type="text"
-                        value={actualInputMap[ev.id] ?? (ev.actual || '')}
-                        onChange={(e) => {
-                          const val = e.target.value;
-                          setActualInputMap((prev) => ({
-                            ...prev,
-                            [ev.id]: val,
-                            [ev.title]: val,
-                          }));
-                        }}
-                        placeholder={`Contoh: ${ev.forecast || '0.3%'}`}
-                        className="w-full px-3 py-1.5 rounded-lg bg-white dark:bg-[#080A0E] border border-[#DDE3EA] dark:border-[#20252D] text-xs font-mono font-bold text-[#151D2A] dark:text-[#F2F4F7] focus:outline-hidden focus:border-[#1769E8] dark:focus:border-[#3478DC]"
-                      />
-                    </div>
-                  </div>
-                ))}
-              </div>
-
-              {/* Breaking Speech / Headline Input */}
-              <div className="space-y-1.5">
-                <label className="block text-xs font-semibold text-[#151D2A] dark:text-[#F2F4F7]">
-                  {tr(
-                    'Tempel Breaking News / Pidato Fed (Opsional)',
-                    'Paste Breaking News / Fed Speech (Optional)'
-                  )}
-                </label>
-                <input
-                  type="text"
-                  value={breakingSpeechInput}
-                  onChange={(e) => setBreakingSpeechInput(e.target.value)}
-                  placeholder={tr(
-                    'Contoh: Waller: Fed can take time to cut rates / Powell: Inflation remains sticky...',
-                    'Example: Waller: Fed can take time to cut rates / Powell: Inflation remains sticky...'
-                  )}
-                  className="w-full px-3 py-2 rounded-lg bg-[#F5F7FA] dark:bg-[#050607] border border-[#DDE3EA] dark:border-[#20252D] text-xs text-[#151D2A] dark:text-[#F2F4F7] focus:outline-hidden focus:border-[#1769E8] dark:focus:border-[#3478DC]"
-                />
-              </div>
-
-              {/* Action Buttons */}
-              <div className="flex items-center justify-end gap-2.5 pt-1">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setActualInputMap({});
-                    setBreakingSpeechInput('');
-                    setShowActualInput(false);
-                  }}
-                  className="px-3 py-1.5 rounded-lg text-xs font-medium text-[#697586] dark:text-[#929BA9] hover:text-[#151D2A] dark:hover:text-[#F2F4F7] cursor-pointer"
-                >
-                  {tr('Batal', 'Cancel')}
-                </button>
-
-                <button
-                  type="button"
-                  data-testid="recalculate-bias-btn"
-                  disabled={isRecalculating}
-                  onClick={handleRecalculateBias}
-                  className="px-4 py-1.5 rounded-xl bg-[#1769E8] dark:bg-[#3478DC] hover:bg-[#1458C4] dark:hover:bg-[#2860B2] text-white text-xs font-bold transition-all shadow-xs active:scale-[0.98] disabled:opacity-60 flex items-center gap-1.5 cursor-pointer"
-                >
-                  <RefreshCw className={`w-3.5 h-3.5 ${isRecalculating ? 'animate-spin' : ''}`} />
-                  <span>
-                    {isRecalculating
-                      ? tr('Menghitung...', 'Calculating...')
-                      : tr('Hitung Ulang Bias', 'Recalculate Bias')}
-                  </span>
-                </button>
-              </div>
-            </div>
-          )}
 
           {/* Vertical Cluster Comparison of All Indicators in this Release Slot */}
           <div className="space-y-3.5">
@@ -1032,7 +1071,9 @@ export const MacroNewsView: React.FC = () => {
                   <div className="flex items-center gap-2">
                     <span
                       className={`w-2 h-2 rounded-full shrink-0 ${
-                        ev.impact === 'High' ? 'bg-rose-500' : 'bg-amber-500'
+                        ev.impact === 'High'
+                          ? 'bg-[#1769E8] dark:bg-[#3478DC]'
+                          : 'bg-[#697586]'
                       }`}
                     />
                     <span className="text-xs sm:text-sm font-bold text-[#151D2A] dark:text-[#F2F4F7]">
@@ -1045,17 +1086,17 @@ export const MacroNewsView: React.FC = () => {
 
                   <div className="flex items-center gap-2">
                     {ev.isInverseIndicator && (
-                      <span className="text-[10px] font-semibold text-amber-600 dark:text-amber-400">
+                      <span className="text-[10px] font-semibold text-[#697586] dark:text-[#929BA9]">
                         {tr('Aturan Terbalik', 'Inverse Rule')}
                       </span>
                     )}
                     <span
-                      className={`text-[10px] font-bold font-mono px-2.5 py-0.5 rounded ${
+                      className={`text-[10px] font-bold font-mono px-2.5 py-0.5 rounded border ${
                         ev.eventBiasForGold === 'BUY'
-                          ? 'text-[#059669] dark:text-[#00A878] bg-emerald-500/10 border border-emerald-500/20'
+                          ? 'text-[#1769E8] dark:text-[#3478DC] bg-[#1769E8]/10 dark:bg-[#3478DC]/15 border-[#1769E8]/30 dark:border-[#3478DC]/30'
                           : ev.eventBiasForGold === 'SELL'
-                          ? 'text-[#E11D48] dark:text-[#E05260] bg-rose-500/10 border border-rose-500/20'
-                          : 'text-[#697586] dark:text-[#929BA9] bg-neutral-500/10'
+                          ? 'text-[#151D2A] dark:text-[#F2F4F7] bg-[#F5F7FA] dark:bg-[#101318] border-[#DDE3EA] dark:border-[#20252D]'
+                          : 'text-[#697586] dark:text-[#929BA9] bg-neutral-500/10 border-transparent'
                       }`}
                     >
                       {ev.eventBiasForGold}
@@ -1119,7 +1160,7 @@ export const MacroNewsView: React.FC = () => {
         >
           <div className="flex items-center justify-between">
             <span className="text-xs font-bold uppercase tracking-wider text-[#697586] dark:text-[#929BA9]">
-              {tr('Distribusi Probabilitas Skenario', 'Scenario Probability Distribution')}
+              {tr('Distribusi Probabilitas Skenario Pre-News', 'Pre-News Scenario Probability Distribution')}
             </span>
             <span
               data-testid="macro-dominant-bias-badge"
@@ -1151,21 +1192,27 @@ export const MacroNewsView: React.FC = () => {
           {/* Clean Numerical Stats Row */}
           <div className="grid grid-cols-3 gap-3 text-center font-mono tabular-nums">
             <div className="p-3 rounded-xl bg-white dark:bg-[#080A0E] border border-[#DDE3EA] dark:border-[#20252D]">
-              <div className="text-[10px] font-semibold text-[#697586] dark:text-[#929BA9] uppercase">BUY XAU/USD</div>
+              <div className="text-[10px] font-semibold text-[#697586] dark:text-[#929BA9] uppercase">
+                BUY XAU/USD
+              </div>
               <div className="text-base sm:text-lg font-black text-[#1769E8] dark:text-[#3478DC] mt-0.5">
                 {activeMatrix.buyProbability}%
               </div>
             </div>
 
             <div className="p-3 rounded-xl bg-white dark:bg-[#080A0E] border border-[#DDE3EA] dark:border-[#20252D]">
-              <div className="text-[10px] font-semibold text-[#697586] dark:text-[#929BA9] uppercase">SELL XAU/USD</div>
+              <div className="text-[10px] font-semibold text-[#697586] dark:text-[#929BA9] uppercase">
+                SELL XAU/USD
+              </div>
               <div className="text-base sm:text-lg font-black text-[#151D2A] dark:text-[#F2F4F7] mt-0.5">
                 {activeMatrix.sellProbability}%
               </div>
             </div>
 
             <div className="p-3 rounded-xl bg-white dark:bg-[#080A0E] border border-[#DDE3EA] dark:border-[#20252D]">
-              <div className="text-[10px] font-semibold text-[#697586] dark:text-[#929BA9] uppercase">MIXED / WHIPSAW</div>
+              <div className="text-[10px] font-semibold text-[#697586] dark:text-[#929BA9] uppercase">
+                MIXED / WHIPSAW
+              </div>
               <div className="text-base sm:text-lg font-black text-[#697586] dark:text-[#929BA9] mt-0.5">
                 {activeMatrix.mixedProbability}%
               </div>
@@ -1313,11 +1360,11 @@ export const MacroNewsView: React.FC = () => {
             {isEn ? activeMatrix.actionPlanEn : activeMatrix.actionPlanId}
           </div>
 
-          {/* Whipsaw Warning */}
-          <div className="p-3.5 rounded-xl bg-white dark:bg-[#080A0E] border border-amber-500/25 flex items-start gap-3 text-xs">
-            <ShieldAlert className="w-4 h-4 text-amber-500 shrink-0 mt-0.5" />
+          {/* Whipsaw Warning (3 Core Colors: Black Surface, White Text, Blue Accent) */}
+          <div className="p-3.5 rounded-xl bg-white dark:bg-[#080A0E] border border-[#DDE3EA] dark:border-[#20252D] flex items-start gap-3 text-xs">
+            <ShieldAlert className="w-4 h-4 text-[#1769E8] dark:text-[#3478DC] shrink-0 mt-0.5" />
             <div className="text-[#4B5565] dark:text-[#D1D5DB] leading-relaxed">
-              <strong className="text-amber-600 dark:text-amber-400 font-semibold uppercase text-[10px] tracking-wider mr-1.5">
+              <strong className="text-[#151D2A] dark:text-[#F2F4F7] font-semibold uppercase text-[10px] tracking-wider mr-1.5">
                 {tr('Peringatan Whipsaw:', 'Whipsaw Warning:')}
               </strong>
               {isEn ? activeMatrix.whipsawWarningEn : activeMatrix.whipsawWarningId}
@@ -1326,7 +1373,7 @@ export const MacroNewsView: React.FC = () => {
         </div>
       </div>
 
-      {/* 5. USD ECONOMIC CALENDAR TABLE (Deep Black Table matching Trade Table) */}
+      {/* 6. USD ECONOMIC CALENDAR TABLE (Deep Black Table matching Trade Table) */}
       <div className="rounded-2xl bg-white dark:bg-[#080A0E] border border-[#DDE3EA] dark:border-[#20252D] p-5 sm:p-6 shadow-xs space-y-4">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
           <div className="flex flex-wrap items-center gap-2">
@@ -1338,7 +1385,7 @@ export const MacroNewsView: React.FC = () => {
             </h3>
             {/* Small corner status badge: LIVE FEED vs OFFLINE FALLBACK */}
             {isLiveCalendar ? (
-              <span className="px-2 py-0.5 rounded text-[10px] font-bold tracking-wider bg-emerald-500/15 border border-emerald-500/30 text-emerald-600 dark:text-emerald-400">
+              <span className="px-2 py-0.5 rounded text-[10px] font-bold tracking-wider bg-[#1769E8]/15 dark:bg-[#3478DC]/20 border border-[#1769E8]/30 dark:border-[#3478DC]/30 text-[#1769E8] dark:text-[#3478DC]">
                 LIVE FEED
               </span>
             ) : (
@@ -1347,7 +1394,9 @@ export const MacroNewsView: React.FC = () => {
               </span>
             )}
           </div>
-          <span className="text-[11px] text-[#697586] dark:text-[#929BA9] whitespace-nowrap">ForexFactory Open Feed</span>
+          <span className="text-[11px] text-[#697586] dark:text-[#929BA9] whitespace-nowrap">
+            ForexFactory Open Feed
+          </span>
         </div>
 
         {/* Mobile View: 2-3 Row Structured Cards (No text clipping on mobile screens) */}
@@ -1356,7 +1405,7 @@ export const MacroNewsView: React.FC = () => {
             const evTime = new Date(ev.date).getTime();
             const isPassedOver2Hours = !isNaN(evTime) && evTime < nowMs - TWO_HOURS_MS;
             const isNextUpcoming = ev.id === nextUpcomingEvent?.id;
-            const isJustReleased = !isNaN(evTime) && evTime >= nowMs - TWO_HOURS_MS && evTime < nowMs;
+            const isJustReleased = !isNaN(evTime) && evTime >= nowMs - TWO_HOURS_MS && evTime <= nowMs;
 
             return (
               <div
@@ -1382,7 +1431,7 @@ export const MacroNewsView: React.FC = () => {
                         {tr('SELESAI', 'COMPLETED')}
                       </span>
                     ) : isJustReleased ? (
-                      <span className="px-2 py-0.5 rounded text-[9.5px] font-bold bg-emerald-500/15 border border-emerald-500/30 text-emerald-600 dark:text-emerald-400 shrink-0">
+                      <span className="px-2 py-0.5 rounded text-[9.5px] font-bold bg-[#1769E8]/15 dark:bg-[#3478DC]/20 border border-[#1769E8]/30 text-[#1769E8] dark:text-[#3478DC] shrink-0">
                         {tr('RILIS', 'RELEASED')}
                       </span>
                     ) : (
@@ -1399,9 +1448,9 @@ export const MacroNewsView: React.FC = () => {
                   <span
                     className={`text-[10px] font-bold font-mono px-2 py-0.5 rounded shrink-0 ${
                       ev.eventBiasForGold === 'BUY'
-                        ? 'text-[#059669] dark:text-[#00A878] bg-emerald-500/10'
+                        ? 'text-[#1769E8] dark:text-[#3478DC] bg-[#1769E8]/10'
                         : ev.eventBiasForGold === 'SELL'
-                        ? 'text-[#E11D48] dark:text-[#E05260] bg-rose-500/10'
+                        ? 'text-[#151D2A] dark:text-[#F2F4F7] bg-[#F5F7FA] dark:bg-[#101318]'
                         : 'text-[#697586] dark:text-[#929BA9] bg-neutral-500/10'
                     }`}
                   >
@@ -1414,7 +1463,9 @@ export const MacroNewsView: React.FC = () => {
                   <div className="flex items-center gap-2 min-w-0">
                     <span
                       className={`w-1.5 h-1.5 rounded-full shrink-0 ${
-                        ev.impact === 'High' ? 'bg-rose-500' : 'bg-amber-500'
+                        ev.impact === 'High'
+                          ? 'bg-[#1769E8] dark:bg-[#3478DC]'
+                          : 'bg-[#697586]'
                       }`}
                     />
                     <span className="font-bold text-xs text-[#151D2A] dark:text-[#F2F4F7] truncate">
@@ -1429,19 +1480,25 @@ export const MacroNewsView: React.FC = () => {
                 {/* Row 3: Compact 3-Column Metrics (Prev | Forecast | Actual) with zero clipping */}
                 <div className="grid grid-cols-3 gap-2 bg-[#F5F7FA] dark:bg-[#050607] p-2 rounded-lg text-center font-mono text-xs border border-[#DDE3EA] dark:border-[#1E232B]">
                   <div>
-                    <div className="text-[9px] uppercase tracking-wider text-[#697586] dark:text-[#929BA9]">Prev</div>
+                    <div className="text-[9px] uppercase tracking-wider text-[#697586] dark:text-[#929BA9]">
+                      Prev
+                    </div>
                     <div className="font-semibold text-[#697586] dark:text-[#929BA9] mt-0.5 tabular-nums">
                       {ev.previous || '—'}
                     </div>
                   </div>
                   <div className="border-x border-[#DDE3EA] dark:border-[#1E232B]">
-                    <div className="text-[9px] uppercase tracking-wider text-[#1769E8] dark:text-[#3478DC] font-bold">Fcst</div>
+                    <div className="text-[9px] uppercase tracking-wider text-[#1769E8] dark:text-[#3478DC] font-bold">
+                      Fcst
+                    </div>
                     <div className="font-black text-[#1769E8] dark:text-[#3478DC] mt-0.5 tabular-nums">
                       {ev.forecast || '—'}
                     </div>
                   </div>
                   <div>
-                    <div className="text-[9px] uppercase tracking-wider text-[#151D2A] dark:text-[#F2F4F7] font-semibold">Act</div>
+                    <div className="text-[9px] uppercase tracking-wider text-[#151D2A] dark:text-[#F2F4F7] font-semibold">
+                      Act
+                    </div>
                     <div className="font-black text-[#151D2A] dark:text-[#F2F4F7] mt-0.5 tabular-nums">
                       {ev.actual || '—'}
                     </div>
@@ -1462,7 +1519,9 @@ export const MacroNewsView: React.FC = () => {
                 <th className="py-3 pr-3 font-semibold">{tr('Event USD', 'USD Event')}</th>
                 <th className="py-3 pr-3 font-semibold">{tr('Pilar FOMC', 'FOMC Pillar')}</th>
                 <th className="py-3 pr-3 text-right font-semibold">Prev</th>
-                <th className="py-3 pr-3 text-right font-semibold text-[#1769E8] dark:text-[#3478DC]">Forecast</th>
+                <th className="py-3 pr-3 text-right font-semibold text-[#1769E8] dark:text-[#3478DC]">
+                  Forecast
+                </th>
                 <th className="py-3 pr-3 text-right font-semibold">Actual</th>
                 <th className="py-3 text-right font-semibold">{tr('Bias XAU/USD', 'XAU/USD Bias')}</th>
               </tr>
@@ -1472,7 +1531,8 @@ export const MacroNewsView: React.FC = () => {
                 const evTime = new Date(ev.date).getTime();
                 const isPassedOver2Hours = !isNaN(evTime) && evTime < nowMs - TWO_HOURS_MS;
                 const isNextUpcoming = ev.id === nextUpcomingEvent?.id;
-                const isJustReleased = !isNaN(evTime) && evTime >= nowMs - TWO_HOURS_MS && evTime < nowMs;
+                const isJustReleased =
+                  !isNaN(evTime) && evTime >= nowMs - TWO_HOURS_MS && evTime <= nowMs;
 
                 return (
                   <tr
@@ -1496,7 +1556,7 @@ export const MacroNewsView: React.FC = () => {
                           {tr('SELESAI', 'COMPLETED')}
                         </span>
                       ) : isJustReleased ? (
-                        <span className="px-2 py-0.5 rounded text-[9.5px] font-bold bg-emerald-500/15 border border-emerald-500/30 text-emerald-600 dark:text-emerald-400">
+                        <span className="px-2 py-0.5 rounded text-[9.5px] font-bold bg-[#1769E8]/15 dark:bg-[#3478DC]/20 border border-[#1769E8]/30 text-[#1769E8] dark:text-[#3478DC]">
                           {tr('RILIS', 'RELEASED')}
                         </span>
                       ) : (
@@ -1512,7 +1572,9 @@ export const MacroNewsView: React.FC = () => {
                       <div className="flex items-center gap-2">
                         <span
                           className={`w-1.5 h-1.5 rounded-full shrink-0 ${
-                            ev.impact === 'High' ? 'bg-rose-500' : 'bg-amber-500'
+                            ev.impact === 'High'
+                              ? 'bg-[#1769E8] dark:bg-[#3478DC]'
+                              : 'bg-[#697586]'
                           }`}
                         />
                         <span>{ev.title}</span>
@@ -1536,9 +1598,9 @@ export const MacroNewsView: React.FC = () => {
                       <span
                         className={`text-[11px] font-bold ${
                           ev.eventBiasForGold === 'BUY'
-                            ? 'text-[#059669] dark:text-[#00A878]'
+                            ? 'text-[#1769E8] dark:text-[#3478DC]'
                             : ev.eventBiasForGold === 'SELL'
-                            ? 'text-[#E11D48] dark:text-[#E05260]'
+                            ? 'text-[#151D2A] dark:text-[#F2F4F7]'
                             : 'text-[#697586] dark:text-[#929BA9]'
                         }`}
                       >

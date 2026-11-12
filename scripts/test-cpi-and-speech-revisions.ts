@@ -6,11 +6,12 @@ import {
   computeDeterministicMacroSnapshot,
   analyzeStatementTone,
   isFedSpeechEvent,
+  computePreNewsLockState,
   MacroCalendarEvent,
   IntermarketAssetPulse,
 } from '../src/utils/macroNewsEngine';
 
-console.log('=== RUNNING CPI RELEASE, SIMULTANEOUS GROUPING & SPEECH OVERRIDE TEST ===\n');
+console.log('=== RUNNING 100% AUTOMATIC PRE-NEWS VOLATILITY ENGINE & T-5M LOCK TESTS ===\n');
 
 const mockPulse: {
   dxy: IntermarketAssetPulse;
@@ -62,42 +63,33 @@ const mockPulse: {
 };
 
 // ---------------------------------------------------------------------------
-// 1. Post-News Inflation Priority (Actual > Forecast => SELL even if Actual < Previous)
+// 1. Pre-News Calendar Expectations & Simultaneous Release Grouping
 // ---------------------------------------------------------------------------
 {
-  // Core CPI: Previous 0.4%, Forecast 0.2%, Actual 0.3%
-  // 0.3% > 0.2% (beating forecast) => MUST BE SELL XAU/USD!
-  const coreCpiEval = evaluateSingleEventForGold('US Core CPI m/m', 0.3, 0.2, 0.4);
-  assert.strictEqual(
-    coreCpiEval.bias,
-    'SELL',
-    'Core CPI Actual (0.3%) > Forecast (0.2%) must produce SELL XAU/USD despite Actual < Previous (0.4%)'
-  );
-  assert.ok(
-    coreCpiEval.reasonId.includes('Aktual') && coreCpiEval.reasonId.includes('0.3'),
-    'Reason must explain Actual vs Forecast comparison'
-  );
-
-  // CPI m/m: Previous 0.5%, Forecast 0.3%, Actual 0.4%
-  const cpiEval = evaluateSingleEventForGold('US CPI m/m', 0.4, 0.3, 0.5);
-  assert.strictEqual(
-    cpiEval.bias,
-    'SELL',
-    'CPI m/m Actual (0.4%) > Forecast (0.3%) must produce SELL XAU/USD'
-  );
-
-  console.log('✓ PASS [1]: Post-News inflation priority: Actual > Forecast produces strong SELL XAU/USD');
-}
-
-// ---------------------------------------------------------------------------
-// 2. Simultaneous Release Grouping (Core CPI + CPI m/m at 20:30 WIB)
-// ---------------------------------------------------------------------------
-{
-  const releaseTime = new Date('2026-11-12T13:30:00Z').toISOString(); // 20:30 WIB
+  const releaseTime = new Date(Date.now() + 20 * 60 * 1000).toISOString(); // 20 mins ahead
   const events: MacroCalendarEvent[] = [
     {
       id: 'cpi-core',
       title: 'US Core CPI m/m',
+      country: 'USD',
+      date: releaseTime,
+      impact: 'High',
+      previous: '0.3%',
+      forecast: '0.2%',
+      actual: '',
+      previousNum: 0.3,
+      forecastNum: 0.2,
+      actualNum: null,
+      unit: '%',
+      pillar: 'INFLATION',
+      isInverseIndicator: false,
+      eventBiasForGold: 'BUY',
+      biasReasonId: 'Forecast < Previous',
+      biasReasonEn: 'Forecast < Previous',
+    },
+    {
+      id: 'cpi-headline',
+      title: 'US CPI m/m',
       country: 'USD',
       date: releaseTime,
       impact: 'High',
@@ -111,27 +103,8 @@ const mockPulse: {
       pillar: 'INFLATION',
       isInverseIndicator: false,
       eventBiasForGold: 'BUY',
-      biasReasonId: 'Initial buy',
-      biasReasonEn: 'Initial buy',
-    },
-    {
-      id: 'cpi-headline',
-      title: 'US CPI m/m',
-      country: 'USD',
-      date: releaseTime,
-      impact: 'High',
-      previous: '0.5%',
-      forecast: '0.3%',
-      actual: '',
-      previousNum: 0.5,
-      forecastNum: 0.3,
-      actualNum: null,
-      unit: '%',
-      pillar: 'INFLATION',
-      isInverseIndicator: false,
-      eventBiasForGold: 'BUY',
-      biasReasonId: 'Initial buy',
-      biasReasonEn: 'Initial buy',
+      biasReasonId: 'Forecast < Previous',
+      biasReasonEn: 'Forecast < Previous',
     },
   ];
 
@@ -139,118 +112,200 @@ const mockPulse: {
     calendarEvents: events,
     intermarketPulse: mockPulse,
     breakingNews: [],
-    selectedEventId: 'cpi-core',
   });
 
   assert.strictEqual(snap.scenarioMatrix.isSimultaneousRelease, true, 'Must detect simultaneous release');
   assert.strictEqual(snap.scenarioMatrix.simultaneousEvents.length, 1, 'Simultaneous events must contain CPI m/m');
-  assert.strictEqual(snap.scenarioMatrix.simultaneousEvents[0].id, 'cpi-headline');
+  assert.strictEqual(snap.scenarioMatrix.simultaneousAlignment, 'ALIGNED_BUY');
+  assert.strictEqual(snap.scenarioMatrix.dominantBias, 'BUY');
+  assert.ok(snap.scenarioMatrix.buyProbability >= 60, 'Aligned simultaneous BUY should have >= 60% conviction');
+  assert.ok(
+    snap.scenarioMatrix.t5ExecutionTacticId?.includes('BIAS 1 ARAH KUAT (FINAL T-5M)'),
+    'Strong 1-way bias (>= 60%) must generate BIAS 1 ARAH KUAT (FINAL T-5M) tactic'
+  );
 
-  // Test Actual Override through customActualOverrides:
-  // User types 0.3% for Core CPI and 0.4% for Headline CPI -> both beat forecast!
-  const updatedSnap = computeDeterministicMacroSnapshot({
-    calendarEvents: events,
-    intermarketPulse: mockPulse,
-    breakingNews: [],
-    selectedEventId: 'cpi-core',
-    customActualOverrides: {
-      'cpi-core': '0.3%',
-      'cpi-headline': '0.4%',
-    },
-  });
-
-  assert.strictEqual(updatedSnap.scenarioMatrix.primaryEvent.actual, '0.3%');
-  assert.strictEqual(updatedSnap.scenarioMatrix.primaryEvent.actualNum, 0.3);
-  assert.strictEqual(updatedSnap.scenarioMatrix.primaryEvent.eventBiasForGold, 'SELL');
-  assert.strictEqual(updatedSnap.scenarioMatrix.simultaneousEvents[0].actual, '0.4%');
-  assert.strictEqual(updatedSnap.scenarioMatrix.simultaneousEvents[0].actualNum, 0.4);
-  assert.strictEqual(updatedSnap.scenarioMatrix.simultaneousEvents[0].eventBiasForGold, 'SELL');
-  assert.strictEqual(updatedSnap.scenarioMatrix.simultaneousAlignment, 'ALIGNED_SELL');
-  assert.strictEqual(updatedSnap.scenarioMatrix.dominantBias, 'SELL');
-
-  console.log('✓ PASS [2]: Simultaneous release grouping & Actual overrides trigger instant Post-News re-evaluation to SELL');
+  console.log('✓ PASS [1]: Simultaneous Pre-News release grouping & Strong 1-Way T-5M tactic verified');
 }
 
 // ---------------------------------------------------------------------------
-// 3. Fed Speech & Headline Tone Analysis (Hawkish vs Dovish vs Neutral Note)
+// 2. Simultaneous Release Conflict Detection (MIXED >= 40% & RISIKO WHIPSAW SAAT RILIS)
 // ---------------------------------------------------------------------------
 {
-  assert.strictEqual(
-    analyzeStatementTone('Waller signals support for 25-50 bps rate hike amid sticky inflation'),
-    'HAWKISH'
-  );
-  assert.strictEqual(
-    analyzeStatementTone('Powell: Labor market cooling, time has come for rate cuts'),
-    'DOVISH'
-  );
-  assert.strictEqual(
-    analyzeStatementTone('FOMC Member speaks at economic club luncheon'),
-    'NEUTRAL'
-  );
-
-  // Test Hawkish Override
-  const hawkishSnap = computeDeterministicMacroSnapshot({
-    calendarEvents: [],
-    intermarketPulse: mockPulse,
-    breakingNews: [],
-    customHeadlineText: 'Waller: Inflation is sticky, Fed should hike 25 bps',
-  });
-  assert.strictEqual(hawkishSnap.scenarioMatrix.dynamicPivotTriggered, true);
-  assert.strictEqual(hawkishSnap.scenarioMatrix.dynamicPivotType, 'HAWKISH_OVERRIDE');
-  assert.strictEqual(hawkishSnap.scenarioMatrix.dominantBias, 'SELL');
-
-  // Test Dovish Override
-  const dovishSnap = computeDeterministicMacroSnapshot({
-    calendarEvents: [],
-    intermarketPulse: mockPulse,
-    breakingNews: [],
-    customHeadlineText: 'Powell: Easing cycle ready, rate cuts to commence immediately',
-  });
-  assert.strictEqual(dovishSnap.scenarioMatrix.dynamicPivotTriggered, true);
-  assert.strictEqual(dovishSnap.scenarioMatrix.dynamicPivotType, 'DOVISH_OVERRIDE');
-  assert.strictEqual(dovishSnap.scenarioMatrix.dominantBias, 'BUY');
-
-  // Test Fed speech scheduled today with NO statement headline -> Cautionary Note
-  const todaySpeechEvents: MacroCalendarEvent[] = [
+  const releaseTime = new Date(Date.now() + 15 * 60 * 1000).toISOString();
+  const conflictingEvents: MacroCalendarEvent[] = [
     {
-      id: 'fed-powell-speaks',
-      title: 'Fed Chair Powell Speaks',
+      id: 'nfp-main',
+      title: 'US Non-Farm Employment Change (NFP)',
       country: 'USD',
-      date: new Date().toISOString(),
+      date: releaseTime,
       impact: 'High',
-      previous: '',
-      forecast: '',
+      previous: '150K',
+      forecast: '200K', // Stronger labor -> SELL Gold
       actual: '',
-      previousNum: null,
-      forecastNum: null,
+      previousNum: 150,
+      forecastNum: 200,
       actualNum: null,
-      unit: '',
-      pillar: 'POLICY',
+      unit: 'K',
+      pillar: 'LABOR',
       isInverseIndicator: false,
-      eventBiasForGold: 'MIXED',
-      biasReasonId: 'Pending speech',
-      biasReasonEn: 'Pending speech',
+      eventBiasForGold: 'SELL',
+      biasReasonId: 'NFP naik',
+      biasReasonEn: 'NFP up',
+    },
+    {
+      id: 'unemp-rate',
+      title: 'US Unemployment Rate',
+      country: 'USD',
+      date: releaseTime,
+      impact: 'High',
+      previous: '4.0%',
+      forecast: '4.3%', // Higher unemployment (Inverse) -> BUY Gold
+      actual: '',
+      previousNum: 4.0,
+      forecastNum: 4.3,
+      actualNum: null,
+      unit: '%',
+      pillar: 'LABOR',
+      isInverseIndicator: true,
+      eventBiasForGold: 'BUY',
+      biasReasonId: 'Pengangguran naik',
+      biasReasonEn: 'Unemployment up',
     },
   ];
 
-  const speechScheduledSnap = computeDeterministicMacroSnapshot({
-    calendarEvents: todaySpeechEvents,
+  const conflictSnap = computeDeterministicMacroSnapshot({
+    calendarEvents: conflictingEvents,
     intermarketPulse: mockPulse,
     breakingNews: [],
   });
 
-  assert.strictEqual(isFedSpeechEvent('Fed Chair Powell Speaks'), true);
+  assert.strictEqual(conflictSnap.scenarioMatrix.isSimultaneousRelease, true);
+  assert.strictEqual(conflictSnap.scenarioMatrix.simultaneousAlignment, 'CONFLICTING_WHIPSAW');
   assert.ok(
-    speechScheduledSnap.scenarioMatrix.fedSpeechAlertNoteId &&
-      speechScheduledSnap.scenarioMatrix.fedSpeechAlertNoteId.includes('Waspada jadwal pidato pejabat Fed hari ini'),
-    'Must show neutral cautionary note when Fed speech is on calendar today without statement'
+    conflictSnap.scenarioMatrix.mixedProbability >= 40,
+    `Conflicting simultaneous releases must produce mixedProbability >= 40% (got ${conflictSnap.scenarioMatrix.mixedProbability}%)`
+  );
+  assert.ok(
+    conflictSnap.scenarioMatrix.whipsawWarningId.includes('RISIKO WHIPSAW SAAT RILIS'),
+    'Whipsaw warning must include RISIKO WHIPSAW SAAT RILIS'
+  );
+  assert.ok(
+    conflictSnap.scenarioMatrix.t5ExecutionTacticId?.includes('POTENSI SPIKE 2 ARAH / WHIPSAW (FINAL T-5M)'),
+    'Conflicting release must produce POTENSI SPIKE 2 ARAH / WHIPSAW (FINAL T-5M) tactic'
   );
 
-  console.log('✓ PASS [3]: Fed speech tone analysis, Hawkish Override, Dovish Override, and Cautionary Note verified');
+  console.log('✓ PASS [2]: Simultaneous Release Conflict detection (>= 40% MIXED & RISIKO WHIPSAW SAAT RILIS) verified');
 }
 
 // ---------------------------------------------------------------------------
-// 4. Verify MacroNewsView UI Structure
+// 3. Intermarket Divergence Confirmation (DXY & US10Y moving opposite to Calendar)
+// ---------------------------------------------------------------------------
+{
+  const releaseTime = new Date(Date.now() + 30 * 60 * 1000).toISOString();
+  const buyCalendarEvent: MacroCalendarEvent[] = [
+    {
+      id: 'cpi-soft',
+      title: 'US Core CPI m/m',
+      country: 'USD',
+      date: releaseTime,
+      impact: 'High',
+      previous: '0.3%',
+      forecast: '0.2%', // Expecting softer inflation -> BUY Gold
+      actual: '',
+      previousNum: 0.3,
+      forecastNum: 0.2,
+      actualNum: null,
+      unit: '%',
+      pillar: 'INFLATION',
+      isInverseIndicator: false,
+      eventBiasForGold: 'BUY',
+      biasReasonId: 'Forecast lebih rendah',
+      biasReasonEn: 'Lower forecast',
+    },
+  ];
+
+  // However, DXY and US10Y are both rising strongly ahead of release (Bearish Gold / Divergence!)
+  const divergingPulse = {
+    ...mockPulse,
+    dxy: {
+      ...mockPulse.dxy,
+      changePercent: 0.35,
+      direction: 'UP' as const,
+      goldCorrelationEffect: 'BEARISH_GOLD' as const,
+    },
+    us10y: {
+      ...mockPulse.us10y,
+      changePercent: 1.2,
+      direction: 'UP' as const,
+      goldCorrelationEffect: 'BEARISH_GOLD' as const,
+    },
+  };
+
+  const divSnap = computeDeterministicMacroSnapshot({
+    calendarEvents: buyCalendarEvent,
+    intermarketPulse: divergingPulse,
+    breakingNews: [],
+  });
+
+  const hasDivergenceArg = divSnap.scenarioMatrix.sellArguments.some((a) =>
+    a.tag.includes('DIVERGENSI DXY & US10Y')
+  );
+  assert.strictEqual(
+    hasDivergenceArg,
+    true,
+    'Must detect Intermarket Divergence when DXY & US10Y move opposite to BUY calendar expectation'
+  );
+
+  console.log('✓ PASS [3]: Real-Time Intermarket Divergence (DXY & US10Y vs Calendar) verified');
+}
+
+// ---------------------------------------------------------------------------
+// 4. T-5M Automatic Lock State (computePreNewsLockState)
+// ---------------------------------------------------------------------------
+{
+  const baseNow = Date.now();
+  const evIn14Mins: MacroCalendarEvent = {
+    id: 'ev-14m',
+    title: 'US Core PCE Price Index m/m',
+    country: 'USD',
+    date: new Date(baseNow + 14 * 60 * 1000 + 32 * 1000).toISOString(),
+    impact: 'High',
+    previous: '0.3%',
+    forecast: '0.2%',
+    actual: '',
+    previousNum: 0.3,
+    forecastNum: 0.2,
+    actualNum: null,
+    unit: '%',
+    pillar: 'INFLATION',
+    isInverseIndicator: false,
+    eventBiasForGold: 'BUY',
+    biasReasonId: 'Buy',
+    biasReasonEn: 'Buy',
+  };
+
+  // Before T-5M (14:32 remaining)
+  const stateBefore = computePreNewsLockState([evIn14Mins], baseNow);
+  assert.strictEqual(stateBefore.isLockedT5M, false);
+  assert.strictEqual(stateBefore.statusLabelId, 'Auto-Update Final pada T-05:00');
+  assert.strictEqual(stateBefore.countdownHms, '00:14:32');
+
+  // Inside T-5M (04:15 remaining)
+  const evIn4Mins: MacroCalendarEvent = {
+    ...evIn14Mins,
+    id: 'ev-4m',
+    date: new Date(baseNow + 4 * 60 * 1000 + 15 * 1000).toISOString(),
+  };
+  const stateInside = computePreNewsLockState([evIn4Mins], baseNow);
+  assert.strictEqual(stateInside.isLockedT5M, true);
+  assert.strictEqual(stateInside.statusLabelId, 'FINAL PRE-NEWS LOCKED (T-5M)');
+  assert.strictEqual(stateInside.countdownHms, '00:04:15');
+
+  console.log('✓ PASS [4]: T-5M Lock state (Auto-Update Final pada T-05:00 -> FINAL PRE-NEWS LOCKED (T-5M)) verified');
+}
+
+// ---------------------------------------------------------------------------
+// 5. Verify Zero Manual Input & First-Second Action Card in MacroNewsView.tsx
 // ---------------------------------------------------------------------------
 {
   const viewSrc = fs.readFileSync(
@@ -258,23 +313,46 @@ const mockPulse: {
     'utf8'
   );
 
-  assert.ok(
-    viewSrc.includes('data-testid="toggle-input-actual-btn"') &&
-      viewSrc.includes('data-testid="macro-actual-input-drawer"') &&
-      viewSrc.includes('data-testid="recalculate-bias-btn"'),
-    'MacroNewsView must render Input Actual toggle, actual input drawer, and recalculate bias button'
+  // Must NOT contain manual override inputs/buttons
+  assert.strictEqual(
+    viewSrc.includes('toggle-input-actual-btn'),
+    false,
+    'MacroNewsView must NOT contain manual Input Actual toggle button'
   );
-  assert.ok(
-    viewSrc.includes('PINDAH HALUAN: HAWKISH OVERRIDE') &&
-      viewSrc.includes('PINDAH HALUAN: DOVISH OVERRIDE'),
-    'MacroNewsView must render PINDAH HALUAN: HAWKISH OVERRIDE and PINDAH HALUAN: DOVISH OVERRIDE badges'
+  assert.strictEqual(
+    viewSrc.includes('macro-actual-input-drawer'),
+    false,
+    'MacroNewsView must NOT contain manual actual input drawer'
   );
-  assert.ok(
-    viewSrc.includes('data-testid="macro-fed-speech-alert-note"'),
-    'MacroNewsView must render macro-fed-speech-alert-note'
+  assert.strictEqual(
+    viewSrc.includes('recalculate-bias-btn'),
+    false,
+    'MacroNewsView must NOT contain manual recalculate bias button'
+  );
+  assert.strictEqual(
+    viewSrc.includes('Tempel Breaking News'),
+    false,
+    'MacroNewsView must NOT contain manual Tempel Breaking News input'
   );
 
-  console.log('✓ PASS [4]: UI components for Input Actual, Recalculate Bias, and Pindah Haluan badges verified');
+  // Must contain T-5M Execution Card & Lock Status Badges
+  assert.ok(
+    viewSrc.includes('data-testid="macro-t5-action-card"') &&
+      viewSrc.includes('data-testid="macro-t5-countdown-timer"') &&
+      viewSrc.includes('data-testid="macro-t5-probabilities-grid"') &&
+      viewSrc.includes('data-testid="macro-t5-execution-tactic"') &&
+      viewSrc.includes('data-testid="macro-t5-lock-status-badge"'),
+    'MacroNewsView must render T-5M First-Second Action Card, Countdown Timer, Probabilities, and Lock Status Badge'
+  );
+
+  assert.ok(
+    evaluateSingleEventForGold('US Core CPI m/m', 0.3, 0.2, 0.4).bias === 'SELL' &&
+      analyzeStatementTone('Waller signals support for 25-50 bps rate hike') === 'HAWKISH' &&
+      isFedSpeechEvent('Fed Chair Powell Speaks') === true,
+    'Core deterministic functions must remain intact'
+  );
+
+  console.log('✓ PASS [5]: Zero Manual Input UI & First-Second Action Card verified in MacroNewsView.tsx');
 }
 
-console.log('\n=== ALL NEW REVISION TESTS PASSED ===');
+console.log('\n=== ALL 100% AUTOMATIC PRE-NEWS VOLATILITY ENGINE TESTS PASSED ===');

@@ -87,6 +87,19 @@ export interface PreNewsScenarioMatrix {
   actionPlanEn: string;
   whipsawWarningId: string;
   whipsawWarningEn: string;
+  t5ExecutionTacticId?: string;
+  t5ExecutionTacticEn?: string;
+  isStrongOneWayBias?: boolean;
+}
+
+export interface PreNewsCountdownState {
+  targetEvent: MacroCalendarEvent | null;
+  remainingMs: number;
+  formattedCountdown: string;
+  countdownHms: string;
+  isLockedT5M: boolean;
+  statusLabelId: string;
+  statusLabelEn: string;
 }
 
 export interface MacroNewsSnapshot {
@@ -715,7 +728,24 @@ export function computeDeterministicMacroSnapshot(params: {
     workingBreakingNews.unshift(customHl);
   }
 
-  // Pick the primary event: either matching selectedEventId, or the closest upcoming/recent High Impact USD event
+  // Pick the primary event: either matching selectedEventId, or prioritize nearest UPCOMING (waktu_rilis > waktu_sekarang) event group
+  const upcomingEvents = workingCalendarEvents
+    .filter((e) => {
+      const t = new Date(e.date).getTime();
+      return Number.isFinite(t) && t > nowMs;
+    })
+    .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+
+  let nearestUpcomingPrimary: MacroCalendarEvent | undefined;
+  if (upcomingEvents.length > 0) {
+    const firstUpcomingTime = new Date(upcomingEvents[0].date).getTime();
+    const firstSlotCluster = upcomingEvents.filter(
+      (e) => Math.abs(new Date(e.date).getTime() - firstUpcomingTime) <= 15 * 60 * 1000
+    );
+    nearestUpcomingPrimary =
+      firstSlotCluster.find((e) => e.impact === 'High') || firstSlotCluster[0];
+  }
+
   const sortedEvents = [...workingCalendarEvents].sort((a, b) => {
     const aTime = new Date(a.date).getTime() || nowMs;
     const bTime = new Date(b.date).getTime() || nowMs;
@@ -725,12 +755,13 @@ export function computeDeterministicMacroSnapshot(params: {
   const highImpactNearest = sortedEvents.find((e) => e.impact === 'High');
   const primaryEvent: MacroCalendarEvent =
     workingCalendarEvents.find((e) => e.id === selectedEventId) ||
+    nearestUpcomingPrimary ||
     highImpactNearest ||
     sortedEvents[0] || {
       id: 'fallback-cpi-event',
       title: 'US Core CPI m/m',
       country: 'USD',
-      date: new Date().toISOString(),
+      date: new Date(nowMs + 25 * 60 * 1000).toISOString(),
       impact: 'High',
       previous: '0.3%',
       forecast: '0.2%',
@@ -766,10 +797,15 @@ export function computeDeterministicMacroSnapshot(params: {
   const sellArguments: PillarArgumentItem[] = [];
 
   // 1. Evaluate all events in the release cluster & across the 3 FOMC Pillars
+  let clusterBuyCount = 0;
+  let clusterSellCount = 0;
+  let clusterMixedCount = 0;
+
   for (const ev of allClusterEvents) {
     const weight = ev.impact === 'High' ? 28 : 16;
     if (ev.eventBiasForGold === 'BUY') {
       buyScore += weight;
+      clusterBuyCount += 1;
       buyArguments.push({
         pillar: ev.pillar,
         tag: `${ev.pillar} • ${ev.title}`,
@@ -778,6 +814,7 @@ export function computeDeterministicMacroSnapshot(params: {
       });
     } else if (ev.eventBiasForGold === 'SELL') {
       sellScore += weight;
+      clusterSellCount += 1;
       sellArguments.push({
         pillar: ev.pillar,
         tag: `${ev.pillar} • ${ev.title}`,
@@ -785,7 +822,8 @@ export function computeDeterministicMacroSnapshot(params: {
         textEn: ev.biasReasonEn,
       });
     } else {
-      whipsawScore += 14;
+      whipsawScore += 16;
+      clusterMixedCount += 1;
     }
   }
 
@@ -813,13 +851,15 @@ export function computeDeterministicMacroSnapshot(params: {
   }
 
   // 2. Check Simultaneous Release alignment vs conflict
+  // Conflict occurs if >= 2 simultaneous events point in opposite directions (BUY vs SELL) or diverge (BUY/SELL vs stagnant MIXED)
   let simultaneousAlignment: PreNewsScenarioMatrix['simultaneousAlignment'] = 'SINGLE';
   if (isSimultaneousRelease) {
-    const hasBuy = allClusterEvents.some((e) => e.eventBiasForGold === 'BUY');
-    const hasSell = allClusterEvents.some((e) => e.eventBiasForGold === 'SELL');
-    if (hasBuy && hasSell) {
+    const hasBuy = clusterBuyCount > 0;
+    const hasSell = clusterSellCount > 0;
+    const hasMixed = clusterMixedCount > 0;
+    if ((hasBuy && hasSell) || (hasMixed && (hasBuy || hasSell))) {
       simultaneousAlignment = 'CONFLICTING_WHIPSAW';
-      whipsawScore += 32;
+      whipsawScore += 45;
     } else if (hasSell && !hasBuy) {
       simultaneousAlignment = 'ALIGNED_SELL';
       sellScore += 18;
@@ -829,24 +869,49 @@ export function computeDeterministicMacroSnapshot(params: {
     }
   }
 
-  // 3. Evaluate Intermarket Pulse (DXY, US10Y, USOIL) & Dual-Channel Oil Rule
+  // 3. Evaluate Intermarket Pulse (DXY, US10Y, USOIL) & Real-Time Divergence (Priced-In / Pindah Haluan)
   const { dxy, usoil, us10y } = intermarketPulse;
+  const calendarExpectsBuy = clusterBuyCount > clusterSellCount;
+  const calendarExpectsSell = clusterSellCount > clusterBuyCount;
+
   if (dxy.direction === 'UP' && us10y.direction === 'UP') {
     sellScore += 20;
-    sellArguments.push({
-      pillar: 'INTERMARKET',
-      tag: `INTERMARKET • DXY & US10Y`,
-      textId: `Konfirmasi Intermarket Valid: DXY (${dxy.changePercent >= 0 ? '+' : ''}${dxy.changePercent.toFixed(2)}%) dan US10Y Yield (${us10y.changePercent >= 0 ? '+' : ''}${us10y.changePercent.toFixed(2)}%) kompak naik, menekan daya tarik XAU/USD tanpa imbal hasil.`,
-      textEn: `Valid Intermarket Confirmation: DXY (${dxy.changePercent >= 0 ? '+' : ''}${dxy.changePercent.toFixed(2)}%) and US10Y Yield (${us10y.changePercent >= 0 ? '+' : ''}${us10y.changePercent.toFixed(2)}%) are rising in tandem, pressuring non-yielding XAU/USD.`,
-    });
+    if (calendarExpectsBuy) {
+      // Intermarket contradicts calendar BUY expectation -> Priced-In / Intraday Divergence
+      whipsawScore += 16;
+      sellArguments.push({
+        pillar: 'INTERMARKET',
+        tag: `INTERMARKET • DIVERGENSI DXY & US10Y`,
+        textId: `Divergensi Intermarket Real-Time: Meskipun ekspektasi kalender mendukung BUY, DXY (${dxy.changePercent >= 0 ? '+' : ''}${dxy.changePercent.toFixed(2)}%) dan US10Y Yield (${us10y.changePercent >= 0 ? '+' : ''}${us10y.changePercent.toFixed(2)}%) justru naik (indikasi Priced-In / Pindah Haluan) → Menahan keyakinan BUY tunggal.`,
+        textEn: `Real-Time Intermarket Divergence: Although calendar consensus favors BUY, DXY (${dxy.changePercent >= 0 ? '+' : ''}${dxy.changePercent.toFixed(2)}%) and US10Y Yield (${us10y.changePercent >= 0 ? '+' : ''}${us10y.changePercent.toFixed(2)}%) are rising (Priced-In / Intraday Pivot) → Dampening single-direction BUY conviction.`,
+      });
+    } else {
+      sellArguments.push({
+        pillar: 'INTERMARKET',
+        tag: `INTERMARKET • DXY & US10Y`,
+        textId: `Konfirmasi Intermarket Valid: DXY (${dxy.changePercent >= 0 ? '+' : ''}${dxy.changePercent.toFixed(2)}%) dan US10Y Yield (${us10y.changePercent >= 0 ? '+' : ''}${us10y.changePercent.toFixed(2)}%) kompak naik, menekan daya tarik XAU/USD tanpa imbal hasil.`,
+        textEn: `Valid Intermarket Confirmation: DXY (${dxy.changePercent >= 0 ? '+' : ''}${dxy.changePercent.toFixed(2)}%) and US10Y Yield (${us10y.changePercent >= 0 ? '+' : ''}${us10y.changePercent.toFixed(2)}%) are rising in tandem, pressuring non-yielding XAU/USD.`,
+      });
+    }
   } else if (dxy.direction === 'DOWN' && us10y.direction === 'DOWN') {
     buyScore += 20;
-    buyArguments.push({
-      pillar: 'INTERMARKET',
-      tag: `INTERMARKET • DXY & US10Y`,
-      textId: `Dukungan Intermarket: Pelemahan serempak DXY (${dxy.changePercent.toFixed(2)}%) dan US10Y Yield (${us10y.changePercent.toFixed(2)}%) membuka ruang reli BUY pada XAU/USD.`,
-      textEn: `Intermarket Support: Simultaneous pullback in DXY (${dxy.changePercent.toFixed(2)}%) and US10Y Yield (${us10y.changePercent.toFixed(2)}%) opens upside room for BUY XAU/USD.`,
-    });
+    if (calendarExpectsSell) {
+      // Intermarket contradicts calendar SELL expectation -> Priced-In / Intraday Divergence
+      whipsawScore += 16;
+      buyArguments.push({
+        pillar: 'INTERMARKET',
+        tag: `INTERMARKET • DIVERGENSI DXY & US10Y`,
+        textId: `Divergensi Intermarket Real-Time: Meskipun ekspektasi kalender mendukung SELL, DXY (${dxy.changePercent.toFixed(2)}%) dan US10Y Yield (${us10y.changePercent.toFixed(2)}%) melemah serempak (indikasi Priced-In) → Mengurangi keyakinan SELL tunggal.`,
+        textEn: `Real-Time Intermarket Divergence: Despite a SELL calendar consensus, DXY (${dxy.changePercent.toFixed(2)}%) and US10Y Yield (${us10y.changePercent.toFixed(2)}%) are pulling back in tandem (Priced-In signal) → Reducing single-direction SELL conviction.`,
+      });
+    } else {
+      buyArguments.push({
+        pillar: 'INTERMARKET',
+        tag: `INTERMARKET • DXY & US10Y`,
+        textId: `Dukungan Intermarket: Pelemahan serempak DXY (${dxy.changePercent.toFixed(2)}%) dan US10Y Yield (${us10y.changePercent.toFixed(2)}%) membuka ruang reli BUY pada XAU/USD.`,
+        textEn: `Intermarket Support: Simultaneous pullback in DXY (${dxy.changePercent.toFixed(2)}%) and US10Y Yield (${us10y.changePercent.toFixed(2)}%) opens upside room for BUY XAU/USD.`,
+      });
+    }
   } else {
     whipsawScore += 10;
   }
@@ -875,8 +940,7 @@ export function computeDeterministicMacroSnapshot(params: {
     });
   }
 
-  // 4. Evaluate Dynamic Pivot Rule ("Aturan Dinamis Pindah Haluan")
-  // Check if Fed speech is scheduled on the calendar today or on the primary event's date
+  // 4. Auto-Scan RSS Headline & Evaluate Dynamic Pivot Rule ("Aturan Pindah Haluan Bang Nael")
   const fedSpeechEvents = workingCalendarEvents.filter((e) => isFedSpeechEvent(e.title));
   const primaryDayStr = (primaryEvent?.date || '').slice(0, 10);
   const nowDayStr = new Date().toISOString().slice(0, 10);
@@ -885,11 +949,11 @@ export function computeDeterministicMacroSnapshot(params: {
     return eDay === primaryDayStr || eDay === nowDayStr;
   });
 
-  // Evaluate Tone of Speech / Headlines
+  // Evaluate Tone of Speech / Top 10 RSS Headlines automatically
   let statementTone: 'HAWKISH' | 'DOVISH' | 'NEUTRAL' = 'NEUTRAL';
   let speechToneSource: BreakingNewsHeadline | null = null;
 
-  for (const b of workingBreakingNews) {
+  for (const b of workingBreakingNews.slice(0, 10)) {
     const tone = analyzeStatementTone(b.title);
     if (tone !== 'NEUTRAL') {
       statementTone = tone;
@@ -927,7 +991,7 @@ export function computeDeterministicMacroSnapshot(params: {
   let fedSpeechAlertNoteId: string | undefined;
   let fedSpeechAlertNoteEn: string | undefined;
 
-  // HAWKISH OVERRIDE: Fed official backs rate hike / tightening / sticky inflation, OR classic playbook pivot
+  // HAWKISH OVERRIDE: Auto-scanned RSS headline reveals Fed official backing rate hike / tightening / sticky inflation
   if (statementTone === 'HAWKISH' || (hawkishFedNews && (hasCoolingCpiForecast || strongNfpEvent))) {
     dynamicPivotTriggered = true;
     dynamicPivotType = 'HAWKISH_OVERRIDE';
@@ -937,8 +1001,8 @@ export function computeDeterministicMacroSnapshot(params: {
       speechToneSource?.matchedKeywords?.join(', ') ||
       hawkishFedNews?.matchedKeywords?.join(', ') ||
       'Pejabat Fed';
-    dynamicPivotReasonId = `PINDAH HALUAN: HAWKISH OVERRIDE — Pernyataan pejabat Fed (${officialName}) bernada Hawkish (sinyal suku bunga tinggi / pengetatan moneter) membalikkan arah skenario menjadi SELL 1 ARAH pada XAU/USD.`;
-    dynamicPivotReasonEn = `DYNAMIC PIVOT: HAWKISH OVERRIDE — Fed official remarks (${officialName}) tilt Hawkish (rate hike/higher-for-longer guidance), flipping the scenario into a 1-WAY SELL on XAU/USD.`;
+    dynamicPivotReasonId = `PINDAH HALUAN: HAWKISH OVERRIDE (Aturan Pindah Haluan Bang Nael) — Auto-scan RSS mendeteksi pernyataan pejabat Fed (${officialName}) bernada Hawkish (sinyal suku bunga tinggi / pengetatan moneter) yang membalikkan arah skenario menjadi SELL 1 ARAH pada XAU/USD.`;
+    dynamicPivotReasonEn = `DYNAMIC PIVOT: HAWKISH OVERRIDE (Bang Nael Pivot Rule) — RSS auto-scan detected Fed official remarks (${officialName}) tilting Hawkish (rate hike/higher-for-longer guidance), flipping the scenario into a 1-WAY SELL on XAU/USD.`;
     sellArguments.unshift({
       pillar: 'POLICY',
       tag: 'PINDAH HALUAN • HAWKISH OVERRIDE',
@@ -946,14 +1010,14 @@ export function computeDeterministicMacroSnapshot(params: {
       textEn: dynamicPivotReasonEn,
     });
   } else if (statementTone === 'DOVISH') {
-    // DOVISH OVERRIDE: Fed official signals rate cuts / easing / pause
+    // DOVISH OVERRIDE: Auto-scanned RSS headline reveals Fed official signaling rate cuts / easing / pause
     dynamicPivotTriggered = true;
     dynamicPivotType = 'DOVISH_OVERRIDE';
     buyScore += 45;
     sellScore = Math.max(5, Math.min(sellScore, 15));
     const officialName = speechToneSource?.matchedKeywords?.join(', ') || 'Pejabat Fed';
-    dynamicPivotReasonId = `PINDAH HALUAN: DOVISH OVERRIDE — Pernyataan pejabat Fed (${officialName}) bernada Dovish (sinyal pemangkasan suku bunga / pelonggaran moneter) membalikkan arah skenario menjadi BUY 1 ARAH pada XAU/USD.`;
-    dynamicPivotReasonEn = `DYNAMIC PIVOT: DOVISH OVERRIDE — Fed official remarks (${officialName}) tilt Dovish (rate cuts / monetary easing guidance), flipping the scenario into a 1-WAY BUY on XAU/USD.`;
+    dynamicPivotReasonId = `PINDAH HALUAN: DOVISH OVERRIDE (Aturan Pindah Haluan Bang Nael) — Auto-scan RSS mendeteksi pernyataan pejabat Fed (${officialName}) bernada Dovish (sinyal pemangkasan suku bunga / pelonggaran moneter) yang membalikkan arah skenario menjadi BUY 1 ARAH pada XAU/USD.`;
+    dynamicPivotReasonEn = `DYNAMIC PIVOT: DOVISH OVERRIDE (Bang Nael Pivot Rule) — RSS auto-scan detected Fed official remarks (${officialName}) tilting Dovish (rate cuts / monetary easing guidance), flipping the scenario into a 1-WAY BUY on XAU/USD.`;
     buyArguments.unshift({
       pillar: 'POLICY',
       tag: 'PINDAH HALUAN • DOVISH OVERRIDE',
@@ -962,7 +1026,7 @@ export function computeDeterministicMacroSnapshot(params: {
     });
   }
 
-  // Fed Speech Cautionary Note if Fed speech is on calendar today but no speech statement entered yet
+  // Fed Speech Cautionary Note if Fed speech is on calendar today with no directional speech headline yet
   if (hasFedSpeechTodayOrSameDay && !dynamicPivotTriggered) {
     fedSpeechAlertNoteId =
       'Waspada jadwal pidato pejabat Fed hari ini — pantau DXY & US02Y sebelum entry';
@@ -998,6 +1062,19 @@ export function computeDeterministicMacroSnapshot(params: {
   let sellProbability = Math.round((sellScore / rawTotal) * 100);
   let mixedProbability = Math.max(5, 100 - buyProbability - sellProbability);
 
+  // Enforce >= 40% MIXED / WHIPSAW probability when Simultaneous Release Conflict is detected (unless overridden by Dynamic Pivot)
+  if (
+    simultaneousAlignment === 'CONFLICTING_WHIPSAW' &&
+    !dynamicPivotTriggered &&
+    mixedProbability < 40
+  ) {
+    mixedProbability = 42;
+    const remaining = 100 - mixedProbability;
+    const dirSum = Math.max(1, buyScore + sellScore);
+    buyProbability = Math.round((buyScore / dirSum) * remaining);
+    sellProbability = Math.max(0, remaining - buyProbability);
+  }
+
   if (buyProbability + sellProbability + mixedProbability !== 100) {
     const diff = 100 - (buyProbability + sellProbability + mixedProbability);
     mixedProbability += diff;
@@ -1023,6 +1100,15 @@ export function computeDeterministicMacroSnapshot(params: {
   const impactLevel: MacroImpactLevel =
     hasHighImpactNews || hasHighImpactEvent || dynamicPivotTriggered ? 'HIGH' : 'MEDIUM';
 
+  // T-5M First-Second Execution Tactics (100% Automatic from Probability Distribution)
+  const isStrongOneWayBias = buyProbability >= 60 || sellProbability >= 60;
+  const t5ExecutionTacticId = isStrongOneWayBias
+    ? 'BIAS 1 ARAH KUAT (FINAL T-5M) — Siapkan setup dan kalkulasi lot di area struktur M1/M5 sebelum detik rilis, gunakan SL ketat.'
+    : 'POTENSI SPIKE 2 ARAH / WHIPSAW (FINAL T-5M) — Tahan entry sebelum rilis; biarkan likuiditas 1–2 menit pertama tersapu terlebih dahulu.';
+  const t5ExecutionTacticEn = isStrongOneWayBias
+    ? 'STRONG 1-WAY BIAS (FINAL T-5M) — Prepare setup and lot calculation at M1/M5 structure zones before release second, use tight SL.'
+    : 'TWO-WAY SPIKE / WHIPSAW RISK (FINAL T-5M) — Hold entry before release; let the first 1–2 minutes of liquidity sweep settle first.';
+
   // Final Take, Action Plan, and Whipsaw Warning
   const finalTakeId =
     dominantBias === 'SELL'
@@ -1040,31 +1126,31 @@ export function computeDeterministicMacroSnapshot(params: {
 
   const actionPlanId =
     dominantBias === 'SELL'
-      ? `1. Tunggu rilis ${primaryEvent.title} dan pantau reaksi 15 menit pertama.\n2. Konfirmasi SELL 1 Arah jika Actual mendukung penguatan USD disertai kenaikan US10Y Yield & DXY.\n3. Jika FedWatch > 90%, fokuskan eksekusi pada nada Forward Guidance / Press Conference.`
+      ? `1. ${t5ExecutionTacticId}\n2. Konfirmasi SELL 1 Arah jika pergerakan harga selaras dengan kenaikan US10Y Yield & DXY.\n3. Jika FedWatch > 90%, fokuskan eksekusi pada nada Forward Guidance / Press Conference.`
       : dominantBias === 'BUY'
-      ? `1. Pantau area likuiditas bawah menjelang rilis ${primaryEvent.title}.\n2. Eksekusi BUY bertahap apabila data aktual melemahkan USD (atau Klaim Pengangguran aktual > forecast) dan US10Y Yield tertahan turun.\n3. Amankan parsial pada rasio 1:2 R:R.`
-      : `1. Jangan pasang market order tepat pada detik rilis ${primaryEvent.title}.\n2. Tunggu sweep likuiditas atas & bawah (15–30 menit pasca-rilis).\n3. Hanya eksekusi searah breakout struktur M15 yang dikonfirmasi oleh arah DXY & US10Y.`;
+      ? `1. ${t5ExecutionTacticId}\n2. Eksekusi BUY terukur di area struktur M1/M5 apabila DXY & US10Y Yield tertahan turun.\n3. Amankan parsial pada rasio 1:2 R:R.`
+      : `1. ${t5ExecutionTacticId}\n2. Tunggu sweep likuiditas atas & bawah pasca-rilis ${primaryEvent.title}.\n3. Hanya eksekusi searah breakout struktur M5/M15 yang dikonfirmasi oleh arah DXY & US10Y.`;
 
   const actionPlanEn =
     dominantBias === 'SELL'
-      ? `1. Wait for the ${primaryEvent.title} print and observe the first 15-minute reaction.\n2. Execute 1-Way SELL if Actuals reinforce USD strength alongside rising US10Y Yields & DXY.\n3. If FedWatch pricing > 90%, anchor execution on Forward Guidance / Press Conference tone.`
+      ? `1. ${t5ExecutionTacticEn}\n2. Confirm 1-Way SELL if price action aligns with rising US10Y Yields & DXY.\n3. If FedWatch pricing > 90%, anchor execution on Forward Guidance / Press Conference tone.`
       : dominantBias === 'BUY'
-      ? `1. Monitor downside liquidity zones heading into ${primaryEvent.title}.\n2. Scale into BUY setups if actual data softens USD (or Jobless Claims print > forecast) and US10Y Yields roll over.\n3. Lock partial profit at 1:2 R:R.`
-      : `1. Do not place market orders at the exact second of the ${primaryEvent.title} release.\n2. Wait for the two-way liquidity sweep (15–30 minutes post-release).\n3. Only execute in the direction of the M15 structure break confirmed by DXY & US10Y.`;
+      ? `1. ${t5ExecutionTacticEn}\n2. Scale into BUY setups at M1/M5 structure zones as DXY & US10Y Yields roll over.\n3. Lock partial profit at 1:2 R:R.`
+      : `1. ${t5ExecutionTacticEn}\n2. Wait for the two-way liquidity sweep after the ${primaryEvent.title} release.\n3. Only execute in the direction of the M5/M15 structure break confirmed by DXY & US10Y.`;
 
   const whipsawWarningId =
     simultaneousAlignment === 'CONFLICTING_WHIPSAW'
-      ? `PERINGATAN WHIPSAW TINGGI: ${allClusterEvents.length} data rilis bersamaan (${allClusterEvents.map((e) => e.title).join(' + ')}) memiliki sinyal berlawanan! Risiko Fake Move 2 arah sangat tinggi pada 15 menit pertama.`
+      ? `RISIKO WHIPSAW SAAT RILIS: ${allClusterEvents.length} data rilis bersamaan (${allClusterEvents.map((e) => e.title).join(' + ')}) memiliki sinyal berlawanan! Potensi spike 2 arah sangat tinggi pada menit pertama.`
       : isSimultaneousRelease
-      ? `Rilis Simultan (${allClusterEvents.length} Event Bersamaan): Pastikan seluruh komponen searah saat angka Aktual keluar. Jika salah satu komponen meleset tajam berlawanan arah, waspadai Fake Move.`
-      : `Waspadai spike likuiditas awal jika angka Aktual meleset tipis dari Forecast atau terdapat revisi data bulan sebelumnya.`;
+      ? `Rilis Simultan (${allClusterEvents.length} Event Bersamaan): Pastikan seluruh komponen searah saat rilis. Jika salah satu komponen berlawanan arah, waspadai RISIKO WHIPSAW SAAT RILIS.`
+      : `Waspadai spike likuiditas awal pada detik rilis jika angka konsensus tipis atau terdapat divergensi intermarket.`;
 
   const whipsawWarningEn =
     simultaneousAlignment === 'CONFLICTING_WHIPSAW'
-      ? `HIGH WHIPSAW WARNING: ${allClusterEvents.length} simultaneous releases (${allClusterEvents.map((e) => e.title).join(' + ')}) show conflicting signals! High risk of a two-way Fake Move in the first 15 minutes.`
+      ? `RELEASE WHIPSAW RISK: ${allClusterEvents.length} simultaneous releases (${allClusterEvents.map((e) => e.title).join(' + ')}) show conflicting signals! High risk of a two-way Fake Move in the first minute.`
       : isSimultaneousRelease
-      ? `Simultaneous Release (${allClusterEvents.length} Concurrent Events): Verify all sub-components print in the same direction. If one component diverges sharply, guard against a Fake Move.`
-      : `Watch for initial liquidity spikes if Actuals print close to Forecast or if prior-month revisions conflict with the headline number.`;
+      ? `Simultaneous Release (${allClusterEvents.length} Concurrent Events): Verify all sub-components align at release. If one component diverges, guard against a Fake Move.`
+      : `Watch for initial liquidity spikes at the release second if consensus figures are tight or intermarket diverges.`;
 
   const topBreakingAlert =
     workingBreakingNews.find((b) => b.impact === 'HIGH') || workingBreakingNews[0] || null;
@@ -1108,7 +1194,84 @@ export function computeDeterministicMacroSnapshot(params: {
       actionPlanEn,
       whipsawWarningId,
       whipsawWarningEn,
+      t5ExecutionTacticId,
+      t5ExecutionTacticEn,
+      isStrongOneWayBias,
     },
+  };
+}
+
+/**
+ * Formats remaining milliseconds into HH:MM:SS countdown format (e.g., "00:14:32").
+ */
+export function formatCountdownHms(remainingMs: number): string {
+  if (!Number.isFinite(remainingMs) || remainingMs <= 0) {
+    return '00:00:00';
+  }
+  const totalSeconds = Math.floor(remainingMs / 1000);
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+
+  const hh = String(hours).padStart(2, '0');
+  const mm = String(minutes).padStart(2, '0');
+  const ss = String(seconds).padStart(2, '0');
+  return `${hh}:${mm}:${ss}`;
+}
+
+/**
+ * Computes the T-5 Minute Pre-News Lock and Real-Time Countdown state for the nearest upcoming USD release.
+ * - Before T-5M (remainingMs > 5 mins): statusLabelId = "Auto-Update Final pada T-05:00", isLockedT5M = false
+ * - Inside final 5 mins (0 < remainingMs <= 5 mins): statusLabelId = "FINAL PRE-NEWS LOCKED (T-5M)", isLockedT5M = true
+ */
+export function computePreNewsLockState(
+  calendarEvents: MacroCalendarEvent[],
+  nowMs: number = Date.now(),
+  selectedEventId?: string | null
+): PreNewsCountdownState {
+  const FIVE_MINUTES_MS = 5 * 60 * 1000;
+
+  // Prefer the selected event if it is still upcoming; otherwise pick the nearest upcoming event
+  const selectedEv = selectedEventId
+    ? calendarEvents.find((e) => e.id === selectedEventId)
+    : undefined;
+  const selectedEvTime = selectedEv ? new Date(selectedEv.date).getTime() : NaN;
+
+  let targetEvent: MacroCalendarEvent | null = null;
+  if (selectedEv && Number.isFinite(selectedEvTime) && selectedEvTime > nowMs) {
+    targetEvent = selectedEv;
+  } else {
+    const upcoming = calendarEvents
+      .filter((e) => {
+        const t = new Date(e.date).getTime();
+        return Number.isFinite(t) && t > nowMs;
+      })
+      .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+    targetEvent = upcoming[0] || selectedEv || calendarEvents[0] || null;
+  }
+
+  const targetTimeMs = targetEvent ? new Date(targetEvent.date).getTime() : NaN;
+  const remainingMs =
+    Number.isFinite(targetTimeMs) && targetTimeMs > nowMs ? targetTimeMs - nowMs : 0;
+
+  const isLockedT5M = remainingMs > 0 && remainingMs <= FIVE_MINUTES_MS;
+  const formattedCountdown = formatCountdownHms(remainingMs);
+
+  const statusLabelId = isLockedT5M
+    ? 'FINAL PRE-NEWS LOCKED (T-5M)'
+    : 'Auto-Update Final pada T-05:00';
+  const statusLabelEn = isLockedT5M
+    ? 'FINAL PRE-NEWS LOCKED (T-5M)'
+    : 'Final Auto-Update at T-05:00';
+
+  return {
+    targetEvent,
+    remainingMs,
+    formattedCountdown,
+    countdownHms: formattedCountdown,
+    isLockedT5M,
+    statusLabelId,
+    statusLabelEn,
   };
 }
 

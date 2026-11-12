@@ -1315,7 +1315,7 @@ app.post('/api/macro-news/analyze', async (req, res) => {
           direction: feeds.intermarketPulse.us10y.direction,
         },
       },
-      breakingHeadlines: feeds.breakingNews.slice(0, 5).map((h) => ({
+      breakingHeadlines: feeds.breakingNews.slice(0, 10).map((h) => ({
         title: h.title,
         keywords: h.matchedKeywords,
         channel: h.channelType,
@@ -1493,6 +1493,14 @@ app.post('/api/macro-news/analyze', async (req, res) => {
         }
       : null;
 
+    const isStrongOneWayBias = buyProb >= 60 || sellProb >= 60;
+    const t5ExecutionTacticId = isStrongOneWayBias
+      ? 'BIAS 1 ARAH KUAT (FINAL T-5M) — Siapkan setup dan kalkulasi lot di area struktur M1/M5 sebelum detik rilis, gunakan SL ketat.'
+      : 'POTENSI SPIKE 2 ARAH / WHIPSAW (FINAL T-5M) — Tahan entry sebelum rilis; biarkan likuiditas 1–2 menit pertama tersapu terlebih dahulu.';
+    const t5ExecutionTacticEn = isStrongOneWayBias
+      ? 'STRONG 1-WAY BIAS (FINAL T-5M) — Prepare setup and lot calculation at M1/M5 structure zones before release second, use tight SL.'
+      : 'TWO-WAY SPIKE / WHIPSAW RISK (FINAL T-5M) — Hold entry before release; let the first 1–2 minutes of liquidity sweep settle first.';
+
     const enrichedSnapshot: MacroNewsSnapshot = {
       ...baselineSnapshot,
       sourceMode: 'GEMINI_AI',
@@ -1518,6 +1526,9 @@ app.post('/api/macro-news/analyze', async (req, res) => {
           aiParsed.whipsawWarningId || baselineSnapshot.scenarioMatrix.whipsawWarningId,
         whipsawWarningEn:
           aiParsed.whipsawWarningEn || baselineSnapshot.scenarioMatrix.whipsawWarningEn,
+        t5ExecutionTacticId,
+        t5ExecutionTacticEn,
+        isStrongOneWayBias,
       },
     };
 
