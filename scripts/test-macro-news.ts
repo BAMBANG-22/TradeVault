@@ -67,7 +67,7 @@ const sampleIntermarket: {
 };
 
 // ---------------------------------------------------------------------------
-// 1. Verify API Key Isolation, Gemini 2.5 Flash, and Free Data Feeders
+// 1. Verify Server-Side Gemini Architecture, API Key Isolation, and Free Data Feeders
 // ---------------------------------------------------------------------------
 {
   const analyzerSrc = fs.readFileSync(
@@ -78,21 +78,41 @@ const sampleIntermarket: {
     path.resolve(process.cwd(), 'src/utils/macroFeedFetcher.ts'),
     'utf8'
   );
+  const serverSrc = fs.readFileSync(path.resolve(process.cwd(), 'server.ts'), 'utf8');
   const envExampleSrc = fs.readFileSync(path.resolve(process.cwd(), '.env.example'), 'utf8');
+  const metadataSrc = fs.readFileSync(path.resolve(process.cwd(), 'metadata.json'), 'utf8');
   const viewSrc = fs.readFileSync(
     path.resolve(process.cwd(), 'src/components/news/MacroNewsView.tsx'),
     'utf8'
   );
 
   assert.ok(
-    envExampleSrc.includes('VITE_GEMINI_NEWS_API_KEY=') &&
-      envExampleSrc.includes('VITE_GEMINI_API_KEY='),
-    '.env.example must declare VITE_GEMINI_NEWS_API_KEY and VITE_GEMINI_API_KEY for client-side quota isolation'
+    envExampleSrc.includes('GEMINI_API_KEY=') &&
+      envExampleSrc.includes('GEMINI_NEWS_API_KEY='),
+    '.env.example must declare server-side GEMINI_API_KEY and GEMINI_NEWS_API_KEY'
   );
   assert.ok(
-    analyzerSrc.includes('gemini-2.5-flash:generateContent') &&
-      analyzerSrc.includes('VITE_GEMINI_NEWS_API_KEY'),
-    'clientSideMacroAnalyzer.ts must isolate VITE_GEMINI_NEWS_API_KEY and call gemini-2.5-flash directly'
+    !envExampleSrc.includes('VITE_GEMINI_NEWS_API_KEY') &&
+      !envExampleSrc.includes('VITE_GEMINI_API_KEY'),
+    '.env.example must NOT expose client-side VITE_GEMINI keys'
+  );
+  assert.ok(
+    metadataSrc.includes('MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API'),
+    'metadata.json must include MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API'
+  );
+  assert.ok(
+    serverSrc.includes('/api/macro-news/analyze') &&
+      serverSrc.includes('GoogleGenAI') &&
+      serverSrc.includes('gemini-2.5-flash'),
+    'server.ts must implement /api/macro-news/analyze using GoogleGenAI SDK'
+  );
+  assert.ok(
+    !analyzerSrc.includes('generativelanguage.googleapis.com'),
+    'clientSideMacroAnalyzer.ts must NOT make direct browser calls to generativelanguage.googleapis.com'
+  );
+  assert.ok(
+    analyzerSrc.includes('/api/macro-news/analyze'),
+    'clientSideMacroAnalyzer.ts must route requests through server-side /api/macro-news/analyze endpoint'
   );
   assert.ok(
     fetcherSrc.includes('api.allorigins.win') &&
@@ -104,10 +124,10 @@ const sampleIntermarket: {
     viewSrc.includes('executeClientSideMacroAnalysis') &&
       viewSrc.includes('Menganalisis Pasar...') &&
       viewSrc.includes('data-testid="macro-supabase-feedback-banner"'),
-    'MacroNewsView.tsx must run client-side analysis, display "Menganalisis Pasar..." loading state, and render Supabase insert feedback'
+    'MacroNewsView.tsx must run client-side workflow, display "Menganalisis Pasar..." loading state, and render Supabase insert feedback'
   );
 
-  console.log('✓ PASS [1]: Client-Side Analysis, CORS Proxy (allorigins.win), Gemini 2.5 Flash direct REST, & Supabase insert feedback verified');
+  console.log('✓ PASS [1]: Server-Side Gemini Architecture, Proxy Endpoints, Zero Client API calls, CORS Proxy, & Supabase insert feedback verified');
 }
 
 // ---------------------------------------------------------------------------

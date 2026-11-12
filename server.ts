@@ -1154,12 +1154,48 @@ app.get('/api/macro-news/feeds', async (_req, res) => {
 // Full Macro News & Pre-News Scenario Matrix Analyzer
 app.post('/api/macro-news/analyze', async (req, res) => {
   try {
-    const { forceRefresh = false, selectedEventId } = (req.body || {}) as {
+    const {
+      forceRefresh = false,
+      selectedEventId,
+      clientFeeds,
+    } = (req.body || {}) as {
       forceRefresh?: boolean;
       selectedEventId?: string;
+      clientFeeds?: {
+        calendarEvents?: MacroCalendarEvent[];
+        intermarketPulse?: {
+          dxy: IntermarketAssetPulse;
+          usoil: IntermarketAssetPulse;
+          us10y: IntermarketAssetPulse;
+        };
+        breakingNews?: BreakingNewsHeadline[];
+      };
     };
 
-    const feeds = await gatherMacroPublicFeeds(Boolean(forceRefresh));
+    let feeds: {
+      calendarEvents: MacroCalendarEvent[];
+      intermarketPulse: {
+        dxy: IntermarketAssetPulse;
+        usoil: IntermarketAssetPulse;
+        us10y: IntermarketAssetPulse;
+      };
+      breakingNews: BreakingNewsHeadline[];
+    };
+
+    if (
+      clientFeeds &&
+      Array.isArray(clientFeeds.calendarEvents) &&
+      clientFeeds.calendarEvents.length > 0 &&
+      clientFeeds.intermarketPulse?.dxy
+    ) {
+      feeds = {
+        calendarEvents: clientFeeds.calendarEvents,
+        intermarketPulse: clientFeeds.intermarketPulse,
+        breakingNews: clientFeeds.breakingNews || [],
+      };
+    } else {
+      feeds = await gatherMacroPublicFeeds(Boolean(forceRefresh));
+    }
 
     // Step 1: Always compute the deterministic Master Playbook baseline first
     const baselineSnapshot = computeDeterministicMacroSnapshot({
