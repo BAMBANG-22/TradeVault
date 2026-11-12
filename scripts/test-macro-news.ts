@@ -70,26 +70,44 @@ const sampleIntermarket: {
 // 1. Verify API Key Isolation, Gemini 2.5 Flash, and Free Data Feeders
 // ---------------------------------------------------------------------------
 {
-  const serverSrc = fs.readFileSync(path.resolve(process.cwd(), 'server.ts'), 'utf8');
+  const analyzerSrc = fs.readFileSync(
+    path.resolve(process.cwd(), 'src/utils/clientSideMacroAnalyzer.ts'),
+    'utf8'
+  );
+  const fetcherSrc = fs.readFileSync(
+    path.resolve(process.cwd(), 'src/utils/macroFeedFetcher.ts'),
+    'utf8'
+  );
   const envExampleSrc = fs.readFileSync(path.resolve(process.cwd(), '.env.example'), 'utf8');
-
-  assert.ok(
-    envExampleSrc.includes('GEMINI_NEWS_API_KEY='),
-    '.env.example must declare GEMINI_NEWS_API_KEY for quota isolation'
-  );
-  assert.ok(
-    serverSrc.includes('process.env.GEMINI_NEWS_API_KEY') &&
-      serverSrc.includes('gemini-2.5-flash'),
-    'server.ts must isolate GEMINI_NEWS_API_KEY with fallback and use gemini-2.5-flash'
-  );
-  assert.ok(
-    serverSrc.includes('/api/macro-news/analyze') &&
-      serverSrc.includes('https://nfs.faireconomy.media/ff_calendar_thisweek.json') &&
-      serverSrc.includes('query1.finance.yahoo.com/v8/finance/chart/'),
-    'server.ts must expose /api/macro-news/analyze pulling ForexFactory & Yahoo Finance feeds in parallel'
+  const viewSrc = fs.readFileSync(
+    path.resolve(process.cwd(), 'src/components/news/MacroNewsView.tsx'),
+    'utf8'
   );
 
-  console.log('✓ PASS [1]: API Key Isolation (GEMINI_NEWS_API_KEY), gemini-2.5-flash, & parallel free data feeders verified');
+  assert.ok(
+    envExampleSrc.includes('VITE_GEMINI_NEWS_API_KEY=') &&
+      envExampleSrc.includes('VITE_GEMINI_API_KEY='),
+    '.env.example must declare VITE_GEMINI_NEWS_API_KEY and VITE_GEMINI_API_KEY for client-side quota isolation'
+  );
+  assert.ok(
+    analyzerSrc.includes('gemini-2.5-flash:generateContent') &&
+      analyzerSrc.includes('VITE_GEMINI_NEWS_API_KEY'),
+    'clientSideMacroAnalyzer.ts must isolate VITE_GEMINI_NEWS_API_KEY and call gemini-2.5-flash directly'
+  );
+  assert.ok(
+    fetcherSrc.includes('api.allorigins.win') &&
+      fetcherSrc.includes('https://nfs.faireconomy.media/ff_calendar_thisweek.json') &&
+      fetcherSrc.includes('query1.finance.yahoo.com/v8/finance/chart/'),
+    'macroFeedFetcher.ts must wrap ForexFactory & Yahoo Finance with CORS proxy and 8-second timeout fallbacks'
+  );
+  assert.ok(
+    viewSrc.includes('executeClientSideMacroAnalysis') &&
+      viewSrc.includes('Menganalisis Pasar...') &&
+      viewSrc.includes('data-testid="macro-supabase-feedback-banner"'),
+    'MacroNewsView.tsx must run client-side analysis, display "Menganalisis Pasar..." loading state, and render Supabase insert feedback'
+  );
+
+  console.log('✓ PASS [1]: Client-Side Analysis, CORS Proxy (allorigins.win), Gemini 2.5 Flash direct REST, & Supabase insert feedback verified');
 }
 
 // ---------------------------------------------------------------------------

@@ -1013,8 +1013,11 @@ export async function loadLatestCachedMacroSnapshot(): Promise<MacroNewsSnapshot
 
 /**
  * Saves a newly analyzed MacroNewsSnapshot to both localStorage and Supabase (`macro_news_snapshots`).
+ * Returns an explicit status object so callers can detect and display any Supabase schema/network errors.
  */
-export async function saveMacroSnapshotToCache(snapshot: MacroNewsSnapshot): Promise<void> {
+export async function saveMacroSnapshotToCache(
+  snapshot: MacroNewsSnapshot
+): Promise<{ success: boolean; error?: string; remoteSaved: boolean }> {
   if (typeof window !== 'undefined' && typeof localStorage !== 'undefined') {
     try {
       localStorage.setItem(MACRO_SNAPSHOT_LOCAL_STORAGE_KEY, JSON.stringify(snapshot));
@@ -1027,7 +1030,7 @@ export async function saveMacroSnapshotToCache(snapshot: MacroNewsSnapshot): Pro
     const client = getSupabase();
     if (client) {
       try {
-        await client.from('macro_news_snapshots').insert({
+        const { error } = await client.from('macro_news_snapshots').insert({
           instrument: 'XAUUSD',
           data_fingerprint: snapshot.dataFingerprint,
           snapshot_payload: snapshot,
@@ -1036,11 +1039,29 @@ export async function saveMacroSnapshotToCache(snapshot: MacroNewsSnapshot): Pro
           source_mode: snapshot.sourceMode,
           analyzed_at: snapshot.analyzedAt,
         });
-      } catch {
-        // Silently ignore if user hasn't run the new migration table SQL yet
+
+        if (error) {
+          console.warn('[TradeVault Supabase] Gagal menyimpan snapshot ke macro_news_snapshots:', error);
+          return {
+            success: false,
+            remoteSaved: false,
+            error: error.message || error.details || 'Gagal menyimpan snapshot ke tabel Supabase macro_news_snapshots.',
+          };
+        }
+
+        return { success: true, remoteSaved: true };
+      } catch (err: any) {
+        console.warn('[TradeVault Supabase] Exception saat menyimpan snapshot:', err);
+        return {
+          success: false,
+          remoteSaved: false,
+          error: err?.message || 'Terjadi kesalahan jaringan saat menyimpan ke Supabase.',
+        };
       }
     }
   }
+
+  return { success: true, remoteSaved: false };
 }
 
 /**

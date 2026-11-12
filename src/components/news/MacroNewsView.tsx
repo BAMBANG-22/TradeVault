@@ -36,66 +36,8 @@ import {
   formatTimestampWib,
 } from '../../utils/macroNewsEngine';
 
-const ANALYZE_ENDPOINTS = [
-  '/api/macro-news/analyze',
-  'https://ais-pre-qmgrbl6vkm3qzsovjavbgc-342426605045.asia-southeast1.run.app/api/macro-news/analyze',
-  'https://ais-dev-qmgrbl6vkm3qzsovjavbgc-342426605045.asia-southeast1.run.app/api/macro-news/analyze',
-];
-
-const FEEDS_ENDPOINTS = [
-  '/api/macro-news/feeds',
-  'https://ais-pre-qmgrbl6vkm3qzsovjavbgc-342426605045.asia-southeast1.run.app/api/macro-news/feeds',
-  'https://ais-dev-qmgrbl6vkm3qzsovjavbgc-342426605045.asia-southeast1.run.app/api/macro-news/feeds',
-];
-
-const DEFAULT_FALLBACK_INTERMARKET: {
-  dxy: IntermarketAssetPulse;
-  usoil: IntermarketAssetPulse;
-  us10y: IntermarketAssetPulse;
-} = {
-  dxy: {
-    symbol: 'DXY',
-    yahooTicker: 'DX-Y.NYB',
-    name: 'US Dollar Index (DXY)',
-    price: 104.85,
-    previousClose: 104.42,
-    change: 0.43,
-    changePercent: 0.41,
-    direction: 'UP',
-    goldCorrelationEffect: 'BEARISH_GOLD',
-    summaryId: 'DXY menguat (+0.41%), memberi tekanan korelasi terbalik pada XAU/USD.',
-    summaryEn: 'DXY rising (+0.41%), exerting inverse bearish pressure on XAU/USD.',
-    updatedAt: new Date().toISOString(),
-  },
-  usoil: {
-    symbol: 'USOIL',
-    yahooTicker: 'CL=F',
-    name: 'US Oil WTI Crude',
-    price: 73.4,
-    previousClose: 71.95,
-    change: 1.45,
-    changePercent: 2.02,
-    direction: 'UP',
-    goldCorrelationEffect: 'BEARISH_GOLD',
-    summaryId: 'US Oil WTI naik (+2.02%): risiko rambatan inflasi energi (Inflation Channel -> Fed Hawkish).',
-    summaryEn: 'US Oil WTI higher (+2.02%): energy inflation pass-through risk (Inflation Channel -> Hawkish Fed).',
-    updatedAt: new Date().toISOString(),
-  },
-  us10y: {
-    symbol: 'US10Y',
-    yahooTicker: '^TNX',
-    name: 'US 10Y Treasury Yield',
-    price: 4.38,
-    previousClose: 4.31,
-    change: 0.07,
-    changePercent: 1.62,
-    direction: 'UP',
-    goldCorrelationEffect: 'BEARISH_GOLD',
-    summaryId: 'Imbal hasil US10Y naik (+1.62%), mengonfirmasi tekanan SELL pada emas tanpa imbal hasil.',
-    summaryEn: 'US10Y Yield rising (+1.62%), confirming SELL pressure on non-yielding gold.',
-    updatedAt: new Date().toISOString(),
-  },
-};
+import { executeClientSideMacroAnalysis } from '../../utils/clientSideMacroAnalyzer';
+import { isSupabaseConfigured } from '../../utils/supabaseClient';
 
 export const MacroNewsView: React.FC = () => {
   const { language, isEn, tr } = useLanguage();
@@ -103,86 +45,76 @@ export const MacroNewsView: React.FC = () => {
   const [snapshot, setSnapshot] = useState<MacroNewsSnapshot | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [isRefreshing, setIsRefreshing] = useState<boolean>(false);
+  const [refreshStepMessage, setRefreshStepMessage] = useState<string>('');
+  const [supabaseFeedback, setSupabaseFeedback] = useState<{
+    type: 'success' | 'warning' | 'error';
+    message: string;
+  } | null>(null);
   const [selectedEventId, setSelectedEventId] = useState<string | null>(null);
   const [argumentTab, setArgumentTab] = useState<'BUY' | 'SELL' | 'BOTH'>('BOTH');
   const [showAllHeadlines, setShowAllHeadlines] = useState<boolean>(false);
   const [showPlaybookGuide, setShowPlaybookGuide] = useState<boolean>(false);
 
   const runLiveAnalysis = useCallback(
-    async (forceRefresh: boolean, existingSnap?: MacroNewsSnapshot | null, targetEventId?: string | null) => {
+    async (_forceRefresh: boolean, _existingSnap?: MacroNewsSnapshot | null, targetEventId?: string | null) => {
       setIsRefreshing(true);
+      setRefreshStepMessage(tr('Menganalisis Pasar...', 'Analyzing Market...'));
+      setSupabaseFeedback(null);
+
       try {
-        let analyzedSnap: MacroNewsSnapshot | null = null;
+        const { snapshot: analyzedSnap, supabaseResult } = await executeClientSideMacroAnalysis(
+          targetEventId || undefined
+        );
 
-        for (const endpoint of ANALYZE_ENDPOINTS) {
-          try {
-            const controller = new AbortController();
-            const timeout = setTimeout(() => controller.abort(), 14000);
-            const res = await fetch(endpoint, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                forceRefresh,
-                selectedEventId: targetEventId || undefined,
-              }),
-              signal: controller.signal,
-            });
-            clearTimeout(timeout);
+        // Immediately update state with the newly analyzed snapshot
+        setSnapshot(analyzedSnap);
 
-            if (res.ok) {
-              const json = await res.json();
-              if (json?.snapshot && json.snapshot.scenarioMatrix) {
-                analyzedSnap = json.snapshot as MacroNewsSnapshot;
-                break;
-              }
-            }
-          } catch {
-            // Try next endpoint
-          }
-        }
-
-        // If analyze endpoint wasn't reachable, try passive feeds endpoint (0 Gemini tokens)
-        if (!analyzedSnap) {
-          for (const feedUrl of FEEDS_ENDPOINTS) {
-            try {
-              const res = await fetch(feedUrl);
-              if (res.ok) {
-                const feedJson = await res.json();
-                if (feedJson?.snapshot && feedJson.snapshot.scenarioMatrix) {
-                  analyzedSnap = feedJson.snapshot as MacroNewsSnapshot;
-                  break;
-                }
-              }
-            } catch {
-              // ignore
-            }
-          }
-        }
-
-        // Final offline deterministic fallback
-        if (!analyzedSnap) {
-          analyzedSnap = computeDeterministicMacroSnapshot({
-            calendarEvents: existingSnap?.calendarEvents || [],
-            intermarketPulse: existingSnap?.intermarketPulse || DEFAULT_FALLBACK_INTERMARKET,
-            breakingNews: existingSnap?.breakingNews || [],
-            selectedEventId: targetEventId || undefined,
-            sourceMode: 'RULE_BASED_FALLBACK',
-            modelUsed: 'deterministic-playbook-v1',
+        // Supabase Insert Verification Feedback
+        if (supabaseResult.remoteSaved) {
+          setSupabaseFeedback({
+            type: 'success',
+            message: tr(
+              'Snapshot berhasil disimpan ke tabel Supabase public.macro_news_snapshots!',
+              'Snapshot successfully stored into Supabase public.macro_news_snapshots table!'
+            ),
+          });
+        } else if (!isSupabaseConfigured()) {
+          setSupabaseFeedback({
+            type: 'warning',
+            message: tr(
+              'Supabase belum terkonfigurasi. Data tersimpan di penyimpanan lokal aplikasi (Offline Cache).',
+              'Supabase is not configured yet. Data stored in local app storage (Offline Cache).'
+            ),
+          });
+        } else if (supabaseResult.error) {
+          setSupabaseFeedback({
+            type: 'error',
+            message: tr(
+              `Gagal menyimpan ke tabel Supabase: ${supabaseResult.error}. Data tetap tersimpan di cache lokal.`,
+              `Failed to insert into Supabase table: ${supabaseResult.error}. Data preserved in local cache.`
+            ),
           });
         }
-
-        setSnapshot(analyzedSnap);
-        await saveMacroSnapshotToCache(analyzedSnap);
 
         if (analyzedSnap.impactLevel === 'HIGH') {
           await triggerHighImpactMacroNotification(analyzedSnap, language);
         }
+      } catch (err: any) {
+        console.error('[MacroNewsView] Error during client analysis:', err);
+        setSupabaseFeedback({
+          type: 'error',
+          message: tr(
+            `Terjadi kendala saat analisis: ${err?.message || 'Error tidak diketahui'}.`,
+            `An issue occurred during analysis: ${err?.message || 'Unknown error'}.`
+          ),
+        });
       } finally {
         setIsRefreshing(false);
+        setRefreshStepMessage('');
         setIsLoading(false);
       }
     },
-    [language]
+    [language, tr]
   );
 
   // On mount: strictly read latest snapshot from Supabase / local cache first (0 Gemini tokens)
@@ -371,17 +303,49 @@ export const MacroNewsView: React.FC = () => {
               data-testid="macro-news-refresh-btn"
               disabled={isRefreshing}
               onClick={() => runLiveAnalysis(true, snapshot, selectedEventId)}
-              className="px-4 py-2 rounded-xl bg-[#22D3EE] hover:bg-[#06B6D4] disabled:opacity-60 text-[#0F1419] font-extrabold text-xs tracking-wide transition-all shadow-md shadow-[#22D3EE]/10 flex items-center gap-1.5 cursor-pointer"
+              className="px-4 py-2 rounded-xl bg-[#22D3EE] hover:bg-[#06B6D4] disabled:opacity-70 text-[#0F1419] font-extrabold text-xs tracking-wide transition-all shadow-md shadow-[#22D3EE]/10 flex items-center gap-1.5 cursor-pointer"
             >
               <RefreshCw className={`w-3.5 h-3.5 ${isRefreshing ? 'animate-spin' : ''}`} />
               <span>
                 {isRefreshing
-                  ? tr('Menganalisis...', 'Analyzing...')
+                  ? refreshStepMessage || tr('Menganalisis Pasar...', 'Analyzing Market...')
                   : tr('🔄 Analisis Live', '🔄 Live Analysis')}
               </span>
             </button>
           </div>
         </div>
+
+        {/* Supabase Status Alert Notification */}
+        {supabaseFeedback && (
+          <div
+            data-testid="macro-supabase-feedback-banner"
+            className={`mt-3 p-3 rounded-xl border text-xs font-medium flex items-center justify-between gap-2.5 transition-all animate-in fade-in duration-200 ${
+              supabaseFeedback.type === 'success'
+                ? 'bg-emerald-500/15 border-emerald-500/40 text-emerald-200'
+                : supabaseFeedback.type === 'warning'
+                ? 'bg-amber-500/15 border-amber-500/40 text-amber-200'
+                : 'bg-rose-500/15 border-rose-500/40 text-rose-200'
+            }`}
+          >
+            <div className="flex items-center gap-2">
+              {supabaseFeedback.type === 'success' ? (
+                <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+              ) : supabaseFeedback.type === 'warning' ? (
+                <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0" />
+              ) : (
+                <ShieldAlert className="w-4 h-4 text-rose-400 shrink-0" />
+              )}
+              <span className="leading-snug">{supabaseFeedback.message}</span>
+            </div>
+            <button
+              type="button"
+              onClick={() => setSupabaseFeedback(null)}
+              className="text-[10px] font-bold underline opacity-80 hover:opacity-100 shrink-0 cursor-pointer"
+            >
+              {tr('Tutup', 'Dismiss')}
+            </button>
+          </div>
+        )}
 
         {/* Collapsible Master Playbook Reference */}
         {showPlaybookGuide && (
