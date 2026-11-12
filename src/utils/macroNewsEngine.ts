@@ -92,6 +92,19 @@ export interface PreNewsScenarioMatrix {
   isStrongOneWayBias?: boolean;
 }
 
+export interface MacroEventGroup {
+  groupId: string;
+  primaryEvent: MacroCalendarEvent;
+  events: MacroCalendarEvent[];
+  releaseDateIso: string;
+  combinedTitle: string;
+  formattedScheduleId: string;
+  formattedScheduleEn: string;
+  isUpcoming: boolean;
+  isRecentlyReleased: boolean;
+  searchKeywords: string;
+}
+
 export interface PreNewsCountdownState {
   targetEvent: MacroCalendarEvent | null;
   remainingMs: number;
@@ -100,6 +113,10 @@ export interface PreNewsCountdownState {
   isLockedT5M: boolean;
   statusLabelId: string;
   statusLabelEn: string;
+  projectionBadgeId: string;
+  projectionBadgeEn: string;
+  projectionSubtextId: string;
+  projectionSubtextEn: string;
 }
 
 export interface MacroNewsSnapshot {
@@ -124,6 +141,7 @@ export interface MacroNewsSnapshot {
 }
 
 export const MACRO_SNAPSHOT_LOCAL_STORAGE_KEY = 'tradevault_macro_news_snapshot_v1';
+export const MACRO_GROUP_SNAPSHOT_CACHE_KEY = 'tradevault_macro_group_snapshots_v1';
 export const MACRO_NOTIFIED_FINGERPRINT_KEY = 'tradevault_macro_notified_fp_v1';
 export const SNAPSHOT_TTL_MINUTES = 30;
 
@@ -638,12 +656,13 @@ export function createCustomBreakingHeadline(text: string): BreakingNewsHeadline
 }
 
 /**
- * Computes a deterministic fingerprint from calendar events and top breaking news headlines.
- * Used to determine whether there is new calendar/news data in the last 30 minutes.
+ * Computes a deterministic fingerprint from calendar events, top breaking news headlines,
+ * and optionally the selected event group ID/slot so each event group is cached distinctly in Supabase.
  */
 export function computeMacroDataFingerprint(
   events: MacroCalendarEvent[],
-  headlines: BreakingNewsHeadline[]
+  headlines: BreakingNewsHeadline[],
+  selectedEventSlotKey?: string
 ): string {
   const eventSig = events
     .slice(0, 8)
@@ -653,13 +672,117 @@ export function computeMacroDataFingerprint(
     .slice(0, 3)
     .map((h) => h.title.slice(0, 40))
     .join('|');
-  const raw = `${eventSig}##${newsSig}`;
+  const slotPart = selectedEventSlotKey ? `##slot:${selectedEventSlotKey}` : '';
+  const raw = `${eventSig}##${newsSig}${slotPart}`;
   let hash = 2166136261;
   for (let i = 0; i < raw.length; i++) {
     hash ^= raw.charCodeAt(i);
     hash = Math.imul(hash, 16777619);
   }
   return `fp-${(hash >>> 0).toString(16)}`;
+}
+
+/**
+ * Formats an ISO date into the compact WIB schedule header, e.g. "13 Nov 2026 • 20.30 WIB".
+ */
+export function formatEventGroupWibHeader(isoStr: string, lang: 'id' | 'en' = 'id'): string {
+  if (!isoStr) return '-';
+  try {
+    const dt = new Date(isoStr);
+    if (isNaN(dt.getTime())) return isoStr;
+    const datePart = new Intl.DateTimeFormat(lang === 'en' ? 'en-GB' : 'id-ID', {
+      timeZone: 'Asia/Jakarta',
+      day: '2-digit',
+      month: 'short',
+      year: 'numeric',
+    }).format(dt);
+    const timePart = new Intl.DateTimeFormat(lang === 'en' ? 'en-GB' : 'id-ID', {
+      timeZone: 'Asia/Jakarta',
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: false,
+    }).format(dt);
+    const normalizedTime = lang === 'id' ? timePart.replace(':', '.') : timePart.replace('.', ':');
+    return `${datePart} • ${normalizedTime} WIB`;
+  } catch {
+    return isoStr;
+  }
+}
+
+/**
+ * Groups USD economic calendar events that share the same release slot (within 15 minutes)
+ * into unified MacroEventGroup items for the Upcoming Event Explorer & Search Bar.
+ */
+export function groupCalendarEventsBySlot(
+  events: MacroCalendarEvent[],
+  nowMs: number = Date.now()
+): MacroEventGroup[] {
+  if (!events || events.length === 0) return [];
+
+  const TWO_HOURS_MS = 2 * 60 * 60 * 1000;
+  const FIFTEEN_MINS_MS = 15 * 60 * 1000;
+
+  const sorted = [...events].sort((a, b) => {
+    const ta = new Date(a.date).getTime() || 0;
+    const tb = new Date(b.date).getTime() || 0;
+    return ta - tb;
+  });
+
+  const clusters: MacroCalendarEvent[][] = [];
+  for (const ev of sorted) {
+    const evTime = new Date(ev.date).getTime();
+    const lastCluster = clusters[clusters.length - 1];
+    if (lastCluster && lastCluster.length > 0) {
+      const clusterTime = new Date(lastCluster[0].date).getTime();
+      if (
+        Number.isFinite(evTime) &&
+        Number.isFinite(clusterTime) &&
+        Math.abs(evTime - clusterTime) <= FIFTEEN_MINS_MS
+      ) {
+        lastCluster.push(ev);
+        continue;
+      }
+    }
+    clusters.push([ev]);
+  }
+
+  return clusters.map((cluster) => {
+    const primaryEvent = cluster.find((e) => e.impact === 'High') || cluster[0];
+    const releaseTime = new Date(primaryEvent.date).getTime();
+    const isUpcoming = Number.isFinite(releaseTime) && releaseTime > nowMs;
+    const isRecentlyReleased =
+      Number.isFinite(releaseTime) && releaseTime <= nowMs && releaseTime >= nowMs - TWO_HOURS_MS;
+
+    const combinedTitle = cluster.map((e) => e.title).join(' & ');
+    const headerId = formatEventGroupWibHeader(primaryEvent.date, 'id');
+    const headerEn = formatEventGroupWibHeader(primaryEvent.date, 'en');
+
+    const formattedScheduleId = `${headerId} — ${combinedTitle}`;
+    const formattedScheduleEn = `${headerEn} — ${combinedTitle}`;
+
+    const searchKeywords = [
+      combinedTitle,
+      headerId,
+      headerEn,
+      ...cluster.map((e) => e.pillar),
+      ...cluster.map((e) => e.impact),
+    ]
+      .join(' ')
+      .toLowerCase();
+
+    return {
+      groupId: primaryEvent.id,
+      primaryEvent,
+      events: cluster,
+      releaseDateIso: primaryEvent.date,
+      combinedTitle,
+      formattedScheduleId,
+      formattedScheduleEn,
+      isUpcoming,
+      isRecentlyReleased,
+      searchKeywords,
+    };
+  });
 }
 
 /**
@@ -1155,7 +1278,12 @@ export function computeDeterministicMacroSnapshot(params: {
   const topBreakingAlert =
     workingBreakingNews.find((b) => b.impact === 'HIGH') || workingBreakingNews[0] || null;
 
-  const dataFingerprint = computeMacroDataFingerprint(workingCalendarEvents, workingBreakingNews);
+  const slotKey = selectedEventId ? `${primaryEvent.id}:${primaryEvent.date}` : undefined;
+  const dataFingerprint = computeMacroDataFingerprint(
+    workingCalendarEvents,
+    workingBreakingNews,
+    slotKey
+  );
 
   return {
     id: `macro-snap-${Date.now()}`,
@@ -1220,9 +1348,123 @@ export function formatCountdownHms(remainingMs: number): string {
 }
 
 /**
- * Computes the T-5 Minute Pre-News Lock and Real-Time Countdown state for the nearest upcoming USD release.
- * - Before T-5M (remainingMs > 5 mins): statusLabelId = "Auto-Update Final pada T-05:00", isLockedT5M = false
- * - Inside final 5 mins (0 < remainingMs <= 5 mins): statusLabelId = "FINAL PRE-NEWS LOCKED (T-5M)", isLockedT5M = true
+ * Analyzes a selected MacroEventGroup (or event ID) with 100% automatic Pre-News rules:
+ * - Simultaneous release grouping (e.g. Core PPI m/m & PPI m/m)
+ * - Forecast vs Previous directional scoring
+ * - Simultaneous release conflict detection (MIXED >= 40% & RISIKO WHIPSAW SAAT RILIS)
+ * - Real-time DXY, USOIL, US10Y intermarket confirmation & divergence detection
+ * - RSS headline filtering for Fed speeches & geopolitics (Aturan Pindah Haluan Bang Nael)
+ */
+export function analyzeMacroEvent(
+  selectedEventGroupOrParams:
+    | MacroEventGroup
+    | {
+        calendarEvents: MacroCalendarEvent[];
+        intermarketPulse: {
+          dxy: IntermarketAssetPulse;
+          usoil: IntermarketAssetPulse;
+          us10y: IntermarketAssetPulse;
+        };
+        breakingNews: BreakingNewsHeadline[];
+        selectedEventId?: string;
+        selectedEventGroup?: MacroEventGroup;
+        sourceMode?: MacroNewsSnapshot['sourceMode'];
+        modelUsed?: string;
+      },
+  context?: {
+    calendarEvents: MacroCalendarEvent[];
+    intermarketPulse: {
+      dxy: IntermarketAssetPulse;
+      usoil: IntermarketAssetPulse;
+      us10y: IntermarketAssetPulse;
+    };
+    breakingNews: BreakingNewsHeadline[];
+    sourceMode?: MacroNewsSnapshot['sourceMode'];
+    modelUsed?: string;
+  }
+): MacroNewsSnapshot {
+  if ('groupId' in selectedEventGroupOrParams) {
+    const group = selectedEventGroupOrParams;
+    const ctx = context || {
+      calendarEvents: group.events,
+      intermarketPulse: {
+        dxy: {
+          symbol: 'DXY',
+          yahooTicker: 'DX-Y.NYB',
+          name: 'US Dollar Index (DXY)',
+          price: 104.5,
+          previousClose: 104.5,
+          change: 0,
+          changePercent: 0,
+          direction: 'FLAT',
+          goldCorrelationEffect: 'NEUTRAL',
+          summaryId: 'DXY mendatar',
+          summaryEn: 'DXY flat',
+          updatedAt: new Date().toISOString(),
+        },
+        usoil: {
+          symbol: 'USOIL',
+          yahooTicker: 'CL=F',
+          name: 'US Oil WTI',
+          price: 73.0,
+          previousClose: 73.0,
+          change: 0,
+          changePercent: 0,
+          direction: 'FLAT',
+          goldCorrelationEffect: 'NEUTRAL',
+          summaryId: 'WTI stabil',
+          summaryEn: 'WTI stable',
+          updatedAt: new Date().toISOString(),
+        },
+        us10y: {
+          symbol: 'US10Y',
+          yahooTicker: '^TNX',
+          name: 'US 10Y Treasury Yield',
+          price: 4.35,
+          previousClose: 4.35,
+          change: 0,
+          changePercent: 0,
+          direction: 'FLAT',
+          goldCorrelationEffect: 'NEUTRAL',
+          summaryId: 'Yield 10Y stabil',
+          summaryEn: '10Y Yield stable',
+          updatedAt: new Date().toISOString(),
+        },
+      },
+      breakingNews: [],
+    };
+    return computeDeterministicMacroSnapshot({
+      calendarEvents: ctx.calendarEvents.length > 0 ? ctx.calendarEvents : group.events,
+      intermarketPulse: ctx.intermarketPulse,
+      breakingNews: ctx.breakingNews,
+      selectedEventId: group.groupId,
+      sourceMode: ctx.sourceMode,
+      modelUsed: ctx.modelUsed,
+    });
+  }
+
+  const targetId =
+    selectedEventGroupOrParams.selectedEventGroup?.groupId ||
+    selectedEventGroupOrParams.selectedEventId;
+
+  return computeDeterministicMacroSnapshot({
+    calendarEvents: selectedEventGroupOrParams.calendarEvents,
+    intermarketPulse: selectedEventGroupOrParams.intermarketPulse,
+    breakingNews: selectedEventGroupOrParams.breakingNews,
+    selectedEventId: targetId,
+    sourceMode: selectedEventGroupOrParams.sourceMode,
+    modelUsed: selectedEventGroupOrParams.modelUsed,
+  });
+}
+
+/**
+ * Computes the T-5 Minute Pre-News Lock and Real-Time Countdown state for the selected or nearest upcoming USD release.
+ * Distinguishes clearly between:
+ * 1) Early Reference (> 5 minutes before release, including H-1 / tomorrow):
+ *    projectionBadgeId = "REFERENSI AWAL • DATA SEMENTARA (BELUM FINAL T-5M)"
+ *    projectionSubtextId = "Proyeksi berdasarkan Forecast, korelasi DXY/USOIL/US10Y, & sentimen RSS terkini. Tekan Refresh berkala menjelang rilis."
+ * 2) Final T-5M Lock (0 < remainingMs <= 5 minutes before release):
+ *    projectionBadgeId = "FINAL PRE-NEWS LOCKED (T-5M) • SIAP EKSEKUSI"
  */
 export function computePreNewsLockState(
   calendarEvents: MacroCalendarEvent[],
@@ -1231,14 +1473,13 @@ export function computePreNewsLockState(
 ): PreNewsCountdownState {
   const FIVE_MINUTES_MS = 5 * 60 * 1000;
 
-  // Prefer the selected event if it is still upcoming; otherwise pick the nearest upcoming event
+  // Prefer the selected event if provided; otherwise pick the nearest upcoming event (waktu_rilis > waktu_sekarang)
   const selectedEv = selectedEventId
     ? calendarEvents.find((e) => e.id === selectedEventId)
     : undefined;
-  const selectedEvTime = selectedEv ? new Date(selectedEv.date).getTime() : NaN;
 
   let targetEvent: MacroCalendarEvent | null = null;
-  if (selectedEv && Number.isFinite(selectedEvTime) && selectedEvTime > nowMs) {
+  if (selectedEv) {
     targetEvent = selectedEv;
   } else {
     const upcoming = calendarEvents
@@ -1247,7 +1488,7 @@ export function computePreNewsLockState(
         return Number.isFinite(t) && t > nowMs;
       })
       .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
-    targetEvent = upcoming[0] || selectedEv || calendarEvents[0] || null;
+    targetEvent = upcoming[0] || calendarEvents[0] || null;
   }
 
   const targetTimeMs = targetEvent ? new Date(targetEvent.date).getTime() : NaN;
@@ -1264,6 +1505,20 @@ export function computePreNewsLockState(
     ? 'FINAL PRE-NEWS LOCKED (T-5M)'
     : 'Final Auto-Update at T-05:00';
 
+  const projectionBadgeId = isLockedT5M
+    ? 'FINAL PRE-NEWS LOCKED (T-5M) • SIAP EKSEKUSI'
+    : 'REFERENSI AWAL • DATA SEMENTARA (BELUM FINAL T-5M)';
+  const projectionBadgeEn = isLockedT5M
+    ? 'FINAL PRE-NEWS LOCKED (T-5M) • READY FOR EXECUTION'
+    : 'EARLY REFERENCE • PRELIMINARY DATA (NOT FINAL T-5M)';
+
+  const projectionSubtextId = isLockedT5M
+    ? 'Auto-Update Final telah dieksekusi pada T-05:00. Tampilan dikunci (Freeze Auto-Refresh) agar probabilitas BUY / SELL / MIXED stabil saat eksekusi.'
+    : 'Proyeksi berdasarkan Forecast, korelasi DXY/USOIL/US10Y, & sentimen RSS terkini. Tekan Refresh berkala menjelang rilis.';
+  const projectionSubtextEn = isLockedT5M
+    ? 'Final Auto-Update executed at T-05:00. Display locked (Freeze Auto-Refresh) so BUY / SELL / MIXED probabilities remain stable for execution.'
+    : 'Projection based on Forecast, DXY/USOIL/US10Y correlation, & latest RSS sentiment. Press Refresh periodically ahead of release.';
+
   return {
     targetEvent,
     remainingMs,
@@ -1272,6 +1527,10 @@ export function computePreNewsLockState(
     isLockedT5M,
     statusLabelId,
     statusLabelEn,
+    projectionBadgeId,
+    projectionBadgeEn,
+    projectionSubtextId,
+    projectionSubtextEn,
   };
 }
 
@@ -1373,7 +1632,63 @@ export async function loadLatestCachedMacroSnapshot(): Promise<MacroNewsSnapshot
 }
 
 /**
- * Saves a newly analyzed MacroNewsSnapshot to both localStorage and Supabase (`macro_news_snapshots`).
+ * Loads a cached MacroNewsSnapshot for a specific event group or data_fingerprint from localStorage or Supabase.
+ */
+export async function loadCachedSnapshotByFingerprint(
+  dataFingerprint: string,
+  maxAgeMinutes = 15
+): Promise<MacroNewsSnapshot | null> {
+  if (!dataFingerprint) return null;
+
+  if (typeof window !== 'undefined' && typeof localStorage !== 'undefined') {
+    try {
+      const rawMap = localStorage.getItem(MACRO_GROUP_SNAPSHOT_CACHE_KEY);
+      if (rawMap) {
+        const parsedMap = JSON.parse(rawMap) as Record<string, MacroNewsSnapshot>;
+        const candidate = parsedMap[dataFingerprint];
+        if (candidate && isSnapshotFresh(candidate, maxAgeMinutes)) {
+          return { ...candidate, sourceMode: 'SUPABASE_CACHE' };
+        }
+      }
+    } catch {
+      // ignore localStorage parse error
+    }
+  }
+
+  if (isSupabaseConfigured()) {
+    const client = getSupabase();
+    if (client) {
+      try {
+        const { data, error } = await client
+          .from('macro_news_snapshots')
+          .select('id, data_fingerprint, snapshot_payload, analyzed_at')
+          .eq('instrument', 'XAUUSD')
+          .eq('data_fingerprint', dataFingerprint)
+          .order('analyzed_at', { ascending: false })
+          .limit(1)
+          .maybeSingle();
+
+        if (!error && data && data.snapshot_payload) {
+          const remoteSnap = data.snapshot_payload as MacroNewsSnapshot;
+          if (remoteSnap && isSnapshotFresh(remoteSnap, maxAgeMinutes)) {
+            return {
+              ...remoteSnap,
+              sourceMode: 'SUPABASE_CACHE',
+            };
+          }
+        }
+      } catch {
+        // ignore network error
+      }
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Saves a newly analyzed MacroNewsSnapshot to both localStorage (latest + per-fingerprint map)
+ * and Supabase (`macro_news_snapshots` keyed with `data_fingerprint`).
  * Returns an explicit status object so callers can detect and display any Supabase schema/network errors.
  */
 export async function saveMacroSnapshotToCache(
@@ -1382,6 +1697,15 @@ export async function saveMacroSnapshotToCache(
   if (typeof window !== 'undefined' && typeof localStorage !== 'undefined') {
     try {
       localStorage.setItem(MACRO_SNAPSHOT_LOCAL_STORAGE_KEY, JSON.stringify(snapshot));
+      if (snapshot.dataFingerprint) {
+        const rawMap = localStorage.getItem(MACRO_GROUP_SNAPSHOT_CACHE_KEY);
+        const parsedMap: Record<string, MacroNewsSnapshot> = rawMap ? JSON.parse(rawMap) : {};
+        parsedMap[snapshot.dataFingerprint] = snapshot;
+        if (snapshot.scenarioMatrix?.primaryEvent?.id) {
+          parsedMap[`event:${snapshot.scenarioMatrix.primaryEvent.id}`] = snapshot;
+        }
+        localStorage.setItem(MACRO_GROUP_SNAPSHOT_CACHE_KEY, JSON.stringify(parsedMap));
+      }
     } catch {
       // ignore storage quota errors
     }

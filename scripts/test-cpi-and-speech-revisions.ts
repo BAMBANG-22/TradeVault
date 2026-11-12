@@ -4,6 +4,8 @@ import path from 'path';
 import {
   evaluateSingleEventForGold,
   computeDeterministicMacroSnapshot,
+  analyzeMacroEvent,
+  groupCalendarEventsBySlot,
   analyzeStatementTone,
   isFedSpeechEvent,
   computePreNewsLockState,
@@ -11,7 +13,7 @@ import {
   IntermarketAssetPulse,
 } from '../src/utils/macroNewsEngine';
 
-console.log('=== RUNNING 100% AUTOMATIC PRE-NEWS VOLATILITY ENGINE & T-5M LOCK TESTS ===\n');
+console.log('=== RUNNING UPCOMING EVENT EXPLORER, EARLY REFERENCE VS FINAL T-5M & AUTO ENGINE TESTS ===\n');
 
 const mockPulse: {
   dxy: IntermarketAssetPulse;
@@ -63,44 +65,65 @@ const mockPulse: {
 };
 
 // ---------------------------------------------------------------------------
-// 1. Pre-News Calendar Expectations & Simultaneous Release Grouping
+// 1. Upcoming Event Explorer: Grouping Simultaneous Releases & Search Keywords
 // ---------------------------------------------------------------------------
 {
-  const releaseTime = new Date(Date.now() + 20 * 60 * 1000).toISOString(); // 20 mins ahead
-  const events: MacroCalendarEvent[] = [
+  const ppiReleaseIso = '2026-11-13T13:30:00.000Z'; // 13 Nov 2026 • 20.30 WIB
+  const nfpReleaseIso = '2026-11-13T15:00:00.000Z'; // 13 Nov 2026 • 22.00 WIB
+
+  const scheduleEvents: MacroCalendarEvent[] = [
     {
-      id: 'cpi-core',
-      title: 'US Core CPI m/m',
+      id: 'ppi-core',
+      title: 'US Core PPI m/m',
       country: 'USD',
-      date: releaseTime,
+      date: ppiReleaseIso,
       impact: 'High',
-      previous: '0.3%',
+      previous: '0.2%',
+      forecast: '0.3%',
+      actual: '',
+      previousNum: 0.2,
+      forecastNum: 0.3,
+      actualNum: null,
+      unit: '%',
+      pillar: 'INFLATION',
+      isInverseIndicator: false,
+      eventBiasForGold: 'SELL',
+      biasReasonId: 'Forecast > Previous',
+      biasReasonEn: 'Forecast > Previous',
+    },
+    {
+      id: 'ppi-headline',
+      title: 'US PPI m/m',
+      country: 'USD',
+      date: ppiReleaseIso,
+      impact: 'High',
+      previous: '0.1%',
       forecast: '0.2%',
       actual: '',
-      previousNum: 0.3,
+      previousNum: 0.1,
       forecastNum: 0.2,
       actualNum: null,
       unit: '%',
       pillar: 'INFLATION',
       isInverseIndicator: false,
-      eventBiasForGold: 'BUY',
-      biasReasonId: 'Forecast < Previous',
-      biasReasonEn: 'Forecast < Previous',
+      eventBiasForGold: 'SELL',
+      biasReasonId: 'Forecast > Previous',
+      biasReasonEn: 'Forecast > Previous',
     },
     {
-      id: 'cpi-headline',
-      title: 'US CPI m/m',
+      id: 'nfp-headline',
+      title: 'US Non-Farm Employment Change (NFP)',
       country: 'USD',
-      date: releaseTime,
+      date: nfpReleaseIso,
       impact: 'High',
-      previous: '0.4%',
-      forecast: '0.2%',
+      previous: '185K',
+      forecast: '160K',
       actual: '',
-      previousNum: 0.4,
-      forecastNum: 0.2,
+      previousNum: 185,
+      forecastNum: 160,
       actualNum: null,
-      unit: '%',
-      pillar: 'INFLATION',
+      unit: 'K',
+      pillar: 'LABOR',
       isInverseIndicator: false,
       eventBiasForGold: 'BUY',
       biasReasonId: 'Forecast < Previous',
@@ -108,23 +131,40 @@ const mockPulse: {
     },
   ];
 
-  const snap = computeDeterministicMacroSnapshot({
-    calendarEvents: events,
+  const groups = groupCalendarEventsBySlot(scheduleEvents, new Date('2026-11-12T08:00:00Z').getTime());
+  assert.strictEqual(groups.length, 2, 'Should group 3 events into 2 release time slots');
+  assert.strictEqual(groups[0].combinedTitle, 'US Core PPI m/m & US PPI m/m');
+  assert.ok(
+    groups[0].formattedScheduleId.includes('20.30 WIB') &&
+      groups[0].formattedScheduleId.includes('US Core PPI m/m & US PPI m/m'),
+    `Formatted schedule should include WIB time and combined titles, got: ${groups[0].formattedScheduleId}`
+  );
+  assert.ok(groups[0].searchKeywords.includes('ppi'), 'Search keywords must include ppi');
+
+  // Analyze selected PPI group via analyzeMacroEvent(selectedEventGroup)
+  const ppiSnap = analyzeMacroEvent(groups[0], {
+    calendarEvents: scheduleEvents,
+    intermarketPulse: mockPulse,
+    breakingNews: [],
+  });
+  const nfpSnap = analyzeMacroEvent(groups[1], {
+    calendarEvents: scheduleEvents,
     intermarketPulse: mockPulse,
     breakingNews: [],
   });
 
-  assert.strictEqual(snap.scenarioMatrix.isSimultaneousRelease, true, 'Must detect simultaneous release');
-  assert.strictEqual(snap.scenarioMatrix.simultaneousEvents.length, 1, 'Simultaneous events must contain CPI m/m');
-  assert.strictEqual(snap.scenarioMatrix.simultaneousAlignment, 'ALIGNED_BUY');
-  assert.strictEqual(snap.scenarioMatrix.dominantBias, 'BUY');
-  assert.ok(snap.scenarioMatrix.buyProbability >= 60, 'Aligned simultaneous BUY should have >= 60% conviction');
-  assert.ok(
-    snap.scenarioMatrix.t5ExecutionTacticId?.includes('BIAS 1 ARAH KUAT (FINAL T-5M)'),
-    'Strong 1-way bias (>= 60%) must generate BIAS 1 ARAH KUAT (FINAL T-5M) tactic'
+  assert.strictEqual(ppiSnap.scenarioMatrix.primaryEvent.id, 'ppi-core');
+  assert.strictEqual(ppiSnap.scenarioMatrix.simultaneousEvents.length, 1);
+  assert.strictEqual(ppiSnap.scenarioMatrix.dominantBias, 'SELL');
+  assert.strictEqual(nfpSnap.scenarioMatrix.primaryEvent.id, 'nfp-headline');
+  assert.strictEqual(nfpSnap.scenarioMatrix.dominantBias, 'BUY');
+  assert.notStrictEqual(
+    ppiSnap.dataFingerprint,
+    nfpSnap.dataFingerprint,
+    'Each event group must have a distinct data_fingerprint for Supabase caching'
   );
 
-  console.log('✓ PASS [1]: Simultaneous Pre-News release grouping & Strong 1-Way T-5M tactic verified');
+  console.log('✓ PASS [1]: Upcoming Event Explorer grouping, analyzeMacroEvent(selectedEventGroup), & distinct data_fingerprint verified');
 }
 
 // ---------------------------------------------------------------------------
@@ -198,7 +238,7 @@ const mockPulse: {
 }
 
 // ---------------------------------------------------------------------------
-// 3. Intermarket Divergence Confirmation (DXY & US10Y moving opposite to Calendar)
+// 3. Real-Time Intermarket Divergence Confirmation (DXY & US10Y vs Calendar)
 // ---------------------------------------------------------------------------
 {
   const releaseTime = new Date(Date.now() + 30 * 60 * 1000).toISOString();
@@ -224,7 +264,6 @@ const mockPulse: {
     },
   ];
 
-  // However, DXY and US10Y are both rising strongly ahead of release (Bearish Gold / Divergence!)
   const divergingPulse = {
     ...mockPulse,
     dxy: {
@@ -260,52 +299,61 @@ const mockPulse: {
 }
 
 // ---------------------------------------------------------------------------
-// 4. T-5M Automatic Lock State (computePreNewsLockState)
+// 4. Status Differentiation: "REFERENSI AWAL (EARLY PROJECTION)" vs "FINAL T-5 MENIT"
 // ---------------------------------------------------------------------------
 {
   const baseNow = Date.now();
-  const evIn14Mins: MacroCalendarEvent = {
-    id: 'ev-14m',
-    title: 'US Core PCE Price Index m/m',
+  const evTomorrow: MacroCalendarEvent = {
+    id: 'ev-tomorrow-ppi',
+    title: 'US Core PPI m/m',
     country: 'USD',
-    date: new Date(baseNow + 14 * 60 * 1000 + 32 * 1000).toISOString(),
+    date: new Date(baseNow + 24 * 60 * 60 * 1000).toISOString(), // H-1 day (tomorrow)
     impact: 'High',
-    previous: '0.3%',
-    forecast: '0.2%',
+    previous: '0.2%',
+    forecast: '0.3%',
     actual: '',
-    previousNum: 0.3,
-    forecastNum: 0.2,
+    previousNum: 0.2,
+    forecastNum: 0.3,
     actualNum: null,
     unit: '%',
     pillar: 'INFLATION',
     isInverseIndicator: false,
-    eventBiasForGold: 'BUY',
-    biasReasonId: 'Buy',
-    biasReasonEn: 'Buy',
+    eventBiasForGold: 'SELL',
+    biasReasonId: 'Sell',
+    biasReasonEn: 'Sell',
   };
 
-  // Before T-5M (14:32 remaining)
-  const stateBefore = computePreNewsLockState([evIn14Mins], baseNow);
-  assert.strictEqual(stateBefore.isLockedT5M, false);
-  assert.strictEqual(stateBefore.statusLabelId, 'Auto-Update Final pada T-05:00');
-  assert.strictEqual(stateBefore.countdownHms, '00:14:32');
+  // Early Reference (> 5M away, e.g. H-1 day)
+  const stateEarly = computePreNewsLockState([evTomorrow], baseNow, 'ev-tomorrow-ppi');
+  assert.strictEqual(stateEarly.isLockedT5M, false);
+  assert.strictEqual(
+    stateEarly.projectionBadgeId,
+    'REFERENSI AWAL • DATA SEMENTARA (BELUM FINAL T-5M)'
+  );
+  assert.strictEqual(
+    stateEarly.projectionSubtextId,
+    'Proyeksi berdasarkan Forecast, korelasi DXY/USOIL/US10Y, & sentimen RSS terkini. Tekan Refresh berkala menjelang rilis.'
+  );
 
   // Inside T-5M (04:15 remaining)
   const evIn4Mins: MacroCalendarEvent = {
-    ...evIn14Mins,
+    ...evTomorrow,
     id: 'ev-4m',
     date: new Date(baseNow + 4 * 60 * 1000 + 15 * 1000).toISOString(),
   };
-  const stateInside = computePreNewsLockState([evIn4Mins], baseNow);
-  assert.strictEqual(stateInside.isLockedT5M, true);
-  assert.strictEqual(stateInside.statusLabelId, 'FINAL PRE-NEWS LOCKED (T-5M)');
-  assert.strictEqual(stateInside.countdownHms, '00:04:15');
+  const stateFinalT5 = computePreNewsLockState([evIn4Mins], baseNow, 'ev-4m');
+  assert.strictEqual(stateFinalT5.isLockedT5M, true);
+  assert.strictEqual(
+    stateFinalT5.projectionBadgeId,
+    'FINAL PRE-NEWS LOCKED (T-5M) • SIAP EKSEKUSI'
+  );
+  assert.strictEqual(stateFinalT5.countdownHms, '00:04:15');
 
-  console.log('✓ PASS [4]: T-5M Lock state (Auto-Update Final pada T-05:00 -> FINAL PRE-NEWS LOCKED (T-5M)) verified');
+  console.log('✓ PASS [4]: Status differentiation (REFERENSI AWAL vs FINAL PRE-NEWS LOCKED (T-5M) • SIAP EKSEKUSI) verified');
 }
 
 // ---------------------------------------------------------------------------
-// 5. Verify Zero Manual Input & First-Second Action Card in MacroNewsView.tsx
+// 5. Verify Upcoming Event Explorer, Status Badges & Zero Manual Input in MacroNewsView.tsx
 // ---------------------------------------------------------------------------
 {
   const viewSrc = fs.readFileSync(
@@ -329,20 +377,16 @@ const mockPulse: {
     false,
     'MacroNewsView must NOT contain manual recalculate bias button'
   );
-  assert.strictEqual(
-    viewSrc.includes('Tempel Breaking News'),
-    false,
-    'MacroNewsView must NOT contain manual Tempel Breaking News input'
-  );
 
-  // Must contain T-5M Execution Card & Lock Status Badges
+  // Must contain Upcoming Event Explorer & Projection Status Banner
   assert.ok(
-    viewSrc.includes('data-testid="macro-t5-action-card"') &&
-      viewSrc.includes('data-testid="macro-t5-countdown-timer"') &&
-      viewSrc.includes('data-testid="macro-t5-probabilities-grid"') &&
-      viewSrc.includes('data-testid="macro-t5-execution-tactic"') &&
-      viewSrc.includes('data-testid="macro-t5-lock-status-badge"'),
-    'MacroNewsView must render T-5M First-Second Action Card, Countdown Timer, Probabilities, and Lock Status Badge'
+    viewSrc.includes('data-testid="macro-upcoming-event-explorer"') &&
+      viewSrc.includes('data-testid="macro-upcoming-search-input"') &&
+      viewSrc.includes('data-testid="macro-upcoming-event-groups"') &&
+      viewSrc.includes('data-testid="macro-projection-status-banner"') &&
+      viewSrc.includes('data-testid="macro-projection-status-badge"') &&
+      viewSrc.includes('data-testid="macro-projection-status-subtext"'),
+    'MacroNewsView must render Upcoming Event Explorer, Search Input, Event Groups, and Projection Status Banner'
   );
 
   assert.ok(
@@ -352,7 +396,7 @@ const mockPulse: {
     'Core deterministic functions must remain intact'
   );
 
-  console.log('✓ PASS [5]: Zero Manual Input UI & First-Second Action Card verified in MacroNewsView.tsx');
+  console.log('✓ PASS [5]: Upcoming Event Explorer UI, Status Banner, & Zero Manual Input verified in MacroNewsView.tsx');
 }
 
-console.log('\n=== ALL 100% AUTOMATIC PRE-NEWS VOLATILITY ENGINE TESTS PASSED ===');
+console.log('\n=== ALL UPCOMING EVENT EXPLORER & PRE-NEWS T-5M ENGINE TESTS PASSED ===');

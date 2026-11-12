@@ -159,12 +159,12 @@ export function getClientFallbackCalendarEvents(): MacroCalendarEvent[] {
       actual: '',
     },
     {
-      title: 'US CPI y/y',
+      title: 'US CPI m/m',
       country: 'USD',
       date: getWeekDayIso(2, 13, 30), // Wednesday 13:30 UTC (20:30 WIB)
       impact: 'High' as const,
-      previous: '2.6%',
-      forecast: '2.5%',
+      previous: '0.4%',
+      forecast: '0.3%',
       actual: '',
     },
     {
@@ -174,15 +174,6 @@ export function getClientFallbackCalendarEvents(): MacroCalendarEvent[] {
       impact: 'High' as const,
       previous: '221K',
       forecast: '215K',
-      actual: '212K',
-    },
-    {
-      title: 'US Core PPI m/m',
-      country: 'USD',
-      date: getWeekDayIso(3, 13, 30), // Thursday 13:30 UTC (20:30 WIB)
-      impact: 'High' as const,
-      previous: '0.2%',
-      forecast: '0.3%',
       actual: '',
     },
     {
@@ -195,9 +186,36 @@ export function getClientFallbackCalendarEvents(): MacroCalendarEvent[] {
       actual: '',
     },
     {
-      title: 'US Non-Farm Employment Change (NFP)',
+      title: 'FOMC Member Waller Speaks',
+      country: 'USD',
+      date: getWeekDayIso(3, 18, 0), // Thursday 18:00 UTC (01:00 WIB)
+      impact: 'High' as const,
+      previous: '-',
+      forecast: '-',
+      actual: '',
+    },
+    {
+      title: 'US Core PPI m/m',
       country: 'USD',
       date: getWeekDayIso(4, 13, 30), // Friday 13:30 UTC (20:30 WIB)
+      impact: 'High' as const,
+      previous: '0.2%',
+      forecast: '0.3%',
+      actual: '',
+    },
+    {
+      title: 'US PPI m/m',
+      country: 'USD',
+      date: getWeekDayIso(4, 13, 30), // Friday 13:30 UTC (20:30 WIB)
+      impact: 'High' as const,
+      previous: '0.1%',
+      forecast: '0.2%',
+      actual: '',
+    },
+    {
+      title: 'US Non-Farm Employment Change (NFP)',
+      country: 'USD',
+      date: getWeekDayIso(4, 15, 0), // Friday 15:00 UTC (22:00 WIB)
       impact: 'High' as const,
       previous: '185K',
       forecast: '190K',
@@ -206,7 +224,7 @@ export function getClientFallbackCalendarEvents(): MacroCalendarEvent[] {
     {
       title: 'US Unemployment Rate',
       country: 'USD',
-      date: getWeekDayIso(4, 13, 30), // Friday 13:30 UTC (20:30 WIB)
+      date: getWeekDayIso(4, 15, 0), // Friday 15:00 UTC (22:00 WIB)
       impact: 'High' as const,
       previous: '4.1%',
       forecast: '4.1%',
@@ -215,19 +233,10 @@ export function getClientFallbackCalendarEvents(): MacroCalendarEvent[] {
     {
       title: 'US Average Hourly Earnings m/m',
       country: 'USD',
-      date: getWeekDayIso(4, 13, 30), // Friday 13:30 UTC (20:30 WIB)
+      date: getWeekDayIso(4, 15, 0), // Friday 15:00 UTC (22:00 WIB)
       impact: 'Medium' as const,
       previous: '0.3%',
       forecast: '0.3%',
-      actual: '',
-    },
-    {
-      title: 'US Core PCE Price Index m/m',
-      country: 'USD',
-      date: getWeekDayIso(4, 13, 30), // Friday 13:30 UTC (20:30 WIB)
-      impact: 'High' as const,
-      previous: '0.3%',
-      forecast: '0.2%',
       actual: '',
     },
   ];

@@ -19,16 +19,21 @@ import {
   Minus,
   Info,
   Lock,
+  Search,
+  Calendar,
+  X,
 } from 'lucide-react';
 import { useLanguage } from '../../utils/language';
 import {
   MacroNewsSnapshot,
   MacroCalendarEvent,
+  MacroEventGroup,
   BreakingNewsHeadline,
   IntermarketAssetPulse,
   loadLatestCachedMacroSnapshot,
   isSnapshotFresh,
-  computeDeterministicMacroSnapshot,
+  analyzeMacroEvent,
+  groupCalendarEventsBySlot,
   triggerHighImpactMacroNotification,
   formatTimestampWib,
   computePreNewsLockState,
@@ -54,6 +59,7 @@ const VERIFICATION_THEME_TOKENS = {
 } as const;
 
 const AUTO_REFRESH_TTL_MINUTES = 15;
+const QUICK_SEARCH_FILTERS = ['ALL', 'PPI', 'CPI', 'NFP', 'FOMC', 'PMI', 'CLAIMS'] as const;
 
 export const MacroNewsView: React.FC = () => {
   const { language, isEn, tr } = useLanguage();
@@ -67,6 +73,7 @@ export const MacroNewsView: React.FC = () => {
     message: string;
   } | null>(null);
   const [selectedEventId, setSelectedEventId] = useState<string | null>(null);
+  const [searchQuery, setSearchQuery] = useState<string>('');
   const [argumentTab, setArgumentTab] = useState<'BUY' | 'SELL' | 'BOTH'>('BOTH');
   const [showAllHeadlines, setShowAllHeadlines] = useState<boolean>(false);
   const [showPlaybookGuide, setShowPlaybookGuide] = useState<boolean>(false);
@@ -172,8 +179,6 @@ export const MacroNewsView: React.FC = () => {
           selectedEventId
         );
         if (initialLock.isLockedT5M && initialLock.targetEvent) {
-          // If we opened the page right inside T-5M and the snapshot is older than 5 minutes,
-          // perform the single final T-5M update once and lock it.
           if (!isSnapshotFresh(cached, 5)) {
             t5FinalFetchedEventIdRef.current = initialLock.targetEvent.id;
             await runLiveAnalysis(true, cached, initialLock.targetEvent.id);
@@ -193,7 +198,7 @@ export const MacroNewsView: React.FC = () => {
     };
   }, [runLiveAnalysis]);
 
-  // Compute Pre-News Countdown & Final T-5M Lock State
+  // Compute Pre-News Countdown & Final T-5M Lock State for the active/selected event group
   const lockState = useMemo(() => {
     if (!snapshot) {
       return computePreNewsLockState([], nowMs, selectedEventId);
@@ -217,30 +222,41 @@ export const MacroNewsView: React.FC = () => {
     }
 
     // Outside T-5M lock window: if snapshot becomes older than 15 minutes in background, auto-refresh calmly
-    if (!lockState.isLockedT5M && !isSnapshotFresh(snapshot, AUTO_REFRESH_TTL_MINUTES) && !isRefreshingRef.current) {
+    if (
+      !lockState.isLockedT5M &&
+      !isSnapshotFresh(snapshot, AUTO_REFRESH_TTL_MINUTES) &&
+      !isRefreshingRef.current
+    ) {
       void runLiveAnalysis(false, snapshot, selectedEventId);
     }
   }, [lockState.isLockedT5M, lockState.targetEvent, snapshot, selectedEventId, runLiveAnalysis]);
 
-  const activeMatrix = useMemo(() => {
-    if (!snapshot) return null;
-    if (
-      !selectedEventId ||
-      selectedEventId === snapshot.scenarioMatrix.primaryEvent.id
-    ) {
-      return snapshot.scenarioMatrix;
+  // Group all calendar events by simultaneous release slot
+  const allEventGroups = useMemo<MacroEventGroup[]>(() => {
+    if (!snapshot) return [];
+    return groupCalendarEventsBySlot(snapshot.calendarEvents, nowMs);
+  }, [snapshot, nowMs]);
+
+  // Nearest upcoming event group (waktu_rilis > waktu_sekarang)
+  const nearestUpcomingGroup = useMemo<MacroEventGroup | null>(() => {
+    const upcoming = allEventGroups.filter((g) => g.isUpcoming);
+    return upcoming[0] || allEventGroups[0] || null;
+  }, [allEventGroups]);
+
+  // Filtered event groups for the Upcoming Event Explorer (Search Bar + Filter)
+  const explorerEventGroups = useMemo<MacroEventGroup[]>(() => {
+    if (allEventGroups.length === 0) return [];
+    const q = searchQuery.trim().toLowerCase();
+
+    // When searching a specific keyword (e.g. "PPI", "NFP", "FOMC"), search across all groups this week
+    if (q && q !== 'all') {
+      return allEventGroups.filter((g) => g.searchKeywords.includes(q));
     }
 
-    const customSnap = computeDeterministicMacroSnapshot({
-      calendarEvents: snapshot.calendarEvents,
-      intermarketPulse: snapshot.intermarketPulse,
-      breakingNews: snapshot.breakingNews,
-      selectedEventId,
-      sourceMode: snapshot.sourceMode,
-      modelUsed: snapshot.modelUsed,
-    });
-    return customSnap.scenarioMatrix;
-  }, [snapshot, selectedEventId]);
+    // Default view: prioritize upcoming groups (waktu_rilis > waktu_sekarang) and recently released (< 2h)
+    const activeOrUpcoming = allEventGroups.filter((g) => g.isUpcoming || g.isRecentlyReleased);
+    return activeOrUpcoming.length > 0 ? activeOrUpcoming : allEventGroups;
+  }, [allEventGroups, searchQuery]);
 
   const TWO_HOURS_MS = 2 * 60 * 60 * 1000;
 
@@ -256,39 +272,51 @@ export const MacroNewsView: React.FC = () => {
     return pending[0] || null;
   }, [snapshot, nowMs]);
 
-  // Candidate events for selector chips: ONLY unreleased (evTime > nowMs) OR recently released within 2 hours
-  const candidateChipEvents = useMemo(() => {
-    if (!snapshot) return [];
-    const filtered = snapshot.calendarEvents.filter((ev) => {
-      const t = new Date(ev.date).getTime();
-      return isNaN(t) || t >= nowMs - TWO_HOURS_MS;
-    });
-    const baseList = filtered.length > 0 ? filtered : snapshot.calendarEvents;
-    return [...baseList].sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
-  }, [snapshot, nowMs, TWO_HOURS_MS]);
-
-  // Keep selectedEventId pointing to nearest upcoming event by default
+  // Set default selectedEventId on initial load to the nearest upcoming event group
   useEffect(() => {
     if (!snapshot) return;
-    if (!selectedEventId && nextUpcomingEvent?.id) {
-      setSelectedEventId(nextUpcomingEvent.id);
-      return;
+    if (!selectedEventId && nearestUpcomingGroup?.groupId) {
+      setSelectedEventId(nearestUpcomingGroup.groupId);
     }
-    if (selectedEventId) {
-      const currentSelected = snapshot.calendarEvents.find((e) => e.id === selectedEventId);
-      if (currentSelected) {
-        const t = new Date(currentSelected.date).getTime();
-        if (
-          !isNaN(t) &&
-          t < nowMs - TWO_HOURS_MS &&
-          nextUpcomingEvent &&
-          nextUpcomingEvent.id !== selectedEventId
-        ) {
-          setSelectedEventId(nextUpcomingEvent.id);
-        }
+  }, [snapshot, selectedEventId, nearestUpcomingGroup]);
+
+  // Handler when user taps an Upcoming Event Group from the Explorer or Calendar Table:
+  // 1) Immediately selects the event group for instant UI projection via analyzeMacroEvent
+  // 2) Automatically fetches live Intermarket + RSS feeds and calls Gemini (gemini-2.5-flash)
+  //    for that specific selected event group (unless currently frozen in T-5M lock for that exact event)
+  const handleSelectEventGroup = useCallback(
+    (groupId: string) => {
+      setSelectedEventId(groupId);
+      const currentLock = snapshot
+        ? computePreNewsLockState(snapshot.calendarEvents, Date.now(), groupId)
+        : null;
+      if (currentLock?.isLockedT5M && t5FinalFetchedEventIdRef.current === groupId) {
+        return; // Already locked in final 5-minute window for this event
       }
+      void runLiveAnalysis(true, snapshot, groupId);
+    },
+    [snapshot, runLiveAnalysis]
+  );
+
+  const activeMatrix = useMemo(() => {
+    if (!snapshot) return null;
+    if (
+      !selectedEventId ||
+      selectedEventId === snapshot.scenarioMatrix.primaryEvent.id
+    ) {
+      return snapshot.scenarioMatrix;
     }
-  }, [snapshot, selectedEventId, nextUpcomingEvent, nowMs, TWO_HOURS_MS]);
+
+    const customSnap = analyzeMacroEvent({
+      calendarEvents: snapshot.calendarEvents,
+      intermarketPulse: snapshot.intermarketPulse,
+      breakingNews: snapshot.breakingNews,
+      selectedEventId,
+      sourceMode: snapshot.sourceMode,
+      modelUsed: snapshot.modelUsed,
+    });
+    return customSnap.scenarioMatrix;
+  }, [snapshot, selectedEventId]);
 
   const isLiveCalendar = Boolean(
     snapshot?.isCalendarLiveFeed ?? snapshot?.calendarEvents?.some((e) => e.isLiveFeed)
@@ -346,8 +374,12 @@ export const MacroNewsView: React.FC = () => {
 
   const primaryEv = activeMatrix.primaryEvent;
   const simultaneousCount = 1 + (activeMatrix.simultaneousEvents?.length || 0);
+  const activeClusterTitles = [
+    primaryEv.title,
+    ...(activeMatrix.simultaneousEvents || []).map((e) => e.title),
+  ].join(' & ');
 
-  // Automatic T-5M Execution Tactic fallback in case older cached snapshot lacks the new field
+  // Automatic T-5M Execution Tactic fallback
   const isStrongOneWay =
     activeMatrix.isStrongOneWayBias ??
     (activeMatrix.buyProbability >= 60 || activeMatrix.sellProbability >= 60);
@@ -416,7 +448,7 @@ export const MacroNewsView: React.FC = () => {
               >
                 <Lock className="w-3 h-3" />
                 <span>
-                  {isEn ? lockState.statusLabelEn : lockState.statusLabelId}
+                  {isEn ? lockState.projectionBadgeEn : lockState.projectionBadgeId}
                 </span>
               </span>
             </div>
@@ -436,8 +468,8 @@ export const MacroNewsView: React.FC = () => {
               <span className="text-neutral-400 dark:text-neutral-600 hidden sm:inline">•</span>
               <span className="text-[11px] text-[#697586] dark:text-[#929BA9]">
                 {tr(
-                  '100% Otomatis • Pre-News Volatility Engine (T-5M Lock)',
-                  '100% Automatic • Pre-News Volatility Engine (T-5M Lock)'
+                  '100% Otomatis • Early Reference Explorer & Pre-News T-5M Lock',
+                  '100% Automatic • Early Reference Explorer & Pre-News T-5M Lock'
                 )}
               </span>
             </div>
@@ -454,7 +486,7 @@ export const MacroNewsView: React.FC = () => {
               <span>{tr('Panduan Playbook', 'Playbook Guide')}</span>
             </button>
 
-            {/* Manual "Analisis Live" Button remains available if user wants to force refresh */}
+            {/* Manual "Analisis Live / Refresh Data" Button */}
             <button
               type="button"
               data-testid="macro-news-refresh-btn"
@@ -514,12 +546,12 @@ export const MacroNewsView: React.FC = () => {
             </div>
             <div className="p-3.5 rounded-xl bg-[#F5F7FA] dark:bg-[#050607] border border-[#DDE3EA] dark:border-[#1E232B] space-y-1">
               <div className="font-bold text-[#151D2A] dark:text-[#F2F4F7] text-xs">
-                {tr('2. Konfirmasi Intermarket & Oil', '2. Intermarket & Dual-Channel Oil')}
+                {tr('2. Referensi Awal vs Final T-5M', '2. Early Reference vs Final T-5M')}
               </div>
               <p className="leading-relaxed text-[11px]">
                 {tr(
-                  'Jika DXY & US10Y bergerak berlawanan dengan ekspektasi kalender sebelum rilis, mesin mendeteksi divergensi Priced-In dan menyesuaikan probabilitas otomatis.',
-                  'If DXY & US10Y move opposite to calendar expectations ahead of release, the engine detects Priced-In divergence and adjusts probabilities automatically.'
+                  'Cek proyeksi jadwal besok/minggu ini kapan saja (Referensi Awal), dan sistem akan mengunci otomatis pada 5 menit terakhir sebelum rilis (Final T-5M).',
+                  'Check projections for tomorrow/this week anytime (Early Reference), and the engine automatically locks inside the final 5 minutes before release (Final T-5M).'
                 )}
               </p>
             </div>
@@ -538,56 +570,244 @@ export const MacroNewsView: React.FC = () => {
         )}
       </div>
 
-      {/* 2. FIRST-SECOND ACTION CARD (KARTU EKSEKUSI T-5 MENIT — READABLE IN 2 SECONDS) */}
+      {/* 2. UPCOMING EVENT EXPLORER (PENCARIAN & PEMILIHAN JADWAL MENDATANG — EARLY REFERENCE MODE) */}
+      <div
+        data-testid="macro-upcoming-event-explorer"
+        className="rounded-2xl bg-white dark:bg-[#080A0E] border border-[#DDE3EA] dark:border-[#20252D] p-5 sm:p-6 shadow-xs space-y-4"
+      >
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div className="space-y-0.5">
+            <div className="flex items-center gap-2">
+              <Calendar className="w-4 h-4 text-[#1769E8] dark:text-[#3478DC]" />
+              <h2 className="text-xs sm:text-sm font-bold uppercase tracking-wider text-[#151D2A] dark:text-[#F2F4F7]">
+                {tr(
+                  'Pencarian & Pemilihan Jadwal Rilis USD Mendatang',
+                  'Upcoming USD Release Schedule Explorer'
+                )}
+              </h2>
+            </div>
+            <p className="text-xs text-[#697586] dark:text-[#929BA9]">
+              {tr(
+                'Default memilih jadwal terdekat berikutnya. Ketik atau ketuk jadwal hari lain minggu ini untuk menghitung proyeksi probabilitasnya secara langsung.',
+                'Defaults to nearest upcoming release. Search or tap any schedule this week to immediately calculate its probability projection.'
+              )}
+            </p>
+          </div>
+
+          {/* Quick Keyword Filter Pills */}
+          <div className="flex items-center gap-1.5 overflow-x-auto pb-1 sm:pb-0 no-scrollbar">
+            {QUICK_SEARCH_FILTERS.map((kw) => {
+              const isAll = kw === 'ALL';
+              const isActive = isAll
+                ? searchQuery.trim() === ''
+                : searchQuery.trim().toUpperCase() === kw;
+
+              return (
+                <button
+                  key={kw}
+                  type="button"
+                  onClick={() => setSearchQuery(isAll ? '' : kw)}
+                  className={`px-2.5 py-1 rounded-lg text-[11px] font-bold transition-all cursor-pointer shrink-0 border ${
+                    isActive
+                      ? 'bg-[#1769E8] dark:bg-[#3478DC] border-[#1769E8] dark:border-[#3478DC] text-white'
+                      : 'bg-[#F5F7FA] dark:bg-[#050607] border-[#DDE3EA] dark:border-[#1E232B] text-[#697586] dark:text-[#929BA9] hover:text-[#151D2A] dark:hover:text-[#F2F4F7]'
+                  }`}
+                >
+                  {isAll ? tr('Semua Jadwal', 'All Schedules') : kw}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* Search Input Bar */}
+        <div className="relative">
+          <Search className="w-4 h-4 text-[#697586] dark:text-[#929BA9] absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+          <input
+            type="text"
+            data-testid="macro-upcoming-search-input"
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            placeholder={tr(
+              'Cari jadwal rilis USD minggu ini (ketik: PPI, NFP, FOMC, CPI, Claims, 13 Nov...)',
+              'Search USD releases this week (type: PPI, NFP, FOMC, CPI, Claims, 13 Nov...)'
+            )}
+            className="w-full pl-10 pr-9 py-2.5 rounded-xl bg-[#F5F7FA] dark:bg-[#050607] border border-[#DDE3EA] dark:border-[#1E232B] text-xs sm:text-sm text-[#151D2A] dark:text-[#F2F4F7] placeholder:text-[#697586] dark:placeholder:text-[#929BA9] focus:outline-hidden focus:border-[#1769E8] dark:focus:border-[#3478DC] transition-colors"
+          />
+          {searchQuery && (
+            <button
+              type="button"
+              onClick={() => setSearchQuery('')}
+              className="absolute right-3 top-1/2 -translate-y-1/2 text-[#697586] dark:text-[#929BA9] hover:text-[#151D2A] dark:hover:text-white cursor-pointer"
+              aria-label="Clear search"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          )}
+        </div>
+
+        {/* Selectable Grouped Schedule Cards */}
+        <div
+          data-testid="macro-upcoming-event-groups"
+          className="grid grid-cols-1 md:grid-cols-2 gap-2.5 max-h-60 overflow-y-auto pr-1"
+        >
+          {explorerEventGroups.map((group) => {
+            const isSelected =
+              (selectedEventId &&
+                group.events.some((e) => e.id === selectedEventId)) ||
+              (!selectedEventId && group.groupId === nearestUpcomingGroup?.groupId);
+            const isNearestNext = group.groupId === nearestUpcomingGroup?.groupId;
+
+            return (
+              <button
+                key={group.groupId}
+                type="button"
+                data-testid={`macro-event-group-item-${group.groupId}`}
+                onClick={() => handleSelectEventGroup(group.groupId)}
+                className={`text-left p-3.5 rounded-xl border transition-all cursor-pointer flex items-center justify-between gap-3 ${
+                  isSelected
+                    ? 'bg-[#1769E8] dark:bg-[#3478DC] border-[#1769E8] dark:border-[#3478DC] text-white shadow-xs'
+                    : 'bg-[#F5F7FA] dark:bg-[#050607] border-[#DDE3EA] dark:border-[#1E232B] text-[#151D2A] dark:text-[#F2F4F7] hover:border-[#1769E8]/50 dark:hover:border-[#3478DC]/50'
+                }`}
+              >
+                <div className="min-w-0 space-y-1">
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <span
+                      className={`text-[11px] font-mono font-semibold ${
+                        isSelected ? 'text-white/90' : 'text-[#697586] dark:text-[#929BA9]'
+                      }`}
+                    >
+                      {isEn
+                        ? group.formattedScheduleEn.split(' — ')[0]
+                        : group.formattedScheduleId.split(' — ')[0]}
+                    </span>
+                    {isNearestNext && (
+                      <span
+                        className={`text-[9px] font-bold uppercase px-1.5 py-0.5 rounded ${
+                          isSelected
+                            ? 'bg-white/20 text-white'
+                            : 'bg-[#1769E8]/15 dark:bg-[#3478DC]/20 text-[#1769E8] dark:text-[#3478DC]'
+                        }`}
+                      >
+                        {tr('TERDEKAT', 'NEXT UP')}
+                      </span>
+                    )}
+                    {group.events.length > 1 && (
+                      <span
+                        className={`text-[9px] font-mono px-1.5 py-0.5 rounded ${
+                          isSelected
+                            ? 'bg-black/20 text-white'
+                            : 'bg-white dark:bg-[#101318] text-[#697586] dark:text-[#929BA9] border border-[#DDE3EA] dark:border-[#20252D]'
+                        }`}
+                      >
+                        {group.events.length} Data
+                      </span>
+                    )}
+                  </div>
+                  <div className="text-xs sm:text-sm font-bold truncate">
+                    {group.combinedTitle}
+                  </div>
+                </div>
+
+                <div className="shrink-0 flex flex-col items-end gap-1">
+                  <span
+                    className={`text-[10px] font-mono font-bold px-2 py-0.5 rounded ${
+                      isSelected
+                        ? 'bg-white text-[#1769E8] dark:text-[#080A0E]'
+                        : 'bg-white dark:bg-[#080A0E] text-[#1769E8] dark:text-[#3478DC] border border-[#DDE3EA] dark:border-[#20252D]'
+                    }`}
+                  >
+                    {isSelected
+                      ? tr('AKTIF', 'ACTIVE')
+                      : tr('Pilih', 'Select')}
+                  </span>
+                </div>
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* 3. PROJECTION STATUS DIFFERENTIATION & T-5 MINUTE EXECUTION CARD */}
       <div
         data-testid="macro-t5-action-card"
         className="rounded-2xl bg-white dark:bg-[#080A0E] border border-[#DDE3EA] dark:border-[#20252D] p-5 sm:p-6 shadow-xs space-y-4"
       >
-        {/* Top Row: Title + Calm Lock Indicator + Real-Time Countdown Timer */}
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-[#DDE3EA] dark:border-[#20252D] pb-4">
-          <div className="space-y-1">
-            <div className="flex flex-wrap items-center gap-2">
-              <span className="text-[10px] font-bold uppercase tracking-[0.14em] text-[#1769E8] dark:text-[#3478DC]">
-                {tr('KARTU EKSEKUSI T-5 MENIT', 'T-5 MINUTE EXECUTION CARD')}
-              </span>
-              <span
-                className={`px-2.5 py-0.5 rounded-md text-[10px] font-bold uppercase tracking-wider border ${
-                  lockState.isLockedT5M
-                    ? 'bg-[#1769E8] dark:bg-[#3478DC] border-[#1769E8] dark:border-[#3478DC] text-white'
-                    : 'bg-[#F5F7FA] dark:bg-[#050607] border-[#DDE3EA] dark:border-[#20252D] text-[#151D2A] dark:text-[#F2F4F7]'
-                }`}
-              >
-                {isEn ? lockState.statusLabelEn : lockState.statusLabelId}
-              </span>
-            </div>
-            <h2 className="text-sm sm:text-base font-bold text-[#151D2A] dark:text-[#F2F4F7]">
-              {lockState.targetEvent ? lockState.targetEvent.title : primaryEv.title}
-              {simultaneousCount > 1 && (
-                <span className="ml-2 text-xs font-normal text-[#697586] dark:text-[#929BA9]">
-                  ({simultaneousCount} {tr('Indikator Bersamaan', 'Simultaneous Indicators')})
+        {/* Prominent Status Banner: "REFERENSI AWAL (EARLY PROJECTION)" vs "FINAL T-5 MENIT" */}
+        <div
+          data-testid="macro-projection-status-banner"
+          className={`p-4 rounded-xl border transition-colors ${
+            lockState.isLockedT5M
+              ? 'bg-[#EEF2F6] dark:bg-[#101726] border-[#1769E8] dark:border-[#3478DC]'
+              : 'bg-[#F5F7FA] dark:bg-[#050607] border-[#DDE3EA] dark:border-[#20252D]'
+          }`}
+        >
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div className="space-y-1.5">
+              <div className="flex flex-wrap items-center gap-2">
+                <span
+                  data-testid="macro-projection-status-badge"
+                  className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-lg text-[10px] sm:text-xs font-black uppercase tracking-wider border ${
+                    lockState.isLockedT5M
+                      ? 'bg-[#1769E8] dark:bg-[#3478DC] border-[#1769E8] dark:border-[#3478DC] text-white'
+                      : 'bg-white dark:bg-[#080A0E] border-[#DDE3EA] dark:border-[#20252D] text-[#151D2A] dark:text-[#F2F4F7]'
+                  }`}
+                >
+                  <Lock className="w-3.5 h-3.5 shrink-0" />
+                  <span>
+                    {isEn ? lockState.projectionBadgeEn : lockState.projectionBadgeId}
+                  </span>
                 </span>
-              )}
+
+                <span className="text-[11px] font-mono text-[#697586] dark:text-[#929BA9]">
+                  {formatTimestampWib(primaryEv.date, language)}
+                </span>
+              </div>
+
+              <p
+                data-testid="macro-projection-status-subtext"
+                className="text-xs text-[#697586] dark:text-[#929BA9] leading-relaxed"
+              >
+                {isEn ? lockState.projectionSubtextEn : lockState.projectionSubtextId}
+              </p>
+            </div>
+
+            {/* Real-Time Countdown Box */}
+            <div className="rounded-xl bg-white dark:bg-[#080A0E] border border-[#DDE3EA] dark:border-[#20252D] px-4 py-2.5 flex items-center gap-3 self-start sm:self-center shrink-0">
+              <Clock className="w-4 h-4 text-[#1769E8] dark:text-[#3478DC] shrink-0" />
+              <div>
+                <div className="text-[10px] font-semibold uppercase tracking-wider text-[#697586] dark:text-[#929BA9]">
+                  {tr('Menuju Rilis Jadwal Ini', 'Countdown to Release')}
+                </div>
+                <div
+                  data-testid="macro-t5-countdown-timer"
+                  className="text-lg sm:text-xl font-black font-mono tabular-nums tracking-tight text-[#151D2A] dark:text-[#F2F4F7]"
+                >
+                  {lockState.countdownHms}{' '}
+                  <span className="text-[11px] font-normal text-[#697586] dark:text-[#929BA9]">
+                    {tr('menuju rilis', 'to release')}
+                  </span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Active Event Group Title */}
+        <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
+          <div>
+            <span className="text-[10px] font-bold uppercase tracking-[0.14em] text-[#1769E8] dark:text-[#3478DC]">
+              {tr(' JADWAL RILIS YANG DIANALISIS', 'ANALYZED RELEASE GROUP')}
+            </span>
+            <h2 className="text-sm sm:text-base font-bold text-[#151D2A] dark:text-[#F2F4F7] mt-0.5">
+              {activeClusterTitles}
             </h2>
           </div>
-
-          {/* Real-Time Countdown Box */}
-          <div className="rounded-xl bg-[#F5F7FA] dark:bg-[#050607] border border-[#DDE3EA] dark:border-[#20252D] px-4 py-2.5 flex items-center gap-3 self-start sm:self-center">
-            <Clock className="w-4 h-4 text-[#1769E8] dark:text-[#3478DC] shrink-0" />
-            <div>
-              <div className="text-[10px] font-semibold uppercase tracking-wider text-[#697586] dark:text-[#929BA9]">
-                {tr('Menuju Rilis Terdekat', 'Countdown to Release')}
-              </div>
-              <div
-                data-testid="macro-t5-countdown-timer"
-                className="text-lg sm:text-xl font-black font-mono tabular-nums tracking-tight text-[#151D2A] dark:text-[#F2F4F7]"
-              >
-                {lockState.countdownHms}{' '}
-                <span className="text-[11px] font-normal text-[#697586] dark:text-[#929BA9]">
-                  {tr('menuju rilis', 'to release')}
-                </span>
-              </div>
-            </div>
-          </div>
+          {simultaneousCount > 1 && (
+            <span className="px-2.5 py-1 rounded-lg bg-[#F5F7FA] dark:bg-[#050607] border border-[#DDE3EA] dark:border-[#20252D] text-[11px] font-mono text-[#697586] dark:text-[#929BA9]">
+              {simultaneousCount} {tr('Indikator Rilis Bersamaan', 'Simultaneous Indicators')}
+            </span>
+          )}
         </div>
 
         {/* Middle Row: Large & Clear Pre-News Probabilities (BUY | SELL | MIXED / WHIPSAW) */}
@@ -687,7 +907,7 @@ export const MacroNewsView: React.FC = () => {
         </div>
       </div>
 
-      {/* 3. AUTO-SCAN RSS HEADLINE SENTIMENT (Deep Black Card with Left Core Blue Line) */}
+      {/* 4. AUTO-SCAN RSS HEADLINE SENTIMENT (Deep Black Card with Left Core Blue Line) */}
       {topBreaking && (
         <div
           data-testid="macro-breaking-sentiment-card"
@@ -791,7 +1011,7 @@ export const MacroNewsView: React.FC = () => {
         </div>
       )}
 
-      {/* 4. INTERMARKET PULSE (Deep Black Card with Tabular Numbers & Clean Layout) */}
+      {/* 5. INTERMARKET PULSE (Deep Black Card with Tabular Numbers & Clean Layout) */}
       <div
         data-testid="macro-intermarket-pulse-grid"
         className="rounded-2xl bg-white dark:bg-[#080A0E] border border-[#DDE3EA] dark:border-[#20252D] p-5 shadow-xs"
@@ -868,7 +1088,7 @@ export const MacroNewsView: React.FC = () => {
         </div>
       </div>
 
-      {/* 5. PRE-NEWS SCENARIO MATRIX (Deep Black Card with Dashboard Deep Blue Accents) */}
+      {/* 6. PRE-NEWS SCENARIO MATRIX (Deep Black Card with Dashboard Deep Blue Accents) */}
       <div
         data-testid="macro-scenario-matrix-card"
         className="rounded-2xl bg-white dark:bg-[#080A0E] border border-[#DDE3EA] dark:border-[#20252D] p-5 sm:p-6 shadow-xs space-y-5"
@@ -896,74 +1116,6 @@ export const MacroNewsView: React.FC = () => {
             </span>
           </div>
         </div>
-
-        {/* Economic Calendar Event Selector (Segmented Minimalist Horizontal Track) */}
-        {candidateChipEvents.length > 0 && (
-          <div className="space-y-2">
-            <div className="text-xs font-medium text-[#697586] dark:text-[#929BA9] flex items-center justify-between">
-              <span>{tr('Pilih Jadwal Rilis USD:', 'Select USD Release:')}</span>
-              <span className="font-mono text-[11px] text-[#697586] dark:text-[#929BA9]">
-                {candidateChipEvents.length} {tr('Jadwal Aktif', 'Active Events')}
-              </span>
-            </div>
-            <div className="flex items-center gap-2 overflow-x-auto pb-1.5 no-scrollbar">
-              {candidateChipEvents.map((ev) => {
-                const isSelected =
-                  (selectedEventId && ev.id === selectedEventId) ||
-                  (!selectedEventId && (ev.id === nextUpcomingEvent?.id || ev.id === primaryEv.id));
-                const evTime = new Date(ev.date).getTime();
-                const isNext = ev.id === nextUpcomingEvent?.id;
-                const isRecent = !isNaN(evTime) && evTime <= nowMs && evTime >= nowMs - TWO_HOURS_MS;
-
-                return (
-                  <button
-                    key={ev.id}
-                    type="button"
-                    onClick={() => setSelectedEventId(ev.id)}
-                    className={`shrink-0 px-3.5 py-2 rounded-xl text-xs font-medium transition-all cursor-pointer flex items-center gap-2 ${
-                      isSelected
-                        ? 'bg-[#1769E8] dark:bg-[#3478DC] text-white font-bold shadow-xs'
-                        : 'bg-[#F5F7FA] dark:bg-[#050607] text-[#697586] dark:text-[#929BA9] border border-[#DDE3EA] dark:border-[#1E232B] hover:text-[#151D2A] dark:hover:text-[#F2F4F7] hover:border-[#CBD5E1] dark:hover:border-[#2D343F]'
-                    }`}
-                  >
-                    <span
-                      className={`w-1.5 h-1.5 rounded-full ${
-                        isSelected
-                          ? 'bg-white'
-                          : ev.impact === 'High'
-                          ? 'bg-[#1769E8] dark:bg-[#3478DC]'
-                          : 'bg-[#697586]'
-                      }`}
-                    />
-                    <span>{ev.title}</span>
-                    {isNext && (
-                      <span
-                        className={`text-[9px] font-bold uppercase px-1.5 py-0.5 rounded ${
-                          isSelected
-                            ? 'bg-white/20 text-white'
-                            : 'bg-[#1769E8]/10 dark:bg-[#3478DC]/20 text-[#1769E8] dark:text-[#3478DC]'
-                        }`}
-                      >
-                        {tr('BERIKUTNYA', 'NEXT')}
-                      </span>
-                    )}
-                    {isRecent && ev.actual && (
-                      <span
-                        className={`text-[10px] font-mono px-1.5 py-0.5 rounded ${
-                          isSelected
-                            ? 'bg-black/20 text-white font-bold'
-                            : 'bg-[#E2E8F0] dark:bg-[#101318] text-[#151D2A] dark:text-[#D1D5DB]'
-                        }`}
-                      >
-                        {ev.actual}
-                      </span>
-                    )}
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-        )}
 
         {/* Dynamic Alerts: Aturan Pindah Haluan, Fed Speech Caution, or Simultaneous Release Conflict */}
         {(activeMatrix.dynamicPivotTriggered ||
@@ -1373,7 +1525,7 @@ export const MacroNewsView: React.FC = () => {
         </div>
       </div>
 
-      {/* 6. USD ECONOMIC CALENDAR TABLE (Deep Black Table matching Trade Table) */}
+      {/* 7. USD ECONOMIC CALENDAR TABLE (Deep Black Table matching Trade Table) */}
       <div className="rounded-2xl bg-white dark:bg-[#080A0E] border border-[#DDE3EA] dark:border-[#20252D] p-5 sm:p-6 shadow-xs space-y-4">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
           <div className="flex flex-wrap items-center gap-2">
@@ -1410,7 +1562,7 @@ export const MacroNewsView: React.FC = () => {
             return (
               <div
                 key={ev.id}
-                onClick={() => setSelectedEventId(ev.id)}
+                onClick={() => handleSelectEventGroup(ev.id)}
                 className={`py-3.5 px-2.5 rounded-xl transition-all cursor-pointer ${
                   isNextUpcoming
                     ? 'bg-[#1769E8]/5 dark:bg-[#3478DC]/10 border-l-2 border-l-[#1769E8] dark:border-l-[#3478DC]'
@@ -1537,7 +1689,7 @@ export const MacroNewsView: React.FC = () => {
                 return (
                   <tr
                     key={ev.id}
-                    onClick={() => setSelectedEventId(ev.id)}
+                    onClick={() => handleSelectEventGroup(ev.id)}
                     className={`cursor-pointer transition-colors ${
                       isNextUpcoming
                         ? 'bg-[#1769E8]/5 dark:bg-[#3478DC]/10 border-l-2 border-l-[#1769E8] dark:border-l-[#3478DC]'
