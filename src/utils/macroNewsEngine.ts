@@ -615,6 +615,7 @@ export function isFedSpeechEvent(title: string): boolean {
 export function isPrimaryHighImpactEvent(ev: {
   title?: string;
   impact?: string;
+  country?: string;
   eventCategory?: 'PRIMARY_HIGH_IMPACT' | 'SUPPORTING_REFERENCE';
 }): boolean {
   if (ev.eventCategory === 'SUPPORTING_REFERENCE') return false;
@@ -670,6 +671,7 @@ export function isPrimaryHighImpactEvent(ev: {
 export function isSupportingReferenceEvent(ev: {
   title?: string;
   impact?: string;
+  country?: string;
   eventCategory?: 'PRIMARY_HIGH_IMPACT' | 'SUPPORTING_REFERENCE';
 }): boolean {
   return !isPrimaryHighImpactEvent(ev);
