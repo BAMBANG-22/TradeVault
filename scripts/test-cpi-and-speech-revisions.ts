@@ -8,10 +8,14 @@ import {
   groupCalendarEventsBySlot,
   analyzeStatementTone,
   isFedSpeechEvent,
+  isPrimaryHighImpactEvent,
+  isSupportingReferenceEvent,
+  getSupportingContextEvents,
   computePreNewsLockState,
   MacroCalendarEvent,
   IntermarketAssetPulse,
 } from '../src/utils/macroNewsEngine';
+import { getClientFallbackCalendarEvents } from '../src/utils/macroFeedFetcher';
 
 console.log('=== RUNNING UPCOMING EVENT EXPLORER, EARLY REFERENCE VS FINAL T-5M & AUTO ENGINE TESTS ===\n');
 
@@ -397,6 +401,129 @@ const mockPulse: {
   );
 
   console.log('✓ PASS [5]: Upcoming Event Explorer UI, Status Banner, & Zero Manual Input verified in MacroNewsView.tsx');
+}
+
+// ---------------------------------------------------------------------------
+// 6. Primary High-Impact vs Supporting Reference Separation & 14-Day Feed Coverage
+// ---------------------------------------------------------------------------
+{
+  // Classification checks
+  assert.strictEqual(
+    isPrimaryHighImpactEvent({ title: 'US Core PPI m/m', impact: 'High', country: 'USD' }),
+    true
+  );
+  assert.strictEqual(
+    isPrimaryHighImpactEvent({ title: 'FOMC Rate Decision & Statement', impact: 'High', country: 'USD' }),
+    true
+  );
+  assert.strictEqual(
+    isPrimaryHighImpactEvent({ title: 'US Non-Farm Employment Change (NFP)', impact: 'High', country: 'USD' }),
+    true
+  );
+  assert.strictEqual(
+    isPrimaryHighImpactEvent({ title: 'FOMC Member Waller Speaks', impact: 'High', country: 'USD' }),
+    false,
+    'FOMC Member Speaks MUST NOT be classified as Primary High-Impact'
+  );
+  assert.strictEqual(
+    isPrimaryHighImpactEvent({ title: 'Fed Chair Powell Speaks', impact: 'High', country: 'USD' }),
+    false,
+    'Fed Chair Speaks MUST NOT be classified as Primary High-Impact'
+  );
+  assert.strictEqual(
+    isPrimaryHighImpactEvent({ title: 'US Initial Jobless Claims', impact: 'Medium', country: 'USD' }),
+    false,
+    'Initial Jobless Claims MUST NOT be classified as Primary High-Impact'
+  );
+  assert.strictEqual(
+    isPrimaryHighImpactEvent({ title: 'US JOLTS Job Openings', impact: 'High', country: 'USD' }),
+    false,
+    'JOLTS MUST NOT be classified as Primary High-Impact'
+  );
+  assert.strictEqual(
+    isSupportingReferenceEvent({ title: 'FOMC Member Waller Speaks', impact: 'High', country: 'USD' }),
+    true
+  );
+  assert.strictEqual(
+    isSupportingReferenceEvent({ title: 'US Initial Jobless Claims', impact: 'Medium', country: 'USD' }),
+    true
+  );
+
+  // Verify 14-day fallback calendar has Thursday Claims + FOMC Speech (Supporting) and Friday PPI (Primary),
+  // and that default selection automatically skips Thursday Claims/Speech and picks Friday Core PPI & PPI
+  const fallbackEvents = getClientFallbackCalendarEvents();
+  const primaryGroups = groupCalendarEventsBySlot(fallbackEvents, Date.now(), true);
+  const supportingEvents = getSupportingContextEvents(fallbackEvents, Date.now());
+
+  assert.ok(
+    primaryGroups.every((g) =>
+      g.events.every((e) => !isFedSpeechEvent(e.title) && isPrimaryHighImpactEvent(e))
+    ),
+    'Primary event groups must NEVER contain FOMC Member Speaks or Medium data'
+  );
+
+  const upcomingPrimaryGroups = primaryGroups.filter((g) => g.isUpcoming);
+  assert.ok(upcomingPrimaryGroups.length >= 4, '14-day feed must include multiple upcoming High-Impact groups across this week & next week');
+  assert.strictEqual(
+    upcomingPrimaryGroups[0].combinedTitle,
+    'US Core PPI m/m & US PPI m/m',
+    `Nearest upcoming Primary High-Impact group must be US Core PPI m/m & US PPI m/m (skipping Thursday Claims & FOMC Speaks), got: ${upcomingPrimaryGroups[0].combinedTitle}`
+  );
+
+  // Verify search keywords across 14-day window find PPI, NFP, CPI, PCE, FOMC
+  for (const kw of ['ppi', 'nfp', 'cpi', 'pce', 'fomc', 'gdp', 'ism']) {
+    const matched = primaryGroups.filter((g) => g.searchKeywords.includes(kw));
+    assert.ok(matched.length > 0, `14-day Primary High-Impact search must find "${kw.toUpperCase()}"`);
+  }
+
+  // Verify supportingEvents contains Initial Jobless Claims and FOMC Member Speaks
+  assert.ok(
+    supportingEvents.some((e) => e.title.includes('Jobless Claims')) &&
+      supportingEvents.some((e) => e.title.includes('Speaks')),
+    'Supporting context events must include Initial Jobless Claims and FOMC Member Speaks'
+  );
+
+  // Verify computeDeterministicMacroSnapshot default selection picks US Core PPI m/m
+  const defaultSnap = computeDeterministicMacroSnapshot({
+    calendarEvents: fallbackEvents,
+    intermarketPulse: mockPulse,
+    breakingNews: [],
+  });
+  assert.strictEqual(
+    defaultSnap.scenarioMatrix.primaryEvent.title,
+    'US Core PPI m/m',
+    `Default snapshot primaryEvent must be US Core PPI m/m, got: ${defaultSnap.scenarioMatrix.primaryEvent.title}`
+  );
+
+  // Verify both thisweek and nextweek feeds are fetched in macroFeedFetcher.ts and server.ts,
+  // and that MacroNewsView.tsx contains macro-empty-search-info-card and macro-supporting-context-section
+  const fetcherSrc = fs.readFileSync(
+    path.resolve(process.cwd(), 'src/utils/macroFeedFetcher.ts'),
+    'utf8'
+  );
+  const serverSrc = fs.readFileSync(path.resolve(process.cwd(), 'server.ts'), 'utf8');
+  const viewSrc = fs.readFileSync(
+    path.resolve(process.cwd(), 'src/components/news/MacroNewsView.tsx'),
+    'utf8'
+  );
+
+  assert.ok(
+    fetcherSrc.includes('ff_calendar_thisweek.json') &&
+      fetcherSrc.includes('ff_calendar_nextweek.json') &&
+      serverSrc.includes('ff_calendar_thisweek.json') &&
+      serverSrc.includes('ff_calendar_nextweek.json'),
+    'Both client and server fetchers must pull ff_calendar_thisweek.json AND ff_calendar_nextweek.json'
+  );
+
+  assert.ok(
+    viewSrc.includes('data-testid="macro-empty-search-info-card"') &&
+      viewSrc.includes('dalam 14 hari ke depan — sistem memprioritaskan High-Impact terdekat berikutnya.') &&
+      viewSrc.includes('data-testid="macro-supporting-context-section"') &&
+      viewSrc.includes('Konteks Pendukung & Pidato Fed'),
+    'MacroNewsView must render the 14-day empty search info card and the Konteks Pendukung & Pidato Fed section'
+  );
+
+  console.log('✓ PASS [6]: Primary High-Impact vs Supporting Reference separation, 14-day feed merging, & default High-Impact selection verified');
 }
 
 console.log('\n=== ALL UPCOMING EVENT EXPLORER & PRE-NEWS T-5M ENGINE TESTS PASSED ===');

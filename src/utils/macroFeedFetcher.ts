@@ -8,6 +8,7 @@ import {
   evaluateSingleEventForGold,
   filterAndScoreBreakingHeadlines,
   parseMacroNumeric,
+  isPrimaryHighImpactEvent,
 } from './macroNewsEngine';
 
 /**
@@ -131,6 +132,7 @@ export function getClientFallbackCalendarEvents(): MacroCalendarEvent[] {
   };
 
   const rawSchedule = [
+    // --- THIS WEEK ---
     {
       title: 'US ISM Manufacturing PMI',
       country: 'USD',
@@ -143,11 +145,11 @@ export function getClientFallbackCalendarEvents(): MacroCalendarEvent[] {
     {
       title: 'US JOLTS Job Openings',
       country: 'USD',
-      date: getWeekDayIso(1, 15, 0), // Tuesday 15:00 UTC (22:00 WIB)
-      impact: 'High' as const,
+      date: getWeekDayIso(1, 15, 0), // Tuesday 15:00 UTC (22:00 WIB) — Supporting Reference
+      impact: 'Medium' as const,
       previous: '7.74M',
       forecast: '7.62M',
-      actual: '',
+      actual: '7.65M',
     },
     {
       title: 'US Core CPI m/m',
@@ -156,7 +158,7 @@ export function getClientFallbackCalendarEvents(): MacroCalendarEvent[] {
       impact: 'High' as const,
       previous: '0.3%',
       forecast: '0.2%',
-      actual: '',
+      actual: '0.3%',
     },
     {
       title: 'US CPI m/m',
@@ -165,31 +167,22 @@ export function getClientFallbackCalendarEvents(): MacroCalendarEvent[] {
       impact: 'High' as const,
       previous: '0.4%',
       forecast: '0.3%',
-      actual: '',
+      actual: '0.4%',
     },
     {
       title: 'US Initial Jobless Claims',
       country: 'USD',
-      date: getWeekDayIso(3, 13, 30), // Thursday 13:30 UTC (20:30 WIB)
-      impact: 'High' as const,
+      date: getWeekDayIso(3, 13, 30), // Thursday 13:30 UTC (20:30 WIB) — Supporting Reference
+      impact: 'Medium' as const,
       previous: '221K',
       forecast: '215K',
       actual: '',
     },
     {
-      title: 'US ISM Services PMI',
-      country: 'USD',
-      date: getWeekDayIso(3, 15, 0), // Thursday 15:00 UTC (22:00 WIB)
-      impact: 'High' as const,
-      previous: '56.0',
-      forecast: '54.2',
-      actual: '',
-    },
-    {
       title: 'FOMC Member Waller Speaks',
       country: 'USD',
-      date: getWeekDayIso(3, 18, 0), // Thursday 18:00 UTC (01:00 WIB)
-      impact: 'High' as const,
+      date: getWeekDayIso(3, 18, 0), // Thursday 18:00 UTC (01:00 WIB) — Supporting Reference (Speech)
+      impact: 'Medium' as const,
       previous: '-',
       forecast: '-',
       actual: '',
@@ -197,7 +190,7 @@ export function getClientFallbackCalendarEvents(): MacroCalendarEvent[] {
     {
       title: 'US Core PPI m/m',
       country: 'USD',
-      date: getWeekDayIso(4, 13, 30), // Friday 13:30 UTC (20:30 WIB)
+      date: getWeekDayIso(4, 13, 30), // Friday 13:30 UTC (20:30 WIB) — Primary High-Impact
       impact: 'High' as const,
       previous: '0.2%',
       forecast: '0.3%',
@@ -206,16 +199,89 @@ export function getClientFallbackCalendarEvents(): MacroCalendarEvent[] {
     {
       title: 'US PPI m/m',
       country: 'USD',
-      date: getWeekDayIso(4, 13, 30), // Friday 13:30 UTC (20:30 WIB)
+      date: getWeekDayIso(4, 13, 30), // Friday 13:30 UTC (20:30 WIB) — Primary High-Impact
       impact: 'High' as const,
       previous: '0.1%',
       forecast: '0.2%',
       actual: '',
     },
     {
+      title: 'US Core Retail Sales m/m',
+      country: 'USD',
+      date: getWeekDayIso(4, 15, 0), // Friday 15:00 UTC (22:00 WIB) — Primary High-Impact
+      impact: 'High' as const,
+      previous: '0.1%',
+      forecast: '0.3%',
+      actual: '',
+    },
+    {
+      title: 'US Retail Sales m/m',
+      country: 'USD',
+      date: getWeekDayIso(4, 15, 0), // Friday 15:00 UTC (22:00 WIB) — Primary High-Impact
+      impact: 'High' as const,
+      previous: '0.4%',
+      forecast: '0.3%',
+      actual: '',
+    },
+    // --- NEXT WEEK (14-Day Horizon) ---
+    {
+      title: 'US ISM Services PMI',
+      country: 'USD',
+      date: getWeekDayIso(8, 15, 0), // Next Tuesday 15:00 UTC (22:00 WIB) — Primary High-Impact
+      impact: 'High' as const,
+      previous: '56.0',
+      forecast: '54.2',
+      actual: '',
+    },
+    {
+      title: 'US ADP Non-Farm Employment Change',
+      country: 'USD',
+      date: getWeekDayIso(9, 13, 15), // Next Wednesday 13:15 UTC (20:15 WIB) — Supporting Reference
+      impact: 'Medium' as const,
+      previous: '184K',
+      forecast: '150K',
+      actual: '',
+    },
+    {
+      title: 'US Advance GDP q/q',
+      country: 'USD',
+      date: getWeekDayIso(9, 13, 30), // Next Wednesday 13:30 UTC (20:30 WIB) — Primary High-Impact
+      impact: 'High' as const,
+      previous: '2.8%',
+      forecast: '2.6%',
+      actual: '',
+    },
+    {
+      title: 'FOMC Rate Decision (Federal Funds Rate)',
+      country: 'USD',
+      date: getWeekDayIso(9, 19, 0), // Next Wednesday 19:00 UTC (02:00 WIB) — Primary High-Impact
+      impact: 'High' as const,
+      previous: '4.75%',
+      forecast: '4.50%',
+      actual: '',
+    },
+    {
+      title: 'FOMC Statement',
+      country: 'USD',
+      date: getWeekDayIso(9, 19, 0), // Next Wednesday 19:00 UTC (02:00 WIB) — Primary High-Impact
+      impact: 'High' as const,
+      previous: '-',
+      forecast: '-',
+      actual: '',
+    },
+    {
+      title: 'US Core PCE Price Index m/m',
+      country: 'USD',
+      date: getWeekDayIso(10, 13, 30), // Next Thursday 13:30 UTC (20:30 WIB) — Primary High-Impact
+      impact: 'High' as const,
+      previous: '0.3%',
+      forecast: '0.2%',
+      actual: '',
+    },
+    {
       title: 'US Non-Farm Employment Change (NFP)',
       country: 'USD',
-      date: getWeekDayIso(4, 15, 0), // Friday 15:00 UTC (22:00 WIB)
+      date: getWeekDayIso(11, 13, 30), // Next Friday 13:30 UTC (20:30 WIB) — Primary High-Impact
       impact: 'High' as const,
       previous: '185K',
       forecast: '190K',
@@ -224,7 +290,7 @@ export function getClientFallbackCalendarEvents(): MacroCalendarEvent[] {
     {
       title: 'US Unemployment Rate',
       country: 'USD',
-      date: getWeekDayIso(4, 15, 0), // Friday 15:00 UTC (22:00 WIB)
+      date: getWeekDayIso(11, 13, 30), // Next Friday 13:30 UTC (20:30 WIB) — Primary High-Impact
       impact: 'High' as const,
       previous: '4.1%',
       forecast: '4.1%',
@@ -233,8 +299,8 @@ export function getClientFallbackCalendarEvents(): MacroCalendarEvent[] {
     {
       title: 'US Average Hourly Earnings m/m',
       country: 'USD',
-      date: getWeekDayIso(4, 15, 0), // Friday 15:00 UTC (22:00 WIB)
-      impact: 'Medium' as const,
+      date: getWeekDayIso(11, 13, 30), // Next Friday 13:30 UTC (20:30 WIB) — Primary High-Impact
+      impact: 'High' as const,
       previous: '0.3%',
       forecast: '0.3%',
       actual: '',
@@ -251,6 +317,13 @@ export function getClientFallbackCalendarEvents(): MacroCalendarEvent[] {
       fcstParsed.value,
       prevParsed.value
     );
+    const eventCategory: MacroCalendarEvent['eventCategory'] = isPrimaryHighImpactEvent({
+      title: item.title,
+      impact: item.impact,
+    })
+      ? 'PRIMARY_HIGH_IMPACT'
+      : 'SUPPORTING_REFERENCE';
+
     return {
       id: `ff-usd-${idx + 1}`,
       title: item.title,
@@ -270,28 +343,69 @@ export function getClientFallbackCalendarEvents(): MacroCalendarEvent[] {
       biasReasonId: evalResult.reasonId,
       biasReasonEn: evalResult.reasonEn,
       isLiveFeed: false,
+      eventCategory,
     };
   });
 }
 
 export async function fetchClientForexFactoryCalendar(): Promise<MacroCalendarEvent[]> {
+  const calendarUrls = [
+    'https://nfs.faireconomy.media/ff_calendar_thisweek.json',
+    'https://nfs.faireconomy.media/ff_calendar_nextweek.json',
+  ];
+
   try {
-    const jsonStr = await fetchWithCorsProxy(
-      'https://nfs.faireconomy.media/ff_calendar_thisweek.json',
-      8000,
-      'application/json'
+    const settled = await Promise.allSettled(
+      calendarUrls.map(async (url) => {
+        const jsonStr = await fetchWithCorsProxy(url, 8000, 'application/json');
+        const parsed = JSON.parse(jsonStr);
+        return Array.isArray(parsed) ? parsed : [];
+      })
     );
-    const rawList = JSON.parse(jsonStr);
-    if (!Array.isArray(rawList)) {
+
+    const combinedRaw: any[] = [];
+    for (const r of settled) {
+      if (r.status === 'fulfilled' && Array.isArray(r.value)) {
+        combinedRaw.push(...r.value);
+      }
+    }
+
+    if (combinedRaw.length === 0) {
       return getClientFallbackCalendarEvents();
     }
 
-    const filtered = rawList.filter((item: any) => isRelevantUsdMacroEvent(item));
+    const filtered = combinedRaw.filter((item: any) => isRelevantUsdMacroEvent(item));
     if (filtered.length === 0) {
       return getClientFallbackCalendarEvents();
     }
 
-    return filtered.slice(0, 18).map((item: any, idx: number) => {
+    // Deduplicate combined thisweek + nextweek entries by normalized title + minute ISO timestamp
+    const seenKeys = new Set<string>();
+    const dedupedRaw: any[] = [];
+    for (const item of filtered) {
+      const titleKey = String(item.title || '').trim().toUpperCase();
+      let isoMinuteKey = String(item.date || '');
+      try {
+        const dt = new Date(item.date);
+        if (!isNaN(dt.getTime())) {
+          isoMinuteKey = dt.toISOString().slice(0, 16);
+        }
+      } catch {}
+      const uniqueKey = `${titleKey}|${isoMinuteKey}`;
+      if (!seenKeys.has(uniqueKey)) {
+        seenKeys.add(uniqueKey);
+        dedupedRaw.push(item);
+      }
+    }
+
+    // Sort chronologically across the 14-day window
+    dedupedRaw.sort((a, b) => {
+      const ta = new Date(a.date).getTime() || 0;
+      const tb = new Date(b.date).getTime() || 0;
+      return ta - tb;
+    });
+
+    return dedupedRaw.slice(0, 90).map((item: any, idx: number) => {
       const title = String(item.title || 'USD Economic Release').trim();
       const previous = String(item.previous ?? '').trim();
       const forecast = String(item.forecast ?? '').trim();
@@ -325,6 +439,13 @@ export async function fetchClientForexFactoryCalendar(): Promise<MacroCalendarEv
         }
       }
 
+      const eventCategory: MacroCalendarEvent['eventCategory'] = isPrimaryHighImpactEvent({
+        title,
+        impact,
+      })
+        ? 'PRIMARY_HIGH_IMPACT'
+        : 'SUPPORTING_REFERENCE';
+
       return {
         id: `ff-${idx + 1}-${title.replace(/[^a-zA-Z0-9]/g, '').slice(0, 12)}`,
         title,
@@ -344,6 +465,7 @@ export async function fetchClientForexFactoryCalendar(): Promise<MacroCalendarEv
         biasReasonId: evalResult.reasonId,
         biasReasonEn: evalResult.reasonEn,
         isLiveFeed: true,
+        eventCategory,
       };
     });
   } catch (err) {

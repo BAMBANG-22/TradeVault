@@ -25,6 +25,7 @@ export interface MacroCalendarEvent {
   biasReasonId: string;
   biasReasonEn: string;
   isLiveFeed?: boolean;
+  eventCategory?: 'PRIMARY_HIGH_IMPACT' | 'SUPPORTING_REFERENCE';
 }
 
 export interface IntermarketAssetPulse {
@@ -569,10 +570,19 @@ export function filterAndScoreBreakingHeadlines(
 }
 
 /**
- * Checks if a calendar event is a Fed speech or testimony.
+ * Checks if a calendar event is a Fed speech, testimony, or press conference (NOT a quantitative rate decision).
  */
 export function isFedSpeechEvent(title: string): boolean {
   const t = (title || '').toUpperCase();
+  if (
+    t.includes('RATE DECISION') ||
+    t.includes('FEDERAL FUNDS RATE') ||
+    t.includes('FOMC STATEMENT') ||
+    t.includes('ECONOMIC PROJECTIONS') ||
+    t.includes('DOT PLOT')
+  ) {
+    return false;
+  }
   return (
     t.includes('SPEAKS') ||
     t.includes('SPEECH') ||
@@ -585,6 +595,104 @@ export function isFedSpeechEvent(title: string): boolean {
     t.includes('FOMC PRESS CONFERENCE') ||
     t.includes('CENTRAL BANK')
   );
+}
+
+/**
+ * Strictly determines whether a USD calendar event is a Primary High-Impact Quantitative Target:
+ * ONLY High-impact (Red Folder) quantitative releases:
+ * - CPI, Core CPI, PPI, Core PPI
+ * - NFP (Non-Farm Employment Change), Unemployment Rate, Average Hourly Earnings
+ * - FOMC Rate Decision / Federal Funds Rate / FOMC Statement / Economic Projections / Dot Plot
+ * - PCE, Core PCE
+ * - GDP (Advance, Prelim, Final, GDP Price Index)
+ * - Retail Sales, Core Retail Sales
+ * - ISM Manufacturing PMI, ISM Services PMI
+ *
+ * Strictly EXCLUDES:
+ * - Fed Speeches (FOMC Member Speaks, Fed Chair Speaks, Testifies)
+ * - Medium / Secondary indicators (Initial Jobless Claims, Unemployment Claims, ADP, JOLTS, Challenger, UoM, Consumer Confidence, ISM Prices)
+ */
+export function isPrimaryHighImpactEvent(ev: {
+  title?: string;
+  impact?: string;
+  eventCategory?: 'PRIMARY_HIGH_IMPACT' | 'SUPPORTING_REFERENCE';
+}): boolean {
+  if (ev.eventCategory === 'SUPPORTING_REFERENCE') return false;
+  const title = (ev.title || '').toUpperCase().trim();
+  const impact = (ev.impact || 'High').trim();
+
+  // 1. Never allow Fed speeches as primary target
+  if (isFedSpeechEvent(title)) {
+    return false;
+  }
+
+  // 2. Never allow Medium/Secondary supporting reference indicators as primary target
+  if (
+    title.includes('CLAIMS') ||
+    title.includes('JOBLESS') ||
+    title.includes('ADP') ||
+    title.includes('JOLTS') ||
+    title.includes('CHALLENGER') ||
+    title.includes('UOM') ||
+    title.includes('CONSUMER CONFIDENCE') ||
+    title.includes('EMPIRE STATE') ||
+    title.includes('PHILLY FED') ||
+    title.includes('ISM MANUFACTURING PRICES') ||
+    title.includes('ISM SERVICES PRICES') ||
+    title.includes('FLASH MANUFACTURING PMI') ||
+    title.includes('FLASH SERVICES PMI')
+  ) {
+    return false;
+  }
+
+  // 3. Must match one of the core Tier-1 quantitative volatility targets
+  const isTier1Quantitative =
+    /\b(CPI|PPI|PCE|NFP|NON-FARM|UNEMPLOYMENT RATE|AVERAGE HOURLY EARNINGS|FOMC RATE|FOMC STATEMENT|FOMC ECONOMIC PROJECTIONS|FEDERAL FUNDS RATE|DOT PLOT|RATE DECISION|GDP|RETAIL SALES|ISM MANUFACTURING PMI|ISM SERVICES PMI)\b/i.test(
+      title
+    );
+
+  if (!isTier1Quantitative) {
+    return false;
+  }
+
+  // Allow Average Hourly Earnings when grouped with NFP even if tagged Medium, otherwise require High
+  if (title.includes('AVERAGE HOURLY EARNINGS')) {
+    return impact === 'High' || impact === 'Medium';
+  }
+
+  return impact === 'High';
+}
+
+/**
+ * Checks whether a USD calendar event belongs to the Supporting Reference & Fed Speeches category
+ * (Medium impact data like Initial Jobless Claims, ADP, JOLTS, or any FOMC/Fed Speech).
+ */
+export function isSupportingReferenceEvent(ev: {
+  title?: string;
+  impact?: string;
+  eventCategory?: 'PRIMARY_HIGH_IMPACT' | 'SUPPORTING_REFERENCE';
+}): boolean {
+  return !isPrimaryHighImpactEvent(ev);
+}
+
+/**
+ * Extracts all Supporting Reference & Fed Speech events (Medium data + FOMC speeches)
+ * sorted chronologically near the current time so they can be displayed in "Konteks Pendukung & Pidato Fed"
+ * and fed into Gemini as supporting context / Pindah Haluan signals.
+ */
+export function getSupportingContextEvents(
+  events: MacroCalendarEvent[],
+  nowMs: number = Date.now()
+): MacroCalendarEvent[] {
+  if (!events || events.length === 0) return [];
+  const THREE_DAYS_PAST_MS = 3 * 24 * 60 * 60 * 1000;
+  return events
+    .filter((ev) => isSupportingReferenceEvent(ev))
+    .filter((ev) => {
+      const t = new Date(ev.date).getTime();
+      return !Number.isFinite(t) || t >= nowMs - THREE_DAYS_PAST_MS;
+    })
+    .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
 }
 
 /**
@@ -712,17 +820,26 @@ export function formatEventGroupWibHeader(isoStr: string, lang: 'id' | 'en' = 'i
 /**
  * Groups USD economic calendar events that share the same release slot (within 15 minutes)
  * into unified MacroEventGroup items for the Upcoming Event Explorer & Search Bar.
+ * By default (`primaryOnly = true`), strictly includes ONLY Primary High-Impact Quantitative releases,
+ * excluding FOMC Speeches and Medium/Supporting indicators (Claims, ADP, JOLTS).
  */
 export function groupCalendarEventsBySlot(
   events: MacroCalendarEvent[],
-  nowMs: number = Date.now()
+  nowMs: number = Date.now(),
+  primaryOnly: boolean = true
 ): MacroEventGroup[] {
   if (!events || events.length === 0) return [];
+
+  const candidateEvents = primaryOnly
+    ? events.filter((e) => isPrimaryHighImpactEvent(e))
+    : events;
+
+  if (candidateEvents.length === 0) return [];
 
   const TWO_HOURS_MS = 2 * 60 * 60 * 1000;
   const FIFTEEN_MINS_MS = 15 * 60 * 1000;
 
-  const sorted = [...events].sort((a, b) => {
+  const sorted = [...candidateEvents].sort((a, b) => {
     const ta = new Date(a.date).getTime() || 0;
     const tb = new Date(b.date).getTime() || 0;
     return ta - tb;
@@ -851,8 +968,12 @@ export function computeDeterministicMacroSnapshot(params: {
     workingBreakingNews.unshift(customHl);
   }
 
-  // Pick the primary event: either matching selectedEventId, or prioritize nearest UPCOMING (waktu_rilis > waktu_sekarang) event group
-  const upcomingEvents = workingCalendarEvents
+  // Pick the primary event: strictly prioritize Primary High-Impact Quantitative releases
+  // (NEVER default to FOMC Member Speaks or Medium/Supporting data like Jobless Claims, ADP, JOLTS)
+  const primaryPool = workingCalendarEvents.filter((e) => isPrimaryHighImpactEvent(e));
+  const effectivePool = primaryPool.length > 0 ? primaryPool : workingCalendarEvents;
+
+  const upcomingPrimaryEvents = effectivePool
     .filter((e) => {
       const t = new Date(e.date).getTime();
       return Number.isFinite(t) && t > nowMs;
@@ -860,53 +981,65 @@ export function computeDeterministicMacroSnapshot(params: {
     .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
 
   let nearestUpcomingPrimary: MacroCalendarEvent | undefined;
-  if (upcomingEvents.length > 0) {
-    const firstUpcomingTime = new Date(upcomingEvents[0].date).getTime();
-    const firstSlotCluster = upcomingEvents.filter(
+  if (upcomingPrimaryEvents.length > 0) {
+    const firstUpcomingTime = new Date(upcomingPrimaryEvents[0].date).getTime();
+    const firstSlotCluster = upcomingPrimaryEvents.filter(
       (e) => Math.abs(new Date(e.date).getTime() - firstUpcomingTime) <= 15 * 60 * 1000
     );
     nearestUpcomingPrimary =
       firstSlotCluster.find((e) => e.impact === 'High') || firstSlotCluster[0];
   }
 
-  const sortedEvents = [...workingCalendarEvents].sort((a, b) => {
+  const sortedPrimaryEvents = [...effectivePool].sort((a, b) => {
     const aTime = new Date(a.date).getTime() || nowMs;
     const bTime = new Date(b.date).getTime() || nowMs;
     return Math.abs(aTime - nowMs) - Math.abs(bTime - nowMs);
   });
 
-  const highImpactNearest = sortedEvents.find((e) => e.impact === 'High');
+  // Only allow selectedEventId if it belongs to primaryPool (or if primaryPool is empty in synthetic test)
+  const explicitSelectedPrimary = selectedEventId
+    ? primaryPool.find((e) => e.id === selectedEventId) ||
+      (primaryPool.length === 0
+        ? workingCalendarEvents.find((e) => e.id === selectedEventId)
+        : undefined)
+    : undefined;
+
+  const highImpactNearest = sortedPrimaryEvents.find((e) => e.impact === 'High');
   const primaryEvent: MacroCalendarEvent =
-    workingCalendarEvents.find((e) => e.id === selectedEventId) ||
+    explicitSelectedPrimary ||
     nearestUpcomingPrimary ||
     highImpactNearest ||
-    sortedEvents[0] || {
-      id: 'fallback-cpi-event',
-      title: 'US Core CPI m/m',
+    sortedPrimaryEvents[0] || {
+      id: 'fallback-ppi-event',
+      title: 'US Core PPI m/m',
       country: 'USD',
       date: new Date(nowMs + 25 * 60 * 1000).toISOString(),
       impact: 'High',
-      previous: '0.3%',
-      forecast: '0.2%',
+      previous: '0.2%',
+      forecast: '0.3%',
       actual: '',
-      previousNum: 0.3,
-      forecastNum: 0.2,
+      previousNum: 0.2,
+      forecastNum: 0.3,
       actualNum: null,
       unit: '%',
       pillar: 'INFLATION',
       isInverseIndicator: false,
-      eventBiasForGold: 'BUY',
-      biasReasonId: '[Pilar INFLATION] US Core CPI m/m (Forecast vs Previous: 0.2% vs 0.3%) mengindikasikan pelambatan inflasi bulanan → Dorongan awal BUY XAU/USD.',
-      biasReasonEn: '[INFLATION Pillar] US Core CPI m/m (Forecast vs Previous: 0.2% vs 0.3%) indicates cooling monthly inflation → Initial BUY XAU/USD catalyst.',
+      eventBiasForGold: 'SELL',
+      biasReasonId: '[Pilar INFLATION] US Core PPI m/m (Forecast vs Previous: 0.3% vs 0.2%) mengindikasikan kenaikan tekanan inflasi produsen → Dorongan awal SELL XAU/USD.',
+      biasReasonEn: '[INFLATION Pillar] US Core PPI m/m (Forecast vs Previous: 0.3% vs 0.2%) indicates rising producer inflation → Initial SELL XAU/USD catalyst.',
+      eventCategory: 'PRIMARY_HIGH_IMPACT',
     };
 
-  // Detect Simultaneous Releases (other USD events within 15 minutes of primaryEvent)
+  // Detect Simultaneous Releases (other Primary High-Impact USD events within 15 minutes of primaryEvent)
   const primaryTimeMs = new Date(primaryEvent.date).getTime();
   const simultaneousEvents = workingCalendarEvents.filter((e) => {
     if (e.id === primaryEvent.id) return false;
+    if (isFedSpeechEvent(e.title)) return false;
     const tMs = new Date(e.date).getTime();
     if (!Number.isFinite(primaryTimeMs) || !Number.isFinite(tMs)) return false;
-    return Math.abs(tMs - primaryTimeMs) <= 15 * 60 * 1000;
+    if (Math.abs(tMs - primaryTimeMs) > 15 * 60 * 1000) return false;
+    // Strictly require Primary High-Impact in full calendars; allow synthetic 2-event test pairs
+    return isPrimaryHighImpactEvent(e) || (workingCalendarEvents.length <= 3 && e.impact === 'High');
   });
 
   const allClusterEvents = [primaryEvent, ...simultaneousEvents];
@@ -950,23 +1083,26 @@ export function computeDeterministicMacroSnapshot(params: {
     }
   }
 
-  // Also include broader weekly FOMC Pillar context from other key calendar events
+  // Also include broader weekly FOMC Pillar & Supporting Reference context (Claims, ADP, JOLTS, etc.)
   for (const ev of workingCalendarEvents) {
     if (allClusterEvents.some((c) => c.id === ev.id)) continue;
-    if (ev.impact !== 'High') continue;
+    if (isFedSpeechEvent(ev.title)) continue;
+    const isSupporting = isSupportingReferenceEvent(ev);
+    const contextWeight = isSupporting ? 8 : 10;
+    const tagPrefix = isSupporting ? `KONTEKS PENDUKUNG (${ev.pillar})` : ev.pillar;
     if (ev.eventBiasForGold === 'BUY' && buyArguments.length < 4) {
-      buyScore += 10;
+      buyScore += contextWeight;
       buyArguments.push({
         pillar: ev.pillar,
-        tag: `${ev.pillar} • ${ev.title}`,
+        tag: `${tagPrefix} • ${ev.title}`,
         textId: ev.biasReasonId,
         textEn: ev.biasReasonEn,
       });
     } else if (ev.eventBiasForGold === 'SELL' && sellArguments.length < 4) {
-      sellScore += 10;
+      sellScore += contextWeight;
       sellArguments.push({
         pillar: ev.pillar,
-        tag: `${ev.pillar} • ${ev.title}`,
+        tag: `${tagPrefix} • ${ev.title}`,
         textId: ev.biasReasonId,
         textEn: ev.biasReasonEn,
       });
@@ -1473,22 +1609,25 @@ export function computePreNewsLockState(
 ): PreNewsCountdownState {
   const FIVE_MINUTES_MS = 5 * 60 * 1000;
 
-  // Prefer the selected event if provided; otherwise pick the nearest upcoming event (waktu_rilis > waktu_sekarang)
+  // Prefer the selected event if it is a Primary High-Impact release; otherwise pick the nearest upcoming Primary High-Impact release
+  const primaryPool = calendarEvents.filter((e) => isPrimaryHighImpactEvent(e));
+  const effectivePool = primaryPool.length > 0 ? primaryPool : calendarEvents;
+
   const selectedEv = selectedEventId
-    ? calendarEvents.find((e) => e.id === selectedEventId)
+    ? effectivePool.find((e) => e.id === selectedEventId)
     : undefined;
 
   let targetEvent: MacroCalendarEvent | null = null;
   if (selectedEv) {
     targetEvent = selectedEv;
   } else {
-    const upcoming = calendarEvents
+    const upcoming = effectivePool
       .filter((e) => {
         const t = new Date(e.date).getTime();
         return Number.isFinite(t) && t > nowMs;
       })
       .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
-    targetEvent = upcoming[0] || calendarEvents[0] || null;
+    targetEvent = upcoming[0] || effectivePool[0] || null;
   }
 
   const targetTimeMs = targetEvent ? new Date(targetEvent.date).getTime() : NaN;

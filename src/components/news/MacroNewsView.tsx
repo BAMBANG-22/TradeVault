@@ -34,6 +34,9 @@ import {
   isSnapshotFresh,
   analyzeMacroEvent,
   groupCalendarEventsBySlot,
+  isPrimaryHighImpactEvent,
+  isFedSpeechEvent,
+  getSupportingContextEvents,
   triggerHighImpactMacroNotification,
   formatTimestampWib,
   computePreNewsLockState,
@@ -59,7 +62,7 @@ const VERIFICATION_THEME_TOKENS = {
 } as const;
 
 const AUTO_REFRESH_TTL_MINUTES = 15;
-const QUICK_SEARCH_FILTERS = ['ALL', 'PPI', 'CPI', 'NFP', 'FOMC', 'PMI', 'CLAIMS'] as const;
+const QUICK_SEARCH_FILTERS = ['ALL', 'PPI', 'CPI', 'NFP', 'PCE', 'FOMC', 'GDP', 'ISM', 'RETAIL'] as const;
 
 export const MacroNewsView: React.FC = () => {
   const { language, isEn, tr } = useLanguage();
@@ -231,40 +234,47 @@ export const MacroNewsView: React.FC = () => {
     }
   }, [lockState.isLockedT5M, lockState.targetEvent, snapshot, selectedEventId, runLiveAnalysis]);
 
-  // Group all calendar events by simultaneous release slot
+  // Group ONLY Primary Quantitative High-Impact calendar events by simultaneous release slot
   const allEventGroups = useMemo<MacroEventGroup[]>(() => {
     if (!snapshot) return [];
-    return groupCalendarEventsBySlot(snapshot.calendarEvents, nowMs);
+    return groupCalendarEventsBySlot(snapshot.calendarEvents, nowMs, true);
   }, [snapshot, nowMs]);
 
-  // Nearest upcoming event group (waktu_rilis > waktu_sekarang)
+  // Supporting Reference & Fed Speeches (Konteks Pendukung & Pidato Fed)
+  const supportingContextEvents = useMemo<MacroCalendarEvent[]>(() => {
+    if (!snapshot) return [];
+    return getSupportingContextEvents(snapshot.calendarEvents, nowMs);
+  }, [snapshot, nowMs]);
+
+  // Nearest upcoming Primary High-Impact event group (waktu_rilis > waktu_sekarang)
   const nearestUpcomingGroup = useMemo<MacroEventGroup | null>(() => {
     const upcoming = allEventGroups.filter((g) => g.isUpcoming);
     return upcoming[0] || allEventGroups[0] || null;
   }, [allEventGroups]);
 
-  // Filtered event groups for the Upcoming Event Explorer (Search Bar + Filter)
+  // Filtered Primary High-Impact event groups for the 14-Day Upcoming Event Explorer (Search Bar + Filter)
   const explorerEventGroups = useMemo<MacroEventGroup[]>(() => {
     if (allEventGroups.length === 0) return [];
     const q = searchQuery.trim().toLowerCase();
 
-    // When searching a specific keyword (e.g. "PPI", "NFP", "FOMC"), search across all groups this week
+    // When searching a specific keyword (e.g. "PPI", "NFP", "CPI", "PCE", "FOMC"), search across all 14-day Primary High-Impact groups
     if (q && q !== 'all') {
       return allEventGroups.filter((g) => g.searchKeywords.includes(q));
     }
 
-    // Default view: prioritize upcoming groups (waktu_rilis > waktu_sekarang) and recently released (< 2h)
+    // Default view: prioritize upcoming Primary High-Impact groups (waktu_rilis > waktu_sekarang) and recently released (< 2h)
     const activeOrUpcoming = allEventGroups.filter((g) => g.isUpcoming || g.isRecentlyReleased);
     return activeOrUpcoming.length > 0 ? activeOrUpcoming : allEventGroups;
   }, [allEventGroups, searchQuery]);
 
   const TWO_HOURS_MS = 2 * 60 * 60 * 1000;
 
-  // Next upcoming event (earliest unreleased event with evTime > nowMs)
+  // Next upcoming Primary High-Impact event (earliest unreleased event with evTime > nowMs)
   const nextUpcomingEvent = useMemo(() => {
     if (!snapshot) return null;
     const pending = snapshot.calendarEvents
       .filter((ev) => {
+        if (!isPrimaryHighImpactEvent(ev)) return false;
         const t = new Date(ev.date).getTime();
         return !isNaN(t) && t > nowMs;
       })
@@ -272,20 +282,31 @@ export const MacroNewsView: React.FC = () => {
     return pending[0] || null;
   }, [snapshot, nowMs]);
 
-  // Set default selectedEventId on initial load to the nearest upcoming event group
+  // Enforce default selectedEventId on initial load & snapshot updates to strictly point to a Primary High-Impact group
   useEffect(() => {
-    if (!snapshot) return;
-    if (!selectedEventId && nearestUpcomingGroup?.groupId) {
+    if (!snapshot || !nearestUpcomingGroup?.groupId) return;
+    if (!selectedEventId) {
+      setSelectedEventId(nearestUpcomingGroup.groupId);
+      return;
+    }
+    const matchingPrimaryGroup = allEventGroups.find((g) =>
+      g.events.some((e) => e.id === selectedEventId)
+    );
+    if (!matchingPrimaryGroup) {
       setSelectedEventId(nearestUpcomingGroup.groupId);
     }
-  }, [snapshot, selectedEventId, nearestUpcomingGroup]);
+  }, [snapshot, selectedEventId, nearestUpcomingGroup, allEventGroups]);
 
-  // Handler when user taps an Upcoming Event Group from the Explorer or Calendar Table:
+  // Handler when user taps an Upcoming Primary High-Impact Event Group from the Explorer or Calendar Table:
   // 1) Immediately selects the event group for instant UI projection via analyzeMacroEvent
   // 2) Automatically fetches live Intermarket + RSS feeds and calls Gemini (gemini-2.5-flash)
   //    for that specific selected event group (unless currently frozen in T-5M lock for that exact event)
   const handleSelectEventGroup = useCallback(
     (groupId: string) => {
+      const targetEv = snapshot?.calendarEvents.find((e) => e.id === groupId);
+      if (targetEv && !isPrimaryHighImpactEvent(targetEv)) {
+        return; // Supporting reference & Fed speeches cannot become the primary volatility target
+      }
       setSelectedEventId(groupId);
       const currentLock = snapshot
         ? computePreNewsLockState(snapshot.calendarEvents, Date.now(), groupId)
@@ -300,9 +321,11 @@ export const MacroNewsView: React.FC = () => {
 
   const activeMatrix = useMemo(() => {
     if (!snapshot) return null;
+    const effectiveSelectedId = selectedEventId || nearestUpcomingGroup?.groupId;
     if (
-      !selectedEventId ||
-      selectedEventId === snapshot.scenarioMatrix.primaryEvent.id
+      effectiveSelectedId &&
+      effectiveSelectedId === snapshot.scenarioMatrix.primaryEvent.id &&
+      isPrimaryHighImpactEvent(snapshot.scenarioMatrix.primaryEvent)
     ) {
       return snapshot.scenarioMatrix;
     }
@@ -311,12 +334,12 @@ export const MacroNewsView: React.FC = () => {
       calendarEvents: snapshot.calendarEvents,
       intermarketPulse: snapshot.intermarketPulse,
       breakingNews: snapshot.breakingNews,
-      selectedEventId,
+      selectedEventId: effectiveSelectedId,
       sourceMode: snapshot.sourceMode,
       modelUsed: snapshot.modelUsed,
     });
     return customSnap.scenarioMatrix;
-  }, [snapshot, selectedEventId]);
+  }, [snapshot, selectedEventId, nearestUpcomingGroup]);
 
   const isLiveCalendar = Boolean(
     snapshot?.isCalendarLiveFeed ?? snapshot?.calendarEvents?.some((e) => e.isLiveFeed)
@@ -570,26 +593,29 @@ export const MacroNewsView: React.FC = () => {
         )}
       </div>
 
-      {/* 2. UPCOMING EVENT EXPLORER (PENCARIAN & PEMILIHAN JADWAL MENDATANG — EARLY REFERENCE MODE) */}
+      {/* 2. UPCOMING EVENT EXPLORER (PENCARIAN & PEMILIHAN JADWAL HIGH-IMPACT 14 HARI — EARLY REFERENCE MODE) */}
       <div
         data-testid="macro-upcoming-event-explorer"
         className="rounded-2xl bg-white dark:bg-[#080A0E] border border-[#DDE3EA] dark:border-[#20252D] p-5 sm:p-6 shadow-xs space-y-4"
       >
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
           <div className="space-y-0.5">
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               <Calendar className="w-4 h-4 text-[#1769E8] dark:text-[#3478DC]" />
               <h2 className="text-xs sm:text-sm font-bold uppercase tracking-wider text-[#151D2A] dark:text-[#F2F4F7]">
                 {tr(
-                  'Pencarian & Pemilihan Jadwal Rilis USD Mendatang',
-                  'Upcoming USD Release Schedule Explorer'
+                  'Pencarian & Pemilihan Jadwal Rilis USD Mendatang (Primary High-Impact)',
+                  'Upcoming USD Primary High-Impact Schedule Explorer (14-Day Window)'
                 )}
               </h2>
+              <span className="px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-[#F5F7FA] dark:bg-[#050607] border border-[#DDE3EA] dark:border-[#20252D] text-[#1769E8] dark:text-[#3478DC]">
+                {tr('Cakupan 2 Minggu (14 Hari)', '2-Week Coverage (14 Days)')}
+              </span>
             </div>
             <p className="text-xs text-[#697586] dark:text-[#929BA9]">
               {tr(
-                'Default memilih jadwal terdekat berikutnya. Ketik atau ketuk jadwal hari lain minggu ini untuk menghitung proyeksi probabilitasnya secara langsung.',
-                'Defaults to nearest upcoming release. Search or tap any schedule this week to immediately calculate its probability projection.'
+                'Default otomatis memilih grup High-Impact kuantitatif terdekat berikutnya (bukan Pidato Fed / Medium). Cari atau ketuk jadwal minggu ini & minggu depan untuk menghitung proyeksi probabilitasnya.',
+                'Automatically defaults to the nearest upcoming quantitative High-Impact group (excluding Fed Speeches / Medium data). Search or tap any schedule across this week & next week.'
               )}
             </p>
           </div>
@@ -613,7 +639,7 @@ export const MacroNewsView: React.FC = () => {
                       : 'bg-[#F5F7FA] dark:bg-[#050607] border-[#DDE3EA] dark:border-[#1E232B] text-[#697586] dark:text-[#929BA9] hover:text-[#151D2A] dark:hover:text-[#F2F4F7]'
                   }`}
                 >
-                  {isAll ? tr('Semua Jadwal', 'All Schedules') : kw}
+                  {isAll ? tr('Semua High-Impact', 'All High-Impact') : kw}
                 </button>
               );
             })}
@@ -629,8 +655,8 @@ export const MacroNewsView: React.FC = () => {
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             placeholder={tr(
-              'Cari jadwal rilis USD minggu ini (ketik: PPI, NFP, FOMC, CPI, Claims, 13 Nov...)',
-              'Search USD releases this week (type: PPI, NFP, FOMC, CPI, Claims, 13 Nov...)'
+              'Cari jadwal High-Impact 14 hari ke depan (ketik: PPI, NFP, CPI, PCE, FOMC, GDP, ISM...)',
+              'Search 14-day High-Impact releases (type: PPI, NFP, CPI, PCE, FOMC, GDP, ISM...)'
             )}
             className="w-full pl-10 pr-9 py-2.5 rounded-xl bg-[#F5F7FA] dark:bg-[#050607] border border-[#DDE3EA] dark:border-[#1E232B] text-xs sm:text-sm text-[#151D2A] dark:text-[#F2F4F7] placeholder:text-[#697586] dark:placeholder:text-[#929BA9] focus:outline-hidden focus:border-[#1769E8] dark:focus:border-[#3478DC] transition-colors"
           />
@@ -646,86 +672,199 @@ export const MacroNewsView: React.FC = () => {
           )}
         </div>
 
-        {/* Selectable Grouped Schedule Cards */}
-        <div
-          data-testid="macro-upcoming-event-groups"
-          className="grid grid-cols-1 md:grid-cols-2 gap-2.5 max-h-60 overflow-y-auto pr-1"
-        >
-          {explorerEventGroups.map((group) => {
-            const isSelected =
-              (selectedEventId &&
-                group.events.some((e) => e.id === selectedEventId)) ||
-              (!selectedEventId && group.groupId === nearestUpcomingGroup?.groupId);
-            const isNearestNext = group.groupId === nearestUpcomingGroup?.groupId;
+        {/* Selectable Grouped Primary High-Impact Schedule Cards OR 14-Day Empty Search Info Card */}
+        {explorerEventGroups.length > 0 ? (
+          <div
+            data-testid="macro-upcoming-event-groups"
+            className="grid grid-cols-1 md:grid-cols-2 gap-2.5 max-h-60 overflow-y-auto pr-1"
+          >
+            {explorerEventGroups.map((group) => {
+              const isSelected =
+                (selectedEventId &&
+                  group.events.some((e) => e.id === selectedEventId)) ||
+                (!selectedEventId && group.groupId === nearestUpcomingGroup?.groupId);
+              const isNearestNext = group.groupId === nearestUpcomingGroup?.groupId;
 
-            return (
-              <button
-                key={group.groupId}
-                type="button"
-                data-testid={`macro-event-group-item-${group.groupId}`}
-                onClick={() => handleSelectEventGroup(group.groupId)}
-                className={`text-left p-3.5 rounded-xl border transition-all cursor-pointer flex items-center justify-between gap-3 ${
-                  isSelected
-                    ? 'bg-[#1769E8] dark:bg-[#3478DC] border-[#1769E8] dark:border-[#3478DC] text-white shadow-xs'
-                    : 'bg-[#F5F7FA] dark:bg-[#050607] border-[#DDE3EA] dark:border-[#1E232B] text-[#151D2A] dark:text-[#F2F4F7] hover:border-[#1769E8]/50 dark:hover:border-[#3478DC]/50'
-                }`}
-              >
-                <div className="min-w-0 space-y-1">
-                  <div className="flex flex-wrap items-center gap-1.5">
+              return (
+                <button
+                  key={group.groupId}
+                  type="button"
+                  data-testid={`macro-event-group-item-${group.groupId}`}
+                  onClick={() => handleSelectEventGroup(group.groupId)}
+                  className={`text-left p-3.5 rounded-xl border transition-all cursor-pointer flex items-center justify-between gap-3 ${
+                    isSelected
+                      ? 'bg-[#1769E8] dark:bg-[#3478DC] border-[#1769E8] dark:border-[#3478DC] text-white shadow-xs'
+                      : 'bg-[#F5F7FA] dark:bg-[#050607] border-[#DDE3EA] dark:border-[#1E232B] text-[#151D2A] dark:text-[#F2F4F7] hover:border-[#1769E8]/50 dark:hover:border-[#3478DC]/50'
+                  }`}
+                >
+                  <div className="min-w-0 space-y-1">
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      <span
+                        className={`text-[11px] font-mono font-semibold ${
+                          isSelected ? 'text-white/90' : 'text-[#697586] dark:text-[#929BA9]'
+                        }`}
+                      >
+                        {isEn
+                          ? group.formattedScheduleEn.split(' — ')[0]
+                          : group.formattedScheduleId.split(' — ')[0]}
+                      </span>
+                      {isNearestNext && (
+                        <span
+                          className={`text-[9px] font-bold uppercase px-1.5 py-0.5 rounded ${
+                            isSelected
+                              ? 'bg-white/20 text-white'
+                              : 'bg-[#1769E8]/15 dark:bg-[#3478DC]/20 text-[#1769E8] dark:text-[#3478DC]'
+                          }`}
+                        >
+                          {tr('HIGH-IMPACT TERDEKAT', 'NEAREST HIGH-IMPACT')}
+                        </span>
+                      )}
+                      {group.events.length > 1 && (
+                        <span
+                          className={`text-[9px] font-mono px-1.5 py-0.5 rounded ${
+                            isSelected
+                              ? 'bg-black/20 text-white'
+                              : 'bg-white dark:bg-[#101318] text-[#697586] dark:text-[#929BA9] border border-[#DDE3EA] dark:border-[#20252D]'
+                          }`}
+                        >
+                          {group.events.length} Data
+                        </span>
+                      )}
+                    </div>
+                    <div className="text-xs sm:text-sm font-bold truncate">
+                      {group.combinedTitle}
+                    </div>
+                  </div>
+
+                  <div className="shrink-0 flex flex-col items-end gap-1">
                     <span
-                      className={`text-[11px] font-mono font-semibold ${
-                        isSelected ? 'text-white/90' : 'text-[#697586] dark:text-[#929BA9]'
+                      className={`text-[10px] font-mono font-bold px-2 py-0.5 rounded ${
+                        isSelected
+                          ? 'bg-white text-[#1769E8] dark:text-[#080A0E]'
+                          : 'bg-white dark:bg-[#080A0E] text-[#1769E8] dark:text-[#3478DC] border border-[#DDE3EA] dark:border-[#20252D]'
                       }`}
                     >
-                      {isEn
-                        ? group.formattedScheduleEn.split(' — ')[0]
-                        : group.formattedScheduleId.split(' — ')[0]}
+                      {isSelected
+                        ? tr('AKTIF', 'ACTIVE')
+                        : tr('Pilih', 'Select')}
                     </span>
-                    {isNearestNext && (
-                      <span
-                        className={`text-[9px] font-bold uppercase px-1.5 py-0.5 rounded ${
-                          isSelected
-                            ? 'bg-white/20 text-white'
-                            : 'bg-[#1769E8]/15 dark:bg-[#3478DC]/20 text-[#1769E8] dark:text-[#3478DC]'
-                        }`}
-                      >
-                        {tr('TERDEKAT', 'NEXT UP')}
-                      </span>
-                    )}
-                    {group.events.length > 1 && (
-                      <span
-                        className={`text-[9px] font-mono px-1.5 py-0.5 rounded ${
-                          isSelected
-                            ? 'bg-black/20 text-white'
-                            : 'bg-white dark:bg-[#101318] text-[#697586] dark:text-[#929BA9] border border-[#DDE3EA] dark:border-[#20252D]'
-                        }`}
-                      >
-                        {group.events.length} Data
-                      </span>
-                    )}
                   </div>
-                  <div className="text-xs sm:text-sm font-bold truncate">
-                    {group.combinedTitle}
-                  </div>
-                </div>
+                </button>
+              );
+            })}
+          </div>
+        ) : (
+          <div
+            data-testid="macro-empty-search-info-card"
+            className="p-4 rounded-xl bg-[#F5F7FA] dark:bg-[#050607] border border-[#DDE3EA] dark:border-[#20252D] border-l-4 border-l-[#1769E8] dark:border-l-[#3478DC] flex flex-col sm:flex-row sm:items-center justify-between gap-3"
+          >
+            <div className="flex items-start gap-2.5">
+              <Info className="w-4 h-4 text-[#1769E8] dark:text-[#3478DC] shrink-0 mt-0.5" />
+              <div className="space-y-1">
+                <p className="text-xs sm:text-sm font-bold text-[#151D2A] dark:text-[#F2F4F7]">
+                  {isEn
+                    ? `Belum ada jadwal ${searchQuery.trim().toUpperCase()} dalam 14 hari ke depan — sistem memprioritaskan High-Impact terdekat berikutnya.`
+                    : `Belum ada jadwal ${searchQuery.trim().toUpperCase()} dalam 14 hari ke depan — sistem memprioritaskan High-Impact terdekat berikutnya.`}
+                </p>
+                {nearestUpcomingGroup && (
+                  <p className="text-[11px] text-[#697586] dark:text-[#929BA9]">
+                    {tr('Target High-Impact Aktif:', 'Active High-Impact Target:')}{' '}
+                    <span className="font-mono font-semibold text-[#151D2A] dark:text-[#F2F4F7]">
+                      {isEn
+                        ? nearestUpcomingGroup.formattedScheduleEn
+                        : nearestUpcomingGroup.formattedScheduleId}
+                    </span>
+                  </p>
+                )}
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => setSearchQuery('')}
+              className="px-3 py-1.5 rounded-lg bg-[#1769E8] dark:bg-[#3478DC] text-white text-xs font-bold shrink-0 self-start sm:self-center cursor-pointer"
+            >
+              {tr('Kembali ke High-Impact Terdekat', 'Back to Nearest High-Impact')}
+            </button>
+          </div>
+        )}
 
-                <div className="shrink-0 flex flex-col items-end gap-1">
-                  <span
-                    className={`text-[10px] font-mono font-bold px-2 py-0.5 rounded ${
-                      isSelected
-                        ? 'bg-white text-[#1769E8] dark:text-[#080A0E]'
-                        : 'bg-white dark:bg-[#080A0E] text-[#1769E8] dark:text-[#3478DC] border border-[#DDE3EA] dark:border-[#20252D]'
-                    }`}
+        {/* Dedicated Compact Section: "Konteks Pendukung & Pidato Fed" (SUPPORTING_REFERENCE) */}
+        {supportingContextEvents.length > 0 && (
+          <div
+            data-testid="macro-supporting-context-section"
+            className="pt-3.5 border-t border-[#DDE3EA] dark:border-[#20252D] space-y-2.5"
+          >
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1.5">
+              <div className="flex items-center gap-2">
+                <span className="w-2 h-2 rounded-full bg-[#697586] dark:bg-[#929BA9]" />
+                <h3 className="text-[11px] sm:text-xs font-bold uppercase tracking-wider text-[#151D2A] dark:text-[#F2F4F7]">
+                  {tr(
+                    'Konteks Pendukung & Pidato Fed',
+                    'Supporting Context & Fed Speeches'
+                  )}
+                </h3>
+                <span className="px-2 py-0.5 rounded text-[9.5px] font-mono bg-[#F5F7FA] dark:bg-[#050607] border border-[#DDE3EA] dark:border-[#20252D] text-[#697586] dark:text-[#929BA9]">
+                  {tr('Referensi Otomatis Gemini AI', 'Gemini AI Auto-Reference')}
+                </span>
+              </div>
+              <span className="text-[11px] text-[#697586] dark:text-[#929BA9]">
+                {tr(
+                  'Bukan target volatilitas utama • Dibaca otomatis sebagai faktor penguat / sinyal Pindah Haluan',
+                  'Not primary volatility target • Automatically read as reinforcing factor / Dynamic Pivot signal'
+                )}
+              </span>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
+              {supportingContextEvents.map((ctxEv) => {
+                const isSpeech = isFedSpeechEvent(ctxEv.title);
+                return (
+                  <div
+                    key={ctxEv.id}
+                    data-testid={`macro-supporting-context-item-${ctxEv.id}`}
+                    className="p-3 rounded-xl bg-[#F5F7FA] dark:bg-[#050607] border border-[#DDE3EA] dark:border-[#1E232B] flex flex-col justify-between gap-1.5"
                   >
-                    {isSelected
-                      ? tr('AKTIF', 'ACTIVE')
-                      : tr('Pilih', 'Select')}
-                  </span>
-                </div>
-              </button>
-            );
-          })}
-        </div>
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-[10px] font-mono text-[#697586] dark:text-[#929BA9]">
+                        {formatTimestampWib(ctxEv.date, language)}
+                      </span>
+                      <span className="px-1.5 py-0.5 rounded text-[9px] font-bold uppercase bg-white dark:bg-[#080A0E] border border-[#DDE3EA] dark:border-[#20252D] text-[#697586] dark:text-[#929BA9]">
+                        {isSpeech
+                          ? tr('PIDATO FED', 'FED SPEECH')
+                          : tr('KONTEKS PENDUKUNG', 'SUPPORTING DATA')}
+                      </span>
+                    </div>
+
+                    <div className="text-xs font-bold text-[#151D2A] dark:text-[#F2F4F7] truncate">
+                      {ctxEv.title}
+                    </div>
+
+                    {!isSpeech ? (
+                      <div className="flex items-center justify-between text-[10.5px] font-mono text-[#697586] dark:text-[#929BA9] pt-1 border-t border-[#DDE3EA] dark:border-[#1E232B]">
+                        <span>
+                          Prev: <strong className="text-[#151D2A] dark:text-[#F2F4F7]">{ctxEv.previous || '—'}</strong>
+                        </span>
+                        <span>
+                          Fcst: <strong className="text-[#1769E8] dark:text-[#3478DC]">{ctxEv.forecast || '—'}</strong>
+                        </span>
+                        <span>
+                          Bias: <strong className="text-[#151D2A] dark:text-[#F2F4F7]">{ctxEv.eventBiasForGold}</strong>
+                        </span>
+                      </div>
+                    ) : (
+                      <div className="text-[10.5px] text-[#697586] dark:text-[#929BA9] pt-1 border-t border-[#DDE3EA] dark:border-[#1E232B] truncate">
+                        {tr(
+                          'Dipantau otomatis via RSS untuk deteksi sinyal Hawkish / Dovish Fed',
+                          'Auto-monitored via RSS for Hawkish / Dovish Fed signals'
+                        )}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
       </div>
 
       {/* 3. PROJECTION STATUS DIFFERENTIATION & T-5 MINUTE EXECUTION CARD */}
