@@ -12,15 +12,21 @@ import {
   isSupportingReferenceEvent,
   getSupportingContextEvents,
   computePreNewsLockState,
+  createUnavailableFedWatchState,
+  evaluateCmeFedWatchScoring,
+  computeImpliedFedWatchFromMarketQuotes,
+  formatLiveUpdateClockWib,
   MacroCalendarEvent,
   IntermarketAssetPulse,
 } from '../src/utils/macroNewsEngine';
 import {
   getClientFallbackCalendarEvents,
+  getClientFallbackBreakingHeadlines,
   fetchClientForexFactoryCalendar,
+  fetchClientFedFundsFuturesBackup,
 } from '../src/utils/macroFeedFetcher';
 
-console.log('=== RUNNING UPCOMING EVENT EXPLORER, EARLY REFERENCE VS FINAL T-5M & AUTO ENGINE TESTS ===\n');
+console.log('=== RUNNING UPCOMING EVENT EXPLORER, CME FEDWATCH, STRICT LIVE FETCH & PRE-NEWS T-5M TESTS ===\n');
 
 const mockPulse: {
   dxy: IntermarketAssetPulse;
@@ -360,7 +366,178 @@ const mockPulse: {
 }
 
 // ---------------------------------------------------------------------------
-// 5. Verify Upcoming Event Explorer, Status Badges & Zero Manual Input in MacroNewsView.tsx
+// 5. CME FedWatch Scoring Rules (FOMC Desember 2026, >= 80% Saturation, ZQ=F Backup & Precision Timestamp)
+// ---------------------------------------------------------------------------
+{
+  // Unavailable FedWatch state must return null probabilities and honest label
+  const unavailFw = createUnavailableFedWatchState();
+  assert.strictEqual(unavailFw.isAvailable, false);
+  assert.strictEqual(unavailFw.cutProbability, null);
+  assert.strictEqual(unavailFw.holdProbability, null);
+  assert.strictEqual(unavailFw.hikeProbability, null);
+  assert.strictEqual(unavailFw.fomcMeetingDate, 'Data FedWatch belum tersedia');
+
+  // 5A. Extreme Hawkish Priced-In: Rate Hike >= 80% (e.g. 90% Rate Hike for FOMC Desember 2026)
+  const saturatedHikeFw = evaluateCmeFedWatchScoring({
+    fomcMeetingDate: 'FOMC Desember 2026',
+    hikeProbability: 90.0,
+    holdProbability: 10.0,
+    cutProbability: 0.0,
+    hawkishShiftDetected: true,
+    sourceLabel: 'Sumber: CME FedWatch Grounding (Des 2026)',
+  });
+  assert.strictEqual(saturatedHikeFw.isAvailable, true);
+  assert.strictEqual(saturatedHikeFw.fomcMeetingDate, 'FOMC Desember 2026');
+  assert.strictEqual(saturatedHikeFw.dominantOutcome, 'HIKE');
+  assert.strictEqual(saturatedHikeFw.isPricedInSaturated, true);
+  assert.strictEqual(
+    saturatedHikeFw.summaryNoteId,
+    'Pasar sudah 90% priced-in Rate Hike Desember — jika PPI rilis lebih rendah dari Forecast, waspadai kejutan repricing BUY XAU/USD yang eksplosif; jika PPI rilis panas, penguatan USD cenderung terbatas karena sudah priced-in.'
+  );
+
+  const releaseTime = new Date(Date.now() + 20 * 60 * 1000).toISOString();
+  const coolPpiEvent: MacroCalendarEvent[] = [
+    {
+      id: 'ppi-cool-surprise',
+      title: 'Core PPI m/m',
+      country: 'USD',
+      date: releaseTime,
+      impact: 'High',
+      previous: '0.7%',
+      forecast: '0.3%', // Cooler PPI forecast -> BUY Gold
+      actual: '',
+      previousNum: 0.7,
+      forecastNum: 0.3,
+      actualNum: null,
+      unit: '%',
+      pillar: 'INFLATION',
+      isInverseIndicator: false,
+      eventBiasForGold: 'BUY',
+      biasReasonId: 'Inflasi produsen melandai',
+      biasReasonEn: 'Cooler producer inflation',
+    },
+  ];
+
+  const hikeSaturatedSnap = computeDeterministicMacroSnapshot({
+    calendarEvents: coolPpiEvent,
+    intermarketPulse: mockPulse,
+    breakingNews: [],
+    cmeFedWatch: saturatedHikeFw,
+  });
+  assert.ok(
+    hikeSaturatedSnap.scenarioMatrix.buyArguments.some((a) =>
+      a.tag.includes('PRICED-IN SATURATION (≥80%)')
+    ),
+    'Rate Hike >= 80% with cooler PPI must add PRICED-IN SATURATION (≥80%) BUY argument'
+  );
+  assert.ok(
+    hikeSaturatedSnap.scenarioMatrix.actionPlanId.includes(
+      'Pasar sudah 90% priced-in Rate Hike Desember — jika PPI rilis lebih rendah dari Forecast, waspadai kejutan repricing BUY XAU/USD yang eksplosif; jika PPI rilis panas, penguatan USD cenderung terbatas karena sudah priced-in.'
+    ),
+    'Action Plan must include the exact December Rate Hike >= 80% saturation note'
+  );
+
+  // 5B. Extreme Dovish Priced-In: Rate Cut >= 80% when calendar points to SELL (hotter inflation)
+  const saturatedCutFw = evaluateCmeFedWatchScoring({
+    fomcMeetingDate: 'FOMC Desember 2026',
+    cutProbability: 84.5,
+    holdProbability: 15.5,
+    hikeProbability: 0,
+    hawkishShiftDetected: false,
+  });
+  assert.strictEqual(saturatedCutFw.isAvailable, true);
+  assert.strictEqual(saturatedCutFw.dominantOutcome, 'CUT');
+  assert.strictEqual(saturatedCutFw.isPricedInSaturated, true);
+
+  const hotCpiEvent: MacroCalendarEvent[] = [
+    {
+      id: 'cpi-hot-surprise',
+      title: 'US Core CPI m/m',
+      country: 'USD',
+      date: releaseTime,
+      impact: 'High',
+      previous: '0.2%',
+      forecast: '0.3%', // Hotter forecast -> SELL Gold
+      actual: '',
+      previousNum: 0.2,
+      forecastNum: 0.3,
+      actualNum: null,
+      unit: '%',
+      pillar: 'INFLATION',
+      isInverseIndicator: false,
+      eventBiasForGold: 'SELL',
+      biasReasonId: 'Inflasi memanas',
+      biasReasonEn: 'Hotter inflation',
+    },
+  ];
+
+  const saturatedSnap = computeDeterministicMacroSnapshot({
+    calendarEvents: hotCpiEvent,
+    intermarketPulse: mockPulse,
+    breakingNews: [],
+    cmeFedWatch: saturatedCutFw,
+  });
+  assert.ok(
+    saturatedSnap.scenarioMatrix.sellArguments.some((a) =>
+      a.tag.includes('PRICED-IN SATURATION (≥80%)')
+    ),
+    'Priced-In Saturation (>= 80% Cut) vs SELL calendar must add PRICED-IN SATURATION argument'
+  );
+
+  // 5C. Automatic Real-Time Bond & Futures Backup (`ZQ=F` 100 - price & `^IRX`)
+  const impliedBackup = computeImpliedFedWatchFromMarketQuotes({
+    zqFuturesPrice: 95.38,
+    zqPreviousClose: 95.62,
+    irxYield: 4.35,
+    irxPreviousClose: 4.32,
+    us10yYield: 4.42,
+    us10yChangePercent: 0.45,
+  });
+  assert.strictEqual(impliedBackup.isAvailable, true);
+  assert.strictEqual(impliedBackup.fomcMeetingDate, 'FOMC Desember 2026');
+  assert.strictEqual(impliedBackup.impliedFedFundsRate, 4.62);
+  assert.strictEqual(
+    impliedBackup.sourceLabel,
+    'Sumber: Implied Fed Funds Futures (ZQ=F) Live'
+  );
+  assert.ok(
+    (impliedBackup.hikeProbability ?? 0) >= 80,
+    `Implied ZQ=F tightening spread must produce hikeProbability >= 80%, got ${impliedBackup.hikeProbability}%`
+  );
+
+  // 5D. Hawkish Shift -> Pindah Haluan
+  const hawkishShiftFw = evaluateCmeFedWatchScoring({
+    fomcMeetingDate: 'FOMC Desember 2026',
+    cutProbability: 15,
+    holdProbability: 85,
+    hikeProbability: 0,
+    hawkishShiftDetected: true,
+  });
+  const pivotSnap = computeDeterministicMacroSnapshot({
+    calendarEvents: hotCpiEvent,
+    intermarketPulse: mockPulse,
+    breakingNews: [],
+    cmeFedWatch: hawkishShiftFw,
+  });
+  assert.strictEqual(
+    pivotSnap.scenarioMatrix.dynamicPivotTriggered,
+    true,
+    'Hawkish shift in CME FedWatch must trigger Dynamic Pivot (Pindah Haluan)'
+  );
+
+  // Precision Timestamp Format: "Update Live: HH:mm:ss WIB"
+  const liveClockId = formatLiveUpdateClockWib('2026-11-12T10:08:42.000Z', 'id');
+  assert.strictEqual(
+    liveClockId,
+    'Update Live: 17:08:42 WIB',
+    `formatLiveUpdateClockWib must format UTC 10:08:42Z to 'Update Live: 17:08:42 WIB', got: ${liveClockId}`
+  );
+
+  console.log('✓ PASS [5]: CME FedWatch Scoring Rules (FOMC Desember 2026, >=80% Saturation, ZQ=F Backup) & Update Live: HH:mm:ss WIB verified');
+}
+
+// ---------------------------------------------------------------------------
+// 6. Verify Upcoming Event Explorer, CME FedWatch Block, & Zero Manual Input in MacroNewsView.tsx
 // ---------------------------------------------------------------------------
 {
   const viewSrc = fs.readFileSync(
@@ -385,15 +562,20 @@ const mockPulse: {
     'MacroNewsView must NOT contain manual recalculate bias button'
   );
 
-  // Must contain Upcoming Event Explorer & Projection Status Banner
+  // Must contain Upcoming Event Explorer, CME FedWatch Card, Source Badge, Live Update Timestamp & Projection Status Banner
   assert.ok(
     viewSrc.includes('data-testid="macro-upcoming-event-explorer"') &&
       viewSrc.includes('data-testid="macro-upcoming-search-input"') &&
       viewSrc.includes('data-testid="macro-upcoming-event-groups"') &&
       viewSrc.includes('data-testid="macro-projection-status-banner"') &&
       viewSrc.includes('data-testid="macro-projection-status-badge"') &&
-      viewSrc.includes('data-testid="macro-projection-status-subtext"'),
-    'MacroNewsView must render Upcoming Event Explorer, Search Input, Event Groups, and Projection Status Banner'
+      viewSrc.includes('data-testid="macro-projection-status-subtext"') &&
+      viewSrc.includes('data-testid="macro-cme-fedwatch-card"') &&
+      viewSrc.includes('data-testid="macro-cme-fedwatch-source"') &&
+      viewSrc.includes('CME FEDWATCH (FOMC TARGET)') &&
+      viewSrc.includes('Data FedWatch belum tersedia') &&
+      viewSrc.includes('data-testid="macro-live-update-timestamp"'),
+    'MacroNewsView must render Upcoming Event Explorer, CME FEDWATCH (FOMC TARGET) card with source badge, Live Update Timestamp, and Projection Status Banner'
   );
 
   assert.ok(
@@ -403,11 +585,11 @@ const mockPulse: {
     'Core deterministic functions must remain intact'
   );
 
-  console.log('✓ PASS [5]: Upcoming Event Explorer UI, Status Banner, & Zero Manual Input verified in MacroNewsView.tsx');
+  console.log('✓ PASS [6]: Upcoming Event Explorer UI, CME FEDWATCH (FOMC TARGET) block, & Zero Manual Input verified in MacroNewsView.tsx');
 }
 
 // ---------------------------------------------------------------------------
-// 6. Zero-Mock Policy, Live ForexFactory Feed (Core PPI 0.7%/0.3% & PPI 1.3%/0.4%), & LIVE FEED VERIFIED Badge
+// 7. Zero-Mock Policy, Live ForexFactory Feed, Live ZQ=F Backup & Google Search Grounding Queries
 // ---------------------------------------------------------------------------
 (async () => {
   // Classification checks
@@ -447,12 +629,18 @@ const mockPulse: {
     true
   );
 
-  // 1) Zero-Mock Policy: getClientFallbackCalendarEvents() MUST return [] (never fake numbers)
+  // 1) Zero-Mock Policy: getClientFallbackCalendarEvents() & getClientFallbackBreakingHeadlines() MUST return []
   const fallbackEvents = getClientFallbackCalendarEvents();
+  const fallbackHeadlines = getClientFallbackBreakingHeadlines();
   assert.strictEqual(
     fallbackEvents.length,
     0,
     'Zero-Mock Policy: getClientFallbackCalendarEvents() must return empty array []'
+  );
+  assert.strictEqual(
+    fallbackHeadlines.length,
+    0,
+    'Zero-Mock Policy: getClientFallbackBreakingHeadlines() must return empty array []'
   );
 
   // When calendarEvents is empty [], computeDeterministicMacroSnapshot must NOT return fake 0.2% / 0.3% numbers
@@ -469,13 +657,22 @@ const mockPulse: {
   assert.strictEqual(emptySnap.scenarioMatrix.primaryEvent.previousNum, null);
   assert.strictEqual(emptySnap.scenarioMatrix.primaryEvent.forecastNum, null);
 
-  // 2) Verify Live ForexFactory Feed Fetching & Field Mapping
-  const liveEvents = await fetchClientForexFactoryCalendar();
+  // 2) Verify Live ForexFactory Feed Fetching & Live ZQ=F Fed Funds Futures Backup
+  const [liveEvents, liveFedWatchBackup] = await Promise.all([
+    fetchClientForexFactoryCalendar(),
+    fetchClientFedFundsFuturesBackup(mockPulse.us10y),
+  ]);
   assert.ok(liveEvents.length > 0, 'Live ForexFactory calendar fetch must return real USD events');
   assert.ok(
     liveEvents.every((e) => e.isLiveFeed === true && e.country === 'USD'),
     'Every fetched event must be marked isLiveFeed: true and country: USD'
   );
+  assert.strictEqual(
+    liveFedWatchBackup.isAvailable,
+    true,
+    'Live Yahoo Finance ZQ=F / ^IRX backup must return available FOMC Desember 2026 probabilities'
+  );
+  assert.strictEqual(liveFedWatchBackup.fomcMeetingDate, 'FOMC Desember 2026');
 
   const corePpi = liveEvents.find((e) => e.title === 'Core PPI m/m');
   const headlinePpi = liveEvents.find((e) => e.title === 'PPI m/m');
@@ -502,7 +699,7 @@ const mockPulse: {
     'Supporting context events must include Unemployment Claims and/or FOMC Member Speaks'
   );
 
-  // 3) Verify Multi-Proxy URLs & LIVE FEED VERIFIED Badge in source code
+  // 3) Verify Specific December 2026 FOMC Google Search Queries, ZQ=F Backup, & Multi-Proxy URLs
   const fetcherSrc = fs.readFileSync(
     path.resolve(process.cwd(), 'src/utils/macroFeedFetcher.ts'),
     'utf8'
@@ -511,6 +708,14 @@ const mockPulse: {
   const viewSrc = fs.readFileSync(
     path.resolve(process.cwd(), 'src/components/news/MacroNewsView.tsx'),
     'utf8'
+  );
+
+  assert.ok(
+    serverSrc.includes('CME FedWatch December 2026 FOMC rate probability hike hold cut') &&
+      serverSrc.includes('FedWatch tool target rate probabilities December 2026') &&
+      serverSrc.includes('ZQ=F') &&
+      serverSrc.includes('^IRX'),
+    'server.ts must include exact December 2026 FOMC Google Search queries and ZQ=F / ^IRX live backup'
   );
 
   assert.ok(
@@ -525,19 +730,25 @@ const mockPulse: {
     fetcherSrc.includes('ff_calendar_thisweek.json') &&
       fetcherSrc.includes('ff_calendar_nextweek.json') &&
       serverSrc.includes('ff_calendar_thisweek.json') &&
-      serverSrc.includes('ff_calendar_nextweek.json'),
-    'Both client and server fetchers must pull ff_calendar_thisweek.json AND ff_calendar_nextweek.json'
+      serverSrc.includes('ff_calendar_nextweek.json') &&
+      serverSrc.includes('googleSearch'),
+    'Both client and server fetchers must pull ff_calendar_thisweek.json AND ff_calendar_nextweek.json, with Google Search Grounding in server.ts'
   );
 
   assert.ok(
     viewSrc.includes('LIVE FEED VERIFIED') &&
       viewSrc.includes('data-testid="macro-live-feed-verified-badge"') &&
+      viewSrc.includes(
+        'Koneksi Live Gagal — Tidak ada data palsu ditampilkan. Periksa internet lalu tekan Analisis Live ulang.'
+      ) &&
       viewSrc.includes('Gagal memuat kalender live — periksa koneksi atau coba refresh') &&
       viewSrc.includes('data-testid="macro-empty-search-info-card"') &&
       viewSrc.includes('data-testid="macro-supporting-context-section"'),
-    'MacroNewsView must render LIVE FEED VERIFIED badge, honest error message when offline, 14-day empty search info card, and Konteks Pendukung & Pidato Fed section'
+    'MacroNewsView must render LIVE FEED VERIFIED badge, honest offline error message, 14-day empty search info card, and Konteks Pendukung & Pidato Fed section'
   );
 
-  console.log('✓ PASS [6]: Zero-Mock Policy, 3-Proxy Live ForexFactory Feed (Core PPI 0.7%/0.3%, PPI 1.3%/0.4%), & LIVE FEED VERIFIED badge verified');
-  console.log('\n=== ALL UPCOMING EVENT EXPLORER & PRE-NEWS T-5M ENGINE TESTS PASSED ===');
+  console.log('✓ PASS [7]: Zero-Mock Policy, December 2026 FOMC Grounding Queries, Live ZQ=F Backup & Honest Offline Message verified');
+  console.log('\n=== ALL UPCOMING EVENT EXPLORER, CME FEDWATCH (DES 2026) & PRE-NEWS T-5M ENGINE TESTS PASSED ===');
 })();
+
+

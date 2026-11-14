@@ -1,7 +1,12 @@
 import {
   MacroCalendarEvent,
   IntermarketAssetPulse,
+  VixRiskPulse,
+  GoldPositioningPulse,
   BreakingNewsHeadline,
+  CmeFedWatchState,
+  RssFeedHealthStatus,
+  RssFeedSourceStatus,
   classifyFomcPillar,
   isInverseUsdIndicator,
   isRelevantUsdMacroEvent,
@@ -9,13 +14,15 @@ import {
   filterAndScoreBreakingHeadlines,
   parseMacroNumeric,
   isPrimaryHighImpactEvent,
+  computeImpliedFedWatchFromMarketQuotes,
+  createUnavailableFedWatchState,
 } from './macroNewsEngine';
-
-const BACKEND_PROXY_ENDPOINTS = [
-  '/api/proxy?url=',
-  'https://ais-pre-qmgrbl6vkm3qzsovjavbgc-342426605045.asia-southeast1.run.app/api/proxy?url=',
-  'https://ais-dev-qmgrbl6vkm3qzsovjavbgc-342426605045.asia-southeast1.run.app/api/proxy?url=',
-];
+import { isMarketDay } from './date';
+import {
+  getApiEndpointCandidates,
+  isNativeAndroidOrIos,
+  nativeHttpGetText,
+} from './apiConfig';
 
 function isValidFeedPayload(text: string): boolean {
   if (!text) return false;
@@ -51,20 +58,38 @@ export async function fetchWithCorsProxy(
 ): Promise<string> {
   const encodedUrl = encodeURIComponent(targetUrl);
 
-  // Fast path: TradeVault server proxy (works in Web & Android APK without 3rd-party proxy rate limits)
-  for (const proxyPrefix of BACKEND_PROXY_ENDPOINTS) {
+  // Fast path 1 (Native Android APK): CORS-free direct native HTTP via CapacitorHttp
+  if (isNativeAndroidOrIos()) {
+    const nativeText = await nativeHttpGetText(targetUrl, timeoutMs, acceptHeader);
+    if (nativeText && isValidFeedPayload(nativeText)) {
+      return nativeText;
+    }
+  }
+
+  // Fast path 2: Configured standalone backend proxy (/api/proxy?url=...)
+  const proxyCandidates = getApiEndpointCandidates('/api/proxy');
+  for (const proxyBase of proxyCandidates) {
     try {
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), Math.min(3500, timeoutMs));
-      const res = await fetch(`${proxyPrefix}${encodedUrl}`, {
-        headers: { Accept: acceptHeader },
-        signal: controller.signal,
-      });
-      clearTimeout(timer);
-      if (res.ok) {
-        const text = await res.text();
-        if (isValidFeedPayload(text)) {
-          return text;
+      const proxyFullUrl = `${proxyBase}?url=${encodedUrl}`;
+      if (isNativeAndroidOrIos() && /^https?:\/\//i.test(proxyFullUrl)) {
+        const nativeProxyText = await nativeHttpGetText(proxyFullUrl, Math.min(4500, timeoutMs), acceptHeader);
+        if (nativeProxyText && isValidFeedPayload(nativeProxyText)) {
+          return nativeProxyText;
+        }
+      } else {
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), Math.min(3500, timeoutMs));
+        const res = await fetch(proxyFullUrl, {
+          cache: 'no-store',
+          headers: { Accept: acceptHeader, 'Cache-Control': 'no-cache' },
+          signal: controller.signal,
+        });
+        clearTimeout(timer);
+        if (res.ok) {
+          const text = await res.text();
+          if (isValidFeedPayload(text)) {
+            return text;
+          }
         }
       }
     } catch {
@@ -78,6 +103,7 @@ export async function fetchWithCorsProxy(
     const timer = setTimeout(() => controller.abort(), Math.min(4500, timeoutMs));
     const proxyUrl = `https://api.codetabs.com/v1/proxy?quest=${encodedUrl}`;
     const res = await fetch(proxyUrl, {
+      cache: 'no-store',
       headers: { Accept: acceptHeader },
       signal: controller.signal,
     });
@@ -98,6 +124,7 @@ export async function fetchWithCorsProxy(
     const timer = setTimeout(() => controller.abort(), Math.min(4500, timeoutMs));
     const proxyUrl = `https://corsproxy.io/?url=${encodedUrl}`;
     const res = await fetch(proxyUrl, {
+      cache: 'no-store',
       headers: { Accept: acceptHeader },
       signal: controller.signal,
     });
@@ -118,6 +145,7 @@ export async function fetchWithCorsProxy(
     const timer = setTimeout(() => controller.abort(), Math.min(5000, timeoutMs));
     const proxyUrl = `https://api.allorigins.win/get?url=${encodedUrl}`;
     const res = await fetch(proxyUrl, {
+      cache: 'no-store',
       headers: { Accept: 'application/json' },
       signal: controller.signal,
     });
@@ -142,6 +170,7 @@ export async function fetchWithCorsProxy(
     const timer = setTimeout(() => controller.abort(), Math.min(4000, timeoutMs));
     const proxyUrl = `https://api.allorigins.win/raw?url=${encodedUrl}`;
     const res = await fetch(proxyUrl, {
+      cache: 'no-store',
       headers: { Accept: acceptHeader },
       signal: controller.signal,
     });
@@ -161,6 +190,7 @@ export async function fetchWithCorsProxy(
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), Math.min(4000, timeoutMs));
     const res = await fetch(targetUrl, {
+      cache: 'no-store',
       headers: {
         Accept: acceptHeader,
         'User-Agent':
@@ -422,34 +452,91 @@ export async function fetchClientForexFactoryCalendar(): Promise<MacroCalendarEv
   }
 }
 
+function isWeekdayMarketTimestampSec(unixSec: number): boolean {
+  if (!Number.isFinite(unixSec) || unixSec <= 0) return true;
+  return isMarketDay(unixSec, { useUtc: true, enforceFridayCloseUtc: true });
+}
+
 export async function fetchClientYahooAsset(
-  symbol: 'DXY' | 'USOIL' | 'US10Y',
+  symbol: 'DXY' | 'USOIL' | 'US10Y' | 'US02Y',
   yahooTicker: string,
   name: string,
-  fallbackPrice: number,
-  fallbackPrevClose: number
+  _fallbackPrice: number,
+  _fallbackPrevClose: number
 ): Promise<IntermarketAssetPulse> {
-  let price = fallbackPrice;
-  let previousClose = fallbackPrevClose;
+  let price = 0;
+  let previousClose = 0;
+  let hasLivePrice = false;
 
   try {
     const encodedTicker = encodeURIComponent(yahooTicker);
-    const targetUrl = `https://query1.finance.yahoo.com/v8/finance/chart/${encodedTicker}?interval=15m&range=5d`;
+    const targetUrl = `https://query1.finance.yahoo.com/v8/finance/chart/${encodedTicker}?interval=5m&range=5d&_t=${Date.now()}`;
     const jsonStr = await fetchWithCorsProxy(targetUrl, 8000, 'application/json');
     const json = JSON.parse(jsonStr);
-    const meta = json?.chart?.result?.[0]?.meta;
+    const result = json?.chart?.result?.[0];
+    const meta = result?.meta;
     if (meta) {
-      const regPrice = Number(meta.regularMarketPrice);
-      const prev = Number(meta.chartPreviousClose ?? meta.previousClose);
-      if (Number.isFinite(regPrice) && regPrice > 0) {
-        price = regPrice;
+      const timestamps: any[] = result?.timestamp || [];
+      const rawCloses: any[] = result?.indicators?.quote?.[0]?.close || [];
+      const validCloses: number[] = [];
+      for (let i = 0; i < rawCloses.length; i++) {
+        const c = Number(rawCloses[i]);
+        const ts = Number(timestamps[i]);
+        if (Number.isFinite(c) && c > 0 && isWeekdayMarketTimestampSec(ts)) {
+          validCloses.push(c);
+        }
       }
-      if (Number.isFinite(prev) && prev > 0) {
-        previousClose = prev;
+      const latestCandleClose = validCloses.length > 0 ? validCloses[validCloses.length - 1] : NaN;
+      const regPrice = Number(meta.regularMarketPrice);
+      const isNowWeekdayOpen = isWeekdayMarketTimestampSec(Math.floor(Date.now() / 1000));
+      const effectivePrice =
+        !isNowWeekdayOpen && Number.isFinite(latestCandleClose) && latestCandleClose > 0
+          ? latestCandleClose
+          : Number.isFinite(regPrice) && regPrice > 0
+          ? regPrice
+          : latestCandleClose;
+
+      // Prioritize daily previousClose over 5-day chartPreviousClose for accurate intraday change
+      const dailyPrev = Number(meta.previousClose ?? meta.regularMarketPreviousClose);
+      const chartPrev = Number(meta.chartPreviousClose);
+      const prev =
+        Number.isFinite(dailyPrev) && dailyPrev > 0
+          ? dailyPrev
+          : Number.isFinite(chartPrev) && chartPrev > 0
+          ? chartPrev
+          : effectivePrice;
+
+      if (Number.isFinite(effectivePrice) && effectivePrice > 0) {
+        price = effectivePrice;
+        hasLivePrice = true;
+        previousClose =
+          Number.isFinite(prev) && prev > 0 && Math.abs(effectivePrice - prev) > 1e-6
+            ? prev
+            : Number.isFinite(chartPrev) && chartPrev > 0
+            ? chartPrev
+            : effectivePrice;
       }
     }
   } catch (err) {
-    console.warn(`[MacroClient] Yahoo ticker ${yahooTicker} fallback:`, err);
+    console.warn(`[MacroClient] Yahoo ticker ${yahooTicker} unavailable:`, err);
+  }
+
+  if (!hasLivePrice) {
+    return {
+      symbol,
+      yahooTicker,
+      name,
+      price: 0,
+      previousClose: 0,
+      change: 0,
+      changePercent: 0,
+      direction: 'FLAT',
+      goldCorrelationEffect: 'NEUTRAL',
+      summaryId: `${name} sementara tidak tersedia — skor netral`,
+      summaryEn: `${name} temporarily unavailable — neutral score`,
+      updatedAt: new Date().toISOString(),
+      isAvailable: false,
+    };
   }
 
   const change = Number((price - previousClose).toFixed(3));
@@ -478,6 +565,21 @@ export async function fetchClientYahooAsset(
         : direction === 'DOWN'
         ? 'US Dollar softening → Inverse tailwind (BUY XAU/USD)'
         : 'DXY consolidating ahead of macro release';
+  } else if (symbol === 'US02Y') {
+    goldCorrelationEffect =
+      direction === 'UP' ? 'BEARISH_GOLD' : direction === 'DOWN' ? 'BULLISH_GOLD' : 'NEUTRAL';
+    summaryId =
+      direction === 'UP'
+        ? 'Yield 2Y naik → Sensitivitas suku bunga Fed Hawkish (SELL XAU/USD)'
+        : direction === 'DOWN'
+        ? 'Yield 2Y turun → Pelonggaran ekspektasi suku bunga Fed (BUY XAU/USD)'
+        : 'Yield 2Y stabil menunggu keputusan Fed';
+    summaryEn =
+      direction === 'UP'
+        ? '2Y Yield rising → Front-end Fed hawkish pricing (SELL XAU/USD)'
+        : direction === 'DOWN'
+        ? '2Y Yield falling → Easing near-term rate expectations (BUY XAU/USD)'
+        : '2Y Yield stable awaiting Fed catalysts';
   } else if (symbol === 'US10Y') {
     goldCorrelationEffect =
       direction === 'UP' ? 'BEARISH_GOLD' : direction === 'DOWN' ? 'BULLISH_GOLD' : 'NEUTRAL';
@@ -514,12 +616,14 @@ export async function fetchClientYahooAsset(
         : 'WTI Crude stable; monitor Strait of Hormuz / Middle East headlines';
   }
 
+  const decimals = symbol === 'USOIL' ? 2 : 3;
+
   return {
     symbol,
     yahooTicker,
     name,
-    price: Number(price.toFixed(2)),
-    previousClose: Number(previousClose.toFixed(2)),
+    price: Number(price.toFixed(decimals)),
+    previousClose: Number(previousClose.toFixed(decimals)),
     change,
     changePercent,
     direction,
@@ -527,14 +631,21 @@ export async function fetchClientYahooAsset(
     summaryId,
     summaryEn,
     updatedAt: new Date().toISOString(),
+    isAvailable: true,
   };
 }
 
 function parseRssXml(
   xmlText: string,
   sourceName: string
-): Array<{ title: string; source: string; pubDate: string; link?: string }> {
-  const items: Array<{ title: string; source: string; pubDate: string; link?: string }> = [];
+): Array<{ title: string; source: string; pubDate: string; link?: string; description?: string }> {
+  const items: Array<{
+    title: string;
+    source: string;
+    pubDate: string;
+    link?: string;
+    description?: string;
+  }> = [];
   if (!xmlText) return items;
 
   const itemMatches = xmlText.match(/<item[\s\S]*?<\/item>/gi) || [];
@@ -542,12 +653,14 @@ function parseRssXml(
     const titleMatch = block.match(/<title[^>]*>([\s\S]*?)<\/title>/i);
     const pubDateMatch = block.match(/<pubDate[^>]*>([\s\S]*?)<\/pubDate>/i);
     const linkMatch = block.match(/<link[^>]*>([\s\S]*?)<\/link>/i);
+    const descMatch = block.match(/<description[^>]*>([\s\S]*?)<\/description>/i);
     if (titleMatch && titleMatch[1]) {
       items.push({
         title: titleMatch[1],
         source: sourceName,
         pubDate: pubDateMatch?.[1]?.trim() || new Date().toISOString(),
         link: linkMatch?.[1]?.trim(),
+        description: descMatch?.[1]?.trim(),
       });
     }
   }
@@ -555,56 +668,451 @@ function parseRssXml(
 }
 
 export function getClientFallbackBreakingHeadlines(): BreakingNewsHeadline[] {
-  return filterAndScoreBreakingHeadlines([
+  // Zero-Mock Policy: Never return fabricated static headlines when offline.
+  return [];
+}
+
+export async function fetchClientBreakingHeadlinesWithHealth(): Promise<{
+  headlines: BreakingNewsHeadline[];
+  rssFeedHealth: RssFeedHealthStatus;
+}> {
+  // 1. Primary path: Standalone Backend Multi-Source RSS Aggregator (Zero Browser CORS)
+  const rssEndpoints = getApiEndpointCandidates('/api/macro-news/rss');
+  for (const endpoint of rssEndpoints) {
+    try {
+      const urlWithTs = `${endpoint}?_t=${Date.now()}`;
+      if (isNativeAndroidOrIos() && /^https?:\/\//i.test(urlWithTs)) {
+        const raw = await nativeHttpGetText(urlWithTs, 9000, 'application/json');
+        if (raw) {
+          const json = JSON.parse(raw);
+          if (json?.success && Array.isArray(json.headlines) && json.rssFeedHealth) {
+            return {
+              headlines: json.headlines as BreakingNewsHeadline[],
+              rssFeedHealth: json.rssFeedHealth as RssFeedHealthStatus,
+            };
+          }
+        }
+      } else {
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), 9000);
+        const res = await fetch(urlWithTs, {
+          cache: 'no-store',
+          signal: controller.signal,
+        });
+        clearTimeout(timer);
+        if (res.ok) {
+          const json = await res.json();
+          if (json?.success && Array.isArray(json.headlines) && json.rssFeedHealth) {
+            return {
+              headlines: json.headlines as BreakingNewsHeadline[],
+              rssFeedHealth: json.rssFeedHealth as RssFeedHealthStatus,
+            };
+          }
+        }
+      }
+    } catch {
+      // Fall through to next endpoint
+    }
+  }
+
+  // 2. Fallback: Proxy-assisted 4-source Promise.allSettled fetch
+  const feedConfigs: Array<{
+    id: RssFeedSourceStatus['id'];
+    name: string;
+    urls: string[];
+  }> = [
     {
-      title:
-        'Fed Governor Waller: Sticky core inflation and strong NFP labor data mean Fed is in no rush to cut rates; upside inflation risks remain on the table',
-      source: 'FinancialJuice Macro Wire',
-      pubDate: new Date().toISOString(),
+      id: 'FINANCIAL_JUICE',
+      name: 'FinancialJuice',
+      urls: ['https://www.financialjuice.com/feed.ashx?xy=rss'],
     },
     {
-      title:
-        'Strait of Hormuz geopolitical tensions push US Oil WTI above $74 as tanker tracking confirms transit risk',
-      source: 'FXStreet Live Desk',
-      pubDate: new Date().toISOString(),
+      id: 'CNBC',
+      name: 'CNBC Fed/Econ',
+      urls: [
+        'https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=20910258',
+        'https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=10000664',
+      ],
     },
     {
-      title:
-        'US Core CPI inflation expectations remain firm ahead of key FOMC interest rate decision and forward guidance',
-      source: 'Macro Desk',
-      pubDate: new Date().toISOString(),
+      id: 'MARKETWATCH',
+      name: 'MarketWatch',
+      urls: [
+        'https://feeds.content.dowjones.io/public/rss/mw_realtimeheadlines',
+        'https://feeds.content.dowjones.io/public/rss/mw_topstories',
+      ],
     },
-  ]);
+    {
+      id: 'FXSTREET',
+      name: 'FXStreet',
+      urls: [
+        'https://www.fxstreet.com/rss/news',
+        'https://news.google.com/rss/search?q=site:fxstreet.com+(gold+OR+XAUUSD+OR+Fed+OR+FOMC+OR+CPI+OR+PPI+OR+dollar+OR+yield)+when:1d&hl=en-US&gl=US&ceid=US:en',
+      ],
+    },
+  ];
+
+  const results = await Promise.allSettled(
+    feedConfigs.map(async (cfg) => {
+      const items: Array<{ title: string; source: string; pubDate: string; link?: string }> = [];
+      let anySuccess = false;
+      for (const u of cfg.urls) {
+        const xml = await fetchWithCorsProxy(u, 6000, 'application/rss+xml, text/xml');
+        const parsed = parseRssXml(xml, cfg.name);
+        if (parsed.length > 0) {
+          anySuccess = true;
+          items.push(...parsed);
+          break;
+        }
+      }
+      return { cfg, anySuccess, items };
+    })
+  );
+
+  const combined: Array<{ title: string; source: string; pubDate: string; link?: string }> = [];
+  const sourcesStatus: RssFeedSourceStatus[] = [];
+
+  for (let i = 0; i < results.length; i++) {
+    const r = results[i];
+    const cfg = feedConfigs[i];
+    if (r.status === 'fulfilled' && r.value.anySuccess) {
+      combined.push(...r.value.items);
+      sourcesStatus.push({
+        id: cfg.id,
+        name: cfg.name,
+        active: true,
+        itemCount: r.value.items.length,
+      });
+    } else {
+      sourcesStatus.push({
+        id: cfg.id,
+        name: cfg.name,
+        active: false,
+        itemCount: 0,
+      });
+    }
+  }
+
+  const headlines = filterAndScoreBreakingHeadlines(combined);
+  const activeCount = sourcesStatus.filter((s) => s.active).length;
+
+  return {
+    headlines,
+    rssFeedHealth: {
+      activeCount,
+      totalCount: feedConfigs.length,
+      sources: sourcesStatus,
+      updatedAt: new Date().toISOString(),
+    },
+  };
 }
 
 export async function fetchClientBreakingHeadlines(): Promise<BreakingNewsHeadline[]> {
-  const feeds = [
-    { url: 'https://www.financialjuice.com/feed.ashx?xy=rss', source: 'FinancialJuice' },
-    { url: 'https://www.fxstreet.com/rss/news', source: 'FXStreet' },
-  ];
+  const res = await fetchClientBreakingHeadlinesWithHealth();
+  return res.headlines;
+}
 
+async function fetchYahooQuoteNumbers(
+  yahooTicker: string
+): Promise<{ price: number | null; previousClose: number | null }> {
   try {
-    const results = await Promise.allSettled(
-      feeds.map(async (f) => {
-        const xml = await fetchWithCorsProxy(f.url, 8000, 'application/rss+xml, text/xml');
-        return parseRssXml(xml, f.source);
-      })
-    );
+    const encodedTicker = encodeURIComponent(yahooTicker);
+    const targetUrl = `https://query1.finance.yahoo.com/v8/finance/chart/${encodedTicker}?interval=5m&range=5d&_t=${Date.now()}`;
+    const jsonStr = await fetchWithCorsProxy(targetUrl, 6500, 'application/json');
+    const json = JSON.parse(jsonStr);
+    const meta = json?.chart?.result?.[0]?.meta;
+    if (meta) {
+      const regPrice = Number(meta.regularMarketPrice);
+      const prev = Number(meta.previousClose ?? meta.chartPreviousClose);
+      return {
+        price: Number.isFinite(regPrice) && regPrice > 0 ? regPrice : null,
+        previousClose: Number.isFinite(prev) && prev > 0 ? prev : null,
+      };
+    }
+  } catch {
+    // ignore
+  }
+  return { price: null, previousClose: null };
+}
 
-    const combined: Array<{ title: string; source: string; pubDate: string; link?: string }> = [];
-    for (const r of results) {
-      if (r.status === 'fulfilled' && Array.isArray(r.value)) {
-        combined.push(...r.value);
+export async function fetchClientVixPulse(): Promise<VixRiskPulse> {
+  try {
+    const targetUrl = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent('^VIX')}?interval=5m&range=5d&_t=${Date.now()}`;
+    const jsonStr = await fetchWithCorsProxy(targetUrl, 6500, 'application/json');
+    const json = JSON.parse(jsonStr);
+    const meta = json?.chart?.result?.[0]?.meta;
+    if (meta) {
+      const regPrice = Number(meta.regularMarketPrice);
+      const prev = Number(meta.previousClose ?? meta.chartPreviousClose);
+      if (Number.isFinite(regPrice) && regPrice > 0) {
+        const previousClose = Number.isFinite(prev) && prev > 0 ? prev : regPrice;
+        const changePercent =
+          previousClose > 0 ? Number((((regPrice - previousClose) / previousClose) * 100).toFixed(2)) : 0;
+        const direction: 'UP' | 'DOWN' | 'FLAT' =
+          changePercent > 1.0 ? 'UP' : changePercent < -1.0 ? 'DOWN' : 'FLAT';
+        return {
+          yahooTicker: '^VIX',
+          price: Number(regPrice.toFixed(2)),
+          changePercent,
+          direction,
+          isAvailable: true,
+        };
+      }
+    }
+  } catch (err) {
+    console.warn('[MacroClient] VIX feed unavailable:', err);
+  }
+
+  return {
+    yahooTicker: '^VIX',
+    price: 0,
+    changePercent: 0,
+    direction: 'FLAT',
+    isAvailable: false,
+  };
+}
+
+export async function fetchClientGoldPositioning(): Promise<GoldPositioningPulse> {
+  try {
+    const targetUrl = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent('GC=F')}?interval=60m&range=5d&_t=${Date.now()}`;
+    const jsonStr = await fetchWithCorsProxy(targetUrl, 6500, 'application/json');
+    const json = JSON.parse(jsonStr);
+    const result = json?.chart?.result?.[0];
+    const meta = result?.meta;
+    const timestamps: any[] = result?.timestamp || [];
+    const quote = result?.indicators?.quote?.[0] || {};
+    const rawCloses: any[] = quote?.close || [];
+    const rawHighs: any[] = quote?.high || [];
+    const rawLows: any[] = quote?.low || [];
+
+    const bars: Array<{ high: number; low: number; close: number }> = [];
+    for (let i = 0; i < rawCloses.length; i++) {
+      const c = Number(rawCloses[i]);
+      const h = Number(rawHighs[i] ?? c);
+      const l = Number(rawLows[i] ?? c);
+      const ts = Number(timestamps[i]);
+      if (Number.isFinite(c) && c > 0 && isWeekdayMarketTimestampSec(ts)) {
+        bars.push({
+          high: Number.isFinite(h) && h > 0 ? h : c,
+          low: Number.isFinite(l) && l > 0 ? l : c,
+          close: c,
+        });
       }
     }
 
-    const filtered = filterAndScoreBreakingHeadlines(combined);
-    if (filtered.length > 0) {
-      return filtered;
+    const validCloses = bars.map((b) => b.close);
+    const isNowWeekdayOpen = isWeekdayMarketTimestampSec(Math.floor(Date.now() / 1000));
+    const latestWeekdayClose = validCloses[validCloses.length - 1];
+    const regPrice =
+      !isNowWeekdayOpen && Number.isFinite(latestWeekdayClose) && latestWeekdayClose > 0
+        ? latestWeekdayClose
+        : Number(meta?.regularMarketPrice ?? latestWeekdayClose);
+
+    if (Number.isFinite(regPrice) && regPrice > 0) {
+      // ~72 hourly bars = ~3 trading days
+      const idx3dAgo = validCloses.length >= 24 ? Math.max(0, validCloses.length - 72) : Math.max(0, validCloses.length - 4);
+      const baseClose =
+        validCloses.length >= 3
+          ? validCloses[idx3dAgo]
+          : Number(meta?.chartPreviousClose ?? meta?.previousClose ?? regPrice);
+      const change3dPercent =
+        Number.isFinite(baseClose) && baseClose > 0
+          ? Number((((regPrice - baseClose) / baseClose) * 100).toFixed(2))
+          : 0;
+
+      // 6-hour move (last 6 hourly bars)
+      const base6hClose =
+        validCloses.length >= 7
+          ? validCloses[validCloses.length - 7]
+          : validCloses.length > 0
+          ? validCloses[0]
+          : regPrice;
+      const change6hUsd =
+        Number.isFinite(base6hClose) && base6hClose > 0
+          ? Number((regPrice - base6hClose).toFixed(2))
+          : 0;
+      const change6hPercent =
+        Number.isFinite(base6hClose) && base6hClose > 0
+          ? Number((((regPrice - base6hClose) / base6hClose) * 100).toFixed(2))
+          : 0;
+
+      // 14-period 1H ATR
+      let atr14_1h = 12.0;
+      if (bars.length >= 3) {
+        const trs: number[] = [];
+        const startIdx = Math.max(1, bars.length - 14);
+        for (let i = startIdx; i < bars.length; i++) {
+          const cur = bars[i];
+          const prev = bars[i - 1];
+          const tr = Math.max(
+            cur.high - cur.low,
+            Math.abs(cur.high - prev.close),
+            Math.abs(cur.low - prev.close)
+          );
+          if (Number.isFinite(tr) && tr > 0) {
+            trs.push(tr);
+          }
+        }
+        if (trs.length > 0) {
+          atr14_1h = Number((trs.reduce((a, b) => a + b, 0) / trs.length).toFixed(2));
+        }
+      }
+
+      const state: GoldPositioningPulse['state'] =
+        change3dPercent >= 1.8 ? 'CROWDED_HIGH' : change3dPercent <= -1.8 ? 'OVERSOLD_LOW' : 'NEUTRAL';
+
+      const noteId =
+        state === 'CROWDED_HIGH'
+          ? `Emas (GC=F) sudah reli +${change3dPercent}% dalam 3–4 hari — posisi long ramai (waspada profit-taking / sell-the-fact).`
+          : state === 'OVERSOLD_LOW'
+          ? `Emas (GC=F) sudah terkoreksi ${change3dPercent}% dalam 3–4 hari — posisi oversold (waspada short squeeze saat rilis).`
+          : `Posisi 3 hari GC=F netral (${change3dPercent >= 0 ? '+' : ''}${change3dPercent}%) — belum ada ekstrem run-up.`;
+      const noteEn =
+        state === 'CROWDED_HIGH'
+          ? `Gold (GC=F) rallied +${change3dPercent}% over 3–4 days — crowded longs (watch for profit-taking / sell-the-fact).`
+          : state === 'OVERSOLD_LOW'
+          ? `Gold (GC=F) dropped ${change3dPercent}% over 3–4 days — oversold positioning (watch for short-covering squeeze).`
+          : `GC=F 3-day positioning is balanced (${change3dPercent >= 0 ? '+' : ''}${change3dPercent}%) — no extreme run-up.`;
+
+      return {
+        yahooTicker: 'GC=F',
+        price: Number(regPrice.toFixed(2)),
+        change3dPercent,
+        change6hUsd,
+        change6hPercent,
+        atr14_1h,
+        state,
+        isAvailable: true,
+        noteId,
+        noteEn,
+      };
     }
-    return getClientFallbackBreakingHeadlines();
   } catch (err) {
-    console.warn('[MacroClient] Breaking headlines fallback triggered:', err);
-    return getClientFallbackBreakingHeadlines();
+    console.warn('[MacroClient] GC=F positioning unavailable:', err);
+  }
+
+  return {
+    yahooTicker: 'GC=F',
+    price: 0,
+    change3dPercent: 0,
+    change6hUsd: 0,
+    change6hPercent: 0,
+    atr14_1h: 12.0,
+    state: 'NEUTRAL',
+    isAvailable: false,
+    noteId: 'Data posisi 3 hari GC=F tidak tersedia',
+    noteEn: 'GC=F 3-day positioning unavailable',
+  };
+}
+
+/**
+ * Lightweight 0-Gemini-token real-time Intermarket Pulse fetcher.
+ * Pulls live quotes from server `/api/macro-news/intermarket-live` first,
+ * falling back to direct client Yahoo Finance fetches if needed.
+ */
+export async function fetchLiveIntermarketPulseBundle(): Promise<{
+  dxy: IntermarketAssetPulse;
+  us02y: IntermarketAssetPulse;
+  usoil: IntermarketAssetPulse;
+  us10y: IntermarketAssetPulse;
+  vix: VixRiskPulse;
+  goldPositioning: GoldPositioningPulse;
+  fetchedAt: string;
+} | null> {
+  const endpoints = getApiEndpointCandidates('/api/macro-news/intermarket-live');
+
+  for (const endpoint of endpoints) {
+    try {
+      const urlWithTs = `${endpoint}?_t=${Date.now()}`;
+      if (isNativeAndroidOrIos() && /^https?:\/\//i.test(urlWithTs)) {
+        const raw = await nativeHttpGetText(urlWithTs, 5000, 'application/json');
+        if (raw) {
+          const data = JSON.parse(raw);
+          if (data?.success && data?.intermarketPulse?.dxy?.isAvailable) {
+            return {
+              ...data.intermarketPulse,
+              fetchedAt: data.fetchedAt || new Date().toISOString(),
+            };
+          }
+        }
+      } else {
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), 5000);
+        const res = await fetch(urlWithTs, {
+          cache: 'no-store',
+          headers: { Accept: 'application/json', 'Cache-Control': 'no-cache' },
+          signal: controller.signal,
+        });
+        clearTimeout(timer);
+        if (res.ok) {
+          const data = await res.json();
+          if (data?.success && data?.intermarketPulse?.dxy?.isAvailable) {
+            return {
+              ...data.intermarketPulse,
+              fetchedAt: data.fetchedAt || new Date().toISOString(),
+            };
+          }
+        }
+      }
+    } catch {
+      // Fall through to next endpoint or client-side Yahoo fetch
+    }
+  }
+
+  try {
+    const [dxy, us02y, usoil, us10y, vix, goldPositioning] = await Promise.all([
+      fetchClientYahooAsset('DXY', 'DX-Y.NYB', 'US Dollar Index (DXY)', 104.85, 104.42),
+      fetchClientYahooAsset('US02Y', '2YY=F', 'US 2Y Treasury Yield', 4.25, 4.22),
+      fetchClientYahooAsset('USOIL', 'CL=F', 'US Oil WTI Crude', 73.4, 71.95),
+      fetchClientYahooAsset('US10Y', '^TNX', 'US 10Y Treasury Yield', 4.38, 4.31),
+      fetchClientVixPulse(),
+      fetchClientGoldPositioning(),
+    ]);
+
+    if (dxy.isAvailable || us10y.isAvailable || usoil.isAvailable || us02y.isAvailable) {
+      return {
+        dxy,
+        us02y,
+        usoil,
+        us10y,
+        vix,
+        goldPositioning,
+        fetchedAt: new Date().toISOString(),
+      };
+    }
+  } catch {
+    // ignore
+  }
+
+  return null;
+}
+
+/**
+ * Automatic Real-Time Backup from Bond & Futures Markets (`ZQ=F` 30-Day Fed Funds Futures & `^IRX` 13-Week T-Bill):
+ * Calculates `Implied Fed Funds Rate = 100 - harga ZQ=F` and FOMC Desember 2026 probabilities
+ * whenever web search for CME FedWatch is rate-limited or unavailable.
+ */
+export async function fetchClientFedFundsFuturesBackup(
+  us10yPulse?: IntermarketAssetPulse
+): Promise<CmeFedWatchState> {
+  try {
+    const [zqQuote, irxQuote, us2yQuote] = await Promise.all([
+      fetchYahooQuoteNumbers('ZQ=F'),
+      fetchYahooQuoteNumbers('^IRX'),
+      fetchYahooQuoteNumbers('2YY=F'),
+    ]);
+
+    return computeImpliedFedWatchFromMarketQuotes({
+      zqFuturesPrice: zqQuote.price,
+      zqPreviousClose: zqQuote.previousClose,
+      irxYield: irxQuote.price,
+      irxPreviousClose: irxQuote.previousClose,
+      us2yYield: us2yQuote.price,
+      us10yYield: us10yPulse?.isAvailable !== false ? (us10yPulse?.price ?? null) : null,
+      us10yChangePercent: us10yPulse?.isAvailable !== false ? (us10yPulse?.changePercent ?? 0) : 0,
+    });
+  } catch {
+    return createUnavailableFedWatchState();
   }
 }
+
