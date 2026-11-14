@@ -147,9 +147,9 @@ const EXECUTION_ADHERENCE_OPTIONS: { value: ExecutionAdherenceTag; labelId: stri
  */
 export const compressAndResizeImage = (
   file: File | Blob,
-  maxWidth = 1920,
-  maxHeight = 1920,
-  quality = 0.9
+  maxWidth = 2048,
+  maxHeight = 2048,
+  quality = 0.94
 ): Promise<string> => {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -423,6 +423,7 @@ export const TradeForm: React.FC<TradeFormProps> = ({
       profit?: number | null;
       status?: 'PLANNED' | 'ACTIVE' | 'CLOSED';
       plannedRiskReward: number | null;
+      modelUsed?: string;
     };
   } | null>(null);
 
@@ -1005,6 +1006,7 @@ export const TradeForm: React.FC<TradeFormProps> = ({
           profit: data.profit,
           status: data.status,
           plannedRiskReward: data.plannedRiskReward,
+          modelUsed: data.modelUsed,
         },
       });
     } catch (err: any) {
@@ -2560,8 +2562,8 @@ export const TradeForm: React.FC<TradeFormProps> = ({
                       <Sparkles className="h-3.5 w-3.5 text-amber-500 shrink-0" />
                       <span>
                         {tr(
-                          '⚡ Scan Kilat & Isi Otomatis (AI Flash Lite)',
-                          '⚡ Instant Scan & Auto-Fill (AI Flash Lite)'
+                          '⚡ Scan Kilat & Isi Otomatis (AI Gemini Hydrogen)',
+                          '⚡ Instant Scan & Auto-Fill (AI Gemini Hydrogen)'
                         )}
                       </span>
                     </>
@@ -2643,6 +2645,20 @@ export const TradeForm: React.FC<TradeFormProps> = ({
                       )}
                       {scanResultFeedback.details.plannedRiskReward !== null && (
                         <span>R:R: <b>1:{scanResultFeedback.details.plannedRiskReward}</b></span>
+                      )}
+                      {scanResultFeedback.details.modelUsed && (
+                        <span className="text-[10px] opacity-75">
+                          Engine:{' '}
+                          <b>
+                            {scanResultFeedback.details.modelUsed === 'gemini-4-hydrogen'
+                              ? 'Gemini Hydrogen'
+                              : scanResultFeedback.details.modelUsed === 'gemini-3.1-flash-lite'
+                              ? 'Gemini Flash Lite'
+                              : scanResultFeedback.details.modelUsed === 'hybrid-apk-vision-v4'
+                              ? tr('OCR Lokal (Fallback)', 'Local OCR (Fallback)')
+                              : scanResultFeedback.details.modelUsed}
+                          </b>
+                        </span>
                       )}
                     </div>
                   )}

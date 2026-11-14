@@ -112,6 +112,11 @@ interface ExtractScreenshotRequest {
     slYRatio?: number | null;
     boxTopYRatio?: number | null;
     boxBottomYRatio?: number | null;
+    profitTheme?: 'GREEN' | 'BLUE_NAVY' | null;
+    riskTheme?: 'RED' | 'GREY_SLATE' | null;
+    rightAxisGreenBadgeYRatio?: number | null;
+    rightAxisRedBadgeYRatio?: number | null;
+    rightAxisBlueOrDarkBadgeYRatio?: number | null;
   } | null;
 }
 
@@ -360,6 +365,85 @@ function parseAiJsonResponse(text: string): Record<string, any> {
 
 const quotaCooldownUntilByModel = new Map<string, number>();
 
+function buildScannerGeometryHintBlock(canvasHints?: ExtractScreenshotRequest['canvasHints']): string {
+  if (!canvasHints || typeof canvasHints !== 'object') return '';
+  const lines: string[] = [];
+
+  if (canvasHints.hasPositionBox) {
+    lines.push(
+      `- TradingView ${canvasHints.inferredPosition || 'BUY/SELL'} Position Box detected (${
+        canvasHints.profitTheme === 'BLUE_NAVY' ? 'Dark Blue/Navy Profit' : 'Green Profit'
+      } & ${canvasHints.riskTheme === 'GREY_SLATE' ? 'Grey/Slate Risk' : 'Red Risk'}):`
+    );
+    lines.push(
+      `  * Verified Direction: ${canvasHints.inferredPosition || 'UNKNOWN'} (${
+        canvasHints.inferredPosition === 'SELL'
+          ? 'Risk Zone is at TOP, Profit Zone is at BOTTOM -> SELL (takeProfit < entryPrice < stopLoss)'
+          : 'Profit Zone is at TOP, Risk Zone is at BOTTOM -> BUY (stopLoss < entryPrice < takeProfit)'
+      })`
+    );
+    if (canvasHints.boxTopYRatio != null) {
+      lines.push(
+        `  * Box TOP edge (${canvasHints.inferredPosition === 'SELL' ? 'STOP LOSS' : 'TAKE PROFIT'}): vertical Y = ${(
+          Number(canvasHints.boxTopYRatio) * 100
+        ).toFixed(1)}% from top`
+      );
+    }
+    if (canvasHints.entryYRatio != null) {
+      lines.push(
+        `  * Box CENTRAL divider (ENTRY PRICE): vertical Y = ${(
+          Number(canvasHints.entryYRatio) * 100
+        ).toFixed(1)}% from top`
+      );
+    }
+    if (canvasHints.boxBottomYRatio != null) {
+      lines.push(
+        `  * Box BOTTOM edge (${canvasHints.inferredPosition === 'SELL' ? 'TAKE PROFIT' : 'STOP LOSS'}): vertical Y = ${(
+          Number(canvasHints.boxBottomYRatio) * 100
+        ).toFixed(1)}% from top`
+      );
+    }
+    if (canvasHints.tpYRatio != null) {
+      lines.push(
+        `  * Exact Take Profit Y-level: ${(Number(canvasHints.tpYRatio) * 100).toFixed(1)}% from top`
+      );
+    }
+    if (canvasHints.slYRatio != null) {
+      lines.push(
+        `  * Exact Stop Loss Y-level: ${(Number(canvasHints.slYRatio) * 100).toFixed(1)}% from top`
+      );
+    }
+  }
+
+  const badgeHints: string[] = [];
+  if (canvasHints.rightAxisGreenBadgeYRatio != null) {
+    badgeHints.push(
+      `Green badge at Y = ${(Number(canvasHints.rightAxisGreenBadgeYRatio) * 100).toFixed(1)}%`
+    );
+  }
+  if (canvasHints.rightAxisRedBadgeYRatio != null) {
+    badgeHints.push(
+      `Red badge at Y = ${(Number(canvasHints.rightAxisRedBadgeYRatio) * 100).toFixed(1)}%`
+    );
+  }
+  if (canvasHints.rightAxisBlueOrDarkBadgeYRatio != null) {
+    badgeHints.push(
+      `Blue/Navy badge at Y = ${(Number(canvasHints.rightAxisBlueOrDarkBadgeYRatio) * 100).toFixed(1)}%`
+    );
+  }
+  if (badgeHints.length > 0) {
+    lines.push(
+      `- Right-hand Y-axis colored price badge positions (remember: smaller Y% = HIGHER price on chart, larger Y% = LOWER price on chart):`
+    );
+    for (const bh of badgeHints) {
+      lines.push(`  * ${bh}`);
+    }
+  }
+
+  if (lines.length === 0) return '';
+  return `\nPIXEL GEOMETRY SCANNER HINTS (VERIFIED FROM IMAGE PIXELS):\n${lines.join('\n')}\n`;
+}
+
 // AI Vision Endpoint: Extract trade data from chart screenshot
 app.post('/api/extract-trade-screenshot', async (req, res) => {
   try {
@@ -373,8 +457,10 @@ app.post('/api/extract-trade-screenshot', async (req, res) => {
       return;
     }
 
-    const apiKey = process.env.GEMINI_API_KEY;
-    if (!apiKey) {
+    const scanApiKey = (process.env.GEMINI_API_KEY || '').trim();
+    const scannerApiKeys = scanApiKey ? [scanApiKey] : [];
+
+    if (scannerApiKeys.length === 0) {
       res.status(400).json({
         success: false,
         error:
@@ -413,64 +499,39 @@ app.post('/api/extract-trade-screenshot', async (req, res) => {
       base64Data = fetched.buffer.toString('base64');
     }
 
-    const ai = new GoogleGenAI({
-      apiKey,
-      httpOptions: {
-        headers: {
-          'User-Agent': 'aistudio-build',
-        },
-      },
-    });
-
-    const geometryHintBlock =
-      canvasHints && canvasHints.hasPositionBox
-        ? `\nPIXEL GEOMETRY SCANNER HINTS (VERIFIED FROM IMAGE PIXELS):
-- A TradingView ${canvasHints.inferredPosition || 'BUY/SELL'} Position Box (Profit Zone & Risk Zone) was detected:
-  * Verified Direction: ${canvasHints.inferredPosition || 'UNKNOWN'} (${
-            canvasHints.inferredPosition === 'SELL'
-              ? 'Risk Zone (Dark Grey/Slate or Red) is at the TOP and Profit Zone (Dark Blue/Navy or Green) is at the BOTTOM -> SELL (TP < Entry < SL)'
-              : 'Profit Zone (Green or Dark Blue/Navy) is at the TOP and Risk Zone (Red or Dark Grey/Slate) is at the BOTTOM -> BUY (SL < Entry < TP)'
-          })
-  * Top boundary of Position Box is at vertical Y = ${
-    canvasHints.boxTopYRatio != null ? (canvasHints.boxTopYRatio * 100).toFixed(1) + '%' : 'N/A'
-  } from top of image.
-  * Central Dividing Line (Entry Price) is at vertical Y = ${
-    canvasHints.entryYRatio != null ? (canvasHints.entryYRatio * 100).toFixed(1) + '%' : 'N/A'
-  } from top of image.
-  * Bottom boundary of Position Box is at vertical Y = ${
-    canvasHints.boxBottomYRatio != null ? (canvasHints.boxBottomYRatio * 100).toFixed(1) + '%' : 'N/A'
-  } from top of image.\n`
-        : '';
+    const geometryHintBlock = buildScannerGeometryHintBlock(canvasHints);
 
     const prompt = `You are an elite financial chart & order OCR specialist for MetaTrader 5 (MT5 / MT4) and TradingView.
-Carefully inspect the full, uncropped screenshot from the left edge to the rightmost Y-axis price scale.
+Carefully inspect the FULL screenshot from the left edge to the rightmost Y-axis price scale before outputting any number.
+Remember: smaller Y% (closer to top of image) = HIGHER price; larger Y% (closer to bottom of image) = LOWER price.
 ${geometryHintBlock}
-1. SPATIAL VISUAL RULES FOR METATRADER 5 (MT5) CHARTS:
-   - Read the order labels at the LEFT edge of the chart: "TP", "SL", "BUY LIMIT", "SELL LIMIT", "BUY STOP", "SELL STOP", "BUY", "SELL" (for example: "TP", "BUY LIMIT 0.12", "SL").
-   - Follow each label's horizontal dashed line straight across to the RIGHTMOST Y-AXIS, and ONLY extract the price number that is inside a BORDERED / OUTLINED BOX (kotak berbingkai) aligned with that dashed line:
-     * Example: "TP" dashed line -> bordered box "4074.43" on right Y-axis -> takeProfit = 4074.43
-     * Example: "BUY LIMIT 0.12" dashed line -> bordered box "4042.74" on right Y-axis -> entryPrice = 4042.74, lotSize = 0.12, position = "BUY"
-     * Example: "SL" dashed line -> bordered box "4031.97" on right Y-axis -> stopLoss = 4031.97
-   - IGNORE plain unbordered grid numbers on the Y-axis (such as "4052.92" or "4030.42").
-   - IGNORE the running candle price badge (such as "4050.87 / 00:50") — put that ONLY in currentPrice, NEVER in entryPrice, stopLoss, or takeProfit!
-   - STATUS RULE: If the order label contains "LIMIT" or "STOP" (e.g. "BUY LIMIT", "SELL LIMIT", "BUY STOP", "SELL STOP"), you MUST set status = "PLANNED".
+1. SPATIAL VISUAL RULES FOR METATRADER 5 (MT5 / MT4):
+   - A) CHART VIEW:
+     * Read EVERY text label at the LEFT edge of the chart: "TP", "SL", "BUY LIMIT", "SELL LIMIT", "BUY STOP", "SELL STOP", "BUY", "SELL" (for example: "TP", "BUY LIMIT 0.12", "SL").
+     * Trace each label's exact horizontal dashed/dotted line straight across to the RIGHTMOST Y-AXIS, and extract ONLY the exact price inside the BORDERED / OUTLINED BOX or COLORED TAG sitting ON that exact horizontal line.
+     * IGNORE plain unbordered Y-axis tick grid numbers (like "4052.92" or "4030.42").
+     * IGNORE the running live candle price badge (often has a bar countdown timer like "00:50" or "04:12") — put that ONLY in currentPrice, NEVER in entryPrice, stopLoss, or takeProfit unless an Entry dashed line is literally at that exact price!
+     * STATUS RULE: If the order label contains "LIMIT" or "STOP", set status = "PLANNED". If it says "BUY 0.10" or "SELL 0.10" (without LIMIT/STOP), set status = "ACTIVE".
+   - B) MT5 TRADE / HISTORY LIST VIEW (if screenshot shows order rows instead of candles):
+     * Format like "XAUUSD, buy 0.10", "4050.12 -> 4062.30", with "S / L:" and "T / P:" below -> entryPrice = number BEFORE "->", exit/current = number AFTER "->", stopLoss = S/L value, takeProfit = T/P value.
 
 2. SPATIAL VISUAL RULES FOR TRADINGVIEW CHARTS:
-   - Detect the Position Tool's two vertically-adjacent rectangular zones even when customized with Dark Blue / Navy (Profit Zone) and Dark Grey / Slate (Risk Zone) instead of Green and Red.
-   - IGNORE indicator or annotation boxes inside the chart such as "OB m5", "FVG", or "BOS", and ignore the live running candle price badge (e.g. "4.105,78" or "4.105,735").
-   - Read the Y-axis price badges at:
-     (1) The outer TOP boundary of the top box,
-     (2) The CENTRAL HORIZONTAL DIVIDING LINE between the two boxes (Entry Price),
-     (3) The outer BOTTOM boundary of the bottom box.
+   - Identify the Position Tool's two vertically-adjacent shaded rectangles (either Green/Red OR Dark Blue-Navy/Dark Grey-Slate).
+   - IGNORE inner chart labels ("OB m5", "FVG", "BOS", "Liquidity") and IGNORE bottom sub-indicator panels (RSI / MACD / Stochastic scales like 0..100).
+   - IGNORE the live running candle price badge (put ONLY in currentPrice).
+   - Read the exact Y-axis price tags aligned with:
+     (1) TOP outer border of the top zone,
+     (2) CENTRAL horizontal dividing line between the two zones (Entry Price),
+     (3) BOTTOM outer border of the bottom zone.
    - Direction Rule:
-     * If the Dark Blue / Navy (or Green) target box is at the BOTTOM and the Dark Grey / Slate (or Red) risk box is at the TOP, the direction is SELL (takeProfit < entryPrice < stopLoss, e.g. SL = 4099.857 at top, Entry = 4093.045 in middle, TP = 4054.405 at bottom).
-     * If the Green (or Dark Blue / Navy) target box is at the TOP and the Red (or Dark Grey / Slate) risk box is at the BOTTOM, the direction is BUY (stopLoss < entryPrice < takeProfit).
-   - LOCAL NUMBER FORMAT NORMALIZATION: If the Y-axis uses dot thousands separators and comma decimal separators (such as "4.054,405" or "4.105,735"), remove the thousands dot (.) and convert the comma (,) to a decimal point -> 4054.405 and 4105.735.
+     * Profit Zone (Green or Blue/Navy) at TOP + Risk Zone (Red or Grey/Slate) at BOTTOM => position = "BUY" (stopLoss < entryPrice < takeProfit).
+     * Risk Zone (Red or Grey/Slate) at TOP + Profit Zone (Green or Blue/Navy) at BOTTOM => position = "SELL" (takeProfit < entryPrice < stopLoss).
+   - NUMBER FORMAT NORMALIZATION: Convert European/Indonesian format like "4.054,405" or "4.099,857" -> 4054.405 and 4099.857.
    - LOT SIZE ON TRADINGVIEW: Always return null for lotSize on TradingView.
 
-3. NO FAKE / SYNTHETIC NUMBERS:
-   - NEVER invent, interpolate, or calculate synthetic SL/TP numbers using offsets (such as entry - 0.04 or + 0.08).
-   - If Entry, SL, or TP is not clearly visible on the chart, return null for that field so the user can fill it manually.`;
+3. STRICT GROUNDING & ZERO HALLUCINATION:
+   - First populate leftEdgeLabels and rightAxisPriceTags verbatim from what you visually see from top to bottom, THEN assign entryPrice, stopLoss, and takeProfit consistently.
+   - NEVER invent, round roughly, or compute synthetic offsets. If a price tag is obscured or absent, return null for that field.`;
 
     const candidateModels = [
       'gemini-4-hydrogen',
@@ -480,81 +541,96 @@ ${geometryHintBlock}
     let usedModel = '';
 
     for (const model of candidateModels) {
-      const cooldownUntil = quotaCooldownUntilByModel.get(model) || 0;
-      if (Date.now() < cooldownUntil) {
-        continue;
-      }
-
-      for (let attempt = 1; attempt <= 2; attempt++) {
-        try {
-          const response = await ai.models.generateContent({
-            model,
-            contents: [
-              {
-                inlineData: {
-                  mimeType,
-                  data: base64Data,
-                },
-              },
-              prompt,
-            ],
-            config: {
-              responseMimeType: 'application/json',
-              responseSchema: {
-                type: Type.OBJECT,
-                properties: {
-                  detected: { type: Type.BOOLEAN, description: 'True if trade setup or order is detected' },
-                  source: { type: Type.STRING, description: 'MT5, TRADINGVIEW, or CHART' },
-                  instrument: { type: Type.STRING, description: 'Clean instrument symbol, e.g. XAUUSD, EURUSD, GBPUSD, USDJPY, BTCUSD, US30, NAS100' },
-                  position: { type: Type.STRING, description: 'BUY or SELL' },
-                  lotSize: { type: Type.NUMBER, description: 'Lot size ONLY if source is MT5 (e.g. 0.01, 0.12, 0.25). Null for TradingView.' },
-                  entryPrice: { type: Type.NUMBER, description: 'Exact entry price from right Y-axis bordered box/badge, or null if not detected' },
-                  stopLoss: { type: Type.NUMBER, description: 'Exact Stop Loss price from right Y-axis bordered box/badge, or null if not detected' },
-                  takeProfit: { type: Type.NUMBER, description: 'Exact Take Profit price from right Y-axis bordered box/badge, or null if not detected' },
-                  exitPrice: { type: Type.NUMBER, description: 'Close/exit price if trade is closed' },
-                  profit: { type: Type.NUMBER, description: 'Floating or closed profit/loss amount' },
-                  plannedRiskReward: { type: Type.NUMBER, description: 'Risk/Reward ratio number (e.g. 2.0 for 1:2 RR)' },
-                  timeframe: { type: Type.STRING, description: 'Chart timeframe (e.g. M1, M5, M15, M30, H1, H4, D1)' },
-                  currentPrice: { type: Type.NUMBER, description: 'Current live running market price on the right price scale' },
-                  status: { type: Type.STRING, description: 'PLANNED (when LIMIT or STOP is present, or TradingView setup), ACTIVE (open market order), or CLOSED' },
-                  notes: { type: Type.STRING, description: 'Brief summary of visual readings including left-edge order labels' },
-                },
-                required: ['detected', 'instrument', 'position'],
-              },
-            },
-          });
-
-          if (response && response.text) {
-            responseText = response.text;
-            usedModel = model;
-            break;
-          }
-        } catch (err: any) {
-          const errMsg = err?.message || String(err);
-          const isQuotaExhausted =
-            errMsg.includes('429') ||
-            errMsg.includes('RESOURCE_EXHAUSTED') ||
-            errMsg.includes('Quota exceeded');
-
-          if (isQuotaExhausted) {
-            // Put this model on a 1-hour (3600s) cooldown and immediately try the next model in the queue
-            quotaCooldownUntilByModel.set(model, Date.now() + 60 * 60 * 1000);
-            break;
-          }
-
-          const isTransientServerOverload =
-            errMsg.includes('503') ||
-            errMsg.includes('high demand') ||
-            errMsg.includes('overloaded') ||
-            errMsg.includes('UNAVAILABLE') ||
-            errMsg.includes('500');
-
-          if (isTransientServerOverload && attempt < 2) {
-            await new Promise((resolve) => setTimeout(resolve, 500));
-            continue;
-          }
-          break;
+      for (let keyIdx = 0; keyIdx < scannerApiKeys.length; keyIdx++) {
+        const cooldownKey = `${keyIdx}:${model}`;
+        const cooldownUntil = quotaCooldownUntilByModel.get(cooldownKey) || 0;
+        if (Date.now() < cooldownUntil) {
+          continue;
         }
+
+        const ai = new GoogleGenAI({
+          apiKey: scannerApiKeys[keyIdx],
+          httpOptions: {
+            headers: {
+              'User-Agent': 'aistudio-build',
+            },
+          },
+        });
+
+        for (let attempt = 1; attempt <= 2; attempt++) {
+          try {
+            const response = await ai.models.generateContent({
+              model,
+              contents: [
+                {
+                  inlineData: {
+                    mimeType,
+                    data: base64Data,
+                  },
+                },
+                prompt,
+              ],
+              config: {
+                temperature: 0,
+                responseMimeType: 'application/json',
+                responseSchema: {
+                  type: Type.OBJECT,
+                  properties: {
+                    detected: { type: Type.BOOLEAN, description: 'True if trade setup or order is detected' },
+                    source: { type: Type.STRING, description: 'MT5, TRADINGVIEW, or CHART' },
+                    instrument: { type: Type.STRING, description: 'Clean instrument symbol, e.g. XAUUSD, EURUSD, GBPUSD, USDJPY, BTCUSD, US30, NAS100' },
+                    leftEdgeLabels: { type: Type.STRING, description: 'Verbatim order/line labels on left edge (e.g. "TP, BUY LIMIT 0.12, SL") or "TradingView Position Box"' },
+                    rightAxisPriceTags: { type: Type.STRING, description: 'Highlighted/bordered Y-axis price badges listed top-to-bottom with colors/borders before assigning prices' },
+                    position: { type: Type.STRING, description: 'BUY or SELL' },
+                    lotSize: { type: Type.NUMBER, description: 'Lot size ONLY if source is MT5 (e.g. 0.01, 0.12, 0.25). Null for TradingView.' },
+                    entryPrice: { type: Type.NUMBER, description: 'Exact entry price from right Y-axis bordered box/badge, or null if not detected' },
+                    stopLoss: { type: Type.NUMBER, description: 'Exact Stop Loss price from right Y-axis bordered box/badge, or null if not detected' },
+                    takeProfit: { type: Type.NUMBER, description: 'Exact Take Profit price from right Y-axis bordered box/badge, or null if not detected' },
+                    exitPrice: { type: Type.NUMBER, description: 'Close/exit price if trade is closed' },
+                    profit: { type: Type.NUMBER, description: 'Floating or closed profit/loss amount' },
+                    plannedRiskReward: { type: Type.NUMBER, description: 'Risk/Reward ratio number (e.g. 2.0 for 1:2 RR)' },
+                    timeframe: { type: Type.STRING, description: 'Chart timeframe (e.g. M1, M5, M15, M30, H1, H4, D1)' },
+                    currentPrice: { type: Type.NUMBER, description: 'Current live running market price on the right price scale' },
+                    status: { type: Type.STRING, description: 'PLANNED (when LIMIT or STOP is present, or TradingView setup), ACTIVE (open market order), or CLOSED' },
+                    notes: { type: Type.STRING, description: 'Brief summary of visual readings including left-edge order labels' },
+                  },
+                  required: ['detected', 'instrument', 'position'],
+                },
+              },
+            });
+
+            if (response && response.text) {
+              responseText = response.text;
+              usedModel = model;
+              break;
+            }
+          } catch (err: any) {
+            const errMsg = err?.message || String(err);
+            const isQuotaExhausted =
+              errMsg.includes('429') ||
+              errMsg.includes('RESOURCE_EXHAUSTED') ||
+              errMsg.includes('Quota exceeded');
+
+            if (isQuotaExhausted) {
+              quotaCooldownUntilByModel.set(cooldownKey, Date.now() + 20 * 60 * 1000);
+              break;
+            }
+
+            const isTransientServerOverload =
+              errMsg.includes('503') ||
+              errMsg.includes('high demand') ||
+              errMsg.includes('overloaded') ||
+              errMsg.includes('UNAVAILABLE') ||
+              errMsg.includes('500');
+
+            if (isTransientServerOverload && attempt < 2) {
+              await new Promise((resolve) => setTimeout(resolve, 450));
+              continue;
+            }
+            break;
+          }
+        }
+        if (responseText) break;
       }
       if (responseText) break;
     }
@@ -574,10 +650,28 @@ ${geometryHintBlock}
     // Normalize instrument name & strip broker suffixes
     const cleanInstrument = normalizeInstrument(parsedData.instrument);
 
-    // Normalize position (prefer verified canvas box direction if TradingView box is present)
+    const leftLabelsStr = String(parsedData.leftEdgeLabels || '');
+    const notesStr = String(parsedData.notes || '');
+    const combinedLabelsText = `${leftLabelsStr} ${notesStr}`;
+
+    const hasExplicitMt5Buy = /\bBUY(?:\s+(?:LIMIT|STOP))?\b/i.test(combinedLabelsText);
+    const hasExplicitMt5Sell = /\bSELL(?:\s+(?:LIMIT|STOP))?\b/i.test(combinedLabelsText);
+
+    const hasVerifiedDirection = Boolean(
+      (canvasHints?.hasPositionBox &&
+        (canvasHints.inferredPosition === 'BUY' || canvasHints.inferredPosition === 'SELL')) ||
+        (hasExplicitMt5Buy && !hasExplicitMt5Sell) ||
+        (hasExplicitMt5Sell && !hasExplicitMt5Buy)
+    );
+
+    // Normalize position (prefer verified canvas box or explicit MT5 BUY/SELL label)
     let cleanPosition: 'BUY' | 'SELL' =
       canvasHints?.hasPositionBox && (canvasHints.inferredPosition === 'BUY' || canvasHints.inferredPosition === 'SELL')
         ? canvasHints.inferredPosition
+        : hasExplicitMt5Sell && !hasExplicitMt5Buy
+        ? 'SELL'
+        : hasExplicitMt5Buy && !hasExplicitMt5Sell
+        ? 'BUY'
         : parsedData.position === 'SELL'
         ? 'SELL'
         : 'BUY';
@@ -591,10 +685,9 @@ ${geometryHintBlock}
         : 'CHART';
 
     // Lifecycle status detection (strictly detect LIMIT / STOP as PLANNED)
-    const notesStr = String(parsedData.notes || '');
     const rawStatusStr = String(parsedData.status || '').toUpperCase();
     const hasPendingKeyword = /\b(BUY\s+LIMIT|SELL\s+LIMIT|BUY\s+STOP|SELL\s+STOP|LIMIT|STOP|PENDING)\b/i.test(
-      notesStr
+      combinedLabelsText
     );
     const status: 'PLANNED' | 'ACTIVE' | 'CLOSED' =
       rawStatusStr === 'CLOSED'
@@ -628,18 +721,30 @@ ${geometryHintBlock}
 
     // Enforce strict BUY / SELL directional order when all 3 real prices are present (NO synthetic SL/TP calculations!)
     if (entryPrice !== null && stopLoss !== null && takeProfit !== null) {
-      if (stopLoss < entryPrice && entryPrice < takeProfit) {
-        cleanPosition = 'BUY';
-      } else if (takeProfit < entryPrice && entryPrice < stopLoss) {
-        cleanPosition = 'SELL';
-      } else if (cleanPosition === 'BUY' && stopLoss > takeProfit) {
-        const tmp = stopLoss;
-        stopLoss = takeProfit;
-        takeProfit = tmp;
-      } else if (cleanPosition === 'SELL' && stopLoss < takeProfit) {
-        const tmp = stopLoss;
-        stopLoss = takeProfit;
-        takeProfit = tmp;
+      if (hasVerifiedDirection) {
+        if (cleanPosition === 'BUY' && stopLoss > entryPrice && takeProfit < entryPrice) {
+          const tmp = stopLoss;
+          stopLoss = takeProfit;
+          takeProfit = tmp;
+        } else if (cleanPosition === 'SELL' && stopLoss < entryPrice && takeProfit > entryPrice) {
+          const tmp = stopLoss;
+          stopLoss = takeProfit;
+          takeProfit = tmp;
+        }
+      } else {
+        if (stopLoss < entryPrice && entryPrice < takeProfit) {
+          cleanPosition = 'BUY';
+        } else if (takeProfit < entryPrice && entryPrice < stopLoss) {
+          cleanPosition = 'SELL';
+        } else if (cleanPosition === 'BUY' && stopLoss > takeProfit) {
+          const tmp = stopLoss;
+          stopLoss = takeProfit;
+          takeProfit = tmp;
+        } else if (cleanPosition === 'SELL' && stopLoss < takeProfit) {
+          const tmp = stopLoss;
+          stopLoss = takeProfit;
+          takeProfit = tmp;
+        }
       }
     }
 
@@ -689,7 +794,7 @@ ${geometryHintBlock}
         timeframe: parsedData.timeframe || null,
         currentPrice: currentPrice ?? null,
         confidence: parsedData.confidence || 0.95,
-        notes: parsedData.notes || '',
+        notes: parsedData.notes || parsedData.leftEdgeLabels || '',
         modelUsed: usedModel || 'gemini-4-hydrogen',
       },
     });

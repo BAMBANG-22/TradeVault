@@ -255,6 +255,84 @@ function parseAiJsonResponse(text: string): Record<string, any> {
 }
 
 const CANDIDATE_MODELS = ['gemini-4-hydrogen', 'gemini-3.1-flash-lite'];
+const scanQuotaCooldownByKeyModel = new Map<string, number>();
+
+function buildScannerGeometryHintBlock(canvasHints: any): string {
+  if (!canvasHints || typeof canvasHints !== 'object') return '';
+  const lines: string[] = [];
+
+  if (canvasHints.hasPositionBox) {
+    lines.push(
+      `- TradingView ${canvasHints.inferredPosition || 'BUY/SELL'} Position Box detected (${
+        canvasHints.profitTheme === 'BLUE_NAVY' ? 'Dark Blue/Navy Profit' : 'Green Profit'
+      } & ${canvasHints.riskTheme === 'GREY_SLATE' ? 'Grey/Slate Risk' : 'Red Risk'}):`
+    );
+    lines.push(
+      `  * Verified Direction: ${canvasHints.inferredPosition || 'UNKNOWN'} (${
+        canvasHints.inferredPosition === 'SELL'
+          ? 'Risk Zone is at TOP, Profit Zone is at BOTTOM -> SELL (takeProfit < entryPrice < stopLoss)'
+          : 'Profit Zone is at TOP, Risk Zone is at BOTTOM -> BUY (stopLoss < entryPrice < takeProfit)'
+      })`
+    );
+    if (canvasHints.boxTopYRatio != null) {
+      lines.push(
+        `  * Box TOP edge (${canvasHints.inferredPosition === 'SELL' ? 'STOP LOSS' : 'TAKE PROFIT'}): vertical Y = ${(
+          Number(canvasHints.boxTopYRatio) * 100
+        ).toFixed(1)}% from top`
+      );
+    }
+    if (canvasHints.entryYRatio != null) {
+      lines.push(
+        `  * Box CENTRAL divider (ENTRY PRICE): vertical Y = ${(
+          Number(canvasHints.entryYRatio) * 100
+        ).toFixed(1)}% from top`
+      );
+    }
+    if (canvasHints.boxBottomYRatio != null) {
+      lines.push(
+        `  * Box BOTTOM edge (${canvasHints.inferredPosition === 'SELL' ? 'TAKE PROFIT' : 'STOP LOSS'}): vertical Y = ${(
+          Number(canvasHints.boxBottomYRatio) * 100
+        ).toFixed(1)}% from top`
+      );
+    }
+    if (canvasHints.tpYRatio != null) {
+      lines.push(
+        `  * Exact Take Profit Y-level: ${(Number(canvasHints.tpYRatio) * 100).toFixed(1)}% from top`
+      );
+    }
+    if (canvasHints.slYRatio != null) {
+      lines.push(
+        `  * Exact Stop Loss Y-level: ${(Number(canvasHints.slYRatio) * 100).toFixed(1)}% from top`
+      );
+    }
+  }
+
+  const badgeHints: string[] = [];
+  if (canvasHints.rightAxisGreenBadgeYRatio != null) {
+    badgeHints.push(
+      `Green badge at Y = ${(Number(canvasHints.rightAxisGreenBadgeYRatio) * 100).toFixed(1)}%`
+    );
+  }
+  if (canvasHints.rightAxisRedBadgeYRatio != null) {
+    badgeHints.push(
+      `Red badge at Y = ${(Number(canvasHints.rightAxisRedBadgeYRatio) * 100).toFixed(1)}%`
+    );
+  }
+  if (canvasHints.rightAxisBlueOrDarkBadgeYRatio != null) {
+    badgeHints.push(
+      `Blue/Navy badge at Y = ${(Number(canvasHints.rightAxisBlueOrDarkBadgeYRatio) * 100).toFixed(1)}%`
+    );
+  }
+  if (badgeHints.length > 0) {
+    lines.push(`- Right-hand Y-axis colored price badge positions (remember: smaller Y% = HIGHER price on chart, larger Y% = LOWER price on chart):`);
+    for (const bh of badgeHints) {
+      lines.push(`  * ${bh}`);
+    }
+  }
+
+  if (lines.length === 0) return '';
+  return `\nPIXEL GEOMETRY SCANNER HINTS (VERIFIED FROM IMAGE PIXELS):\n${lines.join('\n')}\n`;
+}
 
 async function handleProxy(reqUrl: URL): Promise<Response> {
   const targetUrl = reqUrl.searchParams.get('url');
@@ -299,12 +377,10 @@ async function handleExtractTradeScreenshot(req: Request): Promise<Response> {
       return jsonResponse({ success: false, error: 'Harap sertakan imageBase64 atau imageUrl.' }, 400);
     }
 
-    const apiKey = (
-      Deno.env.get('GEMINI_API_KEY') ||
-      Deno.env.get('GEMINI_NEWS_API_KEY') ||
-      ''
-    ).trim();
-    if (!apiKey) {
+    const scanApiKey = (Deno.env.get('GEMINI_API_KEY') || '').trim();
+    const scannerApiKeys = scanApiKey ? [scanApiKey] : [];
+
+    if (scannerApiKeys.length === 0) {
       return jsonResponse(
         {
           success: false,
@@ -344,96 +420,129 @@ async function handleExtractTradeScreenshot(req: Request): Promise<Response> {
       base64Data = fetched.base64;
     }
 
-    const ai = new GoogleGenAI({
-      apiKey,
-      httpOptions: { headers: { 'User-Agent': 'aistudio-build' } },
-    });
-
-    const geometryHintBlock =
-      canvasHints && canvasHints.hasPositionBox
-        ? `\nPIXEL GEOMETRY SCANNER HINTS (VERIFIED FROM IMAGE PIXELS):
-- A TradingView ${canvasHints.inferredPosition || 'BUY/SELL'} Position Box (Profit Zone & Risk Zone) was detected:
-  * Verified Direction: ${canvasHints.inferredPosition || 'UNKNOWN'} (${
-            canvasHints.inferredPosition === 'SELL'
-              ? 'Risk Zone (Dark Grey/Slate or Red) is at the TOP and Profit Zone (Dark Blue/Navy or Green) is at the BOTTOM -> SELL (TP < Entry < SL)'
-              : 'Profit Zone (Green or Dark Blue/Navy) is at the TOP and Risk Zone (Red or Dark Grey/Slate) is at the BOTTOM -> BUY (SL < Entry < TP)'
-          })
-  * Top boundary of Position Box is at vertical Y = ${
-    canvasHints.boxTopYRatio != null ? (canvasHints.boxTopYRatio * 100).toFixed(1) + '%' : 'N/A'
-  } from top of image.
-  * Central Dividing Line (Entry Price) is at vertical Y = ${
-    canvasHints.entryYRatio != null ? (canvasHints.entryYRatio * 100).toFixed(1) + '%' : 'N/A'
-  } from top of image.
-  * Bottom boundary of Position Box is at vertical Y = ${
-    canvasHints.boxBottomYRatio != null ? (canvasHints.boxBottomYRatio * 100).toFixed(1) + '%' : 'N/A'
-  } from top of image.\n`
-        : '';
+    const geometryHintBlock = buildScannerGeometryHintBlock(canvasHints);
 
     const prompt = `You are an elite financial chart & order OCR specialist for MetaTrader 5 (MT5 / MT4) and TradingView.
-Carefully inspect the full, uncropped screenshot from the left edge to the rightmost Y-axis price scale.
+Carefully inspect the FULL screenshot from the left edge to the rightmost Y-axis price scale before outputting any number.
+Remember: smaller Y% (closer to top of image) = HIGHER price; larger Y% (closer to bottom of image) = LOWER price.
 ${geometryHintBlock}
-1. SPATIAL VISUAL RULES FOR METATRADER 5 (MT5) CHARTS:
-   - Read the order labels at the LEFT edge of the chart: "TP", "SL", "BUY LIMIT", "SELL LIMIT", "BUY STOP", "SELL STOP", "BUY", "SELL".
-   - Follow each label's horizontal dashed line straight across to the RIGHTMOST Y-AXIS, and ONLY extract the price number that is inside a BORDERED / OUTLINED BOX aligned with that dashed line.
-   - IGNORE plain unbordered grid numbers on the Y-axis.
-   - IGNORE the running candle price badge — put that ONLY in currentPrice, NEVER in entryPrice, stopLoss, or takeProfit!
-   - STATUS RULE: If the order label contains "LIMIT" or "STOP", set status = "PLANNED".
+1. SPATIAL VISUAL RULES FOR METATRADER 5 (MT5 / MT4):
+   - A) CHART VIEW:
+     * Read EVERY text label at the LEFT edge of the chart: "TP", "SL", "BUY LIMIT", "SELL LIMIT", "BUY STOP", "SELL STOP", "BUY", "SELL" (for example: "TP", "BUY LIMIT 0.12", "SL").
+     * Trace each label's exact horizontal dashed/dotted line straight across to the RIGHTMOST Y-AXIS, and extract ONLY the exact price inside the BORDERED / OUTLINED BOX or COLORED TAG sitting ON that exact horizontal line.
+     * IGNORE plain unbordered Y-axis tick grid numbers (like "4052.92" or "4030.42").
+     * IGNORE the running live candle price badge (often has a bar countdown timer like "00:50" or "04:12") — put that ONLY in currentPrice, NEVER in entryPrice, stopLoss, or takeProfit unless an Entry dashed line is literally at that exact price!
+     * STATUS RULE: If the order label contains "LIMIT" or "STOP", set status = "PLANNED". If it says "BUY 0.10" or "SELL 0.10" (without LIMIT/STOP), set status = "ACTIVE".
+   - B) MT5 TRADE / HISTORY LIST VIEW (if screenshot shows order rows instead of candles):
+     * Format like "XAUUSD, buy 0.10", "4050.12 -> 4062.30", with "S / L:" and "T / P:" below -> entryPrice = number BEFORE "->", exit/current = number AFTER "->", stopLoss = S/L value, takeProfit = T/P value.
 
 2. SPATIAL VISUAL RULES FOR TRADINGVIEW CHARTS:
-   - Read the rightmost Y-axis price scale tags aligned with the Position Box borders (Risk top/bottom, Entry middle line, Target bottom/top).
-   - If the target box is at the BOTTOM and risk box is at the TOP, direction is SELL (TP < Entry < SL).
-   - If the target box is at the TOP and risk box is at the BOTTOM, direction is BUY (SL < Entry < TP).
-   - Normalize local decimal formats like "4.054,405" -> 4054.405.
+   - Identify the Position Tool's two vertically-adjacent shaded rectangles (either Green/Red OR Dark Blue-Navy/Dark Grey-Slate).
+   - IGNORE inner chart labels ("OB m5", "FVG", "BOS", "Liquidity") and IGNORE bottom sub-indicator panels (RSI / MACD / Stochastic scales like 0..100).
+   - IGNORE the live running candle price badge (put ONLY in currentPrice).
+   - Read the exact Y-axis price tags aligned with:
+     (1) TOP outer border of the top zone,
+     (2) CENTRAL horizontal dividing line between the two zones (Entry Price),
+     (3) BOTTOM outer border of the bottom zone.
+   - Direction Rule:
+     * Profit Zone (Green or Blue/Navy) at TOP + Risk Zone (Red or Grey/Slate) at BOTTOM => position = "BUY" (stopLoss < entryPrice < takeProfit).
+     * Risk Zone (Red or Grey/Slate) at TOP + Profit Zone (Green or Blue/Navy) at BOTTOM => position = "SELL" (takeProfit < entryPrice < stopLoss).
+   - NUMBER FORMAT NORMALIZATION: Convert European/Indonesian format like "4.054,405" or "4.099,857" -> 4054.405 and 4099.857.
    - LOT SIZE ON TRADINGVIEW: Always return null for lotSize on TradingView.
 
-3. NO FAKE / SYNTHETIC NUMBERS:
-   - NEVER invent, interpolate, or calculate synthetic SL/TP numbers.
-   - If Entry, SL, or TP is not clearly visible, return null for that field.`;
+3. STRICT GROUNDING & ZERO HALLUCINATION:
+   - First populate leftEdgeLabels and rightAxisPriceTags verbatim from what you visually see from top to bottom, THEN assign entryPrice, stopLoss, and takeProfit consistently.
+   - NEVER invent, round roughly, or compute synthetic offsets. If a price tag is obscured or absent, return null for that field.`;
 
     let responseText = '';
     let usedModel = '';
 
     for (const model of CANDIDATE_MODELS) {
-      try {
-        const response = await ai.models.generateContent({
-          model,
-          contents: [
-            { inlineData: { mimeType, data: base64Data } },
-            prompt,
-          ],
-          config: {
-            responseMimeType: 'application/json',
-            responseSchema: {
-              type: Type.OBJECT,
-              properties: {
-                detected: { type: Type.BOOLEAN },
-                source: { type: Type.STRING },
-                instrument: { type: Type.STRING },
-                position: { type: Type.STRING },
-                lotSize: { type: Type.NUMBER },
-                entryPrice: { type: Type.NUMBER },
-                stopLoss: { type: Type.NUMBER },
-                takeProfit: { type: Type.NUMBER },
-                exitPrice: { type: Type.NUMBER },
-                profit: { type: Type.NUMBER },
-                plannedRiskReward: { type: Type.NUMBER },
-                timeframe: { type: Type.STRING },
-                currentPrice: { type: Type.NUMBER },
-                status: { type: Type.STRING },
-                notes: { type: Type.STRING },
-              },
-              required: ['detected', 'instrument', 'position'],
-            },
-          },
-        });
-        if (response && response.text) {
-          responseText = response.text;
-          usedModel = model;
-          break;
+      for (let keyIdx = 0; keyIdx < scannerApiKeys.length; keyIdx++) {
+        const cooldownKey = `${keyIdx}:${model}`;
+        const cooldownUntil = scanQuotaCooldownByKeyModel.get(cooldownKey) || 0;
+        if (Date.now() < cooldownUntil) {
+          continue;
         }
-      } catch {
-        continue;
+
+        const ai = new GoogleGenAI({
+          apiKey: scannerApiKeys[keyIdx],
+          httpOptions: { headers: { 'User-Agent': 'aistudio-build' } },
+        });
+
+        for (let attempt = 1; attempt <= 2; attempt++) {
+          try {
+            const response = await ai.models.generateContent({
+              model,
+              contents: [
+                { inlineData: { mimeType, data: base64Data } },
+                prompt,
+              ],
+              config: {
+                temperature: 0,
+                responseMimeType: 'application/json',
+                responseSchema: {
+                  type: Type.OBJECT,
+                  properties: {
+                    detected: { type: Type.BOOLEAN },
+                    source: { type: Type.STRING },
+                    instrument: { type: Type.STRING },
+                    leftEdgeLabels: {
+                      type: Type.STRING,
+                      description: 'Verbatim order/line labels on left edge (e.g. "TP, BUY LIMIT 0.12, SL") or "TradingView Position Box"',
+                    },
+                    rightAxisPriceTags: {
+                      type: Type.STRING,
+                      description: 'Highlighted/bordered Y-axis price badges listed top-to-bottom with colors/borders before assigning prices',
+                    },
+                    position: { type: Type.STRING },
+                    lotSize: { type: Type.NUMBER },
+                    entryPrice: { type: Type.NUMBER },
+                    stopLoss: { type: Type.NUMBER },
+                    takeProfit: { type: Type.NUMBER },
+                    exitPrice: { type: Type.NUMBER },
+                    profit: { type: Type.NUMBER },
+                    plannedRiskReward: { type: Type.NUMBER },
+                    timeframe: { type: Type.STRING },
+                    currentPrice: { type: Type.NUMBER },
+                    status: { type: Type.STRING },
+                    notes: { type: Type.STRING },
+                  },
+                  required: ['detected', 'instrument', 'position'],
+                },
+              },
+            });
+            if (response && response.text) {
+              responseText = response.text;
+              usedModel = model;
+              break;
+            }
+          } catch (err: any) {
+            const errMsg = err?.message || String(err);
+            const isQuotaExhausted =
+              errMsg.includes('429') ||
+              errMsg.includes('RESOURCE_EXHAUSTED') ||
+              errMsg.includes('Quota exceeded');
+            if (isQuotaExhausted) {
+              scanQuotaCooldownByKeyModel.set(cooldownKey, Date.now() + 20 * 60 * 1000);
+              break;
+            }
+            const isTransient =
+              errMsg.includes('503') ||
+              errMsg.includes('500') ||
+              errMsg.includes('UNAVAILABLE') ||
+              errMsg.includes('overloaded') ||
+              errMsg.includes('high demand');
+            if (isTransient && attempt < 2) {
+              await new Promise((r) => setTimeout(r, 450));
+              continue;
+            }
+            break;
+          }
+        }
+        if (responseText) break;
       }
+      if (responseText) break;
     }
 
     if (!responseText) {
@@ -448,10 +557,28 @@ ${geometryHintBlock}
     const parsedData = parseAiJsonResponse(responseText);
     const cleanInstrument = normalizeInstrument(parsedData.instrument);
 
+    const leftLabelsStr = String(parsedData.leftEdgeLabels || '');
+    const notesStr = String(parsedData.notes || '');
+    const combinedLabelsText = `${leftLabelsStr} ${notesStr}`;
+
+    const hasExplicitMt5Buy = /\bBUY(?:\s+(?:LIMIT|STOP))?\b/i.test(combinedLabelsText);
+    const hasExplicitMt5Sell = /\bSELL(?:\s+(?:LIMIT|STOP))?\b/i.test(combinedLabelsText);
+
+    const hasVerifiedDirection = Boolean(
+      (canvasHints?.hasPositionBox &&
+        (canvasHints.inferredPosition === 'BUY' || canvasHints.inferredPosition === 'SELL')) ||
+        (hasExplicitMt5Buy && !hasExplicitMt5Sell) ||
+        (hasExplicitMt5Sell && !hasExplicitMt5Buy)
+    );
+
     let cleanPosition: 'BUY' | 'SELL' =
       canvasHints?.hasPositionBox &&
       (canvasHints.inferredPosition === 'BUY' || canvasHints.inferredPosition === 'SELL')
         ? canvasHints.inferredPosition
+        : hasExplicitMt5Sell && !hasExplicitMt5Buy
+        ? 'SELL'
+        : hasExplicitMt5Buy && !hasExplicitMt5Sell
+        ? 'BUY'
         : parsedData.position === 'SELL'
         ? 'SELL'
         : 'BUY';
@@ -463,10 +590,9 @@ ${geometryHintBlock}
         ? 'TRADINGVIEW'
         : 'CHART';
 
-    const notesStr = String(parsedData.notes || '');
     const rawStatusStr = String(parsedData.status || '').toUpperCase();
     const hasPendingKeyword = /\b(BUY\s+LIMIT|SELL\s+LIMIT|BUY\s+STOP|SELL\s+STOP|LIMIT|STOP|PENDING)\b/i.test(
-      notesStr
+      combinedLabelsText
     );
     const status: 'PLANNED' | 'ACTIVE' | 'CLOSED' =
       rawStatusStr === 'CLOSED'
@@ -497,18 +623,30 @@ ${geometryHintBlock}
         : 0.0003;
 
     if (entryPrice !== null && stopLoss !== null && takeProfit !== null) {
-      if (stopLoss < entryPrice && entryPrice < takeProfit) {
-        cleanPosition = 'BUY';
-      } else if (takeProfit < entryPrice && entryPrice < stopLoss) {
-        cleanPosition = 'SELL';
-      } else if (cleanPosition === 'BUY' && stopLoss > takeProfit) {
-        const tmp = stopLoss;
-        stopLoss = takeProfit;
-        takeProfit = tmp;
-      } else if (cleanPosition === 'SELL' && stopLoss < takeProfit) {
-        const tmp = stopLoss;
-        stopLoss = takeProfit;
-        takeProfit = tmp;
+      if (hasVerifiedDirection) {
+        if (cleanPosition === 'BUY' && stopLoss > entryPrice && takeProfit < entryPrice) {
+          const tmp = stopLoss;
+          stopLoss = takeProfit;
+          takeProfit = tmp;
+        } else if (cleanPosition === 'SELL' && stopLoss < entryPrice && takeProfit > entryPrice) {
+          const tmp = stopLoss;
+          stopLoss = takeProfit;
+          takeProfit = tmp;
+        }
+      } else {
+        if (stopLoss < entryPrice && entryPrice < takeProfit) {
+          cleanPosition = 'BUY';
+        } else if (takeProfit < entryPrice && entryPrice < stopLoss) {
+          cleanPosition = 'SELL';
+        } else if (cleanPosition === 'BUY' && stopLoss > takeProfit) {
+          const tmp = stopLoss;
+          stopLoss = takeProfit;
+          takeProfit = tmp;
+        } else if (cleanPosition === 'SELL' && stopLoss < takeProfit) {
+          const tmp = stopLoss;
+          stopLoss = takeProfit;
+          takeProfit = tmp;
+        }
       }
     }
 
@@ -557,7 +695,7 @@ ${geometryHintBlock}
         timeframe: parsedData.timeframe || null,
         currentPrice: currentPrice ?? null,
         confidence: parsedData.confidence || 0.95,
-        notes: parsedData.notes || '',
+        notes: parsedData.notes || parsedData.leftEdgeLabels || '',
         modelUsed: usedModel || 'gemini-4-hydrogen',
       },
     });
@@ -1113,8 +1251,8 @@ Deno.serve(async (req: Request) => {
       ok: true,
       service: 'tradevault-supabase-edge-api',
       geminiConfigured: Boolean(scanKey || newsKey),
-      scannerGeminiConfigured: Boolean(scanKey || newsKey),
-      newsGeminiConfigured: Boolean(newsKey || scanKey),
+      scannerGeminiConfigured: Boolean(scanKey),
+      newsGeminiConfigured: Boolean(newsKey),
       isMarketOpen: isMarketDayUtc(new Date()),
       timestamp: new Date().toISOString(),
     });

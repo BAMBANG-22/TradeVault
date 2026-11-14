@@ -1103,16 +1103,33 @@ export function normalizeGeminiScanResponse(
       ? 'TRADINGVIEW'
       : 'CHART';
 
-  let position: TradePosition =
-    String(parsedData?.position || '').toUpperCase() === 'SELL' ? 'SELL' : 'BUY';
+  const leftLabelsStr = String(parsedData?.leftEdgeLabels || '');
+  const notesText = String(parsedData?.notes || '');
+  const combinedLabelsText = `${leftLabelsStr} ${notesText}`;
 
-  if (
+  const hasExplicitMt5Buy = /\bBUY(?:\s+(?:LIMIT|STOP))?\b/i.test(combinedLabelsText);
+  const hasExplicitMt5Sell = /\bSELL(?:\s+(?:LIMIT|STOP))?\b/i.test(combinedLabelsText);
+
+  const hasVerifiedDirection = Boolean(
+    (source === 'TRADINGVIEW' &&
+      canvasHints?.hasPositionBox &&
+      (canvasHints.inferredPosition === 'BUY' || canvasHints.inferredPosition === 'SELL')) ||
+      (hasExplicitMt5Buy && !hasExplicitMt5Sell) ||
+      (hasExplicitMt5Sell && !hasExplicitMt5Buy)
+  );
+
+  let position: TradePosition =
     source === 'TRADINGVIEW' &&
     canvasHints?.hasPositionBox &&
     (canvasHints.inferredPosition === 'BUY' || canvasHints.inferredPosition === 'SELL')
-  ) {
-    position = canvasHints.inferredPosition;
-  }
+      ? canvasHints.inferredPosition
+      : hasExplicitMt5Sell && !hasExplicitMt5Buy
+      ? 'SELL'
+      : hasExplicitMt5Buy && !hasExplicitMt5Sell
+      ? 'BUY'
+      : String(parsedData?.position || '').toUpperCase() === 'SELL'
+      ? 'SELL'
+      : 'BUY';
 
   let entryPrice = normalizeChartPriceNumber(parsedData?.entryPrice, cleanInstrument);
   let stopLoss = normalizeChartPriceNumber(parsedData?.stopLoss, cleanInstrument);
@@ -1129,34 +1146,57 @@ export function normalizeGeminiScanResponse(
 
   // Enforce directional ordering when all 3 real prices are present
   if (entryPrice !== null && stopLoss !== null && takeProfit !== null) {
-    if (stopLoss < entryPrice && entryPrice < takeProfit) {
-      position = 'BUY';
-    } else if (takeProfit < entryPrice && entryPrice < stopLoss) {
-      position = 'SELL';
-    } else if (position === 'BUY' && stopLoss > takeProfit) {
-      const tmp = stopLoss;
-      stopLoss = takeProfit;
-      takeProfit = tmp;
-    } else if (position === 'SELL' && stopLoss < takeProfit) {
-      const tmp = stopLoss;
-      stopLoss = takeProfit;
-      takeProfit = tmp;
+    if (hasVerifiedDirection) {
+      if (position === 'BUY' && stopLoss > entryPrice && takeProfit < entryPrice) {
+        const tmp = stopLoss;
+        stopLoss = takeProfit;
+        takeProfit = tmp;
+      } else if (position === 'SELL' && stopLoss < entryPrice && takeProfit > entryPrice) {
+        const tmp = stopLoss;
+        stopLoss = takeProfit;
+        takeProfit = tmp;
+      }
+    } else {
+      if (stopLoss < entryPrice && entryPrice < takeProfit) {
+        position = 'BUY';
+      } else if (takeProfit < entryPrice && entryPrice < stopLoss) {
+        position = 'SELL';
+      } else if (position === 'BUY' && stopLoss > takeProfit) {
+        const tmp = stopLoss;
+        stopLoss = takeProfit;
+        takeProfit = tmp;
+      } else if (position === 'SELL' && stopLoss < takeProfit) {
+        const tmp = stopLoss;
+        stopLoss = takeProfit;
+        takeProfit = tmp;
+      }
     }
   }
 
-  // Reject tiny fake/micro-noise SL or TP (< minSlTpDistance, e.g. 0.04 on XAUUSD)
-  if (entryPrice !== null && stopLoss !== null && Math.abs(entryPrice - stopLoss) < spec.minSlTpDistance) {
+  // Reject tiny fake/micro-noise or wrong-side SL/TP
+  if (
+    entryPrice !== null &&
+    stopLoss !== null &&
+    (Math.abs(entryPrice - stopLoss) < spec.minSlTpDistance ||
+      (position === 'BUY' && stopLoss >= entryPrice) ||
+      (position === 'SELL' && stopLoss <= entryPrice))
+  ) {
     stopLoss = null;
   }
-  if (entryPrice !== null && takeProfit !== null && Math.abs(takeProfit - entryPrice) < spec.minSlTpDistance) {
+  if (
+    entryPrice !== null &&
+    takeProfit !== null &&
+    (Math.abs(takeProfit - entryPrice) < spec.minSlTpDistance ||
+      (position === 'BUY' && takeProfit <= entryPrice) ||
+      (position === 'SELL' && takeProfit >= entryPrice))
+  ) {
     takeProfit = null;
   }
 
   // Detect PENDING / LIMIT / STOP status
-  const notesText = String(parsedData?.notes || '');
   const rawStatus = String(parsedData?.status || '').toUpperCase();
   const hasLimitOrStopKeyword = /\b(BUY\s+LIMIT|SELL\s+LIMIT|BUY\s+STOP|SELL\s+STOP|LIMIT|PENDING)\b/i.test(
-    notesText
+    combinedLabelsText
   );
 
   let status: 'PLANNED' | 'ACTIVE' | 'CLOSED' =
@@ -1181,8 +1221,10 @@ export function normalizeGeminiScanResponse(
     }
   }
 
+  const hasAnyValidLevel = entryPrice !== null || stopLoss !== null || takeProfit !== null;
+
   return {
-    detected: parsedData?.detected !== false && entryPrice !== null,
+    detected: parsedData?.detected !== false && hasAnyValidLevel,
     source,
     instrument: cleanInstrument,
     position,
@@ -1197,7 +1239,7 @@ export function normalizeGeminiScanResponse(
     timeframe: normalizeTimeframeLabel(parsedData?.timeframe),
     currentPrice,
     confidence: 0.96,
-    notes: notesText || `${cleanInstrument} ${position}`,
+    notes: notesText || leftLabelsStr || `${cleanInstrument} ${position}`,
     modelUsed,
     resolvedImageUrl,
   };
@@ -1781,16 +1823,20 @@ export async function scanTradeScreenshotOrUrl(inputSource: string): Promise<Ext
 
   const scanEndpoints = getApiEndpointCandidates('/api/extract-trade-screenshot');
   for (const endpoint of scanEndpoints) {
-    const serverRes = await nativeAwarePostJson(endpoint, payload, 15000);
+    const serverRes = await nativeAwarePostJson(endpoint, payload, 28000);
 
     if (serverRes.ok && serverRes.json?.success && serverRes.json?.data) {
       const normalized = normalizeGeminiScanResponse(
         serverRes.json.data,
         canvasGeom,
-        serverRes.json.data.modelUsed || 'server-gemini',
+        serverRes.json.data.modelUsed || 'gemini-4-hydrogen',
         !isDataUrl ? tvResolved.directImageUrl : undefined
       );
-      if (normalized.entryPrice !== null && normalized.entryPrice > 0) {
+      if (
+        (normalized.entryPrice !== null && normalized.entryPrice > 0) ||
+        normalized.stopLoss !== null ||
+        normalized.takeProfit !== null
+      ) {
         return normalized;
       }
     }
