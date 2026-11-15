@@ -1115,7 +1115,7 @@ export const TradeTable: React.FC<TradeTableProps> = ({
               </button>
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-7 gap-2.5">
+            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-7 gap-2.5">
               {/* Lifecycle Status Filter */}
               <div>
                 <label className="block text-[11px] text-[#697586] dark:text-[#929BA9] mb-1">

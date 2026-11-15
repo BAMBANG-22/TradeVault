@@ -22,7 +22,10 @@ import {
   AlertTriangle,
   Clock,
   KeyRound,
+  Wifi,
+  WifiOff,
 } from 'lucide-react';
+import { setNewsCycleOfflineMode } from '../utils/apiConfig';
 import {
   XAUUSD_SEASONALITY,
   MONTH_LABELS_ID,
@@ -173,10 +176,15 @@ export const CycleConfluencePage: React.FC<CycleConfluencePageProps> = ({
     candleSource,
     isMarketOpen,
     marketStatusText,
+    isOfflineMode,
     refresh,
     updateApiKeyAndReload,
     loadSampleOrCachedCandles,
   } = useCycleConfluenceData(tradingMode, isActive);
+
+  const handleToggleOfflineMode = () => {
+    setNewsCycleOfflineMode(!isOfflineMode);
+  };
 
   const result = useMemo(
     () =>
@@ -737,31 +745,68 @@ export const CycleConfluencePage: React.FC<CycleConfluencePageProps> = ({
               CYCLE &amp; CONFLUENCE · XAU/USD
             </h1>
             <p className="text-[11px] text-[#697586] dark:text-[#929BA9] font-mono-numbers tabular-nums truncate mt-0.5">
-              {livePrice ? `$${livePrice.toFixed(2)}` : 'Memuat harga...'}
+              {livePrice
+                ? `$${livePrice.toFixed(2)}`
+                : isOfflineMode
+                ? 'Cache Lokal Kosong'
+                : 'Memuat harga...'}
               {' · '}
-              <span
-                data-testid="cycle-market-hours-status"
-                className={`font-semibold ${
-                  isMarketOpen
-                    ? 'text-[#059669] dark:text-[#00A878]'
-                    : 'text-[#D97706] dark:text-[#F59E0B]'
-                }`}
-              >
-                {marketStatusText}
-              </span>
-              {candleSource !== 'none' &&
-                ` · ${
-                  candleSource === 'twelvedata'
-                    ? 'Twelve Data XAU/USD (Senin–Jumat)'
-                    : candleSource === 'binance'
-                    ? 'Live Market XAU/USD (Senin–Jumat)'
-                    : 'Cache Penutupan Pasar (Senin–Jumat)'
-                }`}
+              {isOfflineMode ? (
+                <span
+                  data-testid="cycle-offline-status-text"
+                  className="font-semibold text-[#D97706] dark:text-[#F59E0B]"
+                >
+                  Mode Offline Aktif · Cache Lokal (0 Kuota API)
+                </span>
+              ) : (
+                <>
+                  <span
+                    data-testid="cycle-market-hours-status"
+                    className={`font-semibold ${
+                      isMarketOpen
+                        ? 'text-[#059669] dark:text-[#00A878]'
+                        : 'text-[#D97706] dark:text-[#F59E0B]'
+                    }`}
+                  >
+                    {marketStatusText}
+                  </span>
+                  {candleSource !== 'none' &&
+                    ` · ${
+                      candleSource === 'twelvedata'
+                        ? 'Twelve Data XAU/USD (Senin–Jumat)'
+                        : candleSource === 'binance'
+                        ? 'Live Market XAU/USD (Senin–Jumat)'
+                        : 'Cache Penutupan Pasar (Senin–Jumat)'
+                    }`}
+                </>
+              )}
               {` · Update ${formattedUpdatedTime}`}
             </p>
           </div>
 
           <div className="flex flex-wrap items-center gap-2 shrink-0">
+            <button
+              type="button"
+              data-testid="cycle-offline-mode-toggle"
+              onClick={handleToggleOfflineMode}
+              title={
+                isOfflineMode
+                  ? 'Mode Offline aktif untuk News & Cycle (Scan Kilat AI tetap online). Klik untuk kembali Online.'
+                  : 'Aktifkan Mode Offline untuk News & Cycle agar tidak memakai kuota Gemini/API (Scan Kilat AI tetap online).'
+              }
+              className={`min-h-[36px] inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-semibold transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
+                isOfflineMode
+                  ? 'bg-amber-500/15 border-amber-500/40 text-amber-700 dark:text-amber-300'
+                  : 'bg-[#F5F7FA] dark:bg-[#101318] border-[#DDE3EA] dark:border-[#20252D] hover:border-black/25 dark:hover:border-white/25 text-[#151D2A] dark:text-[#F2F4F7]'
+              }`}
+            >
+              {isOfflineMode ? (
+                <WifiOff className="w-3.5 h-3.5 stroke-[2]" />
+              ) : (
+                <Wifi className="w-3.5 h-3.5 stroke-[1.75] text-[#059669] dark:text-[#00A878]" />
+              )}
+              <span>{isOfflineMode ? 'Mode Offline: ON' : 'Online'}</span>
+            </button>
             <button
               type="button"
               data-testid="cycle-session-toggle-button"
@@ -790,15 +835,21 @@ export const CycleConfluencePage: React.FC<CycleConfluencePageProps> = ({
               type="button"
               data-testid="cycle-refresh-button"
               onClick={() => void refresh(true)}
-              disabled={isRefreshing || isLoading}
-              className="min-h-[36px] inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg bg-[#151D2A] dark:bg-white text-white dark:text-[#050607] hover:opacity-90 text-xs font-semibold transition-opacity disabled:opacity-50 whitespace-nowrap shrink-0 cursor-pointer"
+              disabled={isRefreshing || isLoading || isOfflineMode}
+              className="min-h-[36px] inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg bg-[#151D2A] dark:bg-white text-white dark:text-[#050607] hover:opacity-90 text-xs font-semibold transition-opacity disabled:opacity-45 disabled:cursor-not-allowed whitespace-nowrap shrink-0 cursor-pointer"
             >
               <RefreshCw
                 className={`w-3.5 h-3.5 stroke-[2] ${
                   isRefreshing || isLoading ? 'animate-spin' : ''
                 }`}
               />
-              <span>{isRefreshing ? 'Memperbarui...' : 'Perbarui Data'}</span>
+              <span>
+                {isOfflineMode
+                  ? 'Dijeda (Offline)'
+                  : isRefreshing
+                  ? 'Memperbarui...'
+                  : 'Perbarui Data'}
+              </span>
             </button>
           </div>
         </div>
@@ -871,74 +922,113 @@ export const CycleConfluencePage: React.FC<CycleConfluencePageProps> = ({
         </div>
 
         {/* Status / Feed Notice Strip */}
-        {(!hasStoredApiKey ||
-          twelveDataStatus !== 'ok' ||
-          error ||
-          cooldownNotice ||
-          (!isLoading && !livePrice)) && (
+        {(isOfflineMode
+          ? Boolean(error || cooldownNotice || (!isLoading && !livePrice))
+          : !hasStoredApiKey ||
+            twelveDataStatus !== 'ok' ||
+            error ||
+            cooldownNotice ||
+            (!isLoading && !livePrice)) && (
           <div
             data-testid="cycle-status-banner"
             className={`rounded-lg bg-[#F5F7FA] dark:bg-[#101318] border px-3.5 py-2.5 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2.5 ${
-              error || twelveDataStatus === 'error'
+              !isOfflineMode && (error || twelveDataStatus === 'error')
                 ? 'border-[#E11D48]/40 dark:border-[#E05260]/40'
                 : 'border-[#D97706]/40 dark:border-[#F59E0B]/40'
             }`}
           >
             <div className="flex items-start gap-2 min-w-0 text-xs">
-              <AlertTriangle
-                className={`w-3.5 h-3.5 shrink-0 mt-0.5 ${
-                  error || twelveDataStatus === 'error'
-                    ? 'text-[#E11D48] dark:text-[#E05260]'
-                    : 'text-[#D97706] dark:text-[#F59E0B]'
-                }`}
-              />
-              <div className="space-y-0.5 min-w-0">
-                <p
-                  className={`font-semibold ${
+              {isOfflineMode ? (
+                <WifiOff className="w-3.5 h-3.5 shrink-0 mt-0.5 text-[#D97706] dark:text-[#F59E0B]" />
+              ) : (
+                <AlertTriangle
+                  className={`w-3.5 h-3.5 shrink-0 mt-0.5 ${
                     error || twelveDataStatus === 'error'
                       ? 'text-[#E11D48] dark:text-[#E05260]'
                       : 'text-[#D97706] dark:text-[#F59E0B]'
                   }`}
+                />
+              )}
+              <div className="space-y-0.5 min-w-0">
+                <p
+                  className={`font-semibold ${
+                    !isOfflineMode && (error || twelveDataStatus === 'error')
+                      ? 'text-[#E11D48] dark:text-[#E05260]'
+                      : 'text-[#D97706] dark:text-[#F59E0B]'
+                  }`}
                 >
-                  {twelveDataStatus === 'rate_limited'
+                  {isOfflineMode
+                    ? !livePrice
+                      ? 'Mode Offline Aktif · Belum Ada Cache Candle Lokal'
+                      : 'Mode Offline Aktif (Khusus News & Cycle)'
+                    : twelveDataStatus === 'rate_limited'
                     ? 'Kuota Twelve Data Tercapai (Rate Limit)'
                     : !hasStoredApiKey
                     ? 'API Key Twelve Data Belum Disimpan di Browser'
                     : 'Status Umpan Data Pasar XAU/USD (Senin–Jumat)'}
                 </p>
                 <p className="text-[11px] text-[#697586] dark:text-[#929BA9] leading-relaxed">
-                  {error ||
-                    cooldownNotice ||
-                    twelveDataError ||
-                    'Data candlestick XAU/USD (Senin–Jumat) sedang disinkronkan.'}
-                  {candleSource === 'binance' &&
+                  {isOfflineMode
+                    ? cooldownNotice ||
+                      error ||
+                      'Seasonality (60%) + Astronacci (40%) tetap aktif tanpa koneksi API. Aktifkan Online sebentar untuk menyimpan cache candle terbaru, lalu nyalakan lagi Mode Offline kapan saja.'
+                    : error ||
+                      cooldownNotice ||
+                      twelveDataError ||
+                      'Data candlestick XAU/USD (Senin–Jumat) sedang disinkronkan.'}
+                  {!isOfflineMode &&
+                    candleSource === 'binance' &&
                     ' · Cadangan feed pasar XAU/USD (Senin–Jumat) aktif.'}
-                  {candleSource === 'cached' &&
+                  {!isOfflineMode &&
+                    candleSource === 'cached' &&
                     ' · Menampilkan candle hari kerja terakhir dari cache lokal.'}
                 </p>
               </div>
             </div>
 
             <div className="flex flex-wrap items-center gap-2 shrink-0">
-              <button
-                type="button"
-                data-testid="banner-open-apikey-button"
-                onClick={() => {
-                  setApiKeyInput(getRawStoredTwelveDataKey());
-                  setIsApiKeyPanelOpen((prev) => !prev);
-                }}
-                className="min-h-[32px] px-3 py-1 rounded-md border border-[#DDE3EA] dark:border-[#20252D] bg-white dark:bg-[#0B0D11] text-xs font-semibold text-[#151D2A] dark:text-[#F2F4F7] cursor-pointer"
-              >
-                Atur API Key
-              </button>
-              <button
-                type="button"
-                data-testid="banner-load-sample-button"
-                onClick={loadSampleOrCachedCandles}
-                className="min-h-[32px] px-3 py-1 rounded-md bg-[#151D2A] dark:bg-white text-white dark:text-[#050607] text-xs font-semibold hover:opacity-90 transition-opacity cursor-pointer"
-              >
-                Muat Cache Hari Kerja
-              </button>
+              {isOfflineMode ? (
+                <>
+                  <button
+                    type="button"
+                    data-testid="banner-go-online-button"
+                    onClick={handleToggleOfflineMode}
+                    className="min-h-[32px] px-3 py-1 rounded-md bg-[#151D2A] dark:bg-white text-white dark:text-[#050607] text-xs font-semibold hover:opacity-90 transition-opacity cursor-pointer"
+                  >
+                    Aktifkan Online &amp; Muat Data
+                  </button>
+                  <button
+                    type="button"
+                    data-testid="banner-load-sample-button"
+                    onClick={loadSampleOrCachedCandles}
+                    className="min-h-[32px] px-3 py-1 rounded-md border border-[#DDE3EA] dark:border-[#20252D] bg-white dark:bg-[#0B0D11] text-xs font-semibold text-[#151D2A] dark:text-[#F2F4F7] cursor-pointer"
+                  >
+                    Cek Cache Lokal
+                  </button>
+                </>
+              ) : (
+                <>
+                  <button
+                    type="button"
+                    data-testid="banner-open-apikey-button"
+                    onClick={() => {
+                      setApiKeyInput(getRawStoredTwelveDataKey());
+                      setIsApiKeyPanelOpen((prev) => !prev);
+                    }}
+                    className="min-h-[32px] px-3 py-1 rounded-md border border-[#DDE3EA] dark:border-[#20252D] bg-white dark:bg-[#0B0D11] text-xs font-semibold text-[#151D2A] dark:text-[#F2F4F7] cursor-pointer"
+                  >
+                    Atur API Key
+                  </button>
+                  <button
+                    type="button"
+                    data-testid="banner-load-sample-button"
+                    onClick={loadSampleOrCachedCandles}
+                    className="min-h-[32px] px-3 py-1 rounded-md bg-[#151D2A] dark:bg-white text-white dark:text-[#050607] text-xs font-semibold hover:opacity-90 transition-opacity cursor-pointer"
+                  >
+                    Muat Cache Hari Kerja
+                  </button>
+                </>
+              )}
             </div>
           </div>
         )}

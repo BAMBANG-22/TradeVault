@@ -1121,7 +1121,7 @@ export const TradeSimulationTab: React.FC<TradeSimulationTabProps> = ({
             </div>
           </div>
 
-          <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 pt-1 text-xs">
+          <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-5 gap-3 pt-1 text-xs">
             <div className="p-3 rounded-xl bg-[#F5F7FA] dark:bg-[#101318] border border-[#DDE3EA] dark:border-[#20252D]">
               <span className="text-[11px] text-[#667085] dark:text-[#98A2B3] block mb-0.5">
                 {tr('Kemungkinan Terburuk (P5)', 'Worst Case (P5)')}
@@ -1158,7 +1158,7 @@ export const TradeSimulationTab: React.FC<TradeSimulationTabProps> = ({
               </span>
             </div>
 
-            <div className="col-span-2 sm:col-span-1 p-3 rounded-xl bg-[#F5F7FA] dark:bg-[#101318] border border-[#DDE3EA] dark:border-[#20252D]">
+            <div className="col-span-2 sm:col-span-2 xl:col-span-1 p-3 rounded-xl bg-[#F5F7FA] dark:bg-[#101318] border border-[#DDE3EA] dark:border-[#20252D]">
               <span className="text-[11px] text-[#667085] dark:text-[#98A2B3] block mb-0.5">
                 {tr('Rata-rata Max Drawdown', 'Average Max Drawdown')}
               </span>

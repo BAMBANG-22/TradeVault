@@ -1558,8 +1558,8 @@ export const RiskCalculatorView: React.FC<RiskCalculatorViewProps> = ({
 
                 <p className="text-[11px] text-[#697586] dark:text-[#8E98A8]">
                   {tr(
-                    'Catatan: Peringatan proteksi risiko berfungsi sebagai pengingat di dalam aplikasi dan tolok ukur evaluasi disiplin di TradeVault. Fitur ini tidak memblokir order secara otomatis di terminal broker Anda.',
-                    'Note: Risk protection alerts operate as in-app warnings and discipline evaluation benchmarks inside TradeVault. They do not automatically block orders at your broker terminal.'
+                    'Catatan: Peringatan proteksi risiko berfungsi sebagai pengingat di dalam aplikasi dan tolok ukur evaluasi disiplin di VLO. Fitur ini tidak memblokir order secara otomatis di terminal broker Anda.',
+                    'Note: Risk protection alerts operate as in-app warnings and discipline evaluation benchmarks inside VLO. They do not automatically block orders at your broker terminal.'
                   )}
                 </p>
               </div>
@@ -1583,7 +1583,7 @@ export const RiskCalculatorView: React.FC<RiskCalculatorViewProps> = ({
           </div>
 
           {/* Input Controls */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4 items-end">
+          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-5 gap-4 items-end">
             <div>
               <label className="block text-[11px] font-semibold uppercase tracking-wider text-[#697586] dark:text-[#8E98A8] mb-1.5">
                 {tr(`Saldo Awal (${settings.currencySymbol})`, `Initial Balance (${settings.currencySymbol})`)}

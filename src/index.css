@@ -169,6 +169,109 @@ html.light .tv-smoked-glass-card,
     0 2px 6px rgba(15, 23, 42, 0.04);
 }
 
+@keyframes vloWaveIn {
+  0% {
+    opacity: 0;
+    transform: translate3d(-4px, 0, 0) scale3d(0.97, 0.97, 1);
+  }
+  100% {
+    opacity: 1;
+    transform: translate3d(0, 0, 0) scale3d(1, 1, 1);
+  }
+}
+
+@keyframes vloDotsFadeOut {
+  0% {
+    opacity: 1;
+    transform: scale3d(1, 1, 1);
+  }
+  100% {
+    opacity: 0;
+    transform: scale3d(1.03, 1.03, 1);
+  }
+}
+
+@keyframes vloSolidFadeIn {
+  0% {
+    opacity: 0;
+    transform: scale3d(0.95, 0.95, 1);
+  }
+  100% {
+    opacity: 1;
+    transform: scale3d(1, 1, 1);
+  }
+}
+
+@keyframes vloWordAppear {
+  0% {
+    opacity: 0;
+    transform: translate3d(0, 8px, 0);
+  }
+  100% {
+    opacity: 1;
+    transform: translate3d(0, 0, 0);
+  }
+}
+
+.vlo-dot-wave {
+  opacity: 0;
+  transform-origin: 128px 128px;
+  will-change: opacity, transform;
+}
+
+.vlo-dots-layer {
+  transform-origin: center;
+  will-change: opacity, transform;
+}
+
+.vlo-solid-layer {
+  opacity: 0;
+  transform-origin: center;
+  will-change: opacity, transform;
+}
+
+/* Normal (Splash Screen): graceful unhurried 60fps flow (~1.6s) */
+.vlo-reveal-normal .vlo-dot-wave-0 { animation: vloWaveIn 360ms cubic-bezier(0.22, 1, 0.36, 1) 0ms forwards; }
+.vlo-reveal-normal .vlo-dot-wave-1 { animation: vloWaveIn 360ms cubic-bezier(0.22, 1, 0.36, 1) 80ms forwards; }
+.vlo-reveal-normal .vlo-dot-wave-2 { animation: vloWaveIn 360ms cubic-bezier(0.22, 1, 0.36, 1) 160ms forwards; }
+.vlo-reveal-normal .vlo-dot-wave-3 { animation: vloWaveIn 360ms cubic-bezier(0.22, 1, 0.36, 1) 240ms forwards; }
+.vlo-reveal-normal .vlo-dot-wave-4 { animation: vloWaveIn 360ms cubic-bezier(0.22, 1, 0.36, 1) 320ms forwards; }
+.vlo-reveal-normal .vlo-dot-wave-5 { animation: vloWaveIn 360ms cubic-bezier(0.22, 1, 0.36, 1) 400ms forwards; }
+.vlo-reveal-normal .vlo-dot-wave-6 { animation: vloWaveIn 360ms cubic-bezier(0.22, 1, 0.36, 1) 480ms forwards; }
+.vlo-reveal-normal .vlo-dot-wave-7 { animation: vloWaveIn 360ms cubic-bezier(0.22, 1, 0.36, 1) 560ms forwards; }
+
+.vlo-reveal-normal .vlo-dots-layer {
+  animation: vloDotsFadeOut 460ms cubic-bezier(0.4, 0, 0.2, 1) 960ms forwards;
+}
+
+.vlo-reveal-normal .vlo-solid-layer {
+  animation: vloSolidFadeIn 540ms cubic-bezier(0.22, 1, 0.36, 1) 900ms forwards;
+}
+
+/* Fast (Auth Modal): smooth 60fps flow (~0.95s) */
+.vlo-reveal-fast .vlo-dot-wave-0 { animation: vloWaveIn 240ms cubic-bezier(0.22, 1, 0.36, 1) 0ms forwards; }
+.vlo-reveal-fast .vlo-dot-wave-1 { animation: vloWaveIn 240ms cubic-bezier(0.22, 1, 0.36, 1) 45ms forwards; }
+.vlo-reveal-fast .vlo-dot-wave-2 { animation: vloWaveIn 240ms cubic-bezier(0.22, 1, 0.36, 1) 90ms forwards; }
+.vlo-reveal-fast .vlo-dot-wave-3 { animation: vloWaveIn 240ms cubic-bezier(0.22, 1, 0.36, 1) 135ms forwards; }
+.vlo-reveal-fast .vlo-dot-wave-4 { animation: vloWaveIn 240ms cubic-bezier(0.22, 1, 0.36, 1) 180ms forwards; }
+.vlo-reveal-fast .vlo-dot-wave-5 { animation: vloWaveIn 240ms cubic-bezier(0.22, 1, 0.36, 1) 225ms forwards; }
+.vlo-reveal-fast .vlo-dot-wave-6 { animation: vloWaveIn 240ms cubic-bezier(0.22, 1, 0.36, 1) 270ms forwards; }
+.vlo-reveal-fast .vlo-dot-wave-7 { animation: vloWaveIn 240ms cubic-bezier(0.22, 1, 0.36, 1) 315ms forwards; }
+
+.vlo-reveal-fast .vlo-dots-layer {
+  animation: vloDotsFadeOut 320ms cubic-bezier(0.4, 0, 0.2, 1) 540ms forwards;
+}
+
+.vlo-reveal-fast .vlo-solid-layer {
+  animation: vloSolidFadeIn 380ms cubic-bezier(0.22, 1, 0.36, 1) 500ms forwards;
+}
+
+.vlo-splash-wordmark {
+  opacity: 0;
+  will-change: opacity, transform;
+  animation: vloWordAppear 460ms cubic-bezier(0.22, 1, 0.36, 1) 1140ms forwards;
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,
@@ -177,6 +280,17 @@ html.light .tv-smoked-glass-card,
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
     scroll-behavior: auto !important;
+  }
+
+  .vlo-dots-layer {
+    display: none !important;
+  }
+
+  .vlo-solid-layer,
+  .vlo-splash-wordmark {
+    opacity: 1 !important;
+    transform: none !important;
+    animation: none !important;
   }
 }
 

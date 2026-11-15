@@ -1977,14 +1977,14 @@ const DISPLAY_MODE_OPTIONS: Array<{
     label: 'Tampilan App',
     shortLabel: 'App',
     description:
-      'Tampilan standar di dalam aplikasi TradeVault dengan navbar atas dan navigasi bawah tetap terlihat.',
+      'Tampilan standar di dalam aplikasi VLO dengan navbar atas dan navigasi bawah tetap terlihat.',
   },
   {
     id: 'full',
     label: 'Tampilan Penuh',
     shortLabel: 'Penuh',
     description:
-      'Chart memenuhi seluruh area layar. Navbar atas dan navigasi bawah TradeVault disembunyikan.',
+      'Chart memenuhi seluruh area layar. Navbar atas dan navigasi bawah VLO disembunyikan.',
   },
   {
     id: 'landscape',
@@ -6969,8 +6969,8 @@ export const MarketChartView: React.FC<MarketChartViewProps> = ({
                             data-testid="drawing-open-position-direct-btn"
                             onClick={() => handleCreateTradeFromSelectedPosition(selectedDrawingObj)}
                             title={tr(
-                              'Eksekusi Posisi Baru langsung ke Jurnal TradeVault',
-                              'Execute New Position directly to TradeVault Journal'
+                              'Eksekusi Posisi Baru langsung ke Jurnal VLO',
+                              'Execute New Position directly to VLO Journal'
                             )}
                             className={`inline-flex items-center gap-1 h-6 px-2 rounded text-white text-[10px] font-bold transition-colors cursor-pointer shadow-sm ${
                               selectedDrawingObj.type === 'long_position' || selectedDrawingObj.type === 'long'
@@ -7224,7 +7224,7 @@ export const MarketChartView: React.FC<MarketChartViewProps> = ({
 
                       <span
                         data-testid="position-inspector-lot-recommendation"
-                        title="Rekomendasi Lot Ideal sesuai Equity & Risiko Jurnal TradeVault"
+                        title="Rekomendasi Lot Ideal sesuai Equity & Risiko Jurnal VLO"
                         className="px-1.5 py-0.5 rounded bg-[#2962FF]/15 border border-[#2962FF]/35 text-[#60A5FA] font-semibold whitespace-nowrap"
                       >
                         Lot Ideal: {sizingInfo.recommendedLot.toFixed(2)} Lot (${sizingInfo.riskAmountUsd.toFixed(0)} · {sizingInfo.riskPercent}%)
@@ -9015,7 +9015,7 @@ export const MarketChartView: React.FC<MarketChartViewProps> = ({
                         <h3 className="text-[11px] font-semibold text-[#868993] uppercase tracking-wider mt-4 mb-2">
                           {translateSectionName(sectionName)}
                         </h3>
-                        <div className="grid grid-cols-2 gap-2">
+                        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2">
                           {toolsInSection.map((tool) => {
                             const isFav = favoriteTools.includes(tool.id);
                             const isActiveTool = activeDrawingTool === tool.id;

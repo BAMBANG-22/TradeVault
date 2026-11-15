@@ -23,8 +23,12 @@ import { isMarketDay } from '../utils/date';
 import {
   getApiEndpointCandidates,
   isNativeAndroidOrIos,
+  isNewsCycleOfflineMode,
   nativeHttpGetText,
+  NEWS_CYCLE_OFFLINE_MODE_CHANGE_EVENT,
+  NEWS_CYCLE_OFFLINE_MODE_STORAGE_KEY,
 } from '../utils/apiConfig';
+import { loadLocalCachedMacroSnapshotSync } from '../utils/macroNewsEngine';
 import type {
   ConfluenceCandle,
   MacroBiasDirection,
@@ -642,6 +646,7 @@ export interface CycleConfluenceDataState {
   candleSource: ConfluenceCandleSource;
   isMarketOpen: boolean;
   marketStatusText: string;
+  isOfflineMode: boolean;
   refresh: (force?: boolean) => Promise<void>;
   updateApiKeyAndReload: (newKey: string) => Promise<void>;
   loadSampleOrCachedCandles: () => void;
@@ -694,6 +699,22 @@ export function useCycleConfluenceData(
   });
 
   const currentMarketStatus = isMarketOpenForPair(XAU_PAIR.label);
+  const [isOfflineMode, setIsOfflineMode] = useState<boolean>(() => isNewsCycleOfflineMode());
+
+  useEffect(() => {
+    const syncOffline = () => setIsOfflineMode(isNewsCycleOfflineMode());
+    const handleStorage = (e: StorageEvent) => {
+      if (e.key === NEWS_CYCLE_OFFLINE_MODE_STORAGE_KEY) {
+        syncOffline();
+      }
+    };
+    window.addEventListener(NEWS_CYCLE_OFFLINE_MODE_CHANGE_EVENT, syncOffline);
+    window.addEventListener('storage', handleStorage);
+    return () => {
+      window.removeEventListener(NEWS_CYCLE_OFFLINE_MODE_CHANGE_EVENT, syncOffline);
+      window.removeEventListener('storage', handleStorage);
+    };
+  }, []);
 
   const lastManualRefreshRef = useRef<number>(0);
   const abortRef = useRef<AbortController | null>(null);
@@ -701,6 +722,49 @@ export function useCycleConfluenceData(
   const loadData = useCallback(
     async (force: boolean = false, bypassCooldown: boolean = false) => {
       if (!isEnabled) return;
+
+      // Offline Mode (News & Cycle): strictly read local cache only, 0 API/network/Gemini calls
+      if (isOfflineMode || isNewsCycleOfflineMode()) {
+        const targetIntervals = MODE_TIMEFRAMES[tradingMode];
+        const nextMap: Record<string, ConfluenceCandle[]> = {};
+        for (const tf of targetIntervals) {
+          const cached = hydrateMemoryCacheFromLocal(TWELVE_DATA_SYMBOL, tf);
+          if (cached && cached.candles.length > 0) {
+            nextMap[tf] = cached.candles;
+          }
+        }
+        if (Object.keys(nextMap).length > 0) {
+          setCandlesByTf((prev) => ({ ...prev, ...nextMap }));
+          const lowestTf = targetIntervals[targetIntervals.length - 1];
+          const refCandles = nextMap[lowestTf] || nextMap[targetIntervals[0]];
+          if (refCandles && refCandles.length > 0) {
+            setLivePrice(refCandles[refCandles.length - 1].close);
+          }
+          setCandleSource('cached');
+        } else {
+          setCandleSource('none');
+        }
+
+        const localMacro = loadLocalCachedMacroSnapshotSync();
+        if (localMacro) {
+          const rawBias = String(localMacro.dominantBias || '').toUpperCase();
+          const cachedBias: MacroBiasDirection =
+            rawBias === 'BUY' || rawBias === 'SELL' || rawBias === 'MIXED' ? rawBias : 'MIXED';
+          setMacroBias(cachedBias);
+          setMacroAnalyzedAt(localMacro.analyzedAt || null);
+        }
+        setMacroBiasSource('fallback');
+        setError(null);
+        setTwelveDataError(null);
+        setCooldownNotice(
+          force
+            ? 'Mode Offline aktif: data terbaru tidak diambil. Nonaktifkan Mode Offline untuk sinkronisasi online.'
+            : null
+        );
+        setIsLoading(false);
+        setIsRefreshing(false);
+        return;
+      }
 
       const now = Date.now();
       if (force && !bypassCooldown && now - lastManualRefreshRef.current < REFRESH_COOLDOWN_MS) {
@@ -918,7 +982,7 @@ export function useCycleConfluenceData(
         }
       }
     },
-    [tradingMode, isEnabled]
+    [tradingMode, isEnabled, isOfflineMode]
   );
 
   useEffect(() => {
@@ -1013,6 +1077,7 @@ export function useCycleConfluenceData(
     candleSource,
     isMarketOpen: currentMarketStatus.isOpen,
     marketStatusText: currentMarketStatus.statusText,
+    isOfflineMode,
     refresh,
     updateApiKeyAndReload,
     loadSampleOrCachedCandles,

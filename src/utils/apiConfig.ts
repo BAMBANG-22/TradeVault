@@ -7,6 +7,8 @@ import { Capacitor, CapacitorHttp } from '@capacitor/core';
 import { getSupabaseConfig, sanitizeSupabaseUrl } from './supabaseClient';
 
 export const STANDALONE_BACKEND_URL_STORAGE_KEY = 'tradevault_standalone_backend_url_v1';
+export const NEWS_CYCLE_OFFLINE_MODE_STORAGE_KEY = 'tradevault_news_cycle_offline_mode_v1';
+export const NEWS_CYCLE_OFFLINE_MODE_CHANGE_EVENT = 'tradevault:news-cycle-offline-mode-change';
 export const SUPABASE_EDGE_FUNCTION_SLUG = 'tradevault-api';
 
 const SUPABASE_EDGE_SUPPORTED_PATHS = new Set([
@@ -15,6 +17,40 @@ const SUPABASE_EDGE_SUPPORTED_PATHS = new Set([
   '/api/extract-trade-screenshot',
   '/api/macro-news/analyze',
 ]);
+
+/**
+ * Returns whether Offline Mode is enabled specifically for Trade News & Cycle & Confluence.
+ * Scan Kilat AI (`tradeScreenshotScanner`) intentionally ignores this flag so users can still
+ * scan trade screenshots daily using Gemini Hydrogen.
+ */
+export function isNewsCycleOfflineMode(): boolean {
+  if (typeof window === 'undefined' || typeof window.localStorage === 'undefined') {
+    return false;
+  }
+  try {
+    return window.localStorage.getItem(NEWS_CYCLE_OFFLINE_MODE_STORAGE_KEY) === 'true';
+  } catch {
+    return false;
+  }
+}
+
+export function setNewsCycleOfflineMode(enabled: boolean): boolean {
+  const nextValue = Boolean(enabled);
+  if (typeof window !== 'undefined' && typeof window.localStorage !== 'undefined') {
+    try {
+      window.localStorage.setItem(
+        NEWS_CYCLE_OFFLINE_MODE_STORAGE_KEY,
+        nextValue ? 'true' : 'false'
+      );
+      window.dispatchEvent(
+        new CustomEvent(NEWS_CYCLE_OFFLINE_MODE_CHANGE_EVENT, { detail: { enabled: nextValue } })
+      );
+    } catch {
+      // ignore localStorage write failure
+    }
+  }
+  return nextValue;
+}
 
 /**
  * Normalizes a standalone backend URL (Node.js server OR Supabase Edge Function URL).

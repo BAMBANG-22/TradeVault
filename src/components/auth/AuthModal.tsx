@@ -15,12 +15,12 @@ import {
   EyeOff,
   CheckCircle,
   AlertCircle,
-  ShieldCheck,
   Database,
   RefreshCw,
   Send,
 } from 'lucide-react';
 import { useLanguage } from '../../utils/language';
+import { VloDotRevealLogo } from '../layout/VloDotRevealLogo';
 
 interface AuthModalProps {
   isOpen: boolean;
@@ -291,22 +291,25 @@ export const AuthModal: React.FC<AuthModalProps> = ({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 dark:bg-black/80 backdrop-blur-sm p-4 animate-in fade-in duration-150"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/65 dark:bg-black/80 p-4 animate-in fade-in duration-150"
       onClick={onClose}
     >
       <div
-        className="w-full max-w-md max-h-[90vh] max-h-[90dvh] overflow-y-auto rounded-2xl border border-[#DDE3EA] dark:border-[#252B34] bg-white dark:bg-[#11151B] p-6 shadow-2xl text-[#151D2A] dark:text-[#F2F5F9] relative"
+        className="w-full max-w-md max-h-[90vh] max-h-[90dvh] overflow-y-auto rounded-2xl border border-[#DDE3EA] dark:border-[#252B34] bg-white dark:bg-[#11151B] p-6 shadow-2xl text-[#151D2A] dark:text-[#F2F5F9] relative transform-gpu"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
         <div className="flex items-center justify-between pb-3 border-b border-[#DDE3EA] dark:border-[#252B34]">
-          <div className="flex items-center gap-2.5">
-            <div className="p-2 rounded-xl bg-[#EEF2F6] dark:bg-[#171D26] text-[#697586] dark:text-[#929BA9] border border-[#DDE3EA] dark:border-[#252B34]">
-              <ShieldCheck className="h-5 w-5 stroke-[1.75]" />
-            </div>
+          <div className="flex items-center gap-3">
+            <VloDotRevealLogo
+              size={48}
+              speed="fast"
+              roundedClassName="rounded-[12px]"
+              title="VLO"
+            />
             <div>
               <h3 className="text-base font-bold text-[#151D2A] dark:text-[#F2F5F9]">
-                {mode === 'signin' && tr('Masuk ke TradeVault', 'Sign In to TradeVault')}
+                {mode === 'signin' && tr('Masuk ke VLO', 'Sign In to VLO')}
                 {mode === 'signup' && tr('Buat Akun Trader Baru', 'Create New Trader Account')}
                 {mode === 'forgot' && tr('Pemulihan Kata Sandi', 'Password Recovery')}
                 {mode === 'verify_notice' && tr('Verifikasi Email Diperlukan', 'Email Verification Required')}

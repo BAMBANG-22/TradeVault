@@ -4029,24 +4029,34 @@ export function isVerifiedLiveCalendarSnapshot(
  * Strictly rejects any legacy/non-live mock snapshot so only verified live ForexFactory data is used.
  * Uses 0 Gemini tokens!
  */
-export async function loadLatestCachedMacroSnapshot(): Promise<MacroNewsSnapshot | null> {
-  let localSnap: MacroNewsSnapshot | null = null;
-  if (typeof window !== 'undefined' && typeof localStorage !== 'undefined') {
-    try {
-      const raw = localStorage.getItem(MACRO_SNAPSHOT_LOCAL_STORAGE_KEY);
-      if (raw) {
-        const parsed = JSON.parse(raw) as MacroNewsSnapshot;
-        if (isVerifiedLiveCalendarSnapshot(parsed)) {
-          localSnap = parsed;
-        } else {
-          // Purge stale mock snapshot from localStorage
-          localStorage.removeItem(MACRO_SNAPSHOT_LOCAL_STORAGE_KEY);
-          localStorage.removeItem(MACRO_GROUP_SNAPSHOT_CACHE_KEY);
-        }
+export function loadLocalCachedMacroSnapshotSync(): MacroNewsSnapshot | null {
+  if (typeof window === 'undefined' || typeof localStorage === 'undefined') {
+    return null;
+  }
+  try {
+    const raw = localStorage.getItem(MACRO_SNAPSHOT_LOCAL_STORAGE_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw) as MacroNewsSnapshot;
+      if (isVerifiedLiveCalendarSnapshot(parsed)) {
+        return parsed;
       }
-    } catch {
-      // ignore local storage parse error
+      // Purge stale mock snapshot from localStorage
+      localStorage.removeItem(MACRO_SNAPSHOT_LOCAL_STORAGE_KEY);
+      localStorage.removeItem(MACRO_GROUP_SNAPSHOT_CACHE_KEY);
     }
+  } catch {
+    // ignore local storage parse error
+  }
+  return null;
+}
+
+export async function loadLatestCachedMacroSnapshot(options?: {
+  localOnly?: boolean;
+}): Promise<MacroNewsSnapshot | null> {
+  const localSnap = loadLocalCachedMacroSnapshotSync();
+
+  if (options?.localOnly) {
+    return localSnap;
   }
 
   if (isSupabaseConfigured()) {

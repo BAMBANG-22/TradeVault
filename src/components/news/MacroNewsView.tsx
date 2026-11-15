@@ -11,7 +11,15 @@ import {
   Info,
   Lock,
   Search,
+  Wifi,
+  WifiOff,
 } from 'lucide-react';
+import {
+  isNewsCycleOfflineMode,
+  setNewsCycleOfflineMode,
+  NEWS_CYCLE_OFFLINE_MODE_CHANGE_EVENT,
+  NEWS_CYCLE_OFFLINE_MODE_STORAGE_KEY,
+} from '../../utils/apiConfig';
 import { useLanguage } from '../../utils/language';
 import {
   MacroNewsSnapshot,
@@ -117,7 +125,29 @@ export const MacroNewsView: React.FC = () => {
   const [sessionConfig, setSessionConfig] = useState<SessionHoursWibConfig>(() =>
     loadStoredSessionHoursWib()
   );
+  const [isOfflineMode, setIsOfflineMode] = useState<boolean>(() => isNewsCycleOfflineMode());
   const confluenceData = useCycleConfluenceData('SWING', true);
+
+  useEffect(() => {
+    const syncOffline = () => setIsOfflineMode(isNewsCycleOfflineMode());
+    const handleStorage = (e: StorageEvent) => {
+      if (e.key === NEWS_CYCLE_OFFLINE_MODE_STORAGE_KEY) {
+        syncOffline();
+      }
+    };
+    window.addEventListener(NEWS_CYCLE_OFFLINE_MODE_CHANGE_EVENT, syncOffline);
+    window.addEventListener('storage', handleStorage);
+    return () => {
+      window.removeEventListener(NEWS_CYCLE_OFFLINE_MODE_CHANGE_EVENT, syncOffline);
+      window.removeEventListener('storage', handleStorage);
+    };
+  }, []);
+
+  const handleToggleOfflineMode = useCallback(() => {
+    const next = !isOfflineMode;
+    setNewsCycleOfflineMode(next);
+    setIsOfflineMode(next);
+  }, [isOfflineMode]);
 
   // Sync Manual AMD Override & Session Hours WIB from Cycle & Confluence page via custom event + localStorage
   useEffect(() => {
@@ -153,7 +183,7 @@ export const MacroNewsView: React.FC = () => {
   const lastAutoRefreshMsRef = useRef<number>(Date.now());
 
   const syncLiveIntermarketPulse = useCallback(async () => {
-    if (isIntermarketPollingRef.current || isRefreshingRef.current) return;
+    if (isNewsCycleOfflineMode() || isIntermarketPollingRef.current || isRefreshingRef.current) return;
     isIntermarketPollingRef.current = true;
     try {
       const liveBundle = await fetchLiveIntermarketPulseBundle();
@@ -220,6 +250,11 @@ export const MacroNewsView: React.FC = () => {
       existingSnap?: MacroNewsSnapshot | null,
       targetEventId?: string | null
     ) => {
+      if (isNewsCycleOfflineMode()) {
+        setIsLoading(false);
+        setIsRefreshing(false);
+        return;
+      }
       if (isRefreshingRef.current) return;
       isRefreshingRef.current = true;
       setIsRefreshing(true);
@@ -368,10 +403,20 @@ export const MacroNewsView: React.FC = () => {
     return () => clearInterval(interval);
   }, []);
 
-  // On mount: read latest snapshot from Supabase / local cache first (0 Gemini tokens)
+  // On mount or Online/Offline mode transition: load cached snapshot first (0 Gemini tokens)
   useEffect(() => {
     let mounted = true;
     (async () => {
+      if (isOfflineMode) {
+        const localCached = await loadLatestCachedMacroSnapshot({ localOnly: true });
+        if (!mounted) return;
+        if (localCached) {
+          setSnapshot(localCached);
+        }
+        setIsLoading(false);
+        return;
+      }
+
       setIsLoading(true);
       const cached = await loadLatestCachedMacroSnapshot();
       if (!mounted) return;
@@ -405,20 +450,21 @@ export const MacroNewsView: React.FC = () => {
     return () => {
       mounted = false;
     };
-  }, [runLiveAnalysis, syncLiveIntermarketPulse]);
+  }, [isOfflineMode, runLiveAnalysis, syncLiveIntermarketPulse]);
 
   // Lightweight 45-second background ticker poll for Intermarket Pulse (0 Gemini tokens)
-  // Strictly active on weekdays (Monday-Friday / Senin-Jumat) while XAU/USD market is open
+  // Strictly active on weekdays (Monday-Friday / Senin-Jumat) while XAU/USD market is open and NOT Offline Mode
   useEffect(() => {
-    if (!confluenceData.isMarketOpen) return;
+    if (isOfflineMode || !confluenceData.isMarketOpen) return;
     const timer = setInterval(() => {
       void syncLiveIntermarketPulse();
     }, INTERMARKET_LIVE_POLL_MS);
     return () => clearInterval(timer);
-  }, [confluenceData.isMarketOpen, syncLiveIntermarketPulse]);
+  }, [isOfflineMode, confluenceData.isMarketOpen, syncLiveIntermarketPulse]);
 
-  // Initial RSS health check on mount so "4/4 Feed Aktif" shows immediately even when reading cached snapshot
+  // Initial RSS health check on mount (skipped in Offline Mode)
   useEffect(() => {
+    if (isOfflineMode) return;
     let active = true;
     fetchClientBreakingHeadlinesWithHealth()
       .then((res) => {
@@ -439,7 +485,7 @@ export const MacroNewsView: React.FC = () => {
     return () => {
       active = false;
     };
-  }, []);
+  }, [isOfflineMode]);
 
   const lockState = useMemo(() => {
     if (!snapshot) {
@@ -462,11 +508,11 @@ export const MacroNewsView: React.FC = () => {
     });
   }, [snapshot, nowMs]);
 
-  // Background RSS & Automatic Cache Invalidation Poll (checks every 60s for new articles or adaptive window refresh)
+  // Background RSS & Automatic Cache Invalidation Poll (paused when Offline Mode is active)
   useEffect(() => {
-    if (!snapshot) return;
+    if (isOfflineMode || !snapshot) return;
     const timer = setInterval(async () => {
-      if (isRefreshingRef.current || isRssPollingRef.current) return;
+      if (isNewsCycleOfflineMode() || isRefreshingRef.current || isRssPollingRef.current) return;
       isRssPollingRef.current = true;
       try {
         const rssRes = await fetchClientBreakingHeadlinesWithHealth();
@@ -511,12 +557,11 @@ export const MacroNewsView: React.FC = () => {
     }, ADAPTIVE_RSS_CHECK_MS);
 
     return () => clearInterval(timer);
-  }, [confluenceData.isMarketOpen, snapshot, isInAdaptiveFastWindow, selectedEventId, runLiveAnalysis]);
+  }, [isOfflineMode, confluenceData.isMarketOpen, snapshot, isInAdaptiveFastWindow, selectedEventId, runLiveAnalysis]);
 
-  // Automatic T-5M Final Fetch & Adaptive Periodic Refresh (60s in T-30m..T+15m, 5m normal)
-  // Paused automatically on Saturday & Sunday when XAU/USD market is closed
+  // Automatic T-5M Final Fetch & Adaptive Periodic Refresh (paused when Offline Mode or Weekend)
   useEffect(() => {
-    if (!snapshot || !confluenceData.isMarketOpen) return;
+    if (isOfflineMode || !snapshot || !confluenceData.isMarketOpen) return;
 
     const targetEv = lockState.targetEvent;
     if (lockState.isLockedT5M && targetEv) {
@@ -536,7 +581,7 @@ export const MacroNewsView: React.FC = () => {
     ) {
       void runLiveAnalysis(false, snapshot, selectedEventId);
     }
-  }, [confluenceData.isMarketOpen, lockState.isLockedT5M, lockState.targetEvent, isInAdaptiveFastWindow, snapshot, selectedEventId, runLiveAnalysis]);
+  }, [isOfflineMode, confluenceData.isMarketOpen, lockState.isLockedT5M, lockState.targetEvent, isInAdaptiveFastWindow, snapshot, selectedEventId, runLiveAnalysis]);
 
   const allEventGroups = useMemo<MacroEventGroup[]>(() => {
     if (!snapshot) return [];
@@ -799,7 +844,51 @@ export const MacroNewsView: React.FC = () => {
     );
   }
 
-  if (!snapshot || !activeMatrix) return null;
+  if (!snapshot || !activeMatrix) {
+    if (isOfflineMode) {
+      return (
+        <div
+          data-testid="macro-news-view"
+          className="space-y-5 pb-10 text-[#151D2A] dark:text-[#F2F4F7] font-sans"
+        >
+          <div className="flex flex-wrap items-center justify-between gap-3 pb-3 border-b border-[#DDE3EA] dark:border-[#20252D]">
+            <div className="min-w-0">
+              <h1 className="text-xs font-bold uppercase tracking-[0.12em] text-[#151D2A] dark:text-[#F2F4F7] truncate">
+                {tr('TRADE NEWS · XAU/USD', 'TRADE NEWS · XAU/USD')}
+              </h1>
+              <p className="text-[11px] text-[#D97706] dark:text-[#F59E0B] font-medium mt-0.5">
+                {tr(
+                  'Mode Offline Aktif · Hemat Kuota Gemini News (0 Token)',
+                  'Offline Mode Active · Zero Gemini News Quota Used'
+                )}
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={handleToggleOfflineMode}
+              className="min-h-[36px] inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg bg-[#151D2A] dark:bg-white text-white dark:text-[#050607] text-xs font-semibold cursor-pointer"
+            >
+              <Wifi className="w-3.5 h-3.5 stroke-[2]" />
+              <span>{tr('Aktifkan Online & Muat Data', 'Go Online & Load Data')}</span>
+            </button>
+          </div>
+          <div className="rounded-xl bg-[#F5F7FA] dark:bg-[#101318] border border-[#DDE3EA] dark:border-[#20252D] p-5 space-y-2">
+            <div className="flex items-center gap-2 text-sm font-semibold">
+              <WifiOff className="w-4 h-4 text-[#D97706] dark:text-[#F59E0B]" />
+              <span>{tr('Belum Ada Cache Lokal Trade News', 'No Local Trade News Cache Yet')}</span>
+            </div>
+            <p className="text-xs text-[#697586] dark:text-[#929BA9] leading-relaxed">
+              {tr(
+                'Mode Offline aktif untuk Trade News & Cycle agar kuota Gemini News tidak terpakai. Silakan aktifkan Mode Online sebentar untuk menyimpan snapshot berita terbaru ke perangkat, lalu nyalakan kembali Mode Offline kapan saja. Scan Kilat AI tetap aktif online.',
+                'Offline Mode is active for Trade News & Cycle so Gemini News quota is not spent. Go Online briefly to cache the latest news snapshot locally, then re-enable Offline Mode anytime. Instant AI Scan remains online.'
+              )}
+            </p>
+          </div>
+        </div>
+      );
+    }
+    return null;
+  }
 
   const topBreaking: BreakingNewsHeadline | null =
     snapshot.topBreakingAlert || snapshot.breakingNews[0] || null;
@@ -1250,19 +1339,53 @@ export const MacroNewsView: React.FC = () => {
     >
       {/* SECTION 01 — HEADER & INLINE STATUS (DIRECT ON CANVAS) */}
       <div className="space-y-3 pb-5 border-b border-[#DDE3EA] dark:border-[#20252D]">
-        <div className="flex items-center justify-between gap-3 pb-3 border-b border-[#DDE3EA] dark:border-[#20252D]">
+        <div className="flex flex-wrap items-center justify-between gap-3 pb-3 border-b border-[#DDE3EA] dark:border-[#20252D]">
           <div className="min-w-0">
             <h1 className="text-xs font-bold uppercase tracking-[0.12em] text-[#151D2A] dark:text-[#F2F4F7] truncate">
               {tr('TRADE NEWS · XAU/USD', 'TRADE NEWS · XAU/USD')}
             </h1>
             <p className="text-[11px] text-[#697586] dark:text-[#929BA9] font-mono-numbers tabular-nums truncate mt-0.5">
-              {isInAdaptiveFastWindow
+              {isOfflineMode
+                ? tr(
+                    'Mode Offline Aktif · Cache Lokal (0 Kuota Gemini News)',
+                    'Offline Mode Active · Local Cache (0 Gemini Quota)'
+                  )
+                : isInAdaptiveFastWindow
                 ? tr('Sync Cepat: 60d (Jendela Rilis)', 'Fast Sync: 60s (Release Window)')
                 : tr('Sync Otomatis: 5m · Multi-RSS', 'Auto-Sync: 5m · Multi-RSS')}
             </p>
           </div>
 
-          <div className="flex items-center gap-2 shrink-0">
+          <div className="flex flex-wrap items-center gap-2 shrink-0">
+            <button
+              type="button"
+              data-testid="news-offline-mode-toggle"
+              onClick={handleToggleOfflineMode}
+              title={
+                isOfflineMode
+                  ? tr(
+                      'Mode Offline aktif untuk News & Cycle (Scan Kilat AI tetap online). Klik untuk kembali Online.',
+                      'Offline Mode active for News & Cycle (Instant AI Scan remains online). Click to go Online.'
+                    )
+                  : tr(
+                      'Aktifkan Mode Offline untuk News & Cycle agar tidak memakai kuota Gemini News (Scan Kilat AI tetap online).',
+                      'Enable Offline Mode for News & Cycle to save Gemini News quota (Instant AI Scan stays online).'
+                    )
+              }
+              className={`min-h-[36px] inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-semibold transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
+                isOfflineMode
+                  ? 'bg-amber-500/15 border-amber-500/40 text-amber-700 dark:text-amber-300'
+                  : 'bg-[#F5F7FA] dark:bg-[#101318] border-[#DDE3EA] dark:border-[#20252D] hover:border-black/25 dark:hover:border-white/25 text-[#151D2A] dark:text-[#F2F4F7]'
+              }`}
+            >
+              {isOfflineMode ? (
+                <WifiOff className="w-3.5 h-3.5 stroke-[2]" />
+              ) : (
+                <Wifi className="w-3.5 h-3.5 stroke-[1.75] text-[#059669] dark:text-[#00A878]" />
+              )}
+              <span>{isOfflineMode ? tr('Mode Offline: ON', 'Offline: ON') : tr('Online', 'Online')}</span>
+            </button>
+
             <button
               type="button"
               onClick={() => setShowPlaybookGuide(true)}
@@ -1275,12 +1398,14 @@ export const MacroNewsView: React.FC = () => {
             <button
               type="button"
               onClick={() => void runLiveAnalysis(true, snapshot, selectedEventId || undefined)}
-              disabled={isRefreshing}
-              className="min-h-[36px] inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg bg-[#151D2A] dark:bg-white text-white dark:text-[#050607] hover:opacity-90 text-xs font-semibold transition-opacity disabled:opacity-50 whitespace-nowrap shrink-0 cursor-pointer"
+              disabled={isRefreshing || isOfflineMode}
+              className="min-h-[36px] inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg bg-[#151D2A] dark:bg-white text-white dark:text-[#050607] hover:opacity-90 text-xs font-semibold transition-opacity disabled:opacity-45 disabled:cursor-not-allowed whitespace-nowrap shrink-0 cursor-pointer"
             >
               <RefreshCw className={`w-3.5 h-3.5 stroke-[2] ${isRefreshing ? 'animate-spin' : ''}`} />
               <span>
-                {isRefreshing
+                {isOfflineMode
+                  ? tr('Dijeda (Offline)', 'Paused (Offline)')
+                  : isRefreshing
                   ? refreshStepMessage || tr('Sinkronisasi...', 'Syncing...')
                   : tr('Analisis Live', 'Live Sync')}
               </span>
@@ -1452,7 +1577,7 @@ export const MacroNewsView: React.FC = () => {
 
           {/* Expandable RSS News Detail Panel */}
           {showAllHeadlines && contextualBreakingNews.length > 0 && (
-            <div className="pt-2 border-t border-[#DDE3EA] dark:border-[#20252D] divide-y divide-[#DDE3EA] dark:divide-[#20252D] max-h-72 overflow-y-auto">
+            <div className="pt-2 border-t border-[#DDE3EA] dark:border-[#20252D] divide-y divide-[#DDE3EA] dark:divide-[#20252D] max-h-72 lg:max-h-96 overflow-y-auto">
               {contextualBreakingNews.map((item) => (
                 <div key={item.id} className="py-2.5 space-y-1">
                   <div className="flex items-center justify-between gap-2 text-[11px] font-mono-numbers tabular-nums">
@@ -1718,7 +1843,7 @@ export const MacroNewsView: React.FC = () => {
           {/* 3. Unboxed 3-Phase Release Timer Column */}
           <div
             data-testid="macro-release-phase-timer"
-            className="lg:w-[290px] sm:text-right shrink-0 pt-4 lg:pt-0 border-t lg:border-t-0 lg:border-l border-[#DDE3EA] dark:border-[#20252D] lg:pl-6 space-y-1.5"
+            className="lg:w-[290px] lg:text-right shrink-0 pt-4 lg:pt-0 border-t lg:border-t-0 lg:border-l border-[#DDE3EA] dark:border-[#20252D] lg:pl-6 space-y-1.5"
           >
             <span className="text-[11px] font-semibold uppercase tracking-[0.06em] block text-[#697586] dark:text-[#929BA9]">
               {releaseTimerPhase === 'PHASE_2_SPIKE_ZONE'
@@ -2511,7 +2636,7 @@ export const MacroNewsView: React.FC = () => {
 
         <div
           data-testid="macro-intermarket-grid"
-          className="grid grid-cols-2 divide-x divide-y divide-[#DDE3EA] dark:divide-[#20252D] border-y border-[#DDE3EA] dark:border-[#20252D]"
+          className="grid grid-cols-2 md:grid-cols-4 divide-x divide-y md:divide-y-0 divide-[#DDE3EA] dark:divide-[#20252D] border-y border-[#DDE3EA] dark:border-[#20252D]"
         >
           {intermarketList.map((asset) => {
             const displayLabel =
@@ -3208,8 +3333,11 @@ export const MacroNewsView: React.FC = () => {
               const isExpanded = Boolean(expandedCalendarEventIds[ev.id]);
 
               return (
-                <div key={ev.id} className="py-4 space-y-3">
-                  <div className="flex items-start justify-between gap-3">
+                <div
+                  key={ev.id}
+                  className="py-4 space-y-3 lg:space-y-0 lg:grid lg:grid-cols-12 lg:gap-x-6 lg:gap-y-2.5 lg:items-start"
+                >
+                  <div className="flex items-start justify-between gap-3 lg:col-span-7 min-w-0">
                     <div className="min-w-0 space-y-1 flex-1">
                       <div className="flex flex-wrap items-center gap-1.5 text-xs text-[#697586] dark:text-[#929BA9] font-mono-numbers tabular-nums">
                         <span>{formatTimestampWib(ev.date, isEn ? 'en' : 'id')}</span>
@@ -3254,7 +3382,7 @@ export const MacroNewsView: React.FC = () => {
                   </div>
 
                   {/* Aligned 3-Column Numbers: Previous = White, Forecast = White, Actual = White pre-release / USD semantic post-release */}
-                  <div className="grid grid-cols-3 gap-3 py-1 font-mono-numbers tabular-nums">
+                  <div className="grid grid-cols-3 gap-3 py-1 lg:py-0 lg:col-span-5 lg:col-start-8 lg:row-start-1 lg:row-span-2 lg:self-center lg:pl-6 lg:border-l lg:border-[#DDE3EA] lg:dark:border-[#20252D] font-mono-numbers tabular-nums">
                     <div>
                       <span className="text-[11px] font-sans text-[#697586] dark:text-[#929BA9] block">
                         Previous
@@ -3292,7 +3420,7 @@ export const MacroNewsView: React.FC = () => {
                   </div>
 
                   {/* Fundamental Interpretation & Pre-News -> Post-News Comparison */}
-                  <div className="space-y-1">
+                  <div className="space-y-1 lg:col-span-7 lg:col-start-1 min-w-0">
                     <div className="flex flex-wrap items-center justify-between gap-2">
                       <div className="flex flex-wrap items-center gap-2 text-xs">
                         <span className="font-medium text-[#697586] dark:text-[#929BA9]">

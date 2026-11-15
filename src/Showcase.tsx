@@ -790,11 +790,11 @@ const SmartphoneStage: React.FC<SmartphoneStageProps> = ({
                       style={{
                         fontSize: 16,
                         fontWeight: 800,
-                        letterSpacing: '-0.02em',
+                        letterSpacing: '0.06em',
                         color: '#F2F5F9',
                       }}
                     >
-                      Trade<span style={{ color: '#38BDF8' }}>Vault</span>
+                      VLO
                     </span>
                     <span
                       style={{
@@ -1130,7 +1130,7 @@ const SceneHookPsychology: React.FC = () => {
       sceneBadge="PSYCHOLOGICAL FORTRESS · ANTI REVENGE TRADING"
       headline="Musuh Terbesar Trader Bukan Market."
       highlightText="Tapi Emosinya Saat Loss."
-      subheadline="Loss beruntun memicu balas dendam (revenge trade) dan over-lot hingga Margin Call. TradeVault mengunci disiplinmu sebelum modal habis."
+      subheadline="Loss beruntun memicu balas dendam (revenge trade) dan over-lot hingga Margin Call. VLO mengunci disiplinmu sebelum modal habis."
       bottomCalloutTitle="PROTEKSI BATAS RUGI HARIAN (DAILY LOSS LIMIT 3.0%)"
       bottomCalloutBody="Saat akumulasi loss hari ini menyentuh batas terukur ($150.00), sistem memberi sinyal tegas: BERHENTI TRADING HARI INI. Modal $4,850.00 tetap aman."
       bottomCalloutTone={frame < 225 ? 'rose' : 'cyan'}
@@ -1436,7 +1436,7 @@ const SceneHookPsychology: React.FC = () => {
             }}
           >
             <div style={{ fontSize: 10, fontWeight: 700, color: '#00f2fe' }}>
-              DENGAN TRADEVAULT
+              DENGAN VLO
             </div>
             <div style={{ fontSize: 14, fontWeight: 800, color: '#10B981', marginTop: 4 }}>
               Stop di -3% ($4,850)
@@ -1522,7 +1522,7 @@ const SceneHookPsychology: React.FC = () => {
                 textTransform: 'uppercase',
               }}
             >
-              PROTEKSI DISIPLIN TRADEVAULT AKTIF
+              PROTEKSI DISIPLIN VLO AKTIF
             </div>
 
             <div
@@ -1695,7 +1695,7 @@ const SceneDashboardAwareness: React.FC = () => {
       highlightText="Tahu Kapan Harus Berhenti."
       subheadline="Pantau saldo riil, kurva ekuitas tanpa manipulasi, serta kalender disiplin harian: Profit Days, Loss Days terkendali, dan No-Trade Days."
       bottomCalloutTitle="DISIPLIN BERHENTI SAAT TARGET HARIAN TERCAPAI"
-      bottomCalloutBody="Trader profesional tidak trading setiap jam. Saat profit harian sudah mengamankan target (+2R), TradeVault mengingatkan untuk mengunci profit dan tutup chart."
+      bottomCalloutBody="Trader profesional tidak trading setiap jam. Saat profit harian sudah mengamankan target (+2R), VLO mengingatkan untuk mengunci profit dan tutup chart."
       bottomCalloutTone="emerald"
       activeTab="dashboard"
       ambientColor="#10B981"
@@ -2601,7 +2601,7 @@ const SceneTradeLogAndRadar: React.FC = () => {
       highlightText="Ukur 5 Dimensi Konsistensi."
       subheadline="Filter sesi London & New York, validasi checklist setup sebelum entry, dan evaluasi Win Rate, Profit Factor, R:R, serta Expectancy secara objektif."
       bottomCalloutTitle="EVALUASI OBJEKTIF · BUKAN SEKADAR CATATAN UNTUNG RUGI"
-      bottomCalloutBody="TradeVault memisahkan trade yang menang karena keberuntungan (judi tanpa SL) dari trade yang dieksekusi sesuai rencana (Plan Adherence Grade A)."
+      bottomCalloutBody="VLO memisahkan trade yang menang karena keberuntungan (judi tanpa SL) dari trade yang dieksekusi sesuai rencana (Plan Adherence Grade A)."
       bottomCalloutTone="blue"
       activeTab={isAnalyticsPhase ? 'analytics' : 'trades'}
       ambientColor="#38BDF8"
@@ -3453,12 +3453,12 @@ const SceneOutroBranding: React.FC = () => {
 
   return (
     <SmartphoneStage
-      sceneBadge="TRADEVAULT · PSYCHOLOGICAL & RISK FORTRESS"
+      sceneBadge="VLO · PSYCHOLOGICAL & RISK FORTRESS"
       headline="Kendalikan Dirimu. Lindungi Modalmu."
       highlightText="Trading Tanpa Drama."
-      subheadline="Bukan sekadar jurnal transaksi. TradeVault adalah sistem pertahanan diri agar Anda tahu persis batas risiko dan kapan harus berhenti hari ini."
+      subheadline="Bukan sekadar jurnal transaksi. VLO adalah sistem pertahanan diri agar Anda tahu persis batas risiko dan kapan harus berhenti hari ini."
       bottomCalloutTitle="SIAP MENGHENTIKAN SIKLUS OVER-LOT & REVENGE TRADING?"
-      bottomCalloutBody="Gunakan TradeVault sekarang di Smartphone & Desktop Anda — 100% Presisi untuk XAUUSD, Forex, Index, dan Crypto."
+      bottomCalloutBody="Gunakan VLO sekarang di Smartphone & Desktop Anda — 100% Presisi untuk XAUUSD, Forex, Index, dan Crypto."
       bottomCalloutTone="cyan"
       activeTab="dashboard"
       ambientColor="#00f2fe"
@@ -3510,11 +3510,11 @@ const SceneOutroBranding: React.FC = () => {
             style={{
               fontSize: 28,
               fontWeight: 900,
-              letterSpacing: '-0.02em',
+              letterSpacing: '0.08em',
               color: '#F8FAFC',
             }}
           >
-            Trade<span style={{ color: '#38BDF8' }}>Vault</span>
+            VLO
           </div>
           <div
             style={{
@@ -3613,8 +3613,8 @@ const SceneOutroBranding: React.FC = () => {
             }}
           >
             {ctaTapped
-              ? '✓ TradeVault Siap Melindungi Akun Anda'
-              : 'Mulai Disiplin Trading Bersama TradeVault'}
+              ? '✓ VLO Siap Melindungi Akun Anda'
+              : 'Mulai Disiplin Trading Bersama VLO'}
           </div>
         </div>
       </div>

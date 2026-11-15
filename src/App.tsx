@@ -45,6 +45,7 @@ import { useLanguage } from './utils/language';
 import { Sidebar } from './components/layout/Sidebar';
 import { Navbar } from './components/layout/Navbar';
 import { MobileNav } from './components/layout/MobileNav';
+import { SplashScreen } from './components/layout/SplashScreen';
 
 // Views
 import { DashboardView } from './components/dashboard/DashboardView';
@@ -132,6 +133,23 @@ export default function App() {
   const [isLocalInfoModalOpen, setIsLocalInfoModalOpen] = useState<boolean>(false);
   const [isBackupModalOpen, setIsBackupModalOpen] = useState<boolean>(false);
   const [isClearDemoModalOpen, setIsClearDemoModalOpen] = useState<boolean>(false);
+  const [isWorkspaceReady, setIsWorkspaceReady] = useState<boolean>(() => {
+    if (
+      typeof window !== 'undefined' &&
+      window.matchMedia?.('(prefers-reduced-motion: reduce)').matches
+    ) {
+      return true;
+    }
+    return false;
+  });
+
+  useEffect(() => {
+    if (isWorkspaceReady) return;
+    const timer = window.setTimeout(() => {
+      setIsWorkspaceReady(true);
+    }, 180);
+    return () => window.clearTimeout(timer);
+  }, [isWorkspaceReady]);
 
   // Synchronous concurrency locks & latest references to prevent double-submit and stale closures
   const isSavingTradeRef = useRef<boolean>(false);
@@ -1478,6 +1496,9 @@ export default function App() {
 
   return (
     <div className="min-h-screen w-full bg-[#F5F7FA] text-[#151D2A] dark:bg-[#050607] dark:text-[#F2F4F7] flex flex-col font-sans transition-colors duration-150">
+      <SplashScreen onComplete={() => setIsWorkspaceReady(true)} />
+      {isWorkspaceReady && (
+        <>
       {/* Non-blocking Floating Toast Notification with Swipe-to-Dismiss & Manual Close */}
       {notification && (
         <div
@@ -1961,6 +1982,8 @@ export default function App() {
           );
         }}
       />
+        </>
+      )}
     </div>
   );
 }

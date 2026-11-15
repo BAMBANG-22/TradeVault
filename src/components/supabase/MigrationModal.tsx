@@ -64,7 +64,7 @@ export const MigrationModal: React.FC<MigrationModalProps> = ({
     try {
       const portableTrades = await prepareTradesForJsonBackup(localTrades, userId || null);
       const jsonStr = generateBackupJson(portableTrades, settings);
-      const fileName = `Pre_Migration_TradeVault_Backup_${new Date().toISOString().slice(0, 10)}.json`;
+      const fileName = `Pre_Migration_VLO_Backup_${new Date().toISOString().slice(0, 10)}.json`;
       const result = await exportFile({
         data: jsonStr,
         fileName,

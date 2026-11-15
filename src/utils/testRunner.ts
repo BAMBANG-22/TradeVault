@@ -7106,11 +7106,11 @@ export function runLayoutAndFixedHeaderAcceptanceTests(): TestSuiteSummary {
     'button aria-label="Buka menu navigasi" active'
   );
 
-  // FH-04: Logo and "TradeVault" brand text remain visible during/after scroll (no fade-out, no shrink)
+  // FH-04: Logo and "VLO" brand text remain visible during/after scroll (no fade-out, no shrink)
   // Verified: Removed scrollProgress opacity logic (was opacity: 1 - scrollProgress)
   record(
     'FH-04',
-    'Logo dan tulisan TRADEVAULT tetap 100% visible saat scrolling (tidak memudar/fade out)',
+    'Logo dan tulisan VLO tetap 100% visible saat scrolling (tidak memudar/fade out)',
     'Persistent Header',
     true,
     'opacity-100 permanent',

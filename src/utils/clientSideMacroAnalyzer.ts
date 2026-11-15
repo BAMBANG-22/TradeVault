@@ -13,6 +13,7 @@ import {
   evaluateSingleEventForGold,
   analyzeMacroEvent,
   detectPreviousRevisionsAndStreaks,
+  loadLocalCachedMacroSnapshotSync,
 } from './macroNewsEngine';
 import {
   fetchClientForexFactoryCalendar,
@@ -22,7 +23,11 @@ import {
   fetchClientVixPulse,
   fetchClientGoldPositioning,
 } from './macroFeedFetcher';
-import { getApiEndpointCandidates, nativeAwarePostJson } from './apiConfig';
+import {
+  getApiEndpointCandidates,
+  isNewsCycleOfflineMode,
+  nativeAwarePostJson,
+} from './apiConfig';
 
 /**
  * Executes server-side Gemini analysis via /api/macro-news/analyze proxy.
@@ -88,6 +93,11 @@ export async function analyzeMacroWithGeminiClient(params: {
     },
   };
 
+  // 1b. If News & Cycle Offline Mode is active, NEVER call Gemini API
+  if (isNewsCycleOfflineMode()) {
+    return baselineSnapshot;
+  }
+
   // 2. Call standalone server Gemini proxy (configured via VITE_API_BASE_URL or in-app setting for APK)
   const endpoints = getApiEndpointCandidates('/api/macro-news/analyze');
   for (const endpoint of endpoints) {
@@ -116,6 +126,17 @@ export async function executeClientSideMacroAnalysis(
   snapshot: MacroNewsSnapshot;
   supabaseResult: { success: boolean; error?: string; remoteSaved: boolean };
 }> {
+  if (isNewsCycleOfflineMode()) {
+    const cachedSnap = loadLocalCachedMacroSnapshotSync();
+    if (cachedSnap) {
+      return {
+        snapshot: cachedSnap,
+        supabaseResult: { success: false, remoteSaved: false },
+      };
+    }
+    throw new Error('Mode Offline aktif dan belum ada cache lokal Trade News tersimpan.');
+  }
+
   // Step 1: Pull all live public feeds in parallel (never hangs even if one fails)
   const [calendarEvents, dxy, us02y, usoil, us10y, vix, goldPositioning, rssResult] = await Promise.all([
     fetchClientForexFactoryCalendar(),
