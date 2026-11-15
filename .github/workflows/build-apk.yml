@@ -1,4 +1,4 @@
-name: Build TradeVault Android APK
+name: Build Vlo Journal Android APK
 
 on:
   workflow_dispatch:
@@ -194,7 +194,7 @@ jobs:
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: TradeVault-Next-Persistent-Signed-Debug-APK
+          name: Vlo-Journal-Persistent-Signed-Debug-APK
           path: android/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
           retention-days: 14
