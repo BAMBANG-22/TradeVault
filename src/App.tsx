@@ -17,7 +17,16 @@ import {
 } from './utils/storage';
 import { calculatePerformance } from './utils/calculations';
 import { DEMO_TRADES, isDemoTrade } from './utils/demoData';
-import { getSupabase, getCurrentSession, getCurrentUser } from './utils/supabaseClient';
+import { Capacitor } from '@capacitor/core';
+import { App as CapacitorApp } from '@capacitor/app';
+import {
+  getSupabase,
+  getCurrentSession,
+  getCurrentUser,
+  isSupabaseConfigured,
+  handleNativeOAuthCallbackUrl,
+  translateAuthError,
+} from './utils/supabaseClient';
 import {
   fetchTradesFromSupabase,
   saveTradeToSupabase,
@@ -87,7 +96,9 @@ export default function App() {
     trades: true,
   });
 
-  // Supabase Auth States
+  // Cloud Auth & Onboarding States
+  const GUEST_MODE_STORAGE_KEY = 'vlo_guest_mode_v1';
+  const DEV_MODE_SESSION_KEY = 'vlo_dev_mode';
   const [currentUser, setCurrentUser] = useState<any | null>(null);
   const [isAuthModalOpen, setIsAuthModalOpen] = useState<boolean>(false);
   const [isAccountModalOpen, setIsAccountModalOpen] = useState<boolean>(false);
@@ -95,6 +106,24 @@ export default function App() {
   const [isCloudSyncing, setIsCloudSyncing] = useState<boolean>(false);
   const [cloudLoadError, setCloudLoadError] = useState<string | null>(null);
   const [dataSource, setDataSource] = useState<'cloud' | 'local_fallback' | 'local'>('local');
+  const [shouldPromptOnboarding, setShouldPromptOnboarding] = useState<boolean>(false);
+  const [isDeveloperMode, setIsDeveloperMode] = useState<boolean>(() => {
+    try {
+      if (typeof import.meta !== 'undefined' && (import.meta as any).env?.DEV) {
+        return true;
+      }
+      return typeof sessionStorage !== 'undefined' && sessionStorage.getItem('vlo_dev_mode') === '1';
+    } catch {
+      return false;
+    }
+  });
+
+  const handleUnlockDeveloperMode = useCallback(() => {
+    try {
+      sessionStorage.setItem(DEV_MODE_SESSION_KEY, '1');
+    } catch {}
+    setIsDeveloperMode(true);
+  }, []);
 
   // Modal and editing states
   const [editingTrade, setEditingTrade] = useState<Trade | null>(null);
@@ -259,9 +288,21 @@ export default function App() {
 
     // 1. Initial check for persistent session on page load/refresh
     getCurrentSession().then(({ session }) => {
-      if (isMounted && session?.user) {
+      if (!isMounted) return;
+      if (session?.user) {
         authGenerationRef.current++;
         setCurrentUser(session.user);
+        try {
+          localStorage.removeItem(GUEST_MODE_STORAGE_KEY);
+        } catch {}
+      } else if (isSupabaseConfigured()) {
+        let skippedOnboarding = false;
+        try {
+          skippedOnboarding = localStorage.getItem(GUEST_MODE_STORAGE_KEY) === '1';
+        } catch {}
+        if (!skippedOnboarding) {
+          setShouldPromptOnboarding(true);
+        }
       }
     });
 
@@ -275,6 +316,12 @@ export default function App() {
         authGenerationRef.current++;
         if (event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED' || event === 'USER_UPDATED') {
           setCurrentUser(session?.user || null);
+          if (session?.user) {
+            setShouldPromptOnboarding(false);
+            try {
+              localStorage.removeItem(GUEST_MODE_STORAGE_KEY);
+            } catch {}
+          }
         } else if (event === 'SIGNED_OUT') {
           resetTransientModalsAndCaches();
           previousUserIdRef.current = null;
@@ -352,22 +399,22 @@ export default function App() {
         if (result.data.length > 0) {
           showToast(
             tr(
-              `Berhasil memuat ${result.data.length} transaksi dari database Supabase.`,
-              `Successfully loaded ${result.data.length} trades from Supabase database.`
+              `Berhasil memuat ${result.data.length} transaksi dari VLO Cloud.`,
+              `Successfully loaded ${result.data.length} trades from VLO Cloud.`
             )
           );
         } else {
           showToast(
             tr(
-              'Terhubung ke database Supabase. Akun ini belum memiliki transaksi cloud.',
-              'Connected to Supabase database. This account has no cloud trades yet.'
+              'Terhubung ke VLO Cloud. Akun ini belum memiliki transaksi cloud.',
+              'Connected to VLO Cloud. This account has no cloud trades yet.'
             )
           );
         }
       } else if (!result.success) {
         setCloudLoadError(
           result.error ||
-            tr('Gagal memuat data dari database Supabase.', 'Failed to load data from Supabase database.')
+            tr('Gagal memuat data dari VLO Cloud.', 'Failed to load data from VLO Cloud.')
         );
         setDataSource('local_fallback');
         const fallbackTrades = loadStoredTrades(activeUserId);
@@ -375,8 +422,8 @@ export default function App() {
         setTrades(fallbackTrades);
         showToast(
           tr(
-            `Gagal memuat transaksi dari Supabase: ${result.error}. Menampilkan data cadangan luring akun ini (${fallbackTrades.length} transaksi).`,
-            `Failed to load trades from Supabase: ${result.error}. Showing offline backup data for this account (${fallbackTrades.length} trades).`
+            `Gagal memuat transaksi dari VLO Cloud: ${result.error}. Menampilkan data cadangan luring akun ini (${fallbackTrades.length} transaksi).`,
+            `Failed to load trades from VLO Cloud: ${result.error}. Showing offline backup data for this account (${fallbackTrades.length} trades).`
           ),
           'error'
         );
@@ -440,6 +487,60 @@ export default function App() {
       clearToastTimers();
     };
   }, [clearToastTimers]);
+
+  // First-launch public onboarding prompt after splash finishes (only if cloud is active and user has not chosen local mode)
+  useEffect(() => {
+    if (!isWorkspaceReady || !shouldPromptOnboarding || currentUser) return;
+    setShouldPromptOnboarding(false);
+    setIsAuthModalOpen(true);
+  }, [isWorkspaceReady, shouldPromptOnboarding, currentUser]);
+
+  // Handle web OAuth error redirect parameters and native Android APK deep-link OAuth callbacks
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      try {
+        const urlParams = new URLSearchParams(window.location.search);
+        const hashParams = new URLSearchParams(window.location.hash.replace(/^#/, ''));
+        const oauthError =
+          urlParams.get('error_description') ||
+          urlParams.get('error') ||
+          hashParams.get('error_description') ||
+          hashParams.get('error');
+        if (oauthError) {
+          showToast(translateAuthError({ message: oauthError }), 'error');
+          window.history.replaceState({}, document.title, window.location.pathname);
+        }
+      } catch {}
+    }
+
+    if (!Capacitor.isNativePlatform()) return;
+
+    const listenerPromise = CapacitorApp.addListener('appUrlOpen', async (event) => {
+      if (!event?.url) return;
+      const result = await handleNativeOAuthCallbackUrl(event.url);
+      if (!result.handled) return;
+
+      if (result.success && result.user) {
+        setCurrentUser(result.user);
+        setIsAuthModalOpen(false);
+        setShouldPromptOnboarding(false);
+        try {
+          localStorage.removeItem(GUEST_MODE_STORAGE_KEY);
+        } catch {}
+        const label =
+          result.user.user_metadata?.full_name || result.user.email || 'Trader';
+        showToast(
+          tr(`Berhasil masuk sebagai ${label}`, `Signed in as ${label}`)
+        );
+      } else if (!result.success && result.error) {
+        showToast(result.error, 'error');
+      }
+    });
+
+    return () => {
+      listenerPromise.then((handle) => handle.remove()).catch(() => {});
+    };
+  }, [showToast, tr]);
 
   const handleToastGestureStart = (clientX: number, clientY: number) => {
     toastGestureRef.current = {
@@ -653,7 +754,7 @@ export default function App() {
         setIsCloudSyncing(false);
 
         if (!cloudResult.success) {
-          const dbErrMsg = `Gagal memperbarui database Supabase: ${cloudResult.error}`;
+          const dbErrMsg = `Gagal memperbarui VLO Cloud: ${cloudResult.error}`;
           showToast(dbErrMsg, 'error');
           // Do not update the in-memory trade list as a cloud success if cloud write failed
           return {
@@ -770,12 +871,12 @@ export default function App() {
       showToast(
         isEdit
           ? tr(
-              `Transaksi ${finalTrade.id} berhasil diperbarui di database Supabase!`,
-              `Trade ${finalTrade.id} updated in Supabase database!`
+              `Transaksi ${finalTrade.id} berhasil diperbarui di VLO Cloud!`,
+              `Trade ${finalTrade.id} updated in VLO Cloud!`
             )
           : tr(
-              `Transaksi ${finalTrade.id} berhasil disimpan ke database Supabase!`,
-              `Trade ${finalTrade.id} saved to Supabase database!`
+              `Transaksi ${finalTrade.id} berhasil disimpan ke VLO Cloud!`,
+              `Trade ${finalTrade.id} saved to VLO Cloud!`
             )
       );
 
@@ -826,7 +927,7 @@ export default function App() {
           setIsCloudSyncing(false);
 
           if (!deleteResult.success) {
-            showToast(`Gagal menghapus dari database Supabase: ${deleteResult.error}`, 'error');
+            showToast(`Gagal menghapus dari VLO Cloud: ${deleteResult.error}`, 'error');
             return;
           }
 
@@ -873,8 +974,8 @@ export default function App() {
       if (verifiedUserId && !isDemoTradeItem) {
         showToast(
           tr(
-            `Transaksi ${deletedId} berhasil dihapus dari database Supabase.`,
-            `Trade ${deletedId} deleted from Supabase database.`
+            `Transaksi ${deletedId} berhasil dihapus dari VLO Cloud.`,
+            `Trade ${deletedId} deleted from VLO Cloud.`
           )
         );
       } else {
@@ -935,8 +1036,8 @@ export default function App() {
         setCloudLoadError(null);
         showToast(
           tr(
-            `Berhasil menyinkronkan seluruh (${res.count}) transaksi ke tabel public.trades!`,
-            `Successfully synced all (${res.count}) trades to public.trades!`
+            `Berhasil menyinkronkan seluruh (${res.count}) transaksi ke VLO Cloud!`,
+            `Successfully synced all (${res.count}) trades to VLO Cloud!`
           )
         );
       } else if (res.count > 0 && res.failedCount > 0) {
@@ -999,22 +1100,22 @@ export default function App() {
       if (result.data.length > 0) {
         showToast(
           tr(
-            `Berhasil memuat ${result.data.length} transaksi dari database Supabase!`,
-            `Successfully loaded ${result.data.length} trades from Supabase database!`
+            `Berhasil memuat ${result.data.length} transaksi dari VLO Cloud!`,
+            `Successfully loaded ${result.data.length} trades from VLO Cloud!`
           )
         );
       } else {
         showToast(
           tr(
-            'Terhubung ke database Supabase. Akun ini belum memiliki transaksi cloud.',
-            'Connected to Supabase database. This account has no cloud trades yet.'
+            'Terhubung ke VLO Cloud. Akun ini belum memiliki transaksi cloud.',
+            'Connected to VLO Cloud. This account has no cloud trades yet.'
           )
         );
       }
     } else {
       setCloudLoadError(
         result.error ||
-          tr('Gagal memuat transaksi dari Supabase.', 'Failed to load trades from Supabase.')
+          tr('Gagal memuat transaksi dari VLO Cloud.', 'Failed to load trades from VLO Cloud.')
       );
       setDataSource('local_fallback');
       const fallbackTrades = loadStoredTrades(verifiedUserId);
@@ -1022,8 +1123,8 @@ export default function App() {
       setTrades(fallbackTrades);
       showToast(
         tr(
-          `Gagal memuat dari Supabase: ${result.error}. Menggunakan cache luring akun ini (${fallbackTrades.length} transaksi).`,
-          `Failed to load from Supabase: ${result.error}. Using offline cache for this account (${fallbackTrades.length} trades).`
+          `Gagal memuat dari VLO Cloud: ${result.error}. Menggunakan cache luring akun ini (${fallbackTrades.length} transaksi).`,
+          `Failed to load from VLO Cloud: ${result.error}. Using offline cache for this account (${fallbackTrades.length} trades).`
         ),
         'error'
       );
@@ -1162,8 +1263,8 @@ export default function App() {
           showToast(
             cloudClear.error ||
               tr(
-                'Gagal menghapus seluruh transaksi dari database cloud Supabase.',
-                'Failed to delete all trades from Supabase cloud database.'
+                'Gagal menghapus seluruh transaksi dari VLO Cloud.',
+                'Failed to delete all trades from VLO Cloud.'
               ),
             'error'
           );
@@ -1333,7 +1434,7 @@ export default function App() {
 
     if (verifiedUserId && syncToCloud) {
       setIsCloudSyncing(true);
-      showToast('Menyinkronkan transaksi pemulihan ke database Supabase...');
+      showToast('Menyinkronkan transaksi pemulihan ke VLO Cloud...');
 
       try {
         const res = await migrateLocalTradesToSupabase(finalTrades, verifiedUserId);
@@ -1377,8 +1478,8 @@ export default function App() {
           setCloudLoadError(null);
           showToast(
             mode === 'replace'
-              ? `Berhasil menggantikan jurnal dengan ${finalTrades.length} trade dan menyinkronkannya ke database Supabase!`
-              : `Berhasil menggabungkan cadangan (${finalTrades.length} total trade) dan menyinkronkannya ke database Supabase!`
+              ? `Berhasil menggantikan jurnal dengan ${finalTrades.length} trade dan menyinkronkannya ke VLO Cloud!`
+              : `Berhasil menggabungkan cadangan (${finalTrades.length} total trade) dan menyinkronkannya ke VLO Cloud!`
           );
         } else if (res.count > 0 && res.failedCount > 0) {
           setDataSource('local_fallback');
@@ -1389,7 +1490,7 @@ export default function App() {
         } else {
           setDataSource('local_fallback');
           showToast(
-            `Data berhasil dimuat di browser lokal, namun sinkronisasi ke Supabase gagal: ${res.error}. Transaksi BELUM tersimpan di cloud.`,
+            `Data berhasil dimuat di browser lokal, namun sinkronisasi ke VLO Cloud gagal: ${res.error}. Transaksi BELUM tersimpan di cloud.`,
             'error'
           );
         }
@@ -1399,7 +1500,7 @@ export default function App() {
     } else {
       if (currentUser && !syncToCloud) {
         showToast(
-          `Data cadangan (${backupTrades.length} trade) dimuat ke browser lokal. Data BELUM tersimpan di cloud Supabase. Gunakan tombol 'Sinkronkan ke Cloud' untuk mengunggahnya.`,
+          `Data cadangan (${backupTrades.length} trade) dimuat ke browser lokal. Data BELUM tersimpan di VLO Cloud. Gunakan tombol 'Sinkronkan ke Cloud' untuk mengunggahnya.`,
           'error'
         );
       } else {
@@ -1673,7 +1774,7 @@ export default function App() {
                   </div>
                   <div>
                     <h4 className="text-sm font-bold text-rose-600 dark:text-rose-400">
-                      {tr('Gagal Mengambil Data dari Supabase', 'Failed to Fetch Data from Supabase')}
+                      {tr('Gagal Mengambil Data dari VLO Cloud', 'Failed to Fetch Data from VLO Cloud')}
                     </h4>
                     <p className="text-xs text-[#151D2A] dark:text-[#F2F5F9] mt-0.5">{cloudLoadError}</p>
                     <p className="text-[11px] text-[#697586] dark:text-[#929BA9] mt-1">
@@ -1832,6 +1933,8 @@ export default function App() {
                   isCloudSyncing={isCloudSyncing}
                   onSyncLocalToCloud={handleSyncLocalToCloud}
                   onReloadFromCloud={handleReloadFromCloud}
+                  isDeveloperMode={isDeveloperMode}
+                  onUnlockDeveloperMode={handleUnlockDeveloperMode}
                 />
               </div>
             )}
@@ -1929,20 +2032,39 @@ export default function App() {
         trades={trades}
       />
 
-      {/* Supabase Authentication Modal (Login, Signup, Forgot Password, Email Verification Notice) */}
+      {/* Authentication Modal (Google / Social OAuth, VLO Account, Forgot Password, Local Mode) */}
       <AuthModal
         isOpen={isAuthModalOpen}
         onClose={() => setIsAuthModalOpen(false)}
         onAuthSuccess={(user) => {
           setCurrentUser(user);
+          setShouldPromptOnboarding(false);
+          try {
+            localStorage.removeItem(GUEST_MODE_STORAGE_KEY);
+          } catch {}
+          const displayLabel = user.user_metadata?.full_name || user.email;
           showToast(
-            tr(`Berhasil masuk sebagai ${user.email}`, `Signed in as ${user.email}`)
+            tr(`Berhasil masuk sebagai ${displayLabel}`, `Signed in as ${displayLabel}`)
+          );
+        }}
+        onContinueLocal={() => {
+          setShouldPromptOnboarding(false);
+          try {
+            localStorage.setItem(GUEST_MODE_STORAGE_KEY, '1');
+          } catch {}
+          setIsAuthModalOpen(false);
+          showToast(
+            tr(
+              'Mode Lokal aktif. Anda dapat masuk akun kapan saja melalui Pengaturan.',
+              'Local Mode active. You can sign in anytime from Settings.'
+            )
           );
         }}
         onOpenConfig={() => {
           setIsAuthModalOpen(false);
           setIsSupabaseConfigOpen(true);
         }}
+        isDeveloperMode={isDeveloperMode}
       />
 
       {/* User Account & Logout Confirmation Modal */}

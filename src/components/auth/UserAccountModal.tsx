@@ -1,3 +1,8 @@
+/**
+ * @license
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
 import React, { useState, useEffect } from 'react';
 import {
   X,
@@ -70,6 +75,17 @@ export const UserAccountModal: React.FC<UserAccountModalProps> = ({
     }
   };
 
+  const displayName =
+    currentUser.user_metadata?.full_name ||
+    currentUser.user_metadata?.name ||
+    currentUser.user_metadata?.preferred_username ||
+    '';
+  const avatarUrl =
+    currentUser.user_metadata?.avatar_url || currentUser.user_metadata?.picture || '';
+  const rawProvider = String(currentUser.app_metadata?.provider || 'email').toLowerCase();
+  const providerLabel =
+    rawProvider === 'google' ? 'Google' : tr('Akun VLO', 'VLO Account');
+
   const email = currentUser.email || tr('Pengguna Tanpa Email', 'User Without Email');
   const userId = currentUser.id || '-';
   const createdAt = currentUser.created_at
@@ -106,16 +122,17 @@ export const UserAccountModal: React.FC<UserAccountModalProps> = ({
             </div>
             <div>
               <h3 className="text-base font-bold text-[#151D2A] dark:text-[#F2F5F9]">
-                {tr('Profil Akun Trader', 'Trader Account Profile')}
+                {tr('Profil Akun VLO', 'VLO Account Profile')}
               </h3>
               <p className="text-xs text-[#697586] dark:text-[#929BA9]">
-                {tr('Informasi akun terautentikasi Supabase', 'Supabase authenticated account information')}
+                {tr('Sinkronisasi VLO Cloud aktif & terisolasi', 'VLO Cloud sync active & isolated')}
               </p>
             </div>
           </div>
           <button
+            type="button"
             onClick={onClose}
-            className="p-1.5 rounded-lg bg-[#EEF2F6] hover:bg-[#DDE3EA] text-[#697586] hover:text-[#151D2A] dark:bg-[#171D26] dark:text-[#929BA9] dark:hover:text-[#F2F5F9] transition-colors"
+            className="p-1.5 rounded-lg bg-[#EEF2F6] hover:bg-[#DDE3EA] text-[#697586] hover:text-[#151D2A] dark:bg-[#171D26] dark:text-[#929BA9] dark:hover:text-[#F2F5F9] transition-colors cursor-pointer"
             aria-label={tr('Tutup', 'Close')}
           >
             <X className="h-5 w-5 stroke-[1.75]" />
@@ -124,27 +141,49 @@ export const UserAccountModal: React.FC<UserAccountModalProps> = ({
 
         {/* User Card */}
         <div className="my-4 p-4 rounded-xl bg-[#F5F7FA] dark:bg-[#080A0E] border border-[#DDE3EA] dark:border-[#252B34] space-y-3">
-          <div className="flex items-center justify-between">
-            <span className="text-[10px] uppercase font-bold tracking-wider text-[#697586] dark:text-[#929BA9]">
-              {tr('Status Autentikasi', 'Authentication Status')}
+          <div className="flex items-center justify-between gap-2 text-[11px]">
+            <span className="uppercase font-semibold tracking-wider text-[#697586] dark:text-[#929BA9]">
+              {tr('Status Akun', 'Account Status')}
             </span>
-            <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-white dark:bg-[#11151B] text-emerald-600 dark:text-emerald-400 border border-[#DDE3EA] dark:border-[#252B34]">
-              <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 dark:bg-emerald-400" />
-              {tr('Aktif & Terverifikasi', 'Active & Verified')}
+            <span className="font-semibold text-[#059669] dark:text-[#10B981]">
+              {tr('Aktif & Terisolasi', 'Active & Isolated')}
             </span>
           </div>
 
-          <div className="flex items-start gap-3 pt-1">
-            <div className="h-10 w-10 rounded-full bg-[#EEF2F6] dark:bg-[#171D26] border border-[#DDE3EA] dark:border-[#252B34] flex items-center justify-center text-[#1769E8] dark:text-[#60A5FA] shrink-0 font-bold uppercase text-base">
-              {email.charAt(0)}
-            </div>
+          <div className="flex items-center gap-3 pt-1">
+            {avatarUrl ? (
+              <img
+                src={avatarUrl}
+                alt={displayName || email}
+                referrerPolicy="no-referrer"
+                className="h-11 w-11 rounded-full border border-[#DDE3EA] dark:border-[#252B34] object-cover shrink-0"
+              />
+            ) : (
+              <div className="h-11 w-11 rounded-full bg-[#EEF2F6] dark:bg-[#171D26] border border-[#DDE3EA] dark:border-[#252B34] flex items-center justify-center text-[#1769E8] dark:text-[#60A5FA] shrink-0 font-bold uppercase text-base">
+                {(displayName || email).charAt(0)}
+              </div>
+            )}
             <div className="min-w-0 flex-1">
-              <div className="text-sm font-bold text-[#151D2A] dark:text-[#F2F5F9] break-all" title={email}>
+              {displayName && (
+                <div className="text-sm font-bold text-[#151D2A] dark:text-[#F2F5F9] truncate">
+                  {displayName}
+                </div>
+              )}
+              <div
+                className={`${
+                  displayName
+                    ? 'text-xs text-[#697586] dark:text-[#929BA9]'
+                    : 'text-sm font-bold text-[#151D2A] dark:text-[#F2F5F9]'
+                } break-all`}
+                title={email}
+              >
                 {email}
               </div>
-              <div className="text-[11px] text-[#697586] dark:text-[#929BA9] flex items-center gap-1 mt-0.5 font-mono-numbers">
-                <ShieldCheck className="h-3 w-3 text-[#697586] dark:text-[#929BA9] shrink-0 stroke-[1.75]" />
-                <span>Supabase Auth Cloud</span>
+              <div className="text-[11px] text-[#697586] dark:text-[#929BA9] flex items-center gap-1.5 mt-0.5">
+                <ShieldCheck className="h-3 w-3 text-[#059669] dark:text-[#10B981] shrink-0 stroke-[1.75]" />
+                <span>{providerLabel}</span>
+                <span aria-hidden="true">·</span>
+                <span>VLO Cloud</span>
               </div>
             </div>
           </div>
@@ -155,7 +194,7 @@ export const UserAccountModal: React.FC<UserAccountModalProps> = ({
           <div className="p-3 rounded-xl bg-[#F5F7FA] dark:bg-[#080A0E] border border-[#DDE3EA] dark:border-[#252B34] flex items-center justify-between">
             <span className="text-[#697586] dark:text-[#929BA9] flex items-center gap-2">
               <Key className="h-3.5 w-3.5 text-[#697586] dark:text-[#929BA9] stroke-[1.75]" />
-              <span>{tr('ID Pengguna', 'User ID')}</span>
+              <span>{tr('ID Akun', 'Account ID')}</span>
             </span>
             <span className="font-mono-numbers text-[11px] text-[#151D2A] dark:text-[#F2F5F9] max-w-[180px] truncate" title={userId}>
               {userId}
@@ -183,10 +222,10 @@ export const UserAccountModal: React.FC<UserAccountModalProps> = ({
         <div className="my-4 p-3 rounded-xl bg-[#F5F7FA] dark:bg-[#080A0E] border border-[#DDE3EA] dark:border-[#252B34] text-[11px] text-[#697586] dark:text-[#929BA9] flex items-start gap-2">
           <HardDrive className="h-4 w-4 text-[#697586] dark:text-[#929BA9] shrink-0 mt-0.5 stroke-[1.75]" />
           <p className="leading-relaxed">
-            <strong className="text-[#151D2A] dark:text-[#F2F5F9]">{tr('Keamanan Data:', 'Data Safety:')}</strong>{' '}
+            <strong className="text-[#151D2A] dark:text-[#F2F5F9]">{tr('Privasi & Isolasi Data:', 'Data Privacy & Isolation:')}</strong>{' '}
             {tr(
-              'Jurnal transaksi Anda tetap tersimpan aman di browser ini dan tidak akan hilang saat Anda keluar dari akun.',
-              'Your trade journal remains safely stored in this browser and will not be lost when you sign out.'
+              'Jurnal dan screenshot Anda diproteksi khusus untuk akun ini dan terpisah sepenuhnya dari akun pengguna lain.',
+              'Your journal and screenshots are strictly scoped to this account and completely isolated from other users.'
             )}
           </p>
         </div>
@@ -204,7 +243,7 @@ export const UserAccountModal: React.FC<UserAccountModalProps> = ({
             <button
               type="button"
               onClick={() => setConfirmLogout(true)}
-              className="w-full py-2.5 rounded-lg bg-[#F5F7FA] dark:bg-[#080A0E] hover:bg-[#EEF2F6] dark:hover:bg-[#171D26] text-rose-600 dark:text-rose-400 border border-[#DDE3EA] dark:border-[#252B34] text-xs font-bold transition-colors flex items-center justify-center gap-2"
+              className="w-full min-h-[44px] py-2.5 rounded-lg bg-[#F5F7FA] dark:bg-[#080A0E] hover:bg-[#EEF2F6] dark:hover:bg-[#171D26] text-rose-600 dark:text-rose-400 border border-[#DDE3EA] dark:border-[#252B34] text-xs font-bold transition-colors flex items-center justify-center gap-2 cursor-pointer"
             >
               <LogOut className="h-4 w-4 stroke-[1.75]" />
               <span>{tr('Keluar dari Akun', 'Sign Out')}</span>
@@ -217,8 +256,8 @@ export const UserAccountModal: React.FC<UserAccountModalProps> = ({
               </div>
               <p className="text-[11px] text-[#697586] dark:text-[#929BA9] leading-relaxed">
                 {tr(
-                  'Sesi cloud Anda akan ditutup. Anda dapat masuk kembali kapan saja.',
-                  'Your cloud session will be closed. You can sign back in anytime.'
+                  'Sesi cloud Anda akan ditutup di perangkat ini. Anda dapat masuk kembali kapan saja.',
+                  'Your cloud session will be closed on this device. You can sign back in anytime.'
                 )}
               </p>
               <div className="grid grid-cols-2 gap-2 pt-1">
@@ -226,7 +265,7 @@ export const UserAccountModal: React.FC<UserAccountModalProps> = ({
                   type="button"
                   disabled={loggingOut}
                   onClick={() => setConfirmLogout(false)}
-                  className="py-1.5 rounded-lg bg-[#EEF2F6] hover:bg-[#DDE3EA] dark:bg-[#171D26] dark:hover:bg-[#252B34] text-[#151D2A] dark:text-[#F2F5F9] text-xs font-semibold transition-colors"
+                  className="py-2 rounded-lg bg-[#EEF2F6] hover:bg-[#DDE3EA] dark:bg-[#171D26] dark:hover:bg-[#252B34] text-[#151D2A] dark:text-[#F2F5F9] text-xs font-semibold transition-colors cursor-pointer"
                 >
                   {tr('Batal', 'Cancel')}
                 </button>
@@ -234,7 +273,7 @@ export const UserAccountModal: React.FC<UserAccountModalProps> = ({
                   type="button"
                   disabled={loggingOut}
                   onClick={handleLogout}
-                  className="py-1.5 rounded-lg bg-rose-600 hover:bg-rose-500 text-white text-xs font-bold transition-colors flex items-center justify-center gap-1.5"
+                  className="py-2 rounded-lg bg-rose-600 hover:bg-rose-500 text-white text-xs font-bold transition-colors flex items-center justify-center gap-1.5 cursor-pointer"
                 >
                   {loggingOut ? (
                     <>

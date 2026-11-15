@@ -1,6 +1,10 @@
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
+import { Capacitor } from '@capacitor/core';
+import { Browser } from '@capacitor/browser';
 
 const CONFIG_STORAGE_KEY = 'tradevault_supabase_config';
+export const NATIVE_OAUTH_REDIRECT_URL = 'com.tradevault.journal.next://login-callback';
+export type OAuthProviderId = 'google';
 
 export interface SupabaseConfig {
   url: string;
@@ -114,6 +118,28 @@ export function clearSupabaseConfig(): void {
   cachedConfigKey = '';
 }
 
+export function isBuiltInCloudConfigured(): boolean {
+  let envUrl = '';
+  let envKey = '';
+  try {
+    if (typeof import.meta !== 'undefined' && import.meta && (import.meta as any).env) {
+      envUrl = ((import.meta as any).env.VITE_SUPABASE_URL || '').trim();
+      envKey = ((import.meta as any).env.VITE_SUPABASE_ANON_KEY || '').trim();
+    }
+  } catch {}
+  if (!envUrl && typeof process !== 'undefined' && process?.env) {
+    envUrl = (process.env.VITE_SUPABASE_URL || '').trim();
+    envKey = (process.env.VITE_SUPABASE_ANON_KEY || '').trim();
+  }
+  if (!envUrl || !envKey) return false;
+  try {
+    const parsed = new URL(sanitizeSupabaseUrl(envUrl));
+    return (parsed.protocol === 'https:' || parsed.protocol === 'http:') && envKey.length > 15;
+  } catch {
+    return false;
+  }
+}
+
 export function isSupabaseConfigured(): boolean {
   const config = getSupabaseConfig();
   if (!config.url || !config.anonKey) return false;
@@ -146,6 +172,7 @@ export function getSupabase(): SupabaseClient | null {
     // Never pass /auth/v1 in cleanUrl!
     cachedClient = createClient(cleanUrl, cleanKey, {
       auth: {
+        flowType: 'pkce',
         persistSession: true,
         autoRefreshToken: true,
         detectSessionInUrl: true,
@@ -212,6 +239,14 @@ export function translateAuthError(error: any): string {
     return 'Tautan atau kode verifikasi telah kedaluwarsa. Silakan minta tautan verifikasi baru.';
   }
 
+  if (message.includes('provider is not enabled') || message.includes('unsupported provider')) {
+    return 'Metode login ini belum diaktifkan pada server VLO.';
+  }
+
+  if (message.includes('access_denied') || message.includes('user cancelled') || message.includes('canceled')) {
+    return 'Proses masuk dibatalkan.';
+  }
+
   if (status === 400) {
     return `Permintaan autentikasi tidak valid: ${error.message || 'Periksa input data Anda.'}`;
   }
@@ -221,6 +256,137 @@ export function translateAuthError(error: any): string {
   }
 
   return error.message || 'Terjadi kesalahan saat memproses autentikasi. Silakan coba lagi.';
+}
+
+export function getOAuthRedirectUrl(): string {
+  if (typeof window === 'undefined') return '';
+  if (Capacitor.isNativePlatform()) {
+    return NATIVE_OAUTH_REDIRECT_URL;
+  }
+  return window.location.origin;
+}
+
+export async function signInWithOAuthProvider(
+  provider: OAuthProviderId
+): Promise<{ success: boolean; error?: string }> {
+  const client = getSupabase();
+  if (!client) {
+    return {
+      success: false,
+      error: 'Layanan cloud VLO belum terhubung.',
+    };
+  }
+
+  try {
+    const isNative = Capacitor.isNativePlatform();
+    const redirectTo = getOAuthRedirectUrl();
+
+    if (isNative) {
+      const { data, error } = await client.auth.signInWithOAuth({
+        provider,
+        options: {
+          redirectTo,
+          skipBrowserRedirect: true,
+          queryParams: provider === 'google' ? { prompt: 'select_account' } : undefined,
+        },
+      });
+
+      if (error) {
+        return { success: false, error: translateAuthError(error) };
+      }
+
+      if (!data?.url) {
+        return { success: false, error: 'URL autentikasi tidak tersedia.' };
+      }
+
+      await Browser.open({
+        url: data.url,
+        presentationStyle: 'popover',
+      });
+      return { success: true };
+    }
+
+    const { error } = await client.auth.signInWithOAuth({
+      provider,
+      options: {
+        redirectTo,
+        queryParams: provider === 'google' ? { prompt: 'select_account' } : undefined,
+      },
+    });
+
+    if (error) {
+      return { success: false, error: translateAuthError(error) };
+    }
+
+    return { success: true };
+  } catch (err: any) {
+    return { success: false, error: translateAuthError(err) };
+  }
+}
+
+export async function handleNativeOAuthCallbackUrl(
+  rawUrl: string
+): Promise<{ handled: boolean; success: boolean; user?: any; error?: string }> {
+  if (!rawUrl || !rawUrl.startsWith('com.tradevault.journal.next://')) {
+    return { handled: false, success: false };
+  }
+
+  try {
+    if (Capacitor.isNativePlatform()) {
+      await Browser.close().catch(() => {});
+    }
+  } catch {}
+
+  const client = getSupabase();
+  if (!client) {
+    return { handled: true, success: false, error: 'Koneksi cloud tidak tersedia.' };
+  }
+
+  try {
+    const parsed = new URL(rawUrl);
+    const searchParams = parsed.searchParams;
+    const hashParams = new URLSearchParams(parsed.hash ? parsed.hash.replace(/^#/, '') : '');
+
+    const errorParam =
+      searchParams.get('error_description') ||
+      searchParams.get('error') ||
+      hashParams.get('error_description') ||
+      hashParams.get('error');
+
+    if (errorParam) {
+      return {
+        handled: true,
+        success: false,
+        error: translateAuthError({ message: errorParam }),
+      };
+    }
+
+    const code = searchParams.get('code');
+    if (code) {
+      const { data, error } = await client.auth.exchangeCodeForSession(code);
+      if (error) {
+        return { handled: true, success: false, error: translateAuthError(error) };
+      }
+      return { handled: true, success: true, user: data?.user || data?.session?.user };
+    }
+
+    const accessToken = hashParams.get('access_token');
+    const refreshToken = hashParams.get('refresh_token');
+    if (accessToken && refreshToken) {
+      const { data, error } = await client.auth.setSession({
+        access_token: accessToken,
+        refresh_token: refreshToken,
+      });
+      if (error) {
+        return { handled: true, success: false, error: translateAuthError(error) };
+      }
+      return { handled: true, success: true, user: data?.user || data?.session?.user };
+    }
+
+    return { handled: true, success: false, error: 'Token sesi login tidak ditemukan.' };
+  } catch (err: any) {
+    return { handled: true, success: false, error: translateAuthError(err) };
+  }
 }
 
 /**

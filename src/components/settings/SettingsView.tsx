@@ -71,6 +71,8 @@ interface SettingsViewProps {
   isCloudSyncing?: boolean;
   onSyncLocalToCloud?: () => void;
   onReloadFromCloud?: () => void;
+  isDeveloperMode?: boolean;
+  onUnlockDeveloperMode?: () => void;
 }
 
 export const SettingsView: React.FC<SettingsViewProps> = ({
@@ -91,6 +93,8 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   isCloudSyncing = false,
   onSyncLocalToCloud,
   onReloadFromCloud,
+  isDeveloperMode = false,
+  onUnlockDeveloperMode,
 }) => {
   const { theme, setTheme } = useTheme();
   const { language, setLanguage, tr } = useLanguage();
@@ -109,6 +113,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   const [isTestingBackend, setIsTestingBackend] = useState(false);
   const [backendHealth, setBackendHealth] = useState<StandaloneBackendHealthResult | null>(null);
   const [isNewsCycleOffline, setIsNewsCycleOffline] = useState(() => isNewsCycleOfflineMode());
+  const [devTapCount, setDevTapCount] = useState(0);
 
   useEffect(() => {
     const syncOffline = () => setIsNewsCycleOffline(isNewsCycleOfflineMode());
@@ -313,13 +318,15 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
             <div className="min-w-0">
               <div className="flex items-center gap-2 flex-wrap">
                 <span className="text-sm font-bold text-[#151D2A] dark:text-[#F2F5F9] truncate">
-                  {currentUser ? currentUser.email : tr('Mode Penyimpanan Lokal', 'Local Storage Mode')}
+                  {currentUser
+                    ? currentUser.user_metadata?.full_name || currentUser.email
+                    : tr('Mode Penyimpanan Lokal', 'Local Storage Mode')}
                 </span>
               </div>
               <p className="text-[11px] text-[#697586] dark:text-[#929BA9] mt-0.5 leading-snug">
                 {currentUser ? (
                   <span className="text-[#059669] dark:text-[#10B981] font-medium">
-                    {tr('Cloud Supabase aktif · RLS terlindungi', 'Supabase Cloud active · RLS protected')}
+                    {tr('VLO Cloud aktif · Data terenkripsi & terisolasi', 'VLO Cloud active · Data encrypted & isolated')}
                   </span>
                 ) : (
                   tr(
@@ -642,135 +649,141 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
       </section>
 
       {/* ===================================================================== */}
-      {/* 3. KONEKSI, CLOUD & SERVER BACKEND                                    */}
+      {/* 3. KONEKSI & MODE DATA (PLUS PENGATURAN DEVELOPER BILA AKTIF)         */}
       {/* ===================================================================== */}
       <section className="space-y-2">
         <span className={sectionLabelClass}>
-          {tr('Koneksi, Cloud & Backend', 'Connection, Cloud & Backend')}
+          {isDeveloperMode
+            ? tr('Koneksi, Cloud & Backend (Developer)', 'Connection, Cloud & Backend (Developer)')
+            : tr('Koneksi & Mode Data', 'Connection & Data Mode')}
         </span>
         <div className={cardClass}>
-          {/* Konfigurasi Supabase */}
-          <button
-            type="button"
-            onClick={onOpenConfig}
-            className={rowInteractiveClass}
-          >
-            <div className="flex items-start gap-3 min-w-0">
-              <Cloud className={`${iconClass} mt-0.5`} />
-              <div className="min-w-0">
-                <span className="text-xs font-semibold text-[#151D2A] dark:text-[#F2F5F9] block">
-                  {tr('Konfigurasi Cloud Supabase', 'Supabase Cloud Configuration')}
-                </span>
-                <span className="text-[11px] text-[#697586] dark:text-[#929BA9] block mt-0.5">
-                  {tr(
-                    'Atur Project URL & Anon Key untuk database cloud pribadi Anda',
-                    'Configure Project URL & Anon Key for your personal cloud database'
-                  )}
-                </span>
-              </div>
-            </div>
-            <ChevronRight className={chevronClass} />
-          </button>
-
-          {/* Server Backend Mandiri */}
-          <div className="px-4 py-3.5 space-y-2.5">
-            <div className="flex items-start justify-between gap-4">
-              <div className="flex items-start gap-3 min-w-0">
-                <Server className={`${iconClass} mt-0.5`} />
-                <div className="min-w-0">
-                  <span className="text-xs font-semibold text-[#151D2A] dark:text-[#F2F5F9] block">
-                    {tr('Server Backend & AI Proxy', 'Backend Server & AI Proxy')}
-                  </span>
-                  <span className="text-[11px] text-[#697586] dark:text-[#929BA9] block mt-0.5 break-all">
-                    {backendInfo.source === 'supabase-edge'
-                      ? `${tr('Otomatis Supabase Edge:', 'Auto Supabase Edge:')} ${backendInfo.url}`
-                      : backendInfo.url
-                      ? backendInfo.url
-                      : tr(
-                          'Belum diatur — gunakan Supabase Edge otomatis atau URL server kustom.',
-                          'Not configured — uses auto Supabase Edge or custom server URL.'
-                        )}
-                  </span>
+          {isDeveloperMode && (
+            <>
+              {/* Konfigurasi Supabase (Developer Only) */}
+              <button
+                type="button"
+                onClick={onOpenConfig}
+                className={rowInteractiveClass}
+              >
+                <div className="flex items-start gap-3 min-w-0">
+                  <Cloud className={`${iconClass} mt-0.5`} />
+                  <div className="min-w-0">
+                    <span className="text-xs font-semibold text-[#151D2A] dark:text-[#F2F5F9] block">
+                      {tr('Konfigurasi Cloud Supabase', 'Supabase Cloud Configuration')}
+                    </span>
+                    <span className="text-[11px] text-[#697586] dark:text-[#929BA9] block mt-0.5">
+                      {tr(
+                        'Atur Project URL & Anon Key untuk server VLO Cloud',
+                        'Configure Project URL & Anon Key for VLO Cloud server'
+                      )}
+                    </span>
+                  </div>
                 </div>
-              </div>
-              <div className="flex items-center gap-2 shrink-0">
-                <button
-                  type="button"
-                  disabled={isTestingBackend}
-                  onClick={() => handleTestBackend(isEditingBackend ? backendUrlInput : backendInfo.url)}
-                  className="px-2.5 py-1 rounded-lg border border-[#DDE3EA] dark:border-[#252B34] text-[11px] font-medium text-[#697586] dark:text-[#929BA9] hover:text-[#151D2A] dark:hover:text-[#F2F5F9] hover:bg-[#F5F7FA] dark:hover:bg-[#171D26] transition-colors disabled:opacity-50 cursor-pointer"
-                >
-                  {isTestingBackend ? tr('Menguji...', 'Testing...') : tr('Tes', 'Test')}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    const fresh = getBackendSourceInfo();
-                    setBackendInfo(fresh);
-                    setIsEditingBackend((prev) => !prev);
-                    setBackendUrlInput(fresh.url);
-                  }}
-                  className="px-2.5 py-1 rounded-lg border border-[#DDE3EA] dark:border-[#252B34] bg-[#F5F7FA] dark:bg-[#171D26] text-[11px] font-semibold text-[#1769E8] dark:text-[#60A5FA] hover:bg-[#EEF2F6] dark:hover:bg-[#1E2530] transition-colors cursor-pointer"
-                >
-                  {isEditingBackend ? tr('Tutup', 'Close') : tr('Atur', 'Configure')}
-                </button>
-              </div>
-            </div>
+                <ChevronRight className={chevronClass} />
+              </button>
 
-            {backendHealth && (
-              <div className="ml-7 px-3 py-2 rounded-lg bg-[#F5F7FA] dark:bg-[#080A0E] border border-[#DDE3EA] dark:border-[#252B34] text-[11px] leading-relaxed">
-                <span
-                  className={
-                    backendHealth.reachable && backendHealth.geminiConfigured
-                      ? 'text-[#059669] dark:text-[#10B981] font-medium'
-                      : backendHealth.reachable
-                      ? 'text-[#D97706] dark:text-[#F59E0B] font-medium'
-                      : 'text-[#E11D48] dark:text-[#F43F5E] font-medium'
-                  }
-                >
-                  {language === 'id' ? backendHealth.messageId : backendHealth.messageEn}
-                </span>
-              </div>
-            )}
-
-            {isEditingBackend && (
-              <div className="ml-7 pt-1 space-y-2">
-                <input
-                  type="url"
-                  value={backendUrlInput}
-                  onChange={(e) => setBackendUrlInput(e.target.value)}
-                  placeholder="https://xxxx.supabase.co/functions/v1/tradevault-api"
-                  className="w-full px-3 py-2 rounded-lg bg-[#F5F7FA] dark:bg-[#080A0E] border border-[#DDE3EA] dark:border-[#252B34] text-xs text-[#151D2A] dark:text-[#F2F5F9] placeholder-[#929BA9] focus:outline-none focus:border-[#1769E8]"
-                />
-                <div className="flex flex-wrap items-center gap-2">
-                  <button
-                    type="button"
-                    disabled={isTestingBackend}
-                    onClick={() => handleSaveBackendUrl(true)}
-                    className="px-3 py-1.5 rounded-lg bg-[#1769E8] hover:bg-[#1458C4] text-white text-[11px] font-semibold transition-colors disabled:opacity-50 cursor-pointer"
-                  >
-                    {tr('Simpan & Tes', 'Save & Test')}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => handleSaveBackendUrl(false)}
-                    className="px-3 py-1.5 rounded-lg border border-[#DDE3EA] dark:border-[#252B34] text-[#151D2A] dark:text-[#F2F5F9] hover:bg-[#F5F7FA] dark:hover:bg-[#171D26] text-[11px] font-medium transition-colors cursor-pointer"
-                  >
-                    {tr('Simpan', 'Save')}
-                  </button>
-                  {backendInfo.source === 'custom' && (
+              {/* Server Backend Mandiri (Developer Only) */}
+              <div className="px-4 py-3.5 space-y-2.5">
+                <div className="flex items-start justify-between gap-4">
+                  <div className="flex items-start gap-3 min-w-0">
+                    <Server className={`${iconClass} mt-0.5`} />
+                    <div className="min-w-0">
+                      <span className="text-xs font-semibold text-[#151D2A] dark:text-[#F2F5F9] block">
+                        {tr('Server Backend & AI Proxy', 'Backend Server & AI Proxy')}
+                      </span>
+                      <span className="text-[11px] text-[#697586] dark:text-[#929BA9] block mt-0.5 break-all">
+                        {backendInfo.source === 'supabase-edge'
+                          ? `${tr('Otomatis Supabase Edge:', 'Auto Supabase Edge:')} ${backendInfo.url}`
+                          : backendInfo.url
+                          ? backendInfo.url
+                          : tr(
+                              'Belum diatur — gunakan Supabase Edge otomatis atau URL server kustom.',
+                              'Not configured — uses auto Supabase Edge or custom server URL.'
+                            )}
+                      </span>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2 shrink-0">
                     <button
                       type="button"
-                      onClick={handleResetBackendUrl}
-                      className="px-3 py-1.5 rounded-lg border border-[#DDE3EA] dark:border-[#252B34] text-[#697586] dark:text-[#929BA9] hover:text-[#E11D48] dark:hover:text-[#F43F5E] text-[11px] font-medium transition-colors cursor-pointer"
+                      disabled={isTestingBackend}
+                      onClick={() => handleTestBackend(isEditingBackend ? backendUrlInput : backendInfo.url)}
+                      className="px-2.5 py-1 rounded-lg border border-[#DDE3EA] dark:border-[#252B34] text-[11px] font-medium text-[#697586] dark:text-[#929BA9] hover:text-[#151D2A] dark:hover:text-[#F2F5F9] hover:bg-[#F5F7FA] dark:hover:bg-[#171D26] transition-colors disabled:opacity-50 cursor-pointer"
                     >
-                      {tr('Reset Otomatis', 'Reset to Auto')}
+                      {isTestingBackend ? tr('Menguji...', 'Testing...') : tr('Tes', 'Test')}
                     </button>
-                  )}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const fresh = getBackendSourceInfo();
+                        setBackendInfo(fresh);
+                        setIsEditingBackend((prev) => !prev);
+                        setBackendUrlInput(fresh.url);
+                      }}
+                      className="px-2.5 py-1 rounded-lg border border-[#DDE3EA] dark:border-[#252B34] bg-[#F5F7FA] dark:bg-[#171D26] text-[11px] font-semibold text-[#1769E8] dark:text-[#60A5FA] hover:bg-[#EEF2F6] dark:hover:bg-[#1E2530] transition-colors cursor-pointer"
+                    >
+                      {isEditingBackend ? tr('Tutup', 'Close') : tr('Atur', 'Configure')}
+                    </button>
+                  </div>
                 </div>
+
+                {backendHealth && (
+                  <div className="ml-7 px-3 py-2 rounded-lg bg-[#F5F7FA] dark:bg-[#080A0E] border border-[#DDE3EA] dark:border-[#252B34] text-[11px] leading-relaxed">
+                    <span
+                      className={
+                        backendHealth.reachable && backendHealth.geminiConfigured
+                          ? 'text-[#059669] dark:text-[#10B981] font-medium'
+                          : backendHealth.reachable
+                          ? 'text-[#D97706] dark:text-[#F59E0B] font-medium'
+                          : 'text-[#E11D48] dark:text-[#F43F5E] font-medium'
+                      }
+                    >
+                      {language === 'id' ? backendHealth.messageId : backendHealth.messageEn}
+                    </span>
+                  </div>
+                )}
+
+                {isEditingBackend && (
+                  <div className="ml-7 pt-1 space-y-2">
+                    <input
+                      type="url"
+                      value={backendUrlInput}
+                      onChange={(e) => setBackendUrlInput(e.target.value)}
+                      placeholder="https://xxxx.supabase.co/functions/v1/tradevault-api"
+                      className="w-full px-3 py-2 rounded-lg bg-[#F5F7FA] dark:bg-[#080A0E] border border-[#DDE3EA] dark:border-[#252B34] text-xs text-[#151D2A] dark:text-[#F2F5F9] placeholder-[#929BA9] focus:outline-none focus:border-[#1769E8]"
+                    />
+                    <div className="flex flex-wrap items-center gap-2">
+                      <button
+                        type="button"
+                        disabled={isTestingBackend}
+                        onClick={() => handleSaveBackendUrl(true)}
+                        className="px-3 py-1.5 rounded-lg bg-[#1769E8] hover:bg-[#1458C4] text-white text-[11px] font-semibold transition-colors disabled:opacity-50 cursor-pointer"
+                      >
+                        {tr('Simpan & Tes', 'Save & Test')}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleSaveBackendUrl(false)}
+                        className="px-3 py-1.5 rounded-lg border border-[#DDE3EA] dark:border-[#252B34] text-[#151D2A] dark:text-[#F2F5F9] hover:bg-[#F5F7FA] dark:hover:bg-[#171D26] text-[11px] font-medium transition-colors cursor-pointer"
+                      >
+                        {tr('Simpan', 'Save')}
+                      </button>
+                      {backendInfo.source === 'custom' && (
+                        <button
+                          type="button"
+                          onClick={handleResetBackendUrl}
+                          className="px-3 py-1.5 rounded-lg border border-[#DDE3EA] dark:border-[#252B34] text-[#697586] dark:text-[#929BA9] hover:text-[#E11D48] dark:hover:text-[#F43F5E] text-[11px] font-medium transition-colors cursor-pointer"
+                        >
+                          {tr('Reset Otomatis', 'Reset to Auto')}
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                )}
               </div>
-            )}
-          </div>
+            </>
+          )}
 
           {/* Mode Offline News & Cycle */}
           <div className="px-4 py-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
@@ -1014,10 +1027,26 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
         </div>
       </section>
 
-      {/* Minimalist App Version Footer */}
+      {/* Minimalist App Version Footer (5-tap unlocks Developer Mode) */}
       <div className="pt-2 flex items-center justify-between px-1 text-[11px] text-[#697586] dark:text-[#929BA9]">
-        <span>{tr('Jurnal Trading VLO', 'VLO Trading Journal')}</span>
-        <span className="font-mono-numbers tabular-nums">v1.0.0</span>
+        <span>{tr('Vlo Journal', 'Vlo Journal')}</span>
+        <button
+          type="button"
+          onClick={() => {
+            if (isDeveloperMode) return;
+            const next = devTapCount + 1;
+            if (next >= 5) {
+              setDevTapCount(0);
+              onUnlockDeveloperMode?.();
+              showFeedback(tr('Mode Developer diaktifkan.', 'Developer Mode enabled.'));
+            } else {
+              setDevTapCount(next);
+            }
+          }}
+          className="font-mono-numbers tabular-nums hover:text-[#151D2A] dark:hover:text-[#F2F5F9] transition-colors cursor-default"
+        >
+          v1.0.0
+        </button>
       </div>
 
       {/* Trading Preferences Modal */}
