@@ -66,4 +66,5 @@ jobs:
         run: |
           supabase functions deploy tradevault-api \
             --project-ref "${{ steps.preflight.outputs.project_ref }}" \
-            --no-verify-jwt
+            --no-verify-jwt \
+            --yes
