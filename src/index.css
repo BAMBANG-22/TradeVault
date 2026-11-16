@@ -65,13 +65,13 @@ html.dark {
   }
 
   html.dark body {
-    background-color: #080A0E;
-    color: #F2F5F9;
+    background-color: var(--tv-bg);
+    color: var(--tv-text-primary);
   }
 
   html.light body {
-    background-color: #F5F7FA;
-    color: #151D2A;
+    background-color: var(--tv-bg);
+    color: var(--tv-text-primary);
   }
 
   button:not(:disabled),
@@ -108,7 +108,7 @@ html.dark {
 }
 
 html.dark ::-webkit-scrollbar-track {
-  background: #080A0E;
+  background: #050607;
 }
 
 html.dark ::-webkit-scrollbar-thumb {

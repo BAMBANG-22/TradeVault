@@ -228,18 +228,31 @@ export const MobileNav: React.FC<MobileNavProps> = ({
                   className="w-full flex items-center justify-between gap-3 px-2.5 py-2 rounded-xl bg-[#F8FAFC] dark:bg-[#141922] hover:bg-[#F1F5F9] dark:hover:bg-[#1A202C] border border-[#DDE3EA] dark:border-[#202630] transition-colors cursor-pointer text-left group"
                 >
                   <div className="flex items-center gap-2.5 min-w-0">
-                    <div className="h-8 w-8 rounded-lg bg-white dark:bg-[#0E1218] border border-[#DDE3EA] dark:border-[#252B34] flex items-center justify-center text-[#151D2A] dark:text-[#F2F5F9] shrink-0">
-                      <User className="h-4 w-4 stroke-[1.75]" />
+                    <div className="h-8 w-8 rounded-lg bg-white dark:bg-[#0E1218] border border-[#DDE3EA] dark:border-[#252B34] flex items-center justify-center text-[#151D2A] dark:text-[#F2F5F9] shrink-0 overflow-hidden">
+                      {currentUser.user_metadata?.avatar_url || currentUser.user_metadata?.picture ? (
+                        <img
+                          src={currentUser.user_metadata.avatar_url || currentUser.user_metadata.picture}
+                          alt={currentUser.user_metadata?.full_name || currentUser.email || 'User'}
+                          className="h-full w-full object-cover"
+                          referrerPolicy="no-referrer"
+                        />
+                      ) : (
+                        <User className="h-4 w-4 stroke-[1.75]" />
+                      )}
                     </div>
                     <div className="min-w-0">
                       <span
                         className="text-xs font-semibold text-[#151D2A] dark:text-[#F2F5F9] block truncate"
                         title={currentUser.email}
                       >
-                        {currentUser.email}
+                        {currentUser.user_metadata?.full_name ||
+                          currentUser.user_metadata?.name ||
+                          currentUser.email}
                       </span>
-                      <span className="text-[11px] text-[#697586] dark:text-[#8E98A8] block mt-0.5">
-                        {tr('Akun aktif', 'Active account')}
+                      <span className="text-[11px] text-[#697586] dark:text-[#8E98A8] block mt-0.5 truncate">
+                        {currentUser.user_metadata?.full_name || currentUser.user_metadata?.name
+                          ? currentUser.email
+                          : tr('Akun aktif', 'Active account')}
                       </span>
                     </div>
                   </div>

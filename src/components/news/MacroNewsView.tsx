@@ -82,7 +82,11 @@ const INTERMARKET_LIVE_POLL_MS = 45_000;
 const ADAPTIVE_RSS_CHECK_MS = 60_000;
 const QUICK_SEARCH_FILTERS = ['ALL', 'PPI', 'CPI', 'NFP', 'PCE', 'FOMC', 'GDP', 'ISM', 'RETAIL'] as const;
 
-export const MacroNewsView: React.FC = () => {
+interface MacroNewsViewProps {
+  isActive?: boolean;
+}
+
+export const MacroNewsView: React.FC<MacroNewsViewProps> = ({ isActive = true }) => {
   const { language, isEn, tr } = useLanguage();
 
   const [snapshot, setSnapshot] = useState<MacroNewsSnapshot | null>(null);
@@ -126,7 +130,7 @@ export const MacroNewsView: React.FC = () => {
     loadStoredSessionHoursWib()
   );
   const [isOfflineMode, setIsOfflineMode] = useState<boolean>(() => isNewsCycleOfflineMode());
-  const confluenceData = useCycleConfluenceData('SWING', true);
+  const confluenceData = useCycleConfluenceData('SWING', isActive);
 
   useEffect(() => {
     const syncOffline = () => setIsOfflineMode(isNewsCycleOfflineMode());
@@ -395,13 +399,15 @@ export const MacroNewsView: React.FC = () => {
     [language, tr]
   );
 
-  // Real-time 1-second clock tick for Pre-News Countdown & T-5M Final Lock detection
+  // Real-time 1-second clock tick for Pre-News Countdown & T-5M Final Lock detection (paused when tab is hidden)
   useEffect(() => {
+    if (!isActive) return;
+    setNowMs(Date.now());
     const interval = setInterval(() => {
       setNowMs(Date.now());
     }, 1000);
     return () => clearInterval(interval);
-  }, []);
+  }, [isActive]);
 
   // On mount or Online/Offline mode transition: load cached snapshot first (0 Gemini tokens)
   useEffect(() => {
@@ -453,14 +459,15 @@ export const MacroNewsView: React.FC = () => {
   }, [isOfflineMode, runLiveAnalysis, syncLiveIntermarketPulse]);
 
   // Lightweight 45-second background ticker poll for Intermarket Pulse (0 Gemini tokens)
-  // Strictly active on weekdays (Monday-Friday / Senin-Jumat) while XAU/USD market is open and NOT Offline Mode
+  // Strictly active on weekdays (Monday-Friday / Senin-Jumat) while tab is visible, XAU/USD market is open, and NOT Offline Mode
   useEffect(() => {
-    if (isOfflineMode || !confluenceData.isMarketOpen) return;
+    if (!isActive || isOfflineMode || !confluenceData.isMarketOpen) return;
+    void syncLiveIntermarketPulse();
     const timer = setInterval(() => {
       void syncLiveIntermarketPulse();
     }, INTERMARKET_LIVE_POLL_MS);
     return () => clearInterval(timer);
-  }, [isOfflineMode, confluenceData.isMarketOpen, syncLiveIntermarketPulse]);
+  }, [isActive, isOfflineMode, confluenceData.isMarketOpen, syncLiveIntermarketPulse]);
 
   // Initial RSS health check on mount (skipped in Offline Mode)
   useEffect(() => {
@@ -508,9 +515,9 @@ export const MacroNewsView: React.FC = () => {
     });
   }, [snapshot, nowMs]);
 
-  // Background RSS & Automatic Cache Invalidation Poll (paused when Offline Mode is active)
+  // Background RSS & Automatic Cache Invalidation Poll (paused when tab is hidden or Offline Mode is active)
   useEffect(() => {
-    if (isOfflineMode || !snapshot) return;
+    if (!isActive || isOfflineMode || !snapshot) return;
     const timer = setInterval(async () => {
       if (isNewsCycleOfflineMode() || isRefreshingRef.current || isRssPollingRef.current) return;
       isRssPollingRef.current = true;
@@ -557,7 +564,7 @@ export const MacroNewsView: React.FC = () => {
     }, ADAPTIVE_RSS_CHECK_MS);
 
     return () => clearInterval(timer);
-  }, [isOfflineMode, confluenceData.isMarketOpen, snapshot, isInAdaptiveFastWindow, selectedEventId, runLiveAnalysis]);
+  }, [isActive, isOfflineMode, confluenceData.isMarketOpen, snapshot, isInAdaptiveFastWindow, selectedEventId, runLiveAnalysis]);
 
   // Automatic T-5M Final Fetch & Adaptive Periodic Refresh (paused when Offline Mode or Weekend)
   useEffect(() => {
@@ -866,7 +873,7 @@ export const MacroNewsView: React.FC = () => {
             <button
               type="button"
               onClick={handleToggleOfflineMode}
-              className="min-h-[36px] inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg bg-[#151D2A] dark:bg-white text-white dark:text-[#050607] text-xs font-semibold cursor-pointer"
+              className="h-9 inline-flex items-center justify-center gap-1.5 px-4 py-1.5 rounded-full bg-[#151D2A] dark:bg-white text-white dark:text-[#050607] hover:opacity-90 transition-opacity text-xs font-semibold cursor-pointer shrink-0"
             >
               <Wifi className="w-3.5 h-3.5 stroke-[2]" />
               <span>{tr('Aktifkan Online & Muat Data', 'Go Online & Load Data')}</span>
@@ -1372,7 +1379,7 @@ export const MacroNewsView: React.FC = () => {
                       'Enable Offline Mode for News & Cycle to save Gemini News quota (Instant AI Scan stays online).'
                     )
               }
-              className={`min-h-[36px] inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-semibold transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
+              className={`h-9 w-9 sm:w-auto p-0 sm:px-3.5 sm:py-1.5 inline-flex items-center justify-center gap-1.5 rounded-full border text-xs font-semibold transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
                 isOfflineMode
                   ? 'bg-amber-500/15 border-amber-500/40 text-amber-700 dark:text-amber-300'
                   : 'bg-[#F5F7FA] dark:bg-[#101318] border-[#DDE3EA] dark:border-[#20252D] hover:border-black/25 dark:hover:border-white/25 text-[#151D2A] dark:text-[#F2F4F7]'
@@ -1383,23 +1390,26 @@ export const MacroNewsView: React.FC = () => {
               ) : (
                 <Wifi className="w-3.5 h-3.5 stroke-[1.75] text-[#059669] dark:text-[#00A878]" />
               )}
-              <span>{isOfflineMode ? tr('Mode Offline: ON', 'Offline: ON') : tr('Online', 'Online')}</span>
+              <span className="hidden sm:inline">
+                {isOfflineMode ? tr('Mode Offline: ON', 'Offline: ON') : tr('Online', 'Online')}
+              </span>
             </button>
 
             <button
               type="button"
               onClick={() => setShowPlaybookGuide(true)}
-              className="min-h-[36px] inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#F5F7FA] dark:bg-[#101318] border border-[#DDE3EA] dark:border-[#20252D] hover:border-black/25 dark:hover:border-white/25 text-xs font-semibold text-[#151D2A] dark:text-[#F2F4F7] transition-colors whitespace-nowrap shrink-0 cursor-pointer"
+              title={tr('Playbook Pre-News & 12 Hukum Makro', 'Pre-News & 12 Macro Rules Playbook')}
+              className="h-9 w-9 sm:w-auto p-0 sm:px-3.5 sm:py-1.5 inline-flex items-center justify-center gap-1.5 rounded-full bg-[#F5F7FA] dark:bg-[#101318] border border-[#DDE3EA] dark:border-[#20252D] hover:border-black/25 dark:hover:border-white/25 text-xs font-semibold text-[#151D2A] dark:text-[#F2F4F7] transition-colors whitespace-nowrap shrink-0 cursor-pointer"
             >
               <Info className="w-3.5 h-3.5 stroke-[1.75] text-[#697586] dark:text-[#929BA9]" />
-              <span>{tr('Playbook', 'Playbook')}</span>
+              <span className="hidden sm:inline">{tr('Playbook', 'Playbook')}</span>
             </button>
 
             <button
               type="button"
               onClick={() => void runLiveAnalysis(true, snapshot, selectedEventId || undefined)}
               disabled={isRefreshing || isOfflineMode}
-              className="min-h-[36px] inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg bg-[#151D2A] dark:bg-white text-white dark:text-[#050607] hover:opacity-90 text-xs font-semibold transition-opacity disabled:opacity-45 disabled:cursor-not-allowed whitespace-nowrap shrink-0 cursor-pointer"
+              className="h-9 inline-flex items-center justify-center gap-1.5 px-3.5 sm:px-4 py-1.5 rounded-full bg-[#151D2A] dark:bg-white text-white dark:text-[#050607] hover:opacity-90 text-xs font-semibold transition-opacity disabled:opacity-45 disabled:cursor-not-allowed whitespace-nowrap shrink-0 cursor-pointer"
             >
               <RefreshCw className={`w-3.5 h-3.5 stroke-[2] ${isRefreshing ? 'animate-spin' : ''}`} />
               <span>
@@ -1514,13 +1524,13 @@ export const MacroNewsView: React.FC = () => {
 
             <div
               data-testid="macro-supporting-context-section"
-              className="flex items-center gap-3 shrink-0"
+              className="flex items-center gap-2 shrink-0"
             >
               {snapshot.breakingNews.length > 0 && (
                 <button
                   type="button"
                   onClick={() => setShowAllHeadlines((prev) => !prev)}
-                  className="min-h-[30px] inline-flex items-center gap-1 text-xs font-medium text-[#697586] dark:text-[#929BA9] hover:text-[#151D2A] dark:hover:text-[#F2F4F7] transition-colors cursor-pointer"
+                  className="h-7 inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-[#F5F7FA] dark:bg-[#101318] border border-[#DDE3EA] dark:border-[#20252D] hover:border-black/25 dark:hover:border-white/25 text-[11px] font-semibold text-[#697586] dark:text-[#929BA9] hover:text-[#151D2A] dark:hover:text-[#F2F4F7] transition-colors cursor-pointer"
                 >
                   <span>
                     {tr('Headline RSS', 'RSS')} ({snapshot.breakingNews.length})
@@ -1536,7 +1546,7 @@ export const MacroNewsView: React.FC = () => {
               <button
                 type="button"
                 onClick={() => setShowFedSpeeches((prev) => !prev)}
-                className="min-h-[30px] inline-flex items-center gap-1 text-xs font-medium text-[#697586] dark:text-[#929BA9] hover:text-[#151D2A] dark:hover:text-[#F2F4F7] transition-colors cursor-pointer"
+                className="h-7 inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-[#F5F7FA] dark:bg-[#101318] border border-[#DDE3EA] dark:border-[#20252D] hover:border-black/25 dark:hover:border-white/25 text-[11px] font-semibold text-[#697586] dark:text-[#929BA9] hover:text-[#151D2A] dark:hover:text-[#F2F4F7] transition-colors cursor-pointer"
               >
                 <span>
                   {tr('Pidato Fed', 'Fed')} ({supportingContextEvents.length})
@@ -1568,7 +1578,7 @@ export const MacroNewsView: React.FC = () => {
               <button
                 type="button"
                 onClick={() => setSupabaseFeedback(null)}
-                className="px-2 py-0.5 text-xs font-semibold text-[#151D2A] dark:text-[#F2F4F7] shrink-0 cursor-pointer"
+                className="h-7 px-3 py-0.5 rounded-full bg-white dark:bg-[#0A0C10] border border-[#DDE3EA] dark:border-[#20252D] text-xs font-semibold text-[#151D2A] dark:text-[#F2F4F7] shrink-0 cursor-pointer"
               >
                 {tr('Tutup', 'Dismiss')}
               </button>
@@ -1687,7 +1697,7 @@ export const MacroNewsView: React.FC = () => {
           <button
             type="button"
             onClick={() => setShowTargetSelector(true)}
-            className="min-h-[32px] inline-flex items-center gap-1.5 px-3 py-1 rounded-lg bg-[#F5F7FA] dark:bg-[#101318] border border-[#DDE3EA] dark:border-[#20252D] hover:border-black/25 dark:hover:border-white/25 text-xs font-semibold text-[#151D2A] dark:text-[#F2F4F7] transition-colors whitespace-nowrap shrink-0 cursor-pointer"
+            className="h-8 sm:h-9 inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full bg-[#F5F7FA] dark:bg-[#101318] border border-[#DDE3EA] dark:border-[#20252D] hover:border-[#3478DC] text-xs font-semibold text-[#151D2A] dark:text-[#F2F4F7] transition-colors whitespace-nowrap shrink-0 cursor-pointer"
           >
             <span>
               {tr('Target Rilis (14H)', 'Target Release (14D)')} · {allEventGroups.length}
@@ -2079,11 +2089,13 @@ export const MacroNewsView: React.FC = () => {
                 </p>
               </div>
 
-              <ChevronDown
-                className={`w-4 h-4 shrink-0 text-[#697586] dark:text-[#929BA9] transition-transform duration-300 ease-out ${
-                  showManipulationMap ? 'rotate-180' : 'rotate-0'
-                }`}
-              />
+              <span className="w-7 h-7 rounded-full bg-white dark:bg-[#0A0C10] border border-[#DDE3EA] dark:border-[#20252D] inline-flex items-center justify-center shrink-0">
+                <ChevronDown
+                  className={`w-3.5 h-3.5 text-[#697586] dark:text-[#929BA9] transition-transform duration-300 ease-out ${
+                    showManipulationMap ? 'rotate-180' : 'rotate-0'
+                  }`}
+                />
+              </span>
             </button>
 
             <div
@@ -2345,7 +2357,7 @@ export const MacroNewsView: React.FC = () => {
                             type="button"
                             onClick={() => void confluenceData.refresh(true)}
                             disabled={confluenceData.isRefreshing}
-                            className="px-2.5 py-1 rounded border border-[#DDE3EA] dark:border-[#20252D] text-[11px] font-semibold text-[#151D2A] dark:text-[#F2F4F7] hover:border-black/25 dark:hover:border-white/25 cursor-pointer disabled:opacity-50"
+                            className="h-8 px-3.5 py-1 rounded-full bg-white dark:bg-[#0A0C10] border border-[#DDE3EA] dark:border-[#20252D] text-[11px] font-semibold text-[#151D2A] dark:text-[#F2F4F7] hover:border-black/25 dark:hover:border-white/25 transition-colors cursor-pointer disabled:opacity-50"
                           >
                             {tr('Sync Candle', 'Sync Candles')}
                           </button>
@@ -2353,7 +2365,7 @@ export const MacroNewsView: React.FC = () => {
                             <button
                               type="button"
                               onClick={() => confluenceData.loadSampleOrCachedCandles()}
-                              className="px-2.5 py-1 rounded border border-[#DDE3EA] dark:border-[#20252D] text-[11px] font-semibold text-[#697586] dark:text-[#929BA9] hover:text-[#151D2A] dark:hover:text-[#F2F4F7] cursor-pointer"
+                              className="h-8 px-3.5 py-1 rounded-full bg-white dark:bg-[#0A0C10] border border-[#DDE3EA] dark:border-[#20252D] text-[11px] font-semibold text-[#697586] dark:text-[#929BA9] hover:text-[#151D2A] dark:hover:text-[#F2F4F7] transition-colors cursor-pointer"
                             >
                               {tr('Muat Cache', 'Load Cache')}
                             </button>
@@ -2491,7 +2503,7 @@ export const MacroNewsView: React.FC = () => {
                 type="button"
                 data-testid="macro-bias-history-toggle"
                 onClick={() => setShowBiasHistory((prev) => !prev)}
-                className="min-h-[34px] inline-flex items-center gap-1.5 text-xs font-semibold text-[#151D2A] dark:text-[#F2F4F7] hover:opacity-80 cursor-pointer"
+                className="h-8 inline-flex items-center gap-1.5 px-3.5 py-1 rounded-full bg-[#F5F7FA] dark:bg-[#101318] border border-[#DDE3EA] dark:border-[#20252D] hover:border-black/25 dark:hover:border-white/25 text-xs font-semibold text-[#151D2A] dark:text-[#F2F4F7] transition-colors cursor-pointer"
               >
                 <span>
                   {showBiasHistory
@@ -2883,12 +2895,12 @@ export const MacroNewsView: React.FC = () => {
         className="space-y-4 pb-6 border-b border-[#DDE3EA] dark:border-[#20252D]"
       >
         <div className="flex flex-wrap items-center justify-between gap-2">
-          <div className="inline-flex items-center p-1 rounded-lg bg-[#F5F7FA] dark:bg-[#101318] border border-[#DDE3EA] dark:border-[#20252D]">
+          <div className="inline-flex items-center p-1 rounded-full bg-[#F5F7FA] dark:bg-[#101318] border border-[#DDE3EA] dark:border-[#20252D]">
             <button
               type="button"
               data-testid="macro-tab-execution-plan"
               onClick={() => setStrategyTab('EXECUTION')}
-              className={`min-h-[34px] px-3 py-1 rounded-md text-xs font-semibold transition-colors cursor-pointer ${
+              className={`min-h-[32px] px-3.5 py-1 rounded-full text-xs font-semibold transition-colors cursor-pointer ${
                 strategyTab === 'EXECUTION'
                   ? 'bg-[#151D2A] text-white dark:bg-white dark:text-[#050607]'
                   : 'text-[#697586] dark:text-[#929BA9] hover:text-[#151D2A] dark:hover:text-[#F2F4F7]'
@@ -2900,7 +2912,7 @@ export const MacroNewsView: React.FC = () => {
               type="button"
               data-testid="macro-tab-thesis-pillars"
               onClick={() => setStrategyTab('THESIS')}
-              className={`min-h-[34px] px-3 py-1 rounded-md text-xs font-semibold transition-colors cursor-pointer ${
+              className={`min-h-[32px] px-3.5 py-1 rounded-full text-xs font-semibold transition-colors cursor-pointer ${
                 strategyTab === 'THESIS'
                   ? 'bg-[#151D2A] text-white dark:bg-white dark:text-[#050607]'
                   : 'text-[#697586] dark:text-[#929BA9] hover:text-[#151D2A] dark:hover:text-[#F2F4F7]'
@@ -2956,7 +2968,7 @@ export const MacroNewsView: React.FC = () => {
                   type="button"
                   data-testid="macro-prenews-flow-toggle"
                   onClick={() => setShowPreNewsFlow((prev) => !prev)}
-                  className="min-h-[32px] inline-flex items-center gap-1.5 text-xs font-semibold text-[#151D2A] dark:text-[#F2F4F7] hover:opacity-80 cursor-pointer"
+                  className="h-8 inline-flex items-center gap-1.5 px-3.5 py-1 rounded-full bg-[#F5F7FA] dark:bg-[#101318] border border-[#DDE3EA] dark:border-[#20252D] hover:border-black/25 dark:hover:border-white/25 text-xs font-semibold text-[#151D2A] dark:text-[#F2F4F7] transition-colors cursor-pointer"
                 >
                   <span>
                     {showPreNewsFlow
@@ -3022,15 +3034,15 @@ export const MacroNewsView: React.FC = () => {
           <div className="flex flex-wrap items-center gap-2">
             <div
               data-testid="macro-calendar-view-switch"
-              className="inline-flex items-center p-1 rounded-lg bg-[#F5F7FA] dark:bg-[#101318] border border-[#DDE3EA] dark:border-[#20252D]"
+              className="inline-flex items-center p-1 rounded-full bg-[#F5F7FA] dark:bg-[#101318] border border-[#DDE3EA] dark:border-[#20252D]"
             >
               <button
                 type="button"
                 onClick={() => setCalendarViewMode('LIST')}
-                className={`min-h-[34px] px-3 py-1 rounded-md text-xs font-semibold transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
+                className={`min-h-[32px] px-3.5 py-1 rounded-full text-xs font-semibold transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
                   calendarViewMode === 'LIST'
                     ? 'bg-[#151D2A] text-white dark:bg-white dark:text-[#050607]'
-                    : 'text-[#697586] dark:text-[#929BA9]'
+                    : 'text-[#697586] dark:text-[#929BA9] hover:text-[#151D2A] dark:hover:text-[#F2F4F7]'
                 }`}
               >
                 {tr('Daftar', 'List')}
@@ -3038,24 +3050,24 @@ export const MacroNewsView: React.FC = () => {
               <button
                 type="button"
                 onClick={() => setCalendarViewMode('TIMELINE')}
-                className={`min-h-[34px] px-3 py-1 rounded-md text-xs font-semibold transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
+                className={`min-h-[32px] px-3.5 py-1 rounded-full text-xs font-semibold transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
                   calendarViewMode === 'TIMELINE'
                     ? 'bg-[#151D2A] text-white dark:bg-white dark:text-[#050607]'
-                    : 'text-[#697586] dark:text-[#929BA9]'
+                    : 'text-[#697586] dark:text-[#929BA9] hover:text-[#151D2A] dark:hover:text-[#F2F4F7]'
                 }`}
               >
                 {tr('Timeline', 'Timeline')}
               </button>
             </div>
 
-            <div className="inline-flex items-center p-1 rounded-lg bg-[#F5F7FA] dark:bg-[#101318] border border-[#DDE3EA] dark:border-[#20252D]">
+            <div className="inline-flex items-center p-1 rounded-full bg-[#F5F7FA] dark:bg-[#101318] border border-[#DDE3EA] dark:border-[#20252D]">
               <button
                 type="button"
                 onClick={() => setShowFullCalendar(false)}
-                className={`min-h-[34px] px-3 py-1 rounded-md text-xs font-semibold transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
+                className={`min-h-[32px] px-3.5 py-1 rounded-full text-xs font-semibold transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
                   !showFullCalendar
                     ? 'bg-[#151D2A] text-white dark:bg-white dark:text-[#050607]'
-                    : 'text-[#697586] dark:text-[#929BA9]'
+                    : 'text-[#697586] dark:text-[#929BA9] hover:text-[#151D2A] dark:hover:text-[#F2F4F7]'
                 }`}
               >
                 {tr('High-Impact', 'High-Impact Only')}
@@ -3063,10 +3075,10 @@ export const MacroNewsView: React.FC = () => {
               <button
                 type="button"
                 onClick={() => setShowFullCalendar(true)}
-                className={`min-h-[34px] px-3 py-1 rounded-md text-xs font-semibold transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
+                className={`min-h-[32px] px-3.5 py-1 rounded-full text-xs font-semibold transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
                   showFullCalendar
                     ? 'bg-[#151D2A] text-white dark:bg-white dark:text-[#050607]'
-                    : 'text-[#697586] dark:text-[#929BA9]'
+                    : 'text-[#697586] dark:text-[#929BA9] hover:text-[#151D2A] dark:hover:text-[#F2F4F7]'
                 }`}
               >
                 {tr('Semua Event', 'All Events')}
@@ -3079,17 +3091,17 @@ export const MacroNewsView: React.FC = () => {
         <div className="space-y-2.5">
           <div className="flex flex-col sm:flex-row sm:items-center gap-2.5">
             <div className="relative flex-1 min-w-0">
-              <Search className="w-4 h-4 text-[#697586] dark:text-[#929BA9] absolute left-3 top-1/2 -translate-y-1/2" />
+              <Search className="w-4 h-4 text-[#697586] dark:text-[#929BA9] absolute left-3.5 top-1/2 -translate-y-1/2" />
               <input
                 type="text"
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
                 placeholder={tr('Cari rilis USD (CPI, PPI, NFP, FOMC)...', 'Search USD release (CPI, PPI, NFP, FOMC)...')}
-                className="w-full min-h-[40px] pl-9 pr-3 py-2 rounded-lg bg-[#F5F7FA] dark:bg-[#101318] border border-[#DDE3EA] dark:border-[#20252D] text-xs sm:text-sm text-[#151D2A] dark:text-[#F2F4F7] placeholder-[#697586] dark:placeholder-[#929BA9] focus:outline-none focus:border-black/40 dark:focus:border-white/40"
+                className="w-full min-h-[40px] pl-10 pr-4 py-2 rounded-full bg-[#F5F7FA] dark:bg-[#101318] border border-[#DDE3EA] dark:border-[#20252D] text-xs sm:text-sm text-[#151D2A] dark:text-[#F2F4F7] placeholder-[#697586] dark:placeholder-[#929BA9] focus:outline-none focus:border-black/40 dark:focus:border-white/40"
               />
             </div>
 
-            <div className="inline-flex items-center p-1 rounded-lg bg-[#F5F7FA] dark:bg-[#101318] border border-[#DDE3EA] dark:border-[#20252D] self-start sm:self-auto shrink-0">
+            <div className="inline-flex items-center p-1 rounded-full bg-[#F5F7FA] dark:bg-[#101318] border border-[#DDE3EA] dark:border-[#20252D] self-start sm:self-auto shrink-0">
               {(
                 [
                   { key: 'ALL', labelId: 'Semua', labelEn: 'All' },
@@ -3101,10 +3113,10 @@ export const MacroNewsView: React.FC = () => {
                   key={opt.key}
                   type="button"
                   onClick={() => setEventWindowFilter(opt.key)}
-                  className={`min-h-[32px] px-3 py-1 rounded-md text-xs font-semibold transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
+                  className={`min-h-[32px] px-3.5 py-1 rounded-full text-xs font-semibold transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
                     eventWindowFilter === opt.key
                       ? 'bg-[#151D2A] text-white dark:bg-white dark:text-[#050607]'
-                      : 'text-[#697586] dark:text-[#929BA9]'
+                      : 'text-[#697586] dark:text-[#929BA9] hover:text-[#151D2A] dark:hover:text-[#F2F4F7]'
                   }`}
                 >
                   {tr(opt.labelId, opt.labelEn)}
@@ -3121,7 +3133,7 @@ export const MacroNewsView: React.FC = () => {
                   key={tag}
                   type="button"
                   onClick={() => setSearchQuery(tag === 'ALL' ? '' : tag)}
-                  className={`min-h-[32px] px-3 py-1 rounded-md text-xs font-semibold whitespace-nowrap shrink-0 transition-colors cursor-pointer ${
+                  className={`min-h-[32px] px-3.5 py-1 rounded-full text-xs font-semibold whitespace-nowrap shrink-0 transition-colors cursor-pointer ${
                     isSelected
                       ? 'bg-[#151D2A] text-white dark:bg-white dark:text-[#050607]'
                       : 'bg-[#F5F7FA] dark:bg-[#101318] text-[#697586] dark:text-[#929BA9] border border-[#DDE3EA] dark:border-[#20252D] hover:text-[#151D2A] dark:hover:text-[#F2F4F7]'
@@ -3148,7 +3160,7 @@ export const MacroNewsView: React.FC = () => {
                   setEventWindowFilter('ALL');
                   setShowFullCalendar(true);
                 }}
-                className="min-h-[38px] px-4 py-1.5 rounded-lg bg-[#F5F7FA] dark:bg-[#101318] border border-[#DDE3EA] dark:border-[#20252D] text-xs font-semibold text-[#151D2A] dark:text-[#F2F4F7] cursor-pointer"
+                className="min-h-[36px] px-4 py-1.5 rounded-full bg-[#F5F7FA] dark:bg-[#101318] border border-[#DDE3EA] dark:border-[#20252D] hover:border-black/25 dark:hover:border-white/25 text-xs font-semibold text-[#151D2A] dark:text-[#F2F4F7] transition-colors cursor-pointer"
               >
                 {tr('Tampilkan Semua Jadwal', 'Show All Releases')}
               </button>
@@ -3222,7 +3234,7 @@ export const MacroNewsView: React.FC = () => {
                         <button
                           type="button"
                           onClick={() => handleSelectEventGroup(grp.primaryEvent.id)}
-                          className="min-h-[34px] px-3 py-1 rounded-lg bg-[#F5F7FA] dark:bg-[#101318] border border-[#DDE3EA] dark:border-[#20252D] hover:border-black/25 dark:hover:border-white/25 text-xs font-semibold text-[#151D2A] dark:text-[#F2F4F7] whitespace-nowrap shrink-0 cursor-pointer"
+                          className="min-h-[32px] px-3.5 py-1 rounded-full bg-[#F5F7FA] dark:bg-[#101318] border border-[#DDE3EA] dark:border-[#20252D] hover:border-[#3478DC] text-xs font-semibold text-[#151D2A] dark:text-[#F2F4F7] transition-colors whitespace-nowrap shrink-0 cursor-pointer"
                         >
                           {tr('Analisis', 'Analyze')}
                         </button>
@@ -3374,7 +3386,7 @@ export const MacroNewsView: React.FC = () => {
                       <button
                         type="button"
                         onClick={() => handleSelectEventGroup(ev.id)}
-                        className="min-h-[34px] px-3 py-1 rounded-lg bg-[#F5F7FA] dark:bg-[#101318] border border-[#DDE3EA] dark:border-[#20252D] hover:border-black/25 dark:hover:border-white/25 text-xs font-semibold text-[#151D2A] dark:text-[#F2F4F7] whitespace-nowrap shrink-0 cursor-pointer"
+                        className="min-h-[32px] px-3.5 py-1 rounded-full bg-[#F5F7FA] dark:bg-[#101318] border border-[#DDE3EA] dark:border-[#20252D] hover:border-[#3478DC] text-xs font-semibold text-[#151D2A] dark:text-[#F2F4F7] transition-colors whitespace-nowrap shrink-0 cursor-pointer"
                       >
                         {tr('Analisis', 'Analyze')}
                       </button>
@@ -3441,7 +3453,7 @@ export const MacroNewsView: React.FC = () => {
                       <button
                         type="button"
                         onClick={() => toggleExpandedEvent(ev.id)}
-                        className="min-h-[30px] inline-flex items-center gap-1 text-xs font-medium text-[#697586] dark:text-[#929BA9] hover:text-[#151D2A] dark:hover:text-[#F2F4F7] cursor-pointer"
+                        className="h-7 inline-flex items-center gap-1 px-3 py-1 rounded-full bg-[#F5F7FA] dark:bg-[#101318] border border-[#DDE3EA] dark:border-[#20252D] hover:border-black/25 dark:hover:border-white/25 text-[11px] font-semibold text-[#697586] dark:text-[#929BA9] hover:text-[#151D2A] dark:hover:text-[#F2F4F7] transition-colors cursor-pointer"
                       >
                         <span>
                           {isExpanded ? tr('Tutup Detail', 'Hide Note') : tr('Interpretasi', 'Interpretation')}
@@ -3483,16 +3495,16 @@ export const MacroNewsView: React.FC = () => {
             </p>
           </div>
 
-          <div className="inline-flex items-center p-1 rounded-lg bg-[#F5F7FA] dark:bg-[#101318] border border-[#DDE3EA] dark:border-[#20252D]">
+          <div className="inline-flex items-center p-1 rounded-full bg-[#F5F7FA] dark:bg-[#101318] border border-[#DDE3EA] dark:border-[#20252D]">
             {(['BOTH', 'BUY', 'SELL'] as const).map((tab) => (
               <button
                 key={tab}
                 type="button"
                 onClick={() => setArgumentTab(tab)}
-                className={`min-h-[34px] px-3 py-1 rounded-md text-xs font-semibold transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
+                className={`min-h-[32px] px-3.5 py-1 rounded-full text-xs font-semibold transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
                   argumentTab === tab
                     ? 'bg-[#151D2A] text-white dark:bg-white dark:text-[#050607]'
-                    : 'text-[#697586] dark:text-[#929BA9]'
+                    : 'text-[#697586] dark:text-[#929BA9] hover:text-[#151D2A] dark:hover:text-[#F2F4F7]'
                 }`}
               >
                 {tab === 'BOTH' ? tr('Semua', 'Both') : tab}

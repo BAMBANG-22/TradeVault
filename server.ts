@@ -3,7 +3,7 @@ import http from 'http';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import dotenv from 'dotenv';
-import { GoogleGenAI, Type } from '@google/genai';
+import { GoogleGenAI, ThinkingLevel, Type } from '@google/genai';
 import {
   MacroCalendarEvent,
   IntermarketAssetPulse,
@@ -57,24 +57,63 @@ app.use('/api', (req, res, next) => {
 
 // Standalone healthcheck endpoint for APK & external server verification
 app.get('/api/health', (_req, res) => {
-  const geminiConfigured = Boolean(
-    (process.env.GEMINI_NEWS_API_KEY || process.env.GEMINI_API_KEY || '').trim()
-  );
+  const scanKey = (process.env.GEMINI_API_KEY || '').trim();
+  const newsKey = (process.env.GEMINI_NEWS_API_KEY || '').trim();
   res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
   return res.json({
     ok: true,
     service: 'tradevault-standalone-backend',
-    geminiConfigured,
+    geminiConfigured: Boolean(scanKey || newsKey),
+    scannerGeminiConfigured: Boolean(scanKey),
+    newsGeminiConfigured: Boolean(newsKey),
     isMarketOpen: isMarketDay(new Date(), { useUtc: true, enforceFridayCloseUtc: true }),
     timestamp: new Date().toISOString(),
   });
 });
+
+const ALLOWED_PROXY_DOMAINS = [
+  'faireconomy.media',
+  'yahoo.com',
+  'financialjuice.com',
+  'cnbc.com',
+  'dowjones.io',
+  'fxstreet.com',
+  'news.google.com',
+  'twelvedata.com',
+  'er-api.com',
+  'frankfurter.app',
+  'investing.com',
+  'cmegroup.com',
+  'tradingview.com',
+  'forexlive.com',
+  'reuters.com',
+  'marketwatch.com',
+  'dailyfx.com',
+  'exchangerate-api.com',
+  'stooq.com',
+  'stlouisfed.org',
+  'treasury.gov',
+];
+
+function isAllowedProxyTargetUrl(rawUrl: string): boolean {
+  try {
+    const parsed = new URL(rawUrl);
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return false;
+    const host = parsed.hostname.toLowerCase();
+    return ALLOWED_PROXY_DOMAINS.some((domain) => host === domain || host.endsWith(`.${domain}`));
+  } catch {
+    return false;
+  }
+}
 
 // Resilient backend proxy endpoint for public financial feeds
 app.get('/api/proxy', async (req, res) => {
   const targetUrl = req.query.url as string;
   if (!targetUrl) {
     return res.status(400).json({ error: 'Missing target url parameter' });
+  }
+  if (!isAllowedProxyTargetUrl(targetUrl)) {
+    return res.status(403).json({ error: 'Target domain is not in the allowed financial feeds list' });
   }
   try {
     const controller = new AbortController();
@@ -804,6 +843,408 @@ ${geometryHintBlock}
     res.status(500).json({
       success: false,
       error: error?.message || 'Terjadi kesalahan saat memproses gambar analisis.',
+    });
+  }
+});
+
+function normalizeMt5DateTimeOutput(raw: unknown): string | null {
+  if (!raw || typeof raw !== 'string') return null;
+  const s = raw.trim();
+  if (!s) return null;
+  // Match MT5 formats: "2026.11.14 14:22:10", "2026-11-14 14:22", "2026/11/14 14:22", "2026-11-14T14:22"
+  const m = s.match(/(\d{4})[.\-\/](\d{1,2})[.\-\/](\d{1,2})[T\s]+(\d{1,2}):(\d{2})/);
+  if (m) {
+    const yyyy = m[1];
+    const mm = m[2].padStart(2, '0');
+    const dd = m[3].padStart(2, '0');
+    const hh = m[4].padStart(2, '0');
+    const min = m[5].padStart(2, '0');
+    return `${yyyy}-${mm}-${dd}T${hh}:${min}`;
+  }
+  const parsed = new Date(s);
+  if (!isNaN(parsed.getTime())) {
+    const yyyy = parsed.getFullYear();
+    const mm = String(parsed.getMonth() + 1).padStart(2, '0');
+    const dd = String(parsed.getDate()).padStart(2, '0');
+    const hh = String(parsed.getHours()).padStart(2, '0');
+    const min = String(parsed.getMinutes()).padStart(2, '0');
+    return `${yyyy}-${mm}-${dd}T${hh}:${min}`;
+  }
+  return null;
+}
+
+function inferMt5CloseType(params: {
+  rawCloseType?: unknown;
+  notes?: string;
+  position: 'BUY' | 'SELL';
+  exitPrice: number | null;
+  stopLoss: number | null;
+  takeProfit: number | null;
+  netProfit: number | null;
+  instrument: string;
+}): 'TP' | 'SL' | 'Manual' {
+  const { rawCloseType, notes, exitPrice, stopLoss, takeProfit, netProfit, instrument } = params;
+  const rawUpper = String(rawCloseType || '').trim().toUpperCase();
+  const notesLower = String(notes || '').toLowerCase();
+
+  const priceTol =
+    instrument === 'XAUUSD'
+      ? 0.65
+      : instrument === 'BTCUSD'
+      ? 25
+      : instrument === 'US30' || instrument === 'NAS100'
+      ? 8
+      : instrument.includes('JPY') || instrument === 'XAGUSD'
+      ? 0.05
+      : 0.0005;
+
+  if (exitPrice !== null && takeProfit !== null && Math.abs(exitPrice - takeProfit) <= priceTol) {
+    return 'TP';
+  }
+  if (exitPrice !== null && stopLoss !== null && Math.abs(exitPrice - stopLoss) <= priceTol) {
+    return 'SL';
+  }
+  if (/\[\s*tp\s*\]|\/\s*tp\b|\btake\s*profit\b/i.test(notesLower)) {
+    return 'TP';
+  }
+  if (/\[\s*sl\s*\]|\/\s*sl\b|\bstop\s*loss\b/i.test(notesLower)) {
+    return 'SL';
+  }
+
+  if (rawUpper === 'TP') {
+    if (netProfit !== null && netProfit < -0.05 && takeProfit === null) return 'Manual';
+    return 'TP';
+  }
+  if (rawUpper === 'SL') {
+    if (netProfit !== null && netProfit > 0.05 && stopLoss === null) return 'Manual';
+    return 'SL';
+  }
+  return 'Manual';
+}
+
+// AI Vision Endpoint: Batch extract closed MT5/MT4 trade history rows from a screenshot
+app.post('/api/extract-mt5-history', async (req, res) => {
+  try {
+    const { imageBase64, imageUrl } = req.body as ExtractScreenshotRequest;
+
+    if (!imageBase64 && !imageUrl) {
+      res.status(400).json({
+        success: false,
+        error: 'Harap sertakan imageBase64 atau imageUrl.',
+      });
+      return;
+    }
+
+    const scanApiKey = (process.env.GEMINI_API_KEY || '').trim();
+    const scannerApiKeys = scanApiKey ? [scanApiKey] : [];
+
+    if (scannerApiKeys.length === 0) {
+      res.status(400).json({
+        success: false,
+        error: 'GEMINI_API_KEY belum dikonfigurasi di environment server.',
+      });
+      return;
+    }
+
+    let mimeType = 'image/jpeg';
+    let base64Data = '';
+
+    if (imageBase64) {
+      const trimmedInput = imageBase64.trim();
+      const match = trimmedInput.match(/^data:([a-zA-Z0-9]+\/[a-zA-Z0-9-.+]+);base64,([\s\S]+)$/i);
+      if (match) {
+        const rawMime = match[1].toLowerCase();
+        mimeType =
+          rawMime === 'image/png'
+            ? 'image/png'
+            : rawMime === 'image/webp'
+            ? 'image/webp'
+            : 'image/jpeg';
+        base64Data = match[2].replace(/\s+/g, '');
+      } else {
+        base64Data = trimmedInput.replace(/^data:[^,]+,/, '').replace(/\s+/g, '');
+      }
+    } else if (imageUrl) {
+      const fetched = await fetchImageBufferFromUrl(imageUrl);
+      const rawMime = (fetched.mimeType || 'image/jpeg').toLowerCase();
+      mimeType =
+        rawMime === 'image/png'
+          ? 'image/png'
+          : rawMime === 'image/webp'
+          ? 'image/webp'
+          : 'image/jpeg';
+      base64Data = fetched.buffer.toString('base64');
+    }
+
+    const prompt = `You are an elite MetaTrader 5 (MT5) & MetaTrader 4 (MT4) Account History OCR & trade-ledger extraction specialist.
+Inspect the FULL screenshot carefully from top to bottom and extract EVERY closed trade row visible (even if the screenshot is cropped and has no header).
+
+STRICT EXTRACTION RULES:
+1. SUPPORTED SCREENSHOT VIEWS:
+   - MT5 / MT4 Mobile "History -> Positions" (e.g. "XAUUSD, sell 0.10", "2615.40 -> 2602.10", timestamp, profit)
+   - MT5 Mobile "History -> Deals" (rows showing symbol, buy/sell, "out" / "in/out", volume, price, profit — extract closing/profit deals as closed trades)
+   - Indonesian MT5 locale ("beli" = BUY, "jual" = SELL) as well as English ("buy"/"long" = BUY, "sell"/"short" = SELL)
+   - MT5 / MT4 Desktop Account History table
+   - Broker trade history lists showing closed positions with entry/exit or realized profit/loss
+   - IGNORE summary header lines ("Profit:", "Deposit:", "Balance:", "Credit:", "Withdrawal:") and non-trade ledger rows ("balance", "deposit", "credit", "withdrawal") and unfilled "canceled" pending orders.
+2. READING MOBILE MT5 HISTORY ROWS:
+   - Left: symbol + direction + lot, e.g. "XAUUSD, sell 0.10", "XAUUSDm, buy 0.05", "GOLD, beli 0.10"
+   - Below left: "2615.40 -> 2602.10" (entryPrice BEFORE "->", exitPrice AFTER "->")
+   - Top-right of row: timestamp like "2026.11.14 14:22:10" (closeDateTime)
+   - Bottom-right of row: realized profit/loss like "133.00" or "-45.20" (preserve minus sign strictly for red/negative values!)
+   - Expanded row details (if expanded): "S / L:" -> stopLoss, "T / P:" -> takeProfit, "Open:" -> openDateTime, "Swap:" -> swap, "Commission:"/"Fee:" -> commission, "ID:"/"#12345" -> ticketId.
+3. READING DESKTOP MT5 ACCOUNT HISTORY TABLE:
+   - Map columns: Time (open), Position/Order/Ticket (ticketId), Symbol (instrument), Type (buy->BUY, sell->SELL), Volume (lotSize), Open Price (entryPrice), S/L (stopLoss), T/P (takeProfit), Close Time (closeDateTime), Close Price (exitPrice), Commission, Swap, Profit (netProfit).
+4. CLOSE TYPE DETECTION (TP / SL / Manual):
+   - "TP": comment/tag shows "[tp]", OR T/P badge is green/highlighted, OR exitPrice closely matches takeProfit.
+   - "SL": comment/tag shows "[sl]", OR S/L badge is red/highlighted, OR exitPrice closely matches stopLoss.
+   - "Manual": otherwise (closed manually by trader).
+5. FORMATTING:
+   - Return empty string "" (NEVER literal "null") when ticketId, openDateTime, closeDateTime, or notes are not visible.
+   - Output openDateTime / closeDateTime in "YYYY-MM-DD HH:mm" if visible.
+   - Never invent trades that are not visibly printed on screen.`;
+
+    const candidateModels = ['gemini-4-hydrogen', 'gemini-3.1-flash-lite'];
+    let responseText = '';
+    let usedModel = '';
+
+    for (const model of candidateModels) {
+      for (let keyIdx = 0; keyIdx < scannerApiKeys.length; keyIdx++) {
+        const cooldownKey = `${keyIdx}:${model}`;
+        const cooldownUntil = quotaCooldownUntilByModel.get(cooldownKey) || 0;
+        if (Date.now() < cooldownUntil) {
+          continue;
+        }
+
+        const ai = new GoogleGenAI({
+          apiKey: scannerApiKeys[keyIdx],
+          httpOptions: {
+            headers: {
+              'User-Agent': 'aistudio-build',
+            },
+          },
+        });
+
+        for (let attempt = 1; attempt <= 2; attempt++) {
+          try {
+            const response = await ai.models.generateContent({
+              model,
+              contents: [
+                {
+                  inlineData: {
+                    mimeType,
+                    data: base64Data,
+                  },
+                },
+                prompt,
+              ],
+              config: {
+                ...(model === 'gemini-4-hydrogen'
+                  ? { thinkingConfig: { thinkingLevel: ThinkingLevel.LOW } }
+                  : {}),
+                responseMimeType: 'application/json',
+                responseSchema: {
+                  type: Type.OBJECT,
+                  properties: {
+                    detected: {
+                      type: Type.BOOLEAN,
+                      description: 'True if at least one closed MT5/MT4 trade row is visible',
+                    },
+                    source: {
+                      type: Type.STRING,
+                      description: 'MT5_HISTORY_MOBILE, MT5_HISTORY_DESKTOP, or MT4_HISTORY',
+                    },
+                    trades: {
+                      type: Type.ARRAY,
+                      description: 'All visible closed trade rows ordered top-to-bottom as shown in screenshot',
+                      items: {
+                        type: Type.OBJECT,
+                        properties: {
+                          ticketId: { type: Type.STRING, description: 'MT5 ticket/deal/position ID if visible, else empty string' },
+                          instrument: { type: Type.STRING, description: 'Clean symbol e.g. XAUUSD, EURUSD, BTCUSD' },
+                          position: { type: Type.STRING, description: 'BUY or SELL' },
+                          lotSize: { type: Type.NUMBER, description: 'Volume / lot size e.g. 0.10' },
+                          entryPrice: { type: Type.NUMBER, description: 'Entry / Open price before ->' },
+                          exitPrice: { type: Type.NUMBER, description: 'Exit / Close price after ->' },
+                          stopLoss: { type: Type.NUMBER, description: 'S/L price if shown, else null' },
+                          takeProfit: { type: Type.NUMBER, description: 'T/P price if shown, else null' },
+                          commission: { type: Type.NUMBER, description: 'Commission fee amount if shown, else 0' },
+                          swap: { type: Type.NUMBER, description: 'Swap amount if shown (signed), else 0' },
+                          netProfit: { type: Type.NUMBER, description: 'Realized profit/loss on the row (negative if loss)' },
+                          openDateTime: { type: Type.STRING, description: 'Open timestamp YYYY-MM-DD HH:mm if visible, else empty string' },
+                          closeDateTime: { type: Type.STRING, description: 'Close timestamp YYYY-MM-DD HH:mm if visible, else empty string' },
+                          closeType: { type: Type.STRING, description: 'TP, SL, or Manual' },
+                          notes: { type: Type.STRING, description: 'Optional visible row tag e.g. [tp], [sl], or empty string' },
+                        },
+                        required: ['instrument', 'position'],
+                      },
+                    },
+                  },
+                  required: ['detected', 'trades'],
+                },
+              },
+            });
+
+            if (response && response.text) {
+              responseText = response.text;
+              usedModel = model;
+              break;
+            }
+          } catch (err: any) {
+            const errMsg = err?.message || String(err);
+            const isQuotaExhausted =
+              errMsg.includes('429') ||
+              errMsg.includes('RESOURCE_EXHAUSTED') ||
+              errMsg.includes('Quota exceeded');
+
+            if (isQuotaExhausted) {
+              quotaCooldownUntilByModel.set(cooldownKey, Date.now() + 20 * 60 * 1000);
+              break;
+            }
+
+            const isTransientServerOverload =
+              errMsg.includes('503') ||
+              errMsg.includes('high demand') ||
+              errMsg.includes('overloaded') ||
+              errMsg.includes('UNAVAILABLE') ||
+              errMsg.includes('500');
+
+            if (isTransientServerOverload && attempt < 2) {
+              await new Promise((resolve) => setTimeout(resolve, 450));
+              continue;
+            }
+            break;
+          }
+        }
+        if (responseText) break;
+      }
+      if (responseText) break;
+    }
+
+    if (!responseText) {
+      res.status(200).json({
+        success: false,
+        quotaExhausted: true,
+        error:
+          'Kuota AI Scan Kilat sedang penuh sementara. Silakan coba beberapa saat lagi.',
+      });
+      return;
+    }
+
+    let parsedData = parseAiJsonResponse(responseText);
+    if (!Array.isArray(parsedData.trades)) {
+      const tradesIdx = responseText.indexOf('"trades"');
+      if (tradesIdx !== -1) {
+        const arrStart = responseText.indexOf('[', tradesIdx);
+        if (arrStart !== -1) {
+          const recovered: any[] = [];
+          const objMatches = responseText.slice(arrStart).match(/\{[^{}]+\}/g) || [];
+          for (const rawObj of objMatches) {
+            try {
+              recovered.push(JSON.parse(rawObj));
+            } catch {}
+          }
+          if (recovered.length > 0) {
+            parsedData = { detected: true, source: 'MT5_HISTORY', trades: recovered };
+          }
+        }
+      }
+    }
+
+    const rawTrades = Array.isArray(parsedData.trades) ? parsedData.trades : [];
+
+    const normalizedTrades = rawTrades
+      .map((row: any) => {
+        if (!row || typeof row !== 'object') return null;
+        const rawPos = String(row.position || '').trim().toUpperCase();
+        const isSell =
+          rawPos.includes('SELL') || rawPos.includes('JUAL') || rawPos.includes('SHORT');
+        const isBuy =
+          rawPos.includes('BUY') || rawPos.includes('BELI') || rawPos.includes('LONG');
+        if (!isBuy && !isSell) {
+          return null;
+        }
+        const position: 'BUY' | 'SELL' = isSell && !isBuy ? 'SELL' : isSell ? 'SELL' : 'BUY';
+        const instrument = normalizeInstrument(row.instrument);
+        const lotRaw = parseNumericValue(row.lotSize, 'EURUSD');
+        const entryPrice = parseNumericValue(row.entryPrice, instrument);
+        const exitPrice = parseNumericValue(row.exitPrice, instrument);
+        const stopLoss = parseNumericValue(row.stopLoss, instrument);
+        const takeProfit = parseNumericValue(row.takeProfit, instrument);
+        const rawComm = parseNumericValue(row.commission, 'EURUSD');
+        const rawSwap = parseNumericValue(row.swap, 'EURUSD');
+        const rawProfit = parseNumericValue(row.netProfit, 'EURUSD');
+
+        if (entryPrice === null && exitPrice === null && rawProfit === null) {
+          return null;
+        }
+
+        const cleanStr = (v: unknown): string => {
+          if (typeof v !== 'string') return '';
+          const t = v.trim();
+          return /^(null|undefined|none|n\/a)$/i.test(t) ? '' : t;
+        };
+
+        const openDateTime = normalizeMt5DateTimeOutput(cleanStr(row.openDateTime));
+        const closeDateTime = normalizeMt5DateTimeOutput(cleanStr(row.closeDateTime));
+        const notes = cleanStr(row.notes);
+        const closeType = inferMt5CloseType({
+          rawCloseType: row.closeType,
+          notes,
+          position,
+          exitPrice,
+          stopLoss,
+          takeProfit,
+          netProfit: rawProfit,
+          instrument,
+        });
+
+        const rawTicket =
+          typeof row.ticketId === 'string' || typeof row.ticketId === 'number'
+            ? String(row.ticketId).replace(/^#/, '').trim()
+            : '';
+        const cleanTicket =
+          rawTicket && !/^(null|undefined|none|n\/a|-)$/i.test(rawTicket) ? rawTicket : null;
+
+        return {
+          ticketId: cleanTicket,
+          instrument,
+          position,
+          lotSize: lotRaw !== null && lotRaw > 0 ? Number(lotRaw.toFixed(2)) : 0.01,
+          entryPrice: entryPrice !== null && entryPrice > 0 ? entryPrice : exitPrice || 0,
+          exitPrice: exitPrice !== null && exitPrice > 0 ? exitPrice : entryPrice || 0,
+          stopLoss: stopLoss !== null && stopLoss > 0 ? stopLoss : null,
+          takeProfit: takeProfit !== null && takeProfit > 0 ? takeProfit : null,
+          commission: rawComm !== null ? Number(Math.abs(rawComm).toFixed(2)) : 0,
+          swap: rawSwap !== null ? Number(rawSwap.toFixed(2)) : 0,
+          netProfit: rawProfit !== null ? Number(rawProfit.toFixed(2)) : 0,
+          openDateTime,
+          closeDateTime,
+          closeType,
+          notes,
+        };
+      })
+      .filter((item): item is NonNullable<typeof item> => item !== null);
+
+    console.log(
+      `[MT5HistoryExtract] model=${usedModel}, raw=${rawTrades.length}, normalized=${normalizedTrades.length}`
+    );
+
+    res.json({
+      success: true,
+      data: {
+        detected: normalizedTrades.length > 0 && parsedData.detected !== false,
+        source: String(parsedData.source || 'MT5_HISTORY'),
+        trades: normalizedTrades,
+        modelUsed: usedModel || 'gemini-4-hydrogen',
+      },
+    });
+  } catch (error: any) {
+    const compactMsg = String(error?.message || error || 'Unknown error').replace(/\s+/g, ' ').slice(0, 240);
+    console.warn('[MT5HistoryExtract] Error:', compactMsg);
+    res.status(500).json({
+      success: false,
+      error: error?.message || 'Terjadi kesalahan saat memindai riwayat MT5.',
     });
   }
 });

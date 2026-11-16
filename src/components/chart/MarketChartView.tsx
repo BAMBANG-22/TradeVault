@@ -7361,7 +7361,7 @@ export const MarketChartView: React.FC<MarketChartViewProps> = ({
                               handleSelectToolFromMenu(tool.id);
                             }
                           }}
-                          title={tool.name}
+                          title={translateToolName(tool.name)}
                           className={`inline-flex items-center justify-center h-6 w-6 rounded transition-colors cursor-pointer ${
                             isSelected
                               ? 'bg-[#2A2E39] text-white border border-white/15'
@@ -9042,7 +9042,7 @@ export const MarketChartView: React.FC<MarketChartViewProps> = ({
                                 <button
                                   type="button"
                                   data-testid={`drawing-tool-star-${tool.id}`}
-                                  aria-label={`Favorit ${tool.name}`}
+                                  aria-label={tr(`Favorit ${tool.name}`, `Favorite ${translateToolName(tool.name)}`)}
                                   onClick={(e) => {
                                     e.stopPropagation();
                                     handleToggleFavoriteTool(tool.id);

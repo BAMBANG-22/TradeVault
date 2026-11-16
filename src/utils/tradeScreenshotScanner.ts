@@ -1,6 +1,30 @@
-import { TradePosition } from '../types/trade';
+import {
+  Trade,
+  TradeCloseType,
+  TradePosition,
+  TradingSession,
+} from '../types/trade';
+import { AppSettings } from '../types/settings';
 import { CHART_PREFS_STORAGE_KEY } from '../components/chart/MarketChartView';
 import { getApiEndpointCandidates, nativeAwarePostJson } from './apiConfig';
+import {
+  classifyNetProfitOutcome,
+  computeGrossFromNet,
+  normalizeTradeDateTimeLocal,
+} from './calculations';
+import {
+  evaluateTradeCompliance,
+  encodeExecutionAdherenceNotes,
+} from './complianceRating';
+import {
+  createActivityEvent,
+  encodeLifecycleMetaIntoExecutionNotes,
+  TradeLifecycleMeta,
+} from './tradeLifecycle';
+import {
+  getCachedUsdIdrRate,
+  getCurrentUsdIdrSnapshot,
+} from './currencyRate';
 
 export interface ExtractedTradeScanData {
   detected: boolean;
@@ -1860,3 +1884,405 @@ export async function scanTradeScreenshotOrUrl(inputSource: string): Promise<Ext
     },
   });
 }
+
+// ============================================================================
+// BATCH MT5 HISTORY SCREENSHOT SCANNER (CLOSED TRADES AUTO-LOGGER)
+// ============================================================================
+
+export interface Mt5HistoryTradeCandidate {
+  tempId: string;
+  ticketId: string | null;
+  instrument: string;
+  position: TradePosition;
+  lotSize: number;
+  entryPrice: number;
+  exitPrice: number;
+  stopLoss: number | null;
+  takeProfit: number | null;
+  commission: number;
+  swap: number;
+  netProfit: number;
+  openDateTime: string | null;
+  closeDateTime: string; // YYYY-MM-DDTHH:mm
+  closeType: TradeCloseType;
+  notes: string;
+  strategy: string;
+  session: TradingSession;
+  isDuplicate: boolean;
+  duplicateMatchId?: string;
+  selected: boolean;
+  sourceImageIndex?: number;
+}
+
+export function detectTradingSessionFromDateTime(dateTimeLocal: string): TradingSession {
+  const m = String(dateTimeLocal || '').match(/T(\d{2}):(\d{2})/);
+  if (!m) return 'London';
+  const hour = parseInt(m[1], 10);
+  if (!Number.isFinite(hour)) return 'London';
+  // WIB-aligned trading session defaults (user remains free to override per trade)
+  if (hour >= 6 && hour <= 13) return 'Asian';
+  if (hour >= 14 && hour <= 18) return 'London';
+  if (hour >= 19 && hour <= 22) return 'Overlap';
+  return 'New York';
+}
+
+function buildMt5Fingerprint(item: {
+  ticketId?: string | null;
+  instrument: string;
+  position: TradePosition;
+  lotSize: number;
+  entryPrice: number;
+  exitPrice: number;
+  netProfit: number;
+  closeDateTime?: string | null;
+}): string {
+  const cleanInst = normalizeScanInstrument(item.instrument);
+  const lot = Number(item.lotSize || 0).toFixed(2);
+  const entry = Number(item.entryPrice || 0).toFixed(2);
+  const exit = Number(item.exitPrice || 0).toFixed(2);
+  const net = Number(item.netProfit || 0).toFixed(2);
+  const datePart = item.closeDateTime ? item.closeDateTime.slice(0, 10) : '';
+  return `${cleanInst}|${item.position}|${lot}|${entry}|${exit}|${net}|${datePart}`;
+}
+
+export function detectDuplicateMt5Trade(
+  candidate: {
+    ticketId: string | null;
+    instrument: string;
+    position: TradePosition;
+    lotSize: number;
+    entryPrice: number;
+    exitPrice: number;
+    netProfit: number;
+    closeDateTime: string;
+  },
+  existingTrades: Trade[]
+): string | null {
+  if (!Array.isArray(existingTrades) || existingTrades.length === 0) return null;
+
+  const candTicket = candidate.ticketId ? candidate.ticketId.trim() : '';
+  const candInst = normalizeScanInstrument(candidate.instrument);
+  const candDateDay = (candidate.closeDateTime || '').slice(0, 10);
+
+  for (const t of existingTrades) {
+    if (candTicket) {
+      if (
+        t.id === `MT5-${candTicket}` ||
+        (t.notes && t.notes.includes(`#${candTicket}`)) ||
+        (t.executionNotes && t.executionNotes.includes(`#${candTicket}`))
+      ) {
+        return t.id;
+      }
+    }
+
+    const tInst = normalizeScanInstrument(t.instrument);
+    if (tInst !== candInst || t.position !== candidate.position) continue;
+
+    const sameLot = Math.abs((t.lotSize || 0) - candidate.lotSize) < 0.005;
+    const sameNet = Math.abs((t.netProfit || 0) - candidate.netProfit) < 0.05;
+    const sameEntry = Math.abs((t.entryPrice || 0) - candidate.entryPrice) < 0.15;
+    const sameExit =
+      t.exitPrice !== undefined &&
+      t.exitPrice !== null &&
+      Math.abs(t.exitPrice - candidate.exitPrice) < 0.15;
+
+    if (sameLot && sameNet && sameEntry && sameExit) {
+      const tDay = (t.dateTime || '').slice(0, 10);
+      if (!candDateDay || !tDay || tDay === candDateDay) {
+        return t.id;
+      }
+    }
+  }
+
+  return null;
+}
+
+export async function scanSingleMt5HistoryScreenshot(
+  imageDataUrl: string,
+  options?: {
+    existingTrades?: Trade[];
+    sourceImageIndex?: number;
+    defaultStrategy?: string;
+  }
+): Promise<{
+  trades: Mt5HistoryTradeCandidate[];
+  modelUsed: string;
+  source: string;
+}> {
+  const trimmed = (imageDataUrl || '').trim();
+  if (!trimmed) {
+    throw new Error('Gambar screenshot MT5 kosong.');
+  }
+
+  const endpoints = getApiEndpointCandidates('/api/extract-mt5-history');
+  let lastError = 'Gagal menghubungi layanan AI Scan Kilat MT5.';
+
+  for (const endpoint of endpoints) {
+    const res = await nativeAwarePostJson(endpoint, { imageBase64: trimmed }, 65000);
+    if (res.ok && res.json?.success && res.json?.data) {
+      const rawTrades: any[] = Array.isArray(res.json.data.trades) ? res.json.data.trades : [];
+      const existingTrades = options?.existingTrades || [];
+      const defaultStrategy = options?.defaultStrategy || 'MT5 History Scan';
+      const fallbackNow = normalizeTradeDateTimeLocal(new Date());
+
+      const mapped: Mt5HistoryTradeCandidate[] = rawTrades.map((row, idx) => {
+        const instrument = normalizeScanInstrument(row.instrument);
+        const rawPosStr = String(row.position || '').trim().toUpperCase();
+        const position: TradePosition =
+          rawPosStr.includes('SELL') || rawPosStr.includes('JUAL') || rawPosStr.includes('SHORT')
+            ? 'SELL'
+            : 'BUY';
+        const lotSize =
+          typeof row.lotSize === 'number' && Number.isFinite(row.lotSize) && row.lotSize > 0
+            ? Number(row.lotSize.toFixed(2))
+            : 0.01;
+        const entryPrice =
+          typeof row.entryPrice === 'number' && Number.isFinite(row.entryPrice)
+            ? row.entryPrice
+            : 0;
+        const exitPrice =
+          typeof row.exitPrice === 'number' && Number.isFinite(row.exitPrice)
+            ? row.exitPrice
+            : entryPrice;
+        const stopLoss =
+          typeof row.stopLoss === 'number' && Number.isFinite(row.stopLoss) && row.stopLoss > 0
+            ? row.stopLoss
+            : null;
+        const takeProfit =
+          typeof row.takeProfit === 'number' && Number.isFinite(row.takeProfit) && row.takeProfit > 0
+            ? row.takeProfit
+            : null;
+        const commission =
+          typeof row.commission === 'number' && Number.isFinite(row.commission)
+            ? Number(Math.abs(row.commission).toFixed(2))
+            : 0;
+        const swap =
+          typeof row.swap === 'number' && Number.isFinite(row.swap)
+            ? Number(row.swap.toFixed(2))
+            : 0;
+        const netProfit =
+          typeof row.netProfit === 'number' && Number.isFinite(row.netProfit)
+            ? Number(row.netProfit.toFixed(2))
+            : 0;
+        const closeDateTime =
+          typeof row.closeDateTime === 'string' && row.closeDateTime.trim()
+            ? normalizeTradeDateTimeLocal(row.closeDateTime)
+            : typeof row.openDateTime === 'string' && row.openDateTime.trim()
+            ? normalizeTradeDateTimeLocal(row.openDateTime)
+            : fallbackNow;
+        const openDateTime =
+          typeof row.openDateTime === 'string' && row.openDateTime.trim()
+            ? normalizeTradeDateTimeLocal(row.openDateTime)
+            : null;
+        const rawCloseType = String(row.closeType || '').toUpperCase();
+        const closeType: TradeCloseType =
+          rawCloseType === 'TP' ? 'TP' : rawCloseType === 'SL' ? 'SL' : 'Manual';
+        const rawTicketStr =
+          row.ticketId !== null && row.ticketId !== undefined
+            ? String(row.ticketId).replace(/^#/, '').trim()
+            : '';
+        const ticketId =
+          rawTicketStr && !/^(null|undefined|none|n\/a|-)$/i.test(rawTicketStr)
+            ? rawTicketStr
+            : null;
+
+        const dupId = detectDuplicateMt5Trade(
+          {
+            ticketId,
+            instrument,
+            position,
+            lotSize,
+            entryPrice,
+            exitPrice,
+            netProfit,
+            closeDateTime,
+          },
+          existingTrades
+        );
+
+        return {
+          tempId: `mt5_${Date.now()}_${options?.sourceImageIndex ?? 0}_${idx}_${Math.random()
+            .toString(36)
+            .slice(2, 6)}`,
+          ticketId,
+          instrument,
+          position,
+          lotSize,
+          entryPrice,
+          exitPrice,
+          stopLoss,
+          takeProfit,
+          commission,
+          swap,
+          netProfit,
+          openDateTime,
+          closeDateTime,
+          closeType,
+          notes: typeof row.notes === 'string' ? row.notes.trim() : '',
+          strategy: defaultStrategy,
+          session: detectTradingSessionFromDateTime(openDateTime || closeDateTime),
+          isDuplicate: Boolean(dupId),
+          duplicateMatchId: dupId || undefined,
+          selected: !dupId,
+          sourceImageIndex: options?.sourceImageIndex,
+        };
+      });
+
+      return {
+        trades: mapped,
+        modelUsed: String(res.json.data.modelUsed || 'gemini-4-hydrogen'),
+        source: String(res.json.data.source || 'MT5_HISTORY'),
+      };
+    }
+
+    if (res.json?.error) {
+      lastError = res.json.error;
+      if (res.json?.quotaExhausted) {
+        break;
+      }
+    }
+  }
+
+  throw new Error(lastError);
+}
+
+export function deduplicateBatchMt5Candidates(
+  candidates: Mt5HistoryTradeCandidate[]
+): Mt5HistoryTradeCandidate[] {
+  const seenTickets = new Set<string>();
+  const seenFingerprints = new Set<string>();
+  const result: Mt5HistoryTradeCandidate[] = [];
+
+  for (const cand of candidates) {
+    if (cand.ticketId) {
+      const tk = cand.ticketId.trim();
+      if (seenTickets.has(tk)) continue;
+      seenTickets.add(tk);
+    }
+    const fp = buildMt5Fingerprint(cand);
+    if (seenFingerprints.has(fp)) continue;
+    seenFingerprints.add(fp);
+    result.push(cand);
+  }
+  return result;
+}
+
+export function buildClosedTradeFromMt5Candidate(
+  candidate: Mt5HistoryTradeCandidate,
+  usedIds: Set<string>,
+  settings: AppSettings
+): Trade {
+  let finalId = candidate.ticketId ? `MT5-${candidate.ticketId}` : '';
+  if (!finalId || usedIds.has(finalId.toLowerCase())) {
+    do {
+      finalId = `TRD-${Math.floor(100000 + Math.random() * 900000)}`;
+    } while (usedIds.has(finalId.toLowerCase()));
+  }
+  usedIds.add(finalId.toLowerCase());
+
+  const nowIso = new Date().toISOString();
+  const normalizedComm = Number(Math.abs(candidate.commission || 0).toFixed(2));
+  const normalizedSwap = Number((candidate.swap || 0).toFixed(2));
+  const normalizedNet = Number((candidate.netProfit || 0).toFixed(2));
+  const grossProfit = computeGrossFromNet(normalizedNet, normalizedComm, normalizedSwap);
+  const outcome = classifyNetProfitOutcome(normalizedNet);
+
+  const entryTime = normalizeTradeDateTimeLocal(candidate.openDateTime || candidate.closeDateTime);
+  const exitTime = normalizeTradeDateTimeLocal(candidate.closeDateTime);
+  const cleanSL =
+    candidate.stopLoss !== null && candidate.stopLoss > 0 ? candidate.stopLoss : undefined;
+  const cleanTP =
+    candidate.takeProfit !== null && candidate.takeProfit > 0 ? candidate.takeProfit : undefined;
+
+  const notesParts: string[] = [];
+  if (candidate.ticketId) notesParts.push(`MT5 Ticket #${candidate.ticketId}`);
+  if (candidate.notes) notesParts.push(candidate.notes);
+  const humanNote = notesParts.join(' · ') || 'Diimpor otomatis via Scan Kilat Riwayat MT5';
+
+  const baseExecutionNotes = encodeExecutionAdherenceNotes('AUTO', '');
+  const compliance = evaluateTradeCompliance(
+    {
+      instrument: candidate.instrument,
+      position: candidate.position,
+      lotSize: candidate.lotSize,
+      entryPrice: candidate.entryPrice,
+      stopLoss: cleanSL,
+      takeProfit: cleanTP,
+      exitPrice: candidate.exitPrice,
+      riskAmount: 0,
+      netProfit: normalizedNet,
+      executionNotes: baseExecutionNotes || undefined,
+    },
+    settings
+  );
+
+  const closeExchangeRate = getCurrentUsdIdrSnapshot(getCachedUsdIdrRate());
+
+  const activityLog = [
+    createActivityEvent('TRADE_CREATED', 'Trade Logged via MT5 History Scan', {
+      timestamp: nowIso,
+      newValue: `${candidate.instrument} ${candidate.position} ${candidate.lotSize.toFixed(2)} Lot @ ${candidate.entryPrice}`,
+    }),
+    createActivityEvent('POSITION_OPENED', 'Position Opened (MT5)', {
+      timestamp: entryTime,
+      newValue: `Entry: ${candidate.entryPrice} (${candidate.lotSize.toFixed(2)} Lot)`,
+    }),
+    createActivityEvent('POSITION_CLOSED', `Position Closed (${candidate.closeType})`, {
+      timestamp: exitTime,
+      newValue: `Exit: ${candidate.exitPrice} · Net P/L: ${normalizedNet >= 0 ? '+' : ''}${normalizedNet.toFixed(2)}`,
+    }),
+  ];
+
+  const lifecycleMeta: TradeLifecycleMeta = {
+    status: 'CLOSED',
+    orderType: 'Market',
+    plannedEntry: candidate.entryPrice,
+    plannedLot: candidate.lotSize,
+    plannedStopLoss: cleanSL,
+    plannedTakeProfit: cleanTP,
+    plannedDateTime: entryTime,
+    actualEntry: candidate.entryPrice,
+    actualLot: candidate.lotSize,
+    actualExit: candidate.exitPrice,
+    entryTime,
+    exitTime,
+    closeType: candidate.closeType,
+    closeExchangeRate,
+    activityLog,
+  };
+
+  const finalExecutionNotes = encodeLifecycleMetaIntoExecutionNotes(
+    baseExecutionNotes,
+    lifecycleMeta
+  );
+
+  return {
+    id: finalId,
+    dateTime: exitTime,
+    instrument: normalizeScanInstrument(candidate.instrument),
+    position: candidate.position,
+    strategy: candidate.strategy.trim() || 'MT5 History Scan',
+    session: candidate.session || detectTradingSessionFromDateTime(entryTime),
+    entryPrice: candidate.entryPrice,
+    stopLoss: cleanSL,
+    takeProfit: cleanTP,
+    exitPrice: candidate.exitPrice,
+    lotSize: candidate.lotSize,
+    riskAmount: 0,
+    riskPercentage: 0,
+    outcome,
+    grossProfit,
+    commission: normalizedComm,
+    swap: normalizedSwap,
+    netProfit: normalizedNet,
+    screenshotUrl: undefined,
+    notes: humanNote,
+    disciplineRating: compliance.rating !== null ? compliance.rating : undefined,
+    executionNotes: finalExecutionNotes || undefined,
+    closeExchangeRate,
+    isDemo: false,
+    createdAt: nowIso,
+    updatedAt: nowIso,
+  };
+}
+

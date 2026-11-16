@@ -739,18 +739,18 @@ export const RiskCalculatorView: React.FC<RiskCalculatorViewProps> = ({
             <div>
               <h2 className="text-sm font-semibold uppercase tracking-wider text-[#151D2A] dark:text-[#F2F5F9]">
                 {lotSubMode === 'LOT_CALCULATOR'
-                  ? tr('Kalkulator Lot', 'Lot Calculator')
-                  : tr('Ukuran Posisi Otomatis', 'Position Sizing')}
+                  ? tr('Simulasi Lot Manual', 'Manual Lot Simulator')
+                  : tr('Hitung Lot Otomatis (% Risiko)', 'Auto Lot Sizing (% Risk)')}
               </h2>
               <p className="text-xs text-[#697586] dark:text-[#8E98A8] mt-0.5">
                 {lotSubMode === 'LOT_CALCULATOR'
                   ? tr(
-                      'Perencana Posisi Manual — Simulasi perencanaan posisi trading dengan ukuran lot manual',
-                      'Manual Position Planner — Simulate trading position planning with manual lot size'
+                      'Masukkan ukuran Lot pilihan Anda → cek nominal potensi Rugi ($) & Profit ($) sebelum entry',
+                      'Enter your chosen Lot size → check exact $ Risk & $ Profit before entering a trade'
                     )
                   : tr(
-                      'Penentuan Lot Otomatis — Penentuan ukuran lot otomatis berdasarkan batas risiko akun',
-                      'Automatic Position Sizing — Calculate automatic lot size based on account risk limit'
+                      'Masukkan batas % risiko akun → dapatkan ukuran Lot ideal secara otomatis sesuai jarak Stop Loss',
+                      'Enter your account % risk limit → automatically get the ideal Lot size for your Stop Loss distance'
                     )}
               </p>
             </div>
@@ -759,24 +759,24 @@ export const RiskCalculatorView: React.FC<RiskCalculatorViewProps> = ({
               <button
                 type="button"
                 onClick={() => setLotSubMode('LOT_CALCULATOR')}
-                className={`px-4 py-1.5 rounded-full text-xs font-semibold transition-colors ${
+                className={`px-4 py-1.5 rounded-full text-xs font-semibold transition-colors cursor-pointer ${
                   lotSubMode === 'LOT_CALCULATOR'
                     ? 'bg-[#3B82F6] text-white'
                     : 'text-[#697586] dark:text-[#8E98A8] hover:text-[#151D2A] dark:hover:text-[#F2F5F9]'
                 }`}
               >
-                {tr('Kalkulator Lot', 'Lot Calculator')}
+                {tr('Simulasi Lot', 'Lot Simulator')}
               </button>
               <button
                 type="button"
                 onClick={() => setLotSubMode('LOT_SIZING')}
-                className={`px-4 py-1.5 rounded-full text-xs font-semibold transition-colors ${
+                className={`px-4 py-1.5 rounded-full text-xs font-semibold transition-colors cursor-pointer ${
                   lotSubMode === 'LOT_SIZING'
                     ? 'bg-[#3B82F6] text-white'
                     : 'text-[#697586] dark:text-[#8E98A8] hover:text-[#151D2A] dark:hover:text-[#F2F5F9]'
                 }`}
               >
-                {tr('Ukuran Posisi', 'Position Sizing')}
+                {tr('Cari Lot (% Risiko)', 'Auto Lot (% Risk)')}
               </button>
             </div>
           </div>

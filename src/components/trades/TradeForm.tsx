@@ -147,9 +147,9 @@ const EXECUTION_ADHERENCE_OPTIONS: { value: ExecutionAdherenceTag; labelId: stri
  */
 export const compressAndResizeImage = (
   file: File | Blob,
-  maxWidth = 2048,
-  maxHeight = 2048,
-  quality = 0.94
+  maxWidth = 1600,
+  maxHeight = 1600,
+  quality = 0.84
 ): Promise<string> => {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();

@@ -46,7 +46,9 @@ import {
   XCircle,
   Lock,
   X,
+  ScanLine,
 } from 'lucide-react';
+import { Mt5HistoryScanModal } from './Mt5HistoryScanModal';
 
 interface DateGroupCardProps {
   section: {
@@ -82,6 +84,7 @@ const DateGroupCard: React.FC<DateGroupCardProps> = ({
   const { tr } = useLanguage();
   const scrollRef = React.useRef<HTMLDivElement>(null);
   const [currentVisibleIndex, setCurrentVisibleIndex] = useState(1);
+  const [isExpanded, setIsExpanded] = useState(false);
   const count = section.trades.length;
   const hasMoreThanTwo = count > 2;
 
@@ -128,12 +131,14 @@ const DateGroupCard: React.FC<DateGroupCardProps> = ({
       {/* Trades Rows */}
       <div
         ref={scrollRef}
-        onScroll={hasMoreThanTwo ? handleScroll : undefined}
+        onScroll={hasMoreThanTwo && !isExpanded ? handleScroll : undefined}
         className={`divide-y divide-black/5 dark:divide-white/[0.06] ${
-          hasMoreThanTwo ? 'max-h-[148px] sm:max-h-[154px] overflow-y-auto' : ''
+          hasMoreThanTwo && !isExpanded
+            ? 'max-h-[212px] sm:max-h-[224px] overflow-y-auto overscroll-y-auto'
+            : ''
         }`}
         style={
-          hasMoreThanTwo
+          hasMoreThanTwo && !isExpanded
             ? {
                 scrollbarWidth: 'thin',
                 scrollbarColor: 'rgba(255, 255, 255, 0.15) transparent',
@@ -334,38 +339,51 @@ const DateGroupCard: React.FC<DateGroupCardProps> = ({
         })}
       </div>
 
-      {/* Minimalist Scroll Indicator: ONLY shown if trades.length > 2 */}
+      {/* Minimalist Scroll & Expand Indicator: ONLY shown if trades.length > 2 */}
       {hasMoreThanTwo && (
         <div
           data-testid={`trade-log-scroll-indicator-${section.dateKey}`}
-          className="px-4 py-1.5 border-t border-black/10 dark:border-white/[0.06] bg-black/5 dark:bg-black/30 flex items-center justify-between text-[11px] text-[#697586] dark:text-[#929BA9] font-mono-numbers select-none"
+          className="px-4 py-1.5 border-t border-black/10 dark:border-white/[0.06] bg-black/5 dark:bg-black/30 flex items-center justify-between gap-2 text-[11px] text-[#697586] dark:text-[#929BA9] font-mono-numbers select-none"
         >
-          <span className="text-[10px] tracking-wider uppercase font-sans">
-            {count} {tr('TRANSAKSI', 'TRADES')}
-          </span>
-          <div className="flex items-center gap-1.5">
-            <button
-              type="button"
-              onClick={() => handleScrollStep('up')}
-              className="p-1 rounded text-xs leading-none hover:text-[#151D2A] dark:hover:text-[#F2F5F9] hover:bg-black/5 dark:hover:bg-white/10 transition-colors cursor-pointer"
-              title={tr('Scroll ke atas', 'Scroll up')}
-              aria-label={tr('Scroll ke atas', 'Scroll up')}
-            >
-              ↑
-            </button>
-            <span className="font-semibold text-xs tabular-nums text-[#151D2A] dark:text-[#F2F5F9]">
-              {currentVisibleIndex}/{count}
+          <div className="flex items-center gap-2">
+            <span className="text-[10px] tracking-wider uppercase font-sans">
+              {count} {tr('TRANSAKSI', 'TRADES')}
             </span>
             <button
               type="button"
-              onClick={() => handleScrollStep('down')}
-              className="p-1 rounded text-xs leading-none hover:text-[#151D2A] dark:hover:text-[#F2F5F9] hover:bg-black/5 dark:hover:bg-white/10 transition-colors cursor-pointer"
-              title={tr('Scroll ke bawah', 'Scroll down')}
-              aria-label={tr('Scroll ke bawah', 'Scroll down')}
+              onClick={() => setIsExpanded((prev) => !prev)}
+              className="text-[10px] font-sans font-semibold px-2 py-0.5 rounded border border-black/10 dark:border-white/[0.08] bg-white/60 dark:bg-white/[0.04] text-[#151D2A] dark:text-[#F2F5F9] hover:border-black/25 dark:hover:border-white/25 transition-colors cursor-pointer"
             >
-              ↓
+              {isExpanded
+                ? tr('Ringkas', 'Collapse')
+                : tr(`Tampilkan Semua (${count})`, `Show All (${count})`)}
             </button>
           </div>
+          {!isExpanded && (
+            <div className="flex items-center gap-1.5">
+              <button
+                type="button"
+                onClick={() => handleScrollStep('up')}
+                className="p-1 rounded text-xs leading-none hover:text-[#151D2A] dark:hover:text-[#F2F5F9] hover:bg-black/5 dark:hover:bg-white/10 transition-colors cursor-pointer"
+                title={tr('Scroll ke atas', 'Scroll up')}
+                aria-label={tr('Scroll ke atas', 'Scroll up')}
+              >
+                ↑
+              </button>
+              <span className="font-semibold text-xs tabular-nums text-[#151D2A] dark:text-[#F2F5F9]">
+                {currentVisibleIndex}/{count}
+              </span>
+              <button
+                type="button"
+                onClick={() => handleScrollStep('down')}
+                className="p-1 rounded text-xs leading-none hover:text-[#151D2A] dark:hover:text-[#F2F5F9] hover:bg-black/5 dark:hover:bg-white/10 transition-colors cursor-pointer"
+                title={tr('Scroll ke bawah', 'Scroll down')}
+                aria-label={tr('Scroll ke bawah', 'Scroll down')}
+              >
+                ↓
+              </button>
+            </div>
+          )}
         </div>
       )}
     </div>
@@ -392,6 +410,9 @@ interface TradeTableProps {
   cloudLoadError?: string | null;
   onReloadFromCloud?: () => void;
   onSyncLocalToCloud?: () => void;
+  onImportBatchTrades?: (
+    newTrades: Trade[]
+  ) => Promise<{ success: boolean; error?: string; importedCount?: number }>;
 }
 
 export const TradeTable: React.FC<TradeTableProps> = ({
@@ -409,6 +430,7 @@ export const TradeTable: React.FC<TradeTableProps> = ({
   dataSource = 'local',
   isCloudSyncing = false,
   onReloadFromCloud,
+  onImportBatchTrades,
 }) => {
   const { tr } = useLanguage();
   const [filters, setFilters] = useState<TradeFilter>({
@@ -425,6 +447,7 @@ export const TradeTable: React.FC<TradeTableProps> = ({
   });
 
   const [showAdvancedFilters, setShowAdvancedFilters] = useState(false);
+  const [isMt5ScanModalOpen, setIsMt5ScanModalOpen] = useState(false);
   const [currentPage, setCurrentPage] = useState<number>(1);
   const [pageSize, setPageSize] = useState<number>(25);
 
@@ -1035,28 +1058,46 @@ export const TradeTable: React.FC<TradeTableProps> = ({
         </div>
       </div>
 
-      {/* 3. SEARCH & ICON-ONLY FILTER TOOLBAR */}
+      {/* 3. SEARCH, FILTER & SCAN MT5 TOOLBAR */}
       <div className="space-y-3">
-        <div className="flex items-center gap-2.5">
+        <div className="flex items-center gap-2">
           {/* Search Input */}
           <div className="relative flex-1">
-            <Search className="absolute left-3 top-2.5 h-4 w-4 stroke-[1.75] text-[#697586] dark:text-[#929BA9]" />
+            <Search className="absolute left-3.5 top-2.5 h-4 w-4 stroke-[1.75] text-[#697586] dark:text-[#929BA9]" />
             <input
               type="text"
               placeholder={tr('Cari transaksi...', 'Search trades...')}
               value={filters.search}
               onChange={(e) => setFilters({ ...filters, search: e.target.value })}
-              className="w-full rounded-lg bg-[#F5F7FA] dark:bg-[#101318] border border-[#DDE3EA] dark:border-white/[0.08] pl-9 pr-3 py-2 text-xs text-[#151D2A] dark:text-[#F2F5F9] placeholder-[#697586] dark:placeholder-[#929BA9] focus:border-black/30 dark:focus:border-white/30 focus:outline-none transition-colors"
+              className="w-full rounded-full bg-[#F5F7FA] dark:bg-[#101318] border border-[#DDE3EA] dark:border-white/[0.08] pl-9 pr-3.5 py-2 text-xs text-[#151D2A] dark:text-[#F2F5F9] placeholder-[#697586] dark:placeholder-[#929BA9] focus:border-black/30 dark:focus:border-white/30 focus:outline-none transition-colors"
             />
           </div>
 
-          {/* Filter Button: Icon Only */}
+          {/* Scan Kilat Riwayat MT5 Button (Option 2 Minimalis — Jurnal Trade Toolbar) */}
+          {onImportBatchTrades && (
+            <button
+              type="button"
+              onClick={() => setIsMt5ScanModalOpen(true)}
+              data-testid="scan-mt5-history-btn"
+              title={tr(
+                'Scan Kilat Riwayat MT5 (Auto Log Trade Close)',
+                'Quick Scan MT5 History (Auto Log Closed Trades)'
+              )}
+              aria-label={tr('Scan Kilat Riwayat MT5', 'Quick Scan MT5 History')}
+              className="inline-flex items-center justify-center gap-1.5 h-9 w-9 sm:w-auto sm:px-3.5 rounded-full bg-[#151D2A] hover:bg-[#1E293B] dark:bg-[#F2F4F7] dark:hover:bg-white text-white dark:text-[#050607] text-xs font-bold transition-colors cursor-pointer shrink-0 whitespace-nowrap"
+            >
+              <ScanLine className="h-4 w-4 stroke-[1.85]" />
+              <span className="hidden sm:inline">{tr('Scan MT5', 'Scan MT5')}</span>
+            </button>
+          )}
+
+          {/* Filter Button: Circle Icon Only */}
           <button
             type="button"
             onClick={() => setShowAdvancedFilters(!showAdvancedFilters)}
             title={tr('Filter & Urutan Transaksi', 'Filter & Sort Trades')}
             aria-label={tr('Filter & Urutan Transaksi', 'Filter & Sort Trades')}
-            className={`flex items-center justify-center h-9 w-9 rounded-lg border text-xs font-medium transition-colors cursor-pointer shrink-0 ${
+            className={`flex items-center justify-center h-9 w-9 rounded-full border text-xs font-medium transition-colors cursor-pointer shrink-0 ${
               showAdvancedFilters ||
               filters.lifecycleStatus !== 'ALL' ||
               filters.outcome !== 'ALL' ||
@@ -1697,6 +1738,17 @@ export const TradeTable: React.FC<TradeTableProps> = ({
             </form>
           </div>
         </div>
+      )}
+
+      {/* Batch MT5 History Scanner Modal */}
+      {onImportBatchTrades && (
+        <Mt5HistoryScanModal
+          isOpen={isMt5ScanModalOpen}
+          onClose={() => setIsMt5ScanModalOpen(false)}
+          existingTrades={trades}
+          settings={settings}
+          onImportBatchTrades={onImportBatchTrades}
+        />
       )}
     </div>
   );

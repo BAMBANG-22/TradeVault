@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useEffect, useLayoutEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useLayoutEffect, useRef, useCallback, Suspense, lazy } from 'react';
 import { Check, AlertCircle, X } from 'lucide-react';
 import { Trade } from './types/trade';
 import { AppSettings } from './types/settings';
@@ -56,16 +56,29 @@ import { Navbar } from './components/layout/Navbar';
 import { MobileNav } from './components/layout/MobileNav';
 import { SplashScreen } from './components/layout/SplashScreen';
 
-// Views
+// Views (Core primary views eagerly loaded; heavy secondary views code-split via React.lazy)
 import { DashboardView } from './components/dashboard/DashboardView';
 import { TradeTable } from './components/trades/TradeTable';
 import { TradeForm } from './components/trades/TradeForm';
-import { AnalyticsView } from './components/analytics/AnalyticsView';
-import { RiskCalculatorView } from './components/risk/RiskCalculatorView';
-import { MarketChartView } from './components/chart/MarketChartView';
-import { MacroNewsView } from './components/news/MacroNewsView';
-import { CycleConfluencePage } from './pages/CycleConfluencePage';
-import { SettingsView } from './components/settings/SettingsView';
+
+const AnalyticsView = lazy(() =>
+  import('./components/analytics/AnalyticsView').then((m) => ({ default: m.AnalyticsView }))
+);
+const RiskCalculatorView = lazy(() =>
+  import('./components/risk/RiskCalculatorView').then((m) => ({ default: m.RiskCalculatorView }))
+);
+const MarketChartView = lazy(() =>
+  import('./components/chart/MarketChartView').then((m) => ({ default: m.MarketChartView }))
+);
+const MacroNewsView = lazy(() =>
+  import('./components/news/MacroNewsView').then((m) => ({ default: m.MacroNewsView }))
+);
+const CycleConfluencePage = lazy(() =>
+  import('./pages/CycleConfluencePage').then((m) => ({ default: m.CycleConfluencePage }))
+);
+const SettingsView = lazy(() =>
+  import('./components/settings/SettingsView').then((m) => ({ default: m.SettingsView }))
+);
 
 // Modals
 import { DeleteConfirmModal } from './components/trades/DeleteConfirmModal';
@@ -257,6 +270,95 @@ export default function App() {
     window.addEventListener('scroll', handleWindowScroll, { passive: true });
     return () => window.removeEventListener('scroll', handleWindowScroll);
   }, []);
+
+  // Native Android hardware back button handling: close modals/drawers first, or return to Dashboard before exiting
+  useEffect(() => {
+    if (!Capacitor.isNativePlatform()) return;
+    let listenerHandle: { remove: () => Promise<void> } | null = null;
+    let isDisposed = false;
+
+    CapacitorApp.addListener('backButton', () => {
+      if (screenshotModal) {
+        setScreenshotModal(null);
+        return;
+      }
+      if (tradeForDelete && !isCloudSyncing) {
+        setTradeForDelete(null);
+        return;
+      }
+      if (isClearDemoModalOpen) {
+        setIsClearDemoModalOpen(false);
+        return;
+      }
+      if (isBackupModalOpen) {
+        setIsBackupModalOpen(false);
+        return;
+      }
+      if (isLocalInfoModalOpen) {
+        setIsLocalInfoModalOpen(false);
+        return;
+      }
+      if (isSupabaseConfigOpen) {
+        setIsSupabaseConfigOpen(false);
+        return;
+      }
+      if (isAccountModalOpen) {
+        setIsAccountModalOpen(false);
+        return;
+      }
+      if (isAuthModalOpen) {
+        setIsAuthModalOpen(false);
+        return;
+      }
+      if (isAddTradeModalOpen || activeTabRef.current === 'add-trade') {
+        setEditingTrade(null);
+        setIsAddTradeModalOpen(false);
+        if (activeTabRef.current === 'add-trade') {
+          handleNavigateTab('trades');
+        }
+        return;
+      }
+      if (isMobileMenuOpen) {
+        setIsMobileMenuOpen(false);
+        return;
+      }
+      if (activeTabRef.current === 'detail') {
+        handleNavigateTab('trades');
+        return;
+      }
+      if (activeTabRef.current !== 'dashboard') {
+        handleNavigateTab('dashboard');
+        return;
+      }
+      void CapacitorApp.exitApp();
+    }).then((handle) => {
+      if (isDisposed) {
+        void handle.remove();
+      } else {
+        listenerHandle = handle;
+      }
+    });
+
+    return () => {
+      isDisposed = true;
+      if (listenerHandle) {
+        void listenerHandle.remove();
+      }
+    };
+  }, [
+    screenshotModal,
+    tradeForDelete,
+    isCloudSyncing,
+    isClearDemoModalOpen,
+    isBackupModalOpen,
+    isLocalInfoModalOpen,
+    isSupabaseConfigOpen,
+    isAccountModalOpen,
+    isAuthModalOpen,
+    isAddTradeModalOpen,
+    isMobileMenuOpen,
+    handleNavigateTab,
+  ]);
 
   // Synchronously restore target view scroll position before browser paint
   useLayoutEffect(() => {
@@ -1368,6 +1470,102 @@ export default function App() {
     }
   };
 
+  // Batch import trades from Scan Kilat Riwayat MT5 (supports both Local Mode and Cloud Sync)
+  const handleImportBatchTrades = async (
+    newTrades: Trade[]
+  ): Promise<{ success: boolean; error?: string; importedCount?: number }> => {
+    if (!Array.isArray(newTrades) || newTrades.length === 0) {
+      return { success: false, error: tr('Tidak ada transaksi untuk diimpor.', 'No trades to import.') };
+    }
+
+    const existingIds = new Set(tradesRef.current.map((t) => t.id.toLowerCase()));
+    const sanitizedBatch: Trade[] = [];
+    for (const item of newTrades) {
+      let id = item.id;
+      while (existingIds.has(id.toLowerCase())) {
+        id = `TRD-${Math.floor(100000 + Math.random() * 900000)}`;
+      }
+      existingIds.add(id.toLowerCase());
+      sanitizedBatch.push({ ...item, id });
+    }
+
+    let verifiedUserId: string | null = null;
+    if (currentUser) {
+      const { user } = await getCurrentUser();
+      verifiedUserId = user?.id || currentUser.id || null;
+    }
+
+    if (!verifiedUserId) {
+      const updatedTrades = [...sanitizedBatch, ...tradesRef.current];
+      const saveResult = saveStoredTrades(updatedTrades, null);
+      if (!saveResult.success) {
+        const err =
+          saveResult.error ||
+          tr('Gagal menyimpan transaksi MT5 ke penyimpanan lokal.', 'Failed to save MT5 trades locally.');
+        showToast(err, 'error');
+        return { success: false, error: err };
+      }
+      tradesRef.current = updatedTrades;
+      setTrades(updatedTrades);
+      showToast(
+        tr(
+          `${sanitizedBatch.length} transaksi riwayat MT5 berhasil dicatat ke Jurnal!`,
+          `${sanitizedBatch.length} MT5 history trades logged to Journal!`
+        )
+      );
+      return { success: true, importedCount: sanitizedBatch.length };
+    }
+
+    setIsCloudSyncing(true);
+    const savedCloudTrades: Trade[] = [];
+    let firstCloudError: string | undefined = undefined;
+
+    try {
+      for (const item of sanitizedBatch) {
+        const res = await insertTradeToSupabase(item, verifiedUserId);
+        if (res.success && res.data) {
+          savedCloudTrades.push(res.data);
+        } else {
+          firstCloudError =
+            res.error ||
+            tr('Gagal menyimpan salah satu transaksi ke Cloud.', 'Failed to save trade to Cloud.');
+          break;
+        }
+      }
+
+      if (savedCloudTrades.length > 0) {
+        const updatedTrades = [...savedCloudTrades, ...tradesRef.current];
+        tradesRef.current = updatedTrades;
+        setTrades(updatedTrades);
+        saveStoredTrades(updatedTrades, verifiedUserId);
+      }
+
+      if (firstCloudError) {
+        const msg =
+          savedCloudTrades.length > 0
+            ? tr(
+                `${savedCloudTrades.length} trade tersimpan ke Cloud, namun transaksi berikutnya gagal: ${firstCloudError}`,
+                `${savedCloudTrades.length} trades saved to Cloud, next trade failed: ${firstCloudError}`
+              )
+            : firstCloudError;
+        showToast(msg, 'error');
+        return { success: false, error: msg, importedCount: savedCloudTrades.length };
+      }
+
+      setDataSource('cloud');
+      setCloudLoadError(null);
+      showToast(
+        tr(
+          `${savedCloudTrades.length} transaksi riwayat MT5 berhasil dicatat & disinkronkan ke Cloud!`,
+          `${savedCloudTrades.length} MT5 history trades logged & synced to Cloud!`
+        )
+      );
+      return { success: true, importedCount: savedCloudTrades.length };
+    } finally {
+      setIsCloudSyncing(false);
+    }
+  };
+
   // Update whole trades array fallback
   const handleUpdateTrades = (newTrades: Trade[]) => {
     const saveResult = saveStoredTrades(newTrades, currentUser?.id || null);
@@ -1835,6 +2033,7 @@ export default function App() {
                 cloudLoadError={cloudLoadError}
                 onReloadFromCloud={handleReloadFromCloud}
                 onSyncLocalToCloud={handleSyncLocalToCloud}
+                onImportBatchTrades={handleImportBatchTrades}
                 onOpenMobileMenu={() => setIsMobileMenuOpen(true)}
                 onUpdateTradeLifecycle={(updatedTrade, origId) =>
                   handleSaveTrade(updatedTrade, origId, { stayOnCurrentTab: true })
@@ -1864,80 +2063,88 @@ export default function App() {
               </div>
             )}
 
-            {(activeTab === 'analytics' || visitedTabs['analytics']) && (
-              <div className={activeTab === 'analytics' ? 'block' : 'hidden'} aria-hidden={activeTab !== 'analytics'}>
-                <AnalyticsView
-                  trades={trades}
-                  settings={settings}
-                  onViewTrade={handleOpenTradeDetail}
-                />
-              </div>
-            )}
+            <Suspense
+              fallback={
+                <div className="flex items-center justify-center py-20 text-xs font-medium text-[#697586] dark:text-[#929BA9]">
+                  {tr('Memuat tampilan...', 'Loading view...')}
+                </div>
+              }
+            >
+              {(activeTab === 'analytics' || visitedTabs['analytics']) && (
+                <div className={activeTab === 'analytics' ? 'block' : 'hidden'} aria-hidden={activeTab !== 'analytics'}>
+                  <AnalyticsView
+                    trades={trades}
+                    settings={settings}
+                    onViewTrade={handleOpenTradeDetail}
+                  />
+                </div>
+              )}
 
-            {(activeTab === 'risk' || visitedTabs['risk']) && (
-              <div className={activeTab === 'risk' ? 'block' : 'hidden'} aria-hidden={activeTab !== 'risk'}>
-                <RiskCalculatorView
-                  currentEquity={currentEquity}
-                  settings={settings}
-                  onUpdateSettings={handleUpdateSettings}
-                  dailyLossToday={metrics.dailyLossToday}
-                  trades={trades}
-                />
-              </div>
-            )}
+              {(activeTab === 'risk' || visitedTabs['risk']) && (
+                <div className={activeTab === 'risk' ? 'block' : 'hidden'} aria-hidden={activeTab !== 'risk'}>
+                  <RiskCalculatorView
+                    currentEquity={currentEquity}
+                    settings={settings}
+                    onUpdateSettings={handleUpdateSettings}
+                    dailyLossToday={metrics.dailyLossToday}
+                    trades={trades}
+                  />
+                </div>
+              )}
 
-            {(activeTab === 'market-chart' || visitedTabs['market-chart']) && (
-              <div className={activeTab === 'market-chart' ? 'block' : 'hidden'} aria-hidden={activeTab !== 'market-chart'}>
-                <MarketChartView
-                  isActive={activeTab === 'market-chart'}
-                  currentUser={currentUser}
-                  trades={trades}
-                  settings={settings}
-                  currentEquity={currentEquity}
-                  onOpenAuth={() => setIsAuthModalOpen(true)}
-                  onOpenAccount={() => setIsAccountModalOpen(true)}
-                  onCreateTradeFromPosition={handleCreateTradeFromChart}
-                />
-              </div>
-            )}
+              {(activeTab === 'market-chart' || visitedTabs['market-chart']) && (
+                <div className={activeTab === 'market-chart' ? 'block' : 'hidden'} aria-hidden={activeTab !== 'market-chart'}>
+                  <MarketChartView
+                    isActive={activeTab === 'market-chart'}
+                    currentUser={currentUser}
+                    trades={trades}
+                    settings={settings}
+                    currentEquity={currentEquity}
+                    onOpenAuth={() => setIsAuthModalOpen(true)}
+                    onOpenAccount={() => setIsAccountModalOpen(true)}
+                    onCreateTradeFromPosition={handleCreateTradeFromChart}
+                  />
+                </div>
+              )}
 
-            {(activeTab === 'macro-news' || visitedTabs['macro-news']) && (
-              <div className={activeTab === 'macro-news' ? 'block' : 'hidden'} aria-hidden={activeTab !== 'macro-news'}>
-                <MacroNewsView />
-              </div>
-            )}
+              {(activeTab === 'macro-news' || visitedTabs['macro-news']) && (
+                <div className={activeTab === 'macro-news' ? 'block' : 'hidden'} aria-hidden={activeTab !== 'macro-news'}>
+                  <MacroNewsView isActive={activeTab === 'macro-news'} />
+                </div>
+              )}
 
-            {(activeTab === 'cycle-confluence' || visitedTabs['cycle-confluence']) && (
-              <div className={activeTab === 'cycle-confluence' ? 'block' : 'hidden'} aria-hidden={activeTab !== 'cycle-confluence'}>
-                <CycleConfluencePage isActive={activeTab === 'cycle-confluence'} />
-              </div>
-            )}
+              {(activeTab === 'cycle-confluence' || visitedTabs['cycle-confluence']) && (
+                <div className={activeTab === 'cycle-confluence' ? 'block' : 'hidden'} aria-hidden={activeTab !== 'cycle-confluence'}>
+                  <CycleConfluencePage isActive={activeTab === 'cycle-confluence'} />
+                </div>
+              )}
 
-            {(activeTab === 'settings' || visitedTabs['settings']) && (
-              <div className={activeTab === 'settings' ? 'block' : 'hidden'} aria-hidden={activeTab !== 'settings'}>
-                <SettingsView
-                  settings={settings}
-                  trades={trades}
-                  onSaveSettings={handleUpdateSettings}
-                  onUpdateTrades={handleUpdateTrades}
-                  onImportCsvTrades={handleImportCsvTrades}
-                  onLoadDemoTrades={handleLoadDemoTrades}
-                  onClearAllTrades={handleClearAllTrades}
-                  onRequestClearDemo={() => setIsClearDemoModalOpen(true)}
-                  onOpenLocalInfo={() => setIsLocalInfoModalOpen(true)}
-                  onOpenBackupModal={() => setIsBackupModalOpen(true)}
-                  currentUser={currentUser}
-                  onOpenAuth={() => setIsAuthModalOpen(true)}
-                  onOpenAccount={() => setIsAccountModalOpen(true)}
-                  onOpenConfig={() => setIsSupabaseConfigOpen(true)}
-                  isCloudSyncing={isCloudSyncing}
-                  onSyncLocalToCloud={handleSyncLocalToCloud}
-                  onReloadFromCloud={handleReloadFromCloud}
-                  isDeveloperMode={isDeveloperMode}
-                  onUnlockDeveloperMode={handleUnlockDeveloperMode}
-                />
-              </div>
-            )}
+              {(activeTab === 'settings' || visitedTabs['settings']) && (
+                <div className={activeTab === 'settings' ? 'block' : 'hidden'} aria-hidden={activeTab !== 'settings'}>
+                  <SettingsView
+                    settings={settings}
+                    trades={trades}
+                    onSaveSettings={handleUpdateSettings}
+                    onUpdateTrades={handleUpdateTrades}
+                    onImportCsvTrades={handleImportCsvTrades}
+                    onLoadDemoTrades={handleLoadDemoTrades}
+                    onClearAllTrades={handleClearAllTrades}
+                    onRequestClearDemo={() => setIsClearDemoModalOpen(true)}
+                    onOpenLocalInfo={() => setIsLocalInfoModalOpen(true)}
+                    onOpenBackupModal={() => setIsBackupModalOpen(true)}
+                    currentUser={currentUser}
+                    onOpenAuth={() => setIsAuthModalOpen(true)}
+                    onOpenAccount={() => setIsAccountModalOpen(true)}
+                    onOpenConfig={() => setIsSupabaseConfigOpen(true)}
+                    isCloudSyncing={isCloudSyncing}
+                    onSyncLocalToCloud={handleSyncLocalToCloud}
+                    onReloadFromCloud={handleReloadFromCloud}
+                    isDeveloperMode={isDeveloperMode}
+                    onUnlockDeveloperMode={handleUnlockDeveloperMode}
+                  />
+                </div>
+              )}
+            </Suspense>
           </main>
         </div>
       </div>

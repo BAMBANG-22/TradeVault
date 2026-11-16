@@ -61,7 +61,7 @@ export const SplashScreen: React.FC<SplashScreenProps> = ({ onComplete }) => {
         }, 180);
       }}
       style={{ contain: 'strict', transform: 'translateZ(0)' }}
-      className={`fixed inset-0 z-[100] flex flex-col items-center justify-center bg-[#F5F7FA] dark:bg-[#080A0E] transition-opacity duration-280 ease-out will-change-[opacity] select-none ${
+      className={`fixed inset-0 z-[100] flex flex-col items-center justify-center bg-[#F5F7FA] dark:bg-[#050607] transition-opacity duration-280 ease-out will-change-[opacity] select-none ${
         phase === 'fading' ? 'opacity-0 pointer-events-none' : 'opacity-100 cursor-pointer'
       }`}
       aria-label="VLO"
