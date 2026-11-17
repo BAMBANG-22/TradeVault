@@ -400,7 +400,7 @@ export const Mt5HistoryScanModal: React.FC<Mt5HistoryScanModalProps> = ({
 
   return (
     <div
-      className="fixed inset-0 z-50 overflow-y-auto overscroll-contain flex flex-col items-center justify-center bg-black/75 backdrop-blur-sm p-3 sm:p-4 pt-[calc(0.75rem+env(safe-area-inset-top,0px))] pb-[calc(0.75rem+env(safe-area-inset-bottom,0px))] animate-in fade-in duration-150"
+      className="fixed inset-0 z-50 overflow-y-auto overscroll-contain flex flex-col items-center justify-center bg-black/60 dark:bg-black/75 p-3 sm:p-4 pt-[calc(0.75rem+env(safe-area-inset-top,0px))] pb-[calc(0.75rem+env(safe-area-inset-bottom,0px))] animate-in fade-in duration-150"
       role="dialog"
       aria-modal="true"
       aria-labelledby="mt5-scan-modal-title"
@@ -418,19 +418,19 @@ export const Mt5HistoryScanModal: React.FC<Mt5HistoryScanModalProps> = ({
           if (e.currentTarget === e.target) setIsDragging(false);
         }}
         onDrop={handleDrop}
-        className="relative w-[92vw] sm:w-full max-w-[460px] sm:max-w-[540px] max-h-[calc(100vh-1.5rem)] supports-[height:100dvh]:max-h-[calc(100dvh-1.5rem)] my-auto shrink-0 flex flex-col rounded-[28px] border border-[#DDE3EA] dark:border-[#1E232B] bg-white dark:bg-[#0B0D11] text-[#151D2A] dark:text-[#F2F4F7] font-['Arial',Helvetica,sans-serif] shadow-[0_24px_64px_rgba(15,23,42,0.18)] dark:shadow-[0_24px_64px_rgba(0,0,0,0.85)] overflow-hidden select-none"
+        className="relative w-[92vw] sm:w-full max-w-[460px] sm:max-w-[540px] max-h-[calc(100vh-1.5rem)] supports-[height:100dvh]:max-h-[calc(100dvh-1.5rem)] my-auto shrink-0 flex flex-col rounded-2xl border border-[#D9E2EC] dark:border-[#20252D] bg-white dark:bg-[#101318] text-[#0F172A] dark:text-[#F2F4F7] font-sans shadow-[0_20px_50px_-12px_rgba(15,23,42,0.22)] dark:shadow-[0_24px_60px_-12px_rgba(0,0,0,0.8)] overflow-hidden select-none"
       >
-        {/* Header — Identical to TradeForm */}
-        <div className="flex items-center justify-between px-5 pt-4 pb-3 border-b border-[#DDE3EA] dark:border-[#1E232B] shrink-0">
+        {/* Header */}
+        <div className="flex items-center justify-between px-5 pt-4 pb-3 border-b border-[#D9E2EC] dark:border-[#20252D] shrink-0">
           <div className="flex items-center gap-2.5 min-w-0">
             <h2
               id="mt5-scan-modal-title"
-              className="text-[15px] font-bold tracking-tight text-[#151D2A] dark:text-[#F2F4F7] truncate"
+              className="text-[15px] font-bold tracking-tight text-[#0F172A] dark:text-[#F2F4F7] truncate"
             >
               {tr('Catat dari Riwayat MT5', 'Import MT5 History')}
             </h2>
             {candidates.length > 0 && (
-              <span className="text-[10px] font-semibold tracking-wider uppercase text-[#697586] dark:text-[#929BA9] tabular-nums whitespace-nowrap shrink-0">
+              <span className="text-[10px] font-semibold tracking-wider uppercase text-[#526071] dark:text-[#929BA9] tabular-nums whitespace-nowrap shrink-0">
                 · {selectedCandidates.length}/{candidates.length} {tr('SIAP', 'READY')}
               </span>
             )}
@@ -442,14 +442,14 @@ export const Mt5HistoryScanModal: React.FC<Mt5HistoryScanModalProps> = ({
             disabled={isSaving}
             aria-label={tr('Tutup', 'Close')}
             title={tr('Tutup Formulir', 'Close Form')}
-            className="rounded-full p-1.5 text-[#697586] dark:text-[#929BA9] hover:text-[#151D2A] dark:hover:text-[#F2F4F7] hover:bg-[#F5F7FA] dark:hover:bg-[#151921] active:scale-95 transition-all disabled:opacity-50 cursor-pointer shrink-0"
+            className="rounded-full p-1.5 text-[#526071] dark:text-[#929BA9] hover:text-[#0F172A] dark:hover:text-[#F2F4F7] hover:bg-[#F5F7FA] dark:hover:bg-[#161A22] active:scale-95 transition-all disabled:opacity-50 cursor-pointer shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/35 dark:focus-visible:ring-white/35"
           >
             <X className="h-4 w-4 stroke-[2]" />
           </button>
         </div>
 
         {/* Seamless Hairline-Divided Body */}
-        <div className="flex-1 overflow-y-auto divide-y divide-[#DDE3EA] dark:divide-[#1E232B] min-h-0">
+        <div className="flex-1 overflow-y-auto divide-y divide-[#D9E2EC] dark:divide-[#20252D] min-h-0">
           <input
             ref={fileInputRef}
             type="file"
@@ -461,7 +461,7 @@ export const Mt5HistoryScanModal: React.FC<Mt5HistoryScanModalProps> = ({
 
           {/* Error Banner — Exact TradeForm pattern */}
           {errorMsg && (
-            <div className="px-5 py-2.5 bg-[#E05260]/10">
+            <div className="px-5 py-2.5 bg-[#E11D48]/10 dark:bg-[#E05260]/10">
               <div className="flex items-start gap-2 text-[11px] text-[#E11D48] dark:text-[#E05260]">
                 <AlertCircle className="h-3.5 w-3.5 stroke-[2] shrink-0 mt-0.5" />
                 <span className="leading-snug">{errorMsg}</span>
@@ -770,7 +770,7 @@ export const Mt5HistoryScanModal: React.FC<Mt5HistoryScanModalProps> = ({
                             onClick={() => updateCandidate(cand.tempId, 'closeType', ct)}
                             className={`px-2 py-0.5 rounded-full text-[10px] font-bold transition-all cursor-pointer ${
                               active
-                                ? 'bg-white dark:bg-[#202631] text-[#151D2A] dark:text-[#F2F4F7] shadow-2xs dark:shadow-none'
+                                ? 'bg-[#0F172A] text-white dark:bg-white dark:text-[#050607]'
                                 : 'text-[#697586] dark:text-[#929BA9] hover:text-[#151D2A] dark:hover:text-[#F2F4F7]'
                             }`}
                           >
@@ -1037,13 +1037,13 @@ export const Mt5HistoryScanModal: React.FC<Mt5HistoryScanModalProps> = ({
           })}
         </div>
 
-        {/* Footer — Exact 2-button TradeForm Footer */}
-        <div className="flex items-center justify-between gap-3 px-5 py-3 border-t border-[#DDE3EA] dark:border-[#1E232B] bg-white dark:bg-[#0B0D11] shrink-0">
+        {/* Footer — Standardized 2-button Footer */}
+        <div className="flex items-center justify-between gap-3 px-5 py-3 border-t border-[#D9E2EC] dark:border-[#20252D] bg-white dark:bg-[#101318] shrink-0">
           <button
             type="button"
             onClick={onClose}
             disabled={isSaving}
-            className="flex-1 py-2.5 rounded-full bg-[#F5F7FA] dark:bg-[#151921] hover:bg-[#EEF2F6] dark:hover:bg-[#1C222D] active:scale-[0.98] text-xs font-semibold text-[#697586] dark:text-[#929BA9] hover:text-[#151D2A] dark:hover:text-[#F2F4F7] transition-all disabled:opacity-50 cursor-pointer"
+            className="flex-1 py-2.5 rounded-full border border-[#D9E2EC] dark:border-[#20252D] bg-[#F5F7FA] dark:bg-[#161A22] hover:bg-[#EEF2F6] dark:hover:bg-[#1E2430] active:scale-[0.98] text-xs font-semibold text-[#526071] dark:text-[#929BA9] hover:text-[#0F172A] dark:hover:text-[#F2F4F7] transition-all disabled:opacity-50 cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/35 dark:focus-visible:ring-white/35"
           >
             {tr('Batal', 'Cancel')}
           </button>
@@ -1053,7 +1053,7 @@ export const Mt5HistoryScanModal: React.FC<Mt5HistoryScanModalProps> = ({
             onClick={handleSaveSelected}
             disabled={isSaving || isScanning || selectedCandidates.length === 0}
             aria-busy={isSaving}
-            className="flex-1 inline-flex items-center justify-center gap-1.5 py-2.5 rounded-full bg-[#151D2A] hover:bg-[#1E293B] text-white dark:bg-[#F2F4F7] dark:hover:bg-white active:scale-[0.98] dark:text-[#050607] text-xs font-bold transition-all disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
+            className="flex-1 inline-flex items-center justify-center gap-1.5 py-2.5 rounded-full bg-[#0F172A] hover:bg-[#1E293B] text-white dark:bg-[#F2F4F7] dark:hover:bg-white active:scale-[0.98] dark:text-[#050607] text-xs font-bold transition-all disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/35 dark:focus-visible:ring-white/35"
           >
             {isSaving ? (
               <>

@@ -47,7 +47,7 @@ import {
   saveSettingsToSupabase,
   extractAllTradeStoragePaths,
 } from './utils/supabaseSync';
-import { useTheme } from './utils/theme';
+import { applyThemeToDocument, getStoredTheme } from './utils/theme';
 import { useLanguage } from './utils/language';
 
 // Layout
@@ -94,11 +94,23 @@ import {
   decodeLifecycleMetaFromExecutionNotes,
   encodeLifecycleMetaIntoExecutionNotes,
 } from './utils/tradeLifecycle';
+import {
+  AppNotificationItem,
+  NOTIFICATIONS_UPDATED_EVENT,
+  clearAppNotifications,
+  loadAppNotifications,
+  markAllNotificationsRead,
+  markNotificationRead,
+  pushBatchTradesNotification,
+  pushTradeNotification,
+} from './utils/appNotifications';
 
 export default function App() {
-  // Theme & Language state
-  useTheme();
-  const { tr } = useLanguage();
+  // Sync stored theme class once at mount without re-rendering the entire App tree on theme switches
+  useEffect(() => {
+    applyThemeToDocument(getStoredTheme());
+  }, []);
+  const { isEn, tr } = useLanguage();
 
   // Primary state backed by localStorage with live Supabase synchronization
   const [trades, setTrades] = useState<Trade[]>(() => loadStoredTrades(null));
@@ -145,6 +157,9 @@ export default function App() {
   const [tradeForDelete, setTradeForDelete] = useState<Trade | null>(null);
   const [screenshotModal, setScreenshotModal] = useState<{ url: string; title: string } | null>(null);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState<boolean>(false);
+  const [appNotifications, setAppNotifications] = useState<AppNotificationItem[]>(() =>
+    loadAppNotifications()
+  );
   const [notification, setNotification] = useState<{
     id: number;
     message: string;
@@ -192,6 +207,14 @@ export default function App() {
     }, 180);
     return () => window.clearTimeout(timer);
   }, [isWorkspaceReady]);
+
+  useEffect(() => {
+    const syncNotifications = () => {
+      setAppNotifications(loadAppNotifications());
+    };
+    window.addEventListener(NOTIFICATIONS_UPDATED_EVENT, syncNotifications);
+    return () => window.removeEventListener(NOTIFICATIONS_UPDATED_EVENT, syncNotifications);
+  }, []);
 
   // Synchronous concurrency locks & latest references to prevent double-submit and stale closures
   const isSavingTradeRef = useRef<boolean>(false);
@@ -927,6 +950,7 @@ export default function App() {
         if (!options?.stayOnCurrentTab && activeTabRef.current !== 'detail') {
           handleNavigateTab('trades');
         }
+        pushTradeNotification(finalTrade, isEdit ? 'updated' : 'created', existingTradeRecord, isEn);
         showToast(
           isEdit
             ? tr(
@@ -970,6 +994,7 @@ export default function App() {
       if (!options?.stayOnCurrentTab && activeTabRef.current !== 'detail') {
         handleNavigateTab('trades');
       }
+      pushTradeNotification(finalTrade, isEdit ? 'updated' : 'created', existingTradeRecord, isEn);
       showToast(
         isEdit
           ? tr(
@@ -1507,6 +1532,7 @@ export default function App() {
       }
       tradesRef.current = updatedTrades;
       setTrades(updatedTrades);
+      pushBatchTradesNotification(sanitizedBatch, isEn);
       showToast(
         tr(
           `${sanitizedBatch.length} transaksi riwayat MT5 berhasil dicatat ke Jurnal!`,
@@ -1554,6 +1580,7 @@ export default function App() {
 
       setDataSource('cloud');
       setCloudLoadError(null);
+      pushBatchTradesNotification(savedCloudTrades, isEn);
       showToast(
         tr(
           `${savedCloudTrades.length} transaksi riwayat MT5 berhasil dicatat & disinkronkan ke Cloud!`,
@@ -1794,7 +1821,7 @@ export default function App() {
   );
 
   return (
-    <div className="min-h-screen w-full bg-[#F5F7FA] text-[#151D2A] dark:bg-[#050607] dark:text-[#F2F4F7] flex flex-col font-sans transition-colors duration-150">
+    <div className="min-h-screen w-full bg-[#EEF2F6] text-[#0F172A] dark:bg-[#050607] dark:text-[#F2F4F7] flex flex-col font-sans transition-colors duration-150">
       <SplashScreen onComplete={() => setIsWorkspaceReady(true)} />
       {isWorkspaceReady && (
         <>
@@ -1853,7 +1880,7 @@ export default function App() {
                   }
                 : undefined
             }
-            className={`w-full max-w-[360px] rounded-2xl border bg-[#FFFFFF] border-[#E2E8F0] dark:border-[#CBD5E1]/80 px-3.5 py-3 shadow-[0_10px_28px_-6px_rgba(15,23,42,0.14)] dark:shadow-[0_14px_34px_-6px_rgba(0,0,0,0.55)] select-none touch-none motion-reduce:transition-none ${
+            className={`w-full max-w-[360px] rounded-2xl border bg-white dark:bg-[#101318] border-[#D9E2EC] dark:border-[#20252D] px-3.5 py-3 shadow-[0_12px_32px_-8px_rgba(15,23,42,0.14)] dark:shadow-[0_18px_40px_-8px_rgba(0,0,0,0.72)] select-none touch-none motion-reduce:transition-none ${
               isToastDragging ? 'transition-none' : 'transition-all duration-180 ease-[cubic-bezier(0.22,1,0.36,1)]'
             } ${
               isToastVisible
@@ -1867,8 +1894,8 @@ export default function App() {
                 data-testid="toast-status-icon"
                 className={`mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full border ${
                   notification.type === 'success'
-                    ? 'bg-[#F0FDF4] text-[#15803D] border-[#DCFCE7]'
-                    : 'bg-[#FEF2F2] text-[#B91C1C] border-[#FEE2E2]'
+                    ? 'bg-[#059669]/10 text-[#059669] border-[#059669]/20 dark:bg-[#00A878]/15 dark:text-[#00A878] dark:border-[#00A878]/25'
+                    : 'bg-[#E11D48]/10 text-[#E11D48] border-[#E11D48]/20 dark:bg-[#E05260]/15 dark:text-[#E05260] dark:border-[#E05260]/25'
                 }`}
               >
                 {notification.type === 'success' ? (
@@ -1878,16 +1905,16 @@ export default function App() {
                 )}
               </div>
 
-              {/* Clean Dark Charcoal Title & Readable Secondary Message */}
+              {/* Clean Title & Readable Secondary Message */}
               <div className="min-w-0 flex-1 pr-1">
-                <span className="block text-[12.5px] font-bold leading-snug text-[#11151B]">
+                <span className="block text-[12.5px] font-bold leading-snug text-[#0F172A] dark:text-[#F2F4F7]">
                   {notification.type === 'success'
                     ? tr('Berhasil disimpan', 'Saved successfully')
                     : tr('Perhatian', 'Notice')}
                 </span>
                 <p
                   data-testid="toast-message-text"
-                  className="mt-0.5 text-[11.5px] font-medium leading-relaxed text-[#4B5565] break-words"
+                  className="mt-0.5 text-[11.5px] font-medium leading-relaxed text-[#526071] dark:text-[#929BA9] break-words"
                 >
                   {notification.message}
                 </p>
@@ -1899,7 +1926,7 @@ export default function App() {
                 onClick={dismissToast}
                 aria-label={tr('Tutup notifikasi', 'Close notification')}
                 data-testid="toast-close-button"
-                className="shrink-0 -mr-1 -mt-0.5 inline-flex h-6 w-6 items-center justify-center rounded-lg text-[#64748B] hover:text-[#11151B] hover:bg-[#F1F5F9] transition-colors cursor-pointer"
+                className="shrink-0 -mr-1 -mt-0.5 inline-flex h-7 w-7 items-center justify-center rounded-full text-[#526071] dark:text-[#929BA9] hover:text-[#0F172A] dark:hover:text-[#F2F4F7] hover:bg-[#EEF2F6] dark:hover:bg-[#161A22] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/35 dark:focus-visible:ring-white/35 transition-colors cursor-pointer"
               >
                 <X className="h-3.5 w-3.5 stroke-[2]" />
               </button>
@@ -1952,15 +1979,37 @@ export default function App() {
             currentUser={currentUser}
             onOpenAuth={() => setIsAuthModalOpen(true)}
             onOpenAccount={() => setIsAccountModalOpen(true)}
+            notifications={appNotifications}
+            onMarkAllNotificationsRead={() => {
+              setAppNotifications(markAllNotificationsRead());
+            }}
+            onClearNotifications={() => {
+              setAppNotifications(clearAppNotifications());
+            }}
+            onSelectNotification={(item) => {
+              setAppNotifications(markNotificationRead(item.id));
+              if (item.tradeId) {
+                const targetTrade = tradesRef.current.find(
+                  (t) => t.id.toLowerCase() === item.tradeId?.toLowerCase()
+                );
+                if (targetTrade) {
+                  handleOpenTradeDetail(targetTrade);
+                } else {
+                  handleNavigateTab('trades');
+                }
+              } else if (item.targetTab) {
+                handleNavigateTab(item.targetTab);
+              }
+            }}
           />
 
           {/* View Container with balanced bottom padding for mobile navigation & Android safe area */}
           <main className="flex-1 p-4 sm:p-6 lg:p-8 max-w-7xl w-full mx-auto pb-[calc(4.25rem+env(safe-area-inset-bottom,0px))] lg:pb-8">
             {/* Cloud Connection / Load Error Banner */}
             {cloudLoadError && (
-              <div className="mb-6 p-4 rounded-xl border border-[#DDE3EA] dark:border-[#252B34] bg-white dark:bg-[#11151B] text-[#151D2A] dark:text-[#F2F5F9] flex flex-col sm:flex-row sm:items-center justify-between gap-3 animate-in fade-in duration-150">
+              <div className="mb-6 p-4 rounded-xl border border-[#D9E2EC] dark:border-[#20252D] bg-white dark:bg-[#101318] text-[#0F172A] dark:text-[#F2F4F7] shadow-[0_1px_2px_rgba(15,23,42,0.04)] dark:shadow-none flex flex-col sm:flex-row sm:items-center justify-between gap-3 animate-in fade-in duration-150">
                 <div className="flex items-start gap-3">
-                  <div className="p-2 rounded-lg bg-[#EEF2F6] dark:bg-[#171D26] border border-[#DDE3EA] dark:border-[#252B34] text-rose-600 dark:text-rose-400 shrink-0 mt-0.5">
+                  <div className="p-2 rounded-lg bg-[#E11D48]/10 dark:bg-[#E05260]/15 border border-[#E11D48]/20 dark:border-[#E05260]/25 text-[#E11D48] dark:text-[#E05260] shrink-0 mt-0.5">
                     <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                       <path
                         strokeLinecap="round"
@@ -1971,11 +2020,11 @@ export default function App() {
                     </svg>
                   </div>
                   <div>
-                    <h4 className="text-sm font-bold text-rose-600 dark:text-rose-400">
+                    <h4 className="text-sm font-bold text-[#E11D48] dark:text-[#E05260]">
                       {tr('Gagal Mengambil Data dari VLO Cloud', 'Failed to Fetch Data from VLO Cloud')}
                     </h4>
-                    <p className="text-xs text-[#151D2A] dark:text-[#F2F5F9] mt-0.5">{cloudLoadError}</p>
-                    <p className="text-[11px] text-[#697586] dark:text-[#929BA9] mt-1">
+                    <p className="text-xs text-[#0F172A] dark:text-[#F2F4F7] mt-0.5">{cloudLoadError}</p>
+                    <p className="text-[11px] text-[#526071] dark:text-[#929BA9] mt-1">
                       {tr(
                         'Aplikasi saat ini menampilkan data cadangan lokal sementara. Transaksi baru tidak akan tersimpan ke cloud sampai koneksi berhasil dipulihkan.',
                         'The app is currently displaying temporary local backup data. New trades will not be saved to the cloud until connection is restored.'
@@ -1987,7 +2036,7 @@ export default function App() {
                   <button
                     onClick={handleReloadFromCloud}
                     disabled={isCloudSyncing}
-                    className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg bg-[#1769E8] hover:bg-[#1458C4] text-white text-xs font-semibold transition disabled:opacity-50 cursor-pointer"
+                    className="inline-flex items-center gap-1.5 px-4 py-2 rounded-full bg-[#0F172A] hover:bg-[#1E293B] text-white dark:bg-white dark:hover:bg-[#E2E8F0] dark:text-[#0F172A] text-xs font-semibold transition disabled:opacity-50 cursor-pointer"
                   >
                     <span className={isCloudSyncing ? 'animate-spin inline-block' : 'inline-block'}>↻</span>
                     <span>
@@ -2065,8 +2114,12 @@ export default function App() {
 
             <Suspense
               fallback={
-                <div className="flex items-center justify-center py-20 text-xs font-medium text-[#697586] dark:text-[#929BA9]">
-                  {tr('Memuat tampilan...', 'Loading view...')}
+                <div className="flex items-center justify-center gap-2.5 py-20 text-xs font-medium text-[#526071] dark:text-[#929BA9]">
+                  <span
+                    aria-hidden="true"
+                    className="h-3.5 w-3.5 rounded-full border-2 border-[#D9E2EC] dark:border-[#20252D] border-t-[#0F172A] dark:border-t-white animate-spin"
+                  />
+                  <span>{tr('Memuat tampilan...', 'Loading view...')}</span>
                 </div>
               }
             >
@@ -2141,6 +2194,7 @@ export default function App() {
                     onReloadFromCloud={handleReloadFromCloud}
                     isDeveloperMode={isDeveloperMode}
                     onUnlockDeveloperMode={handleUnlockDeveloperMode}
+                    onUserUpdated={(updatedUser) => setCurrentUser(updatedUser)}
                   />
                 </div>
               )}
@@ -2279,6 +2333,7 @@ export default function App() {
         isOpen={isAccountModalOpen}
         onClose={() => setIsAccountModalOpen(false)}
         currentUser={currentUser}
+        onUserUpdated={(updatedUser) => setCurrentUser(updatedUser)}
         onLogoutSuccess={() => {
           resetTransientModalsAndCaches();
           previousUserIdRef.current = null;

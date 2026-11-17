@@ -323,7 +323,7 @@ export const DrawdownChart: React.FC<DrawdownChartProps> = ({
   return (
     <div className="relative w-full overflow-hidden select-none">
       {!hasValidStartingBalance && hasExecutedTrades && (
-        <div className="mb-2.5 rounded-lg bg-[#F5F7FA] dark:bg-[#171D26] border border-[#DDE3EA] dark:border-[#252B34] px-3 py-2 text-[11px] text-amber-600 dark:text-amber-400">
+        <div className="mb-2.5 rounded-lg bg-[#F5F7FA] dark:bg-[#0B0E13] border border-[#D9E2EC] dark:border-[#20252D] px-3 py-2 text-[11px] text-[#D97706] dark:text-[#F59E0B]">
           {tr(
             'Saldo awal periode bernilai nol atau negatif. Persentase drawdown ditampilkan secara aman pada batas 0.00%.',
             'Period starting balance is zero or negative. Drawdown percentage is safely displayed at 0.00%.'
@@ -378,7 +378,7 @@ export const DrawdownChart: React.FC<DrawdownChartProps> = ({
                 x2={width - padding.right}
                 y2={yPos}
                 stroke="currentColor"
-                className="text-[#DDE3EA]/80 dark:text-[#252B34]"
+                className="text-[#D9E2EC]/80 dark:text-[#20252D]"
                 strokeDasharray="3 3"
                 strokeWidth="1"
               />
@@ -386,7 +386,7 @@ export const DrawdownChart: React.FC<DrawdownChartProps> = ({
                 x={padding.left - 8}
                 y={yPos + 3.5}
                 textAnchor="end"
-                className="fill-[#697586] dark:fill-[#929BA9] font-mono-numbers tabular-nums text-[10px]"
+                className="fill-[#526071] dark:fill-[#929BA9] font-mono-numbers tabular-nums text-[10px]"
               >
                 {label}
               </text>
@@ -428,7 +428,7 @@ export const DrawdownChart: React.FC<DrawdownChartProps> = ({
               r="4.5"
               fill="#E11D48"
               stroke="currentColor"
-              className="text-white dark:text-[#11151B]"
+              className="text-white dark:text-[#101318]"
               strokeWidth="2"
             />
           </g>
@@ -439,7 +439,7 @@ export const DrawdownChart: React.FC<DrawdownChartProps> = ({
           <text
             x={padding.left}
             y={padding.top + innerHeight + 18}
-            className="fill-[#697586] dark:fill-[#929BA9] font-mono-numbers tabular-nums text-[10px]"
+            className="fill-[#526071] dark:fill-[#929BA9] font-mono-numbers tabular-nums text-[10px]"
             textAnchor="start"
           >
             {startLabel}
@@ -447,7 +447,7 @@ export const DrawdownChart: React.FC<DrawdownChartProps> = ({
           <text
             x={width - padding.right}
             y={padding.top + innerHeight + 18}
-            className="fill-[#697586] dark:fill-[#929BA9] font-mono-numbers tabular-nums text-[10px]"
+            className="fill-[#526071] dark:fill-[#929BA9] font-mono-numbers tabular-nums text-[10px]"
             textAnchor="end"
           >
             {endLabel}
@@ -458,7 +458,7 @@ export const DrawdownChart: React.FC<DrawdownChartProps> = ({
       {/* Empty Period Notice Overlay */}
       {!hasExecutedTrades && (
         <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-          <span className="px-3 py-1 rounded-lg bg-white/90 dark:bg-[#11151B]/90 border border-[#DDE3EA] dark:border-[#252B34] text-[11px] text-[#697586] dark:text-[#929BA9]">
+          <span className="px-3 py-1 rounded-lg bg-white/95 dark:bg-[#101318]/95 border border-[#D9E2EC] dark:border-[#20252D] text-[11px] text-[#526071] dark:text-[#929BA9]">
             {tr('Belum ada transaksi pada periode ini', 'No trades in this period')}
           </span>
         </div>
@@ -471,21 +471,21 @@ export const DrawdownChart: React.FC<DrawdownChartProps> = ({
           data-testid="drawdown-chart-tooltip"
           data-tooltip-side={tooltipPlacement?.side ?? 'right'}
           style={{ left: `${tooltipPlacement?.leftPx ?? 8}px` }}
-          className="absolute top-2 z-10 rounded-lg bg-white/95 dark:bg-[#171D26]/95 border border-[#DDE3EA] dark:border-[#252B34] px-2.5 py-1.5 shadow-sm text-xs pointer-events-none font-mono-numbers tabular-nums whitespace-nowrap"
+          className="absolute top-2 z-10 rounded-xl bg-white/95 dark:bg-[#101318]/95 border border-[#D9E2EC] dark:border-[#20252D] px-2.5 py-1.5 shadow-lg text-xs pointer-events-none font-mono-numbers tabular-nums whitespace-nowrap"
         >
-          <div className="flex items-center justify-between gap-4 text-[10px] text-[#697586] dark:text-[#929BA9] font-sans mb-0.5">
+          <div className="flex items-center justify-between gap-4 text-[10px] text-[#526071] dark:text-[#929BA9] font-sans mb-0.5">
             <span>
               {hoveredPoint.index === 0 ? tr('Modal Awal', 'Initial Balance') : `Trade #${hoveredPoint.index}`}
             </span>
             <span className="font-mono-numbers">{hoveredPoint.date.slice(0, 10)}</span>
           </div>
           <div className="flex items-baseline justify-between gap-3">
-            <span className="font-bold text-[#E11D48] dark:text-[#FB7185]">
+            <span className="font-bold text-[#E11D48] dark:text-[#E05260]">
               {hoveredPoint.drawdownPercent > 0
                 ? `-${hoveredPoint.drawdownPercent.toFixed(2)}%`
                 : '0.00%'}
             </span>
-            <span className="text-[11px] font-semibold text-[#151D2A] dark:text-[#F2F5F9]">
+            <span className="text-[11px] font-semibold text-[#0F172A] dark:text-[#F2F4F7]">
               {isPrivacyMode
                 ? '******'
                 : hoveredPoint.drawdownAmount > 0
@@ -493,7 +493,7 @@ export const DrawdownChart: React.FC<DrawdownChartProps> = ({
                 : fmtMoney(0, false)}
             </span>
           </div>
-          <div className="mt-0.5 text-[10px] text-[#697586] dark:text-[#929BA9]">
+          <div className="mt-0.5 text-[10px] text-[#526071] dark:text-[#929BA9]">
             {tr('Puncak:', 'Peak:')}{' '}
             {isPrivacyMode
               ? '******'

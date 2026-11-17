@@ -12,17 +12,40 @@ export interface BrandLogoProps {
    * 'lockup': horizontal mark with vector wordmark (viewBox 0 0 584 256)
    */
   variant?: 'symbol' | 'wordmark' | 'lockup';
-  /** Wraps symbol in Carbon/Paper app-icon tile */
+  /** Wraps symbol in soft squircle app-icon tile */
   withTile?: boolean;
+  /** Enables fluid GPU-composited orbit & core micro-motion on hover/active */
+  interactive?: boolean;
   className?: string;
   title?: string;
 }
 
 /**
+ * Refined G1-continuous Vault Body path (smooth liquid scoop transition from V-arm into bowl)
+ */
+export const VLO_BODY_PATH =
+  'M 34.21 74.65 A 18.00 18.00 0 0 1 65.79 57.35 C 79.24 81.91, 97.88 100.71, 122.99 93.98 A 58.00 58.00 0 1 1 80.00 150.00 C 80.00 120.50, 49.58 102.72, 34.21 74.65 Z M 138.00 125.00 A 25.00 25.00 0 1 0 138.10 125.00 Z';
+
+/**
+ * Tapered aerodynamic Sapphire Flow Pulse arc (swells smoothly from -68deg tail to -14deg head)
+ */
+export const VLO_PULSE_PATH =
+  'M 169.65 71.65 C 195.85 80.01, 216.99 101.01, 225.81 128.11 A 10.50 10.50 0 0 1 205.44 133.19 C 201.93 110.46, 187.25 90.60, 166.28 80.00 A 4.50 4.50 0 0 1 169.65 71.65 Z';
+
+/**
+ * Emerald Core Focus dot centered at (138, 150)
+ */
+export const VLO_CORE_PATH =
+  'M 138.00 136.00 A 14.00 14.00 0 1 1 137.90 136.00 Z';
+
+const VLO_WORDMARK_PATH =
+  'M 262 80 H 285 L 304 148 L 323 80 H 346 L 316.5 176 H 291.5 Z M 366 80 H 387 V 150 A 6 6 0 0 0 393 156 H 434 V 176 H 389 A 23 23 0 0 1 366 153 Z M 504 78 A 50 50 0 1 1 503.9 78 Z M 504 99 A 29 29 0 1 0 504.1 99 Z';
+
+/**
  * VLO Official Brand Logo Component (BD-D — "Orbit-Pulse Bowl" · Carbon + Emerald)
  *
  * Geometry:
- * - Symbol: Vault body + Sapphire Flow Pulse arc + Emerald Core Focus dot
+ * - Symbol: Continuous-curve Vault body + Tapered Sapphire Flow Pulse arc + Emerald Core Focus dot
  * - Wordmark: Rounded-geometric "VLO"
  *
  * Theme color adaptation (DESIGN.md):
@@ -32,9 +55,12 @@ export interface BrandLogoProps {
 export const BrandLogo: React.FC<BrandLogoProps> = ({
   variant = 'lockup',
   withTile = false,
+  interactive = true,
   className = 'h-8 w-auto',
   title = 'VLO',
 }) => {
+  const interactiveClass = interactive ? 'vlo-logo-interactive' : '';
+
   if (variant === 'symbol') {
     const svg = (
       <svg
@@ -43,21 +69,25 @@ export const BrandLogo: React.FC<BrandLogoProps> = ({
         fill="none"
         aria-label={title}
         role="img"
-        className={withTile ? 'h-full w-full block' : `shrink-0 ${className}`}
+        className={
+          withTile
+            ? `h-full w-full block ${interactiveClass}`
+            : `shrink-0 ${interactiveClass} ${className}`
+        }
       >
         <title>{title}</title>
         <path
-          className="fill-[#151D2A] dark:fill-[#F2F5F9] transition-colors duration-150"
+          className="vlo-mark-body fill-[#151D2A] dark:fill-[#F2F5F9]"
           fillRule="evenodd"
-          d="M 34.21 74.65 A 18.00 18.00 0 0 1 65.79 57.35 L 95.13 110.93 A 58.00 58.00 0 1 1 80.00 150.00 C 80.00 124.00, 54.00 106.00, 34.21 74.65 Z M 138.00 125.00 A 25.00 25.00 0 1 0 138.10 125.00 Z"
+          d={VLO_BODY_PATH}
         />
         <path
-          className="fill-[#1769E8] transition-colors duration-150"
-          d="M 174.61 67.78 A 90.00 90.00 0 0 1 223.60 122.19 A 10.00 10.00 0 0 1 204.57 128.37 A 70.00 70.00 0 0 0 166.47 86.05 A 10.00 10.00 0 0 1 174.61 67.78 Z"
+          className="vlo-mark-pulse fill-[#1769E8]"
+          d={VLO_PULSE_PATH}
         />
         <path
-          className="fill-[#059669] dark:fill-[#10B981] transition-colors duration-150"
-          d="M 138.00 136.00 A 14.00 14.00 0 1 1 137.90 136.00 Z"
+          className="vlo-mark-core fill-[#059669] dark:fill-[#10B981]"
+          d={VLO_CORE_PATH}
         />
       </svg>
     );
@@ -65,7 +95,7 @@ export const BrandLogo: React.FC<BrandLogoProps> = ({
     if (withTile) {
       return (
         <span
-          className={`inline-flex items-center justify-center shrink-0 overflow-hidden rounded-[22%] bg-white dark:bg-[#11151B] border border-[#DDE3EA] dark:border-[#252B34] ${className}`}
+          className={`vlo-tile-surface inline-flex items-center justify-center shrink-0 overflow-hidden rounded-[26%] bg-[#F8FAFC]/90 dark:bg-white/[0.045] border border-black/[0.06] dark:border-white/[0.08] shadow-[inset_0_1px_0_rgba(255,255,255,0.85),0_1px_2px_rgba(15,23,42,0.04)] dark:shadow-[inset_0_1px_0_rgba(255,255,255,0.06)] ${className}`}
         >
           {svg}
         </span>
@@ -83,13 +113,13 @@ export const BrandLogo: React.FC<BrandLogoProps> = ({
         fill="none"
         aria-label={title}
         role="img"
-        className={`shrink-0 ${className}`}
+        className={`shrink-0 ${interactive ? 'vlo-wordmark-interactive' : ''} ${className}`}
       >
         <title>{title}</title>
         <path
-          className="fill-[#151D2A] dark:fill-[#F2F5F9] transition-colors duration-150"
+          className="fill-[#151D2A] dark:fill-[#F2F5F9] transition-colors duration-200"
           fillRule="evenodd"
-          d="M 262 80 H 285 L 304 148 L 323 80 H 346 L 316.5 176 H 291.5 Z M 366 80 H 387 V 150 A 6 6 0 0 0 393 156 H 434 V 176 H 389 A 23 23 0 0 1 366 153 Z M 504 78 A 50 50 0 1 1 503.9 78 Z M 504 99 A 29 29 0 1 0 504.1 99 Z"
+          d={VLO_WORDMARK_PATH}
         />
       </svg>
     );
@@ -102,26 +132,26 @@ export const BrandLogo: React.FC<BrandLogoProps> = ({
       fill="none"
       aria-label={title}
       role="img"
-      className={`shrink-0 ${className}`}
+      className={`shrink-0 ${interactiveClass} ${className}`}
     >
       <title>{title}</title>
       <path
-        className="fill-[#151D2A] dark:fill-[#F2F5F9] transition-colors duration-150"
+        className="vlo-mark-body fill-[#151D2A] dark:fill-[#F2F5F9]"
         fillRule="evenodd"
-        d="M 34.21 74.65 A 18.00 18.00 0 0 1 65.79 57.35 L 95.13 110.93 A 58.00 58.00 0 1 1 80.00 150.00 C 80.00 124.00, 54.00 106.00, 34.21 74.65 Z M 138.00 125.00 A 25.00 25.00 0 1 0 138.10 125.00 Z"
+        d={VLO_BODY_PATH}
       />
       <path
-        className="fill-[#1769E8] transition-colors duration-150"
-        d="M 174.61 67.78 A 90.00 90.00 0 0 1 223.60 122.19 A 10.00 10.00 0 0 1 204.57 128.37 A 70.00 70.00 0 0 0 166.47 86.05 A 10.00 10.00 0 0 1 174.61 67.78 Z"
+        className="vlo-mark-pulse fill-[#1769E8]"
+        d={VLO_PULSE_PATH}
       />
       <path
-        className="fill-[#059669] dark:fill-[#10B981] transition-colors duration-150"
-        d="M 138.00 136.00 A 14.00 14.00 0 1 1 137.90 136.00 Z"
+        className="vlo-mark-core fill-[#059669] dark:fill-[#10B981]"
+        d={VLO_CORE_PATH}
       />
       <path
-        className="fill-[#151D2A] dark:fill-[#F2F5F9] transition-colors duration-150"
+        className="fill-[#151D2A] dark:fill-[#F2F5F9] transition-colors duration-200"
         fillRule="evenodd"
-        d="M 262 80 H 285 L 304 148 L 323 80 H 346 L 316.5 176 H 291.5 Z M 366 80 H 387 V 150 A 6 6 0 0 0 393 156 H 434 V 176 H 389 A 23 23 0 0 1 366 153 Z M 504 78 A 50 50 0 1 1 503.9 78 Z M 504 99 A 29 29 0 1 0 504.1 99 Z"
+        d={VLO_WORDMARK_PATH}
       />
     </svg>
   );

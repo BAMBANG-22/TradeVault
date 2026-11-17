@@ -63,6 +63,11 @@ export function sanitizeBackendBaseUrl(rawUrl: string | null | undefined): strin
   let clean = rawUrl.trim().replace(/^['"]+|['"]+$/g, '');
   if (!clean) return '';
 
+  // Reject API keys or tokens accidentally placed in VITE_API_BASE_URL
+  if (/^(sb_publishable_|sb_secret_|eyJhbGci|AIza)/i.test(clean)) {
+    return '';
+  }
+
   const hasScheme = /^https?:\/\//i.test(clean);
   if (!hasScheme) {
     const isLocalHost =
@@ -78,14 +83,25 @@ export function sanitizeBackendBaseUrl(rawUrl: string | null | undefined): strin
     if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
       return '';
     }
+    const host = parsed.hostname.toLowerCase();
+    // Reject hostnames without a dot unless localhost / loopback
+    if (host !== 'localhost' && host !== '127.0.0.1' && !host.includes('.')) {
+      return '';
+    }
+    if (
+      host === 'your-project-id.supabase.co' ||
+      host === 'your-project.supabase.co' ||
+      host === 'xxxx.supabase.co' ||
+      host === 'example.supabase.co'
+    ) {
+      return '';
+    }
     const cleanPath = parsed.pathname
       .replace(/\/api(?:\/.*)?$/i, '')
       .replace(/\/+$/, '');
     return `${parsed.origin}${cleanPath}`;
   } catch {
-    return clean
-      .replace(/\/api(?:\/.*)?$/i, '')
-      .replace(/\/+$/, '');
+    return '';
   }
 }
 
@@ -118,15 +134,17 @@ export function getStoredStandaloneBackendUrl(): string {
   return '';
 }
 
+export const DEFAULT_DEPLOYED_SUPABASE_ORIGIN = 'https://hhotzotsdhkgymgtwfdk.supabase.co';
+
 /**
  * Automatically derives the Supabase Edge Function endpoint URL from the active
- * Supabase project config (`https://<project>.supabase.co/functions/v1/tradevault-api`).
+ * Supabase project config (`https://<project>.supabase.co/functions/v1/tradevault-api`),
+ * with a fallback to the project's deployed public Edge Function for Guest/Local mode on APK/Web.
  */
 export function getSupabaseEdgeBackendUrl(): string {
   const cfg = getSupabaseConfig();
-  if (!cfg.url) return '';
-  const cleanOrigin = sanitizeSupabaseUrl(cfg.url);
-  if (!cleanOrigin) return '';
+  const cleanOrigin = cfg.url ? sanitizeSupabaseUrl(cfg.url) : DEFAULT_DEPLOYED_SUPABASE_ORIGIN;
+  if (!cleanOrigin) return `${DEFAULT_DEPLOYED_SUPABASE_ORIGIN}/functions/v1/${SUPABASE_EDGE_FUNCTION_SLUG}`;
   return `${cleanOrigin}/functions/v1/${SUPABASE_EDGE_FUNCTION_SLUG}`;
 }
 

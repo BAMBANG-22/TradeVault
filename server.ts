@@ -55,21 +55,87 @@ app.use('/api', (req, res, next) => {
   next();
 });
 
+/**
+ * Strictly isolated API key resolver for Scan Kilat (Opsi 1: MT5 History & Opsi 2: Individual MT5/TradingView).
+ * Reads ONLY `GEMINI_SCAN_API_KEY` and `GEMINI_API_KEY` (never `GEMINI_NEWS_API_KEY`).
+ */
+function getScannerGeminiApiKeys(): string[] {
+  const raw = [process.env.GEMINI_SCAN_API_KEY || '', process.env.GEMINI_API_KEY || '']
+    .join(',')
+    .split(',')
+    .map((k) => k.trim())
+    .filter(Boolean);
+  return Array.from(new Set(raw));
+}
+
+/**
+ * Strictly isolated API key resolver for Trade News & Macro Analysis.
+ * Reads ONLY `GEMINI_NEWS_API_KEY` — NEVER falls back to `GEMINI_API_KEY` so Trade News
+ * can never consume or exhaust the Scan Kilat quota.
+ */
+function getNewsGeminiApiKeys(): string[] {
+  const raw = (process.env.GEMINI_NEWS_API_KEY || '')
+    .split(',')
+    .map((k) => k.trim())
+    .filter(Boolean);
+  return Array.from(new Set(raw));
+}
+
+/**
+ * Progressive AI Vision model cascade for Scan Kilat (both Opsi 1 & Opsi 2):
+ * Starts with Gemini Hydrogen (`gemini-4-hydrogen`), and automatically steps down
+ * to lower/lighter versions if quota is exhausted (`429` / `RESOURCE_EXHAUSTED`).
+ */
+const SCANNER_MODEL_CASCADE = [
+  'gemini-4-hydrogen',
+  'gemini-3-flash-preview',
+  'gemini-3.1-flash-lite',
+  'gemini-2.5-flash',
+  'gemini-2.5-flash-lite',
+] as const;
+
+const NEWS_MODEL_CASCADE = [
+  'gemini-4-hydrogen',
+  'gemini-3-flash-preview',
+  'gemini-3.1-flash-lite',
+  'gemini-2.5-flash',
+] as const;
+
+function isGeminiQuotaError(err: any): boolean {
+  const msg = String(err?.message || err || '').toLowerCase();
+  const status = Number(err?.status || err?.statusCode || 0);
+  return (
+    status === 429 ||
+    msg.includes('429') ||
+    msg.includes('resource_exhausted') ||
+    msg.includes('quota') ||
+    msg.includes('rate limit') ||
+    msg.includes('too many requests') ||
+    msg.includes('limit exceeded')
+  );
+}
+
 // Standalone healthcheck endpoint for APK & external server verification
 app.get('/api/health', (_req, res) => {
-  const scanKey = (process.env.GEMINI_API_KEY || '').trim();
-  const newsKey = (process.env.GEMINI_NEWS_API_KEY || '').trim();
+  const scannerKeys = getScannerGeminiApiKeys();
+  const newsKeys = getNewsGeminiApiKeys();
   res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
   return res.json({
     ok: true,
     service: 'tradevault-standalone-backend',
-    geminiConfigured: Boolean(scanKey || newsKey),
-    scannerGeminiConfigured: Boolean(scanKey),
-    newsGeminiConfigured: Boolean(newsKey),
-    isMarketOpen: isMarketDay(new Date(), { useUtc: true, enforceFridayCloseUtc: true }),
+    geminiConfigured: Boolean(scannerKeys.length > 0 || newsKeys.length > 0),
+    scannerGeminiConfigured: scannerKeys.length > 0,
+    newsGeminiConfigured: newsKeys.length > 0,
+    apiKeysStrictlySeparated: true,
+    scannerModelCascade: SCANNER_MODEL_CASCADE,
+    isMarketOpen: isMarketOpenToday(),
     timestamp: new Date().toISOString(),
   });
 });
+
+function isMarketOpenToday(): boolean {
+  return isMarketDay(new Date(), { useUtc: true, enforceFridayCloseUtc: true });
+}
 
 const ALLOWED_PROXY_DOMAINS = [
   'faireconomy.media',
@@ -293,6 +359,9 @@ function parseNumericValue(val: any, instrument = 'XAUUSD'): number | null {
 function normalizeInstrument(raw: string | null | undefined): string {
   if (!raw) return 'XAUUSD';
   let s = raw.toUpperCase().trim();
+  if (!s || s === 'NULL' || s === 'NONE' || s === 'UNKNOWN' || s === 'UNDEFINED' || s === 'N/A' || s === '-') {
+    return 'XAUUSD';
+  }
 
   // Strip tradingview exchange prefixes (e.g. BINANCE:BTCUSD -> BTCUSD, FX:EURUSD -> EURUSD)
   if (s.includes(':')) {
@@ -496,14 +565,13 @@ app.post('/api/extract-trade-screenshot', async (req, res) => {
       return;
     }
 
-    const scanApiKey = (process.env.GEMINI_API_KEY || '').trim();
-    const scannerApiKeys = scanApiKey ? [scanApiKey] : [];
+    const scannerApiKeys = getScannerGeminiApiKeys();
 
     if (scannerApiKeys.length === 0) {
       res.status(400).json({
         success: false,
         error:
-          'GEMINI_API_KEY belum dikonfigurasi di environment server. Pastikan API key telah disetel.',
+          'GEMINI_API_KEY (khusus Scan Kilat) belum dikonfigurasi di environment server.',
       });
       return;
     }
@@ -546,13 +614,14 @@ Remember: smaller Y% (closer to top of image) = HIGHER price; larger Y% (closer 
 ${geometryHintBlock}
 1. SPATIAL VISUAL RULES FOR METATRADER 5 (MT5 / MT4):
    - A) CHART VIEW:
-     * Read EVERY text label at the LEFT edge of the chart: "TP", "SL", "BUY LIMIT", "SELL LIMIT", "BUY STOP", "SELL STOP", "BUY", "SELL" (for example: "TP", "BUY LIMIT 0.12", "SL").
+     * Read EVERY text label at the LEFT edge of the chart: "TP", "SL", "BUY LIMIT", "SELL LIMIT", "BUY STOP", "SELL STOP", "BUY", "SELL", "BELI", "JUAL" (for example: "TP", "BUY LIMIT 0.12", "SL").
      * Trace each label's exact horizontal dashed/dotted line straight across to the RIGHTMOST Y-AXIS, and extract ONLY the exact price inside the BORDERED / OUTLINED BOX or COLORED TAG sitting ON that exact horizontal line.
      * IGNORE plain unbordered Y-axis tick grid numbers (like "4052.92" or "4030.42").
      * IGNORE the running live candle price badge (often has a bar countdown timer like "00:50" or "04:12") — put that ONLY in currentPrice, NEVER in entryPrice, stopLoss, or takeProfit unless an Entry dashed line is literally at that exact price!
      * STATUS RULE: If the order label contains "LIMIT" or "STOP", set status = "PLANNED". If it says "BUY 0.10" or "SELL 0.10" (without LIMIT/STOP), set status = "ACTIVE".
-   - B) MT5 TRADE / HISTORY LIST VIEW (if screenshot shows order rows instead of candles):
-     * Format like "XAUUSD, buy 0.10", "4050.12 -> 4062.30", with "S / L:" and "T / P:" below -> entryPrice = number BEFORE "->", exit/current = number AFTER "->", stopLoss = S/L value, takeProfit = T/P value.
+   - B) MT5 TRADE / HISTORY LIST VIEW (if screenshot shows one or more MT5 trade/history rows instead of candles):
+     * Format like "XAUUSD, buy 0.10" or "XAUUSD, beli 0.10" or "XAUUSD, sell 0.05" / "jual 0.05", "2650.12 -> 2662.30", with profit on the right (e.g. "121.80" or "-45.00") and optional "S / L:" and "T / P:" below.
+     * Extract: source = "MT5", instrument = symbol (strip suffixes like m/c/pro), position = "BUY" (for buy/beli) or "SELL" (for sell/jual), lotSize = lot number, entryPrice = number BEFORE "->", exitPrice = number AFTER "->", profit = right-side profit number, stopLoss = S/L value (null if 0 or "-" or absent), takeProfit = T/P value (null if 0 or "-" or absent), status = "CLOSED" (if from history / closed position) or "ACTIVE" (if open position).
 
 2. SPATIAL VISUAL RULES FOR TRADINGVIEW CHARTS:
    - Identify the Position Tool's two vertically-adjacent shaded rectangles (either Green/Red OR Dark Blue-Navy/Dark Grey-Slate).
@@ -572,10 +641,7 @@ ${geometryHintBlock}
    - First populate leftEdgeLabels and rightAxisPriceTags verbatim from what you visually see from top to bottom, THEN assign entryPrice, stopLoss, and takeProfit consistently.
    - NEVER invent, round roughly, or compute synthetic offsets. If a price tag is obscured or absent, return null for that field.`;
 
-    const candidateModels = [
-      'gemini-4-hydrogen',
-      'gemini-3.1-flash-lite',
-    ];
+    const candidateModels = SCANNER_MODEL_CASCADE;
     let responseText = '';
     let usedModel = '';
 
@@ -610,7 +676,9 @@ ${geometryHintBlock}
                 prompt,
               ],
               config: {
-                temperature: 0,
+                ...(model === 'gemini-4-hydrogen' || model === 'gemini-3-flash-preview'
+                  ? { thinkingConfig: { thinkingLevel: ThinkingLevel.LOW } }
+                  : {}),
                 responseMimeType: 'application/json',
                 responseSchema: {
                   type: Type.OBJECT,
@@ -622,9 +690,9 @@ ${geometryHintBlock}
                     rightAxisPriceTags: { type: Type.STRING, description: 'Highlighted/bordered Y-axis price badges listed top-to-bottom with colors/borders before assigning prices' },
                     position: { type: Type.STRING, description: 'BUY or SELL' },
                     lotSize: { type: Type.NUMBER, description: 'Lot size ONLY if source is MT5 (e.g. 0.01, 0.12, 0.25). Null for TradingView.' },
-                    entryPrice: { type: Type.NUMBER, description: 'Exact entry price from right Y-axis bordered box/badge, or null if not detected' },
-                    stopLoss: { type: Type.NUMBER, description: 'Exact Stop Loss price from right Y-axis bordered box/badge, or null if not detected' },
-                    takeProfit: { type: Type.NUMBER, description: 'Exact Take Profit price from right Y-axis bordered box/badge, or null if not detected' },
+                    entryPrice: { type: Type.NUMBER, description: 'Exact entry price from right Y-axis bordered box/badge or MT5 row, or null if not detected' },
+                    stopLoss: { type: Type.NUMBER, description: 'Exact Stop Loss price from right Y-axis bordered box/badge or MT5 row, or null if not detected' },
+                    takeProfit: { type: Type.NUMBER, description: 'Exact Take Profit price from right Y-axis bordered box/badge or MT5 row, or null if not detected' },
                     exitPrice: { type: Type.NUMBER, description: 'Close/exit price if trade is closed' },
                     profit: { type: Type.NUMBER, description: 'Floating or closed profit/loss amount' },
                     plannedRiskReward: { type: Type.NUMBER, description: 'Risk/Reward ratio number (e.g. 2.0 for 1:2 RR)' },
@@ -645,12 +713,7 @@ ${geometryHintBlock}
             }
           } catch (err: any) {
             const errMsg = err?.message || String(err);
-            const isQuotaExhausted =
-              errMsg.includes('429') ||
-              errMsg.includes('RESOURCE_EXHAUSTED') ||
-              errMsg.includes('Quota exceeded');
-
-            if (isQuotaExhausted) {
+            if (isGeminiQuotaError(err)) {
               quotaCooldownUntilByModel.set(cooldownKey, Date.now() + 20 * 60 * 1000);
               break;
             }
@@ -693,8 +756,8 @@ ${geometryHintBlock}
     const notesStr = String(parsedData.notes || '');
     const combinedLabelsText = `${leftLabelsStr} ${notesStr}`;
 
-    const hasExplicitMt5Buy = /\bBUY(?:\s+(?:LIMIT|STOP))?\b/i.test(combinedLabelsText);
-    const hasExplicitMt5Sell = /\bSELL(?:\s+(?:LIMIT|STOP))?\b/i.test(combinedLabelsText);
+    const hasExplicitMt5Buy = /\b(?:BUY|BELI)(?:\s+(?:LIMIT|STOP))?\b/i.test(combinedLabelsText);
+    const hasExplicitMt5Sell = /\b(?:SELL|JUAL)(?:\s+(?:LIMIT|STOP))?\b/i.test(combinedLabelsText);
 
     const hasVerifiedDirection = Boolean(
       (canvasHints?.hasPositionBox &&
@@ -704,6 +767,7 @@ ${geometryHintBlock}
     );
 
     // Normalize position (prefer verified canvas box or explicit MT5 BUY/SELL label)
+    const rawPosUpper = String(parsedData.position || '').toUpperCase();
     let cleanPosition: 'BUY' | 'SELL' =
       canvasHints?.hasPositionBox && (canvasHints.inferredPosition === 'BUY' || canvasHints.inferredPosition === 'SELL')
         ? canvasHints.inferredPosition
@@ -711,7 +775,7 @@ ${geometryHintBlock}
         ? 'SELL'
         : hasExplicitMt5Buy && !hasExplicitMt5Sell
         ? 'BUY'
-        : parsedData.position === 'SELL'
+        : rawPosUpper === 'SELL' || rawPosUpper === 'JUAL' || rawPosUpper === 'SHORT'
         ? 'SELL'
         : 'BUY';
 
@@ -725,7 +789,7 @@ ${geometryHintBlock}
 
     // Lifecycle status detection (strictly detect LIMIT / STOP as PLANNED)
     const rawStatusStr = String(parsedData.status || '').toUpperCase();
-    const hasPendingKeyword = /\b(BUY\s+LIMIT|SELL\s+LIMIT|BUY\s+STOP|SELL\s+STOP|LIMIT|STOP|PENDING)\b/i.test(
+    const hasPendingKeyword = /\b(BUY\s+LIMIT|SELL\s+LIMIT|BUY\s+STOP|SELL\s+STOP|BELI\s+LIMIT|JUAL\s+LIMIT|LIMIT|STOP|PENDING)\b/i.test(
       combinedLabelsText
     );
     const status: 'PLANNED' | 'ACTIVE' | 'CLOSED' =
@@ -935,13 +999,12 @@ app.post('/api/extract-mt5-history', async (req, res) => {
       return;
     }
 
-    const scanApiKey = (process.env.GEMINI_API_KEY || '').trim();
-    const scannerApiKeys = scanApiKey ? [scanApiKey] : [];
+    const scannerApiKeys = getScannerGeminiApiKeys();
 
     if (scannerApiKeys.length === 0) {
       res.status(400).json({
         success: false,
-        error: 'GEMINI_API_KEY belum dikonfigurasi di environment server.',
+        error: 'GEMINI_API_KEY (khusus Scan Kilat) belum dikonfigurasi di environment server.',
       });
       return;
     }
@@ -1004,7 +1067,7 @@ STRICT EXTRACTION RULES:
    - Output openDateTime / closeDateTime in "YYYY-MM-DD HH:mm" if visible.
    - Never invent trades that are not visibly printed on screen.`;
 
-    const candidateModels = ['gemini-4-hydrogen', 'gemini-3.1-flash-lite'];
+    const candidateModels = SCANNER_MODEL_CASCADE;
     let responseText = '';
     let usedModel = '';
 
@@ -1039,7 +1102,7 @@ STRICT EXTRACTION RULES:
                 prompt,
               ],
               config: {
-                ...(model === 'gemini-4-hydrogen'
+                ...(model === 'gemini-4-hydrogen' || model === 'gemini-3-flash-preview'
                   ? { thinkingConfig: { thinkingLevel: ThinkingLevel.LOW } }
                   : {}),
                 responseMimeType: 'application/json',
@@ -1092,12 +1155,7 @@ STRICT EXTRACTION RULES:
             }
           } catch (err: any) {
             const errMsg = err?.message || String(err);
-            const isQuotaExhausted =
-              errMsg.includes('429') ||
-              errMsg.includes('RESOURCE_EXHAUSTED') ||
-              errMsg.includes('Quota exceeded');
-
-            if (isQuotaExhausted) {
+            if (isGeminiQuotaError(err)) {
               quotaCooldownUntilByModel.set(cooldownKey, Date.now() + 20 * 60 * 1000);
               break;
             }
@@ -1421,17 +1479,10 @@ async function fetchSingleForexFactoryFeed(url: string, xmlUrl?: string): Promis
  * Strictly returns ONLY verified real events from search results (never invents figures).
  */
 async function fetchForexFactoryCalendarViaGoogleSearch(): Promise<any[]> {
-  const newsApiKey = (
-    process.env.GEMINI_NEWS_API_KEY ||
-    process.env.GEMINI_API_KEY ||
-    ''
-  ).trim();
+  const newsApiKey = getNewsGeminiApiKeys()[0] || '';
   if (!newsApiKey) return [];
 
-  const candidateModels = [
-    'gemini-4-hydrogen',
-    'gemini-3.1-flash-lite',
-  ];
+  const candidateModels = NEWS_MODEL_CASCADE;
 
   const ai = new GoogleGenAI({
     apiKey: newsApiKey,
@@ -1569,11 +1620,7 @@ async function fetchLiveCmeFedWatchWithGrounding(
   // Pull live ZQ=F & ^IRX quotes in parallel as automatic real-time bond/futures backup
   const futuresBackupPromise = fetchServerYahooFedFundsAndTbillQuotes(us10yPulse);
 
-  const newsApiKey = (
-    process.env.GEMINI_NEWS_API_KEY ||
-    process.env.GEMINI_API_KEY ||
-    ''
-  ).trim();
+  const newsApiKey = getNewsGeminiApiKeys()[0] || '';
 
   if (!newsApiKey) {
     const backup = await futuresBackupPromise;
@@ -1584,10 +1631,7 @@ async function fetchLiveCmeFedWatchWithGrounding(
     return cachedCmeFedWatch?.data?.isAvailable ? cachedCmeFedWatch.data : backup;
   }
 
-  const candidateModels = [
-    'gemini-4-hydrogen',
-    'gemini-3.1-flash-lite',
-  ];
+  const candidateModels = NEWS_MODEL_CASCADE;
 
   const ai = new GoogleGenAI({
     apiKey: newsApiKey,
@@ -2923,10 +2967,7 @@ async function fetchPastActualsViaGoogleSearch(missingEvents: MacroCalendarEvent
     .join("\n");
   const prompt = `Search the web for the official released ACTUAL economic data values for these US USD economic indicators that have already been published:\n${listDesc}\n\nReturn ONLY a raw JSON object mapping the exact event title to its released actual value string (for example: {"Core CPI m/m": "0.3%", "CPI m/m": "0.2%"}). If an event has genuinely not been released yet, omit it. Do not include markdown fences or explanation.`;
 
-  const candidateModels = [
-    'gemini-4-hydrogen',
-    'gemini-3.1-flash-lite',
-  ];
+  const candidateModels = NEWS_MODEL_CASCADE;
 
   const ai = new GoogleGenAI({
     apiKey,
@@ -3135,7 +3176,7 @@ app.post('/api/macro-news/analyze', async (req, res) => {
       };
     }
 
-    const resolvedNewsKey = (process.env.GEMINI_NEWS_API_KEY || process.env.GEMINI_API_KEY || '').trim();
+    const resolvedNewsKey = getNewsGeminiApiKeys()[0] || '';
     const nowCutoffMs = Date.now() - 5 * 60 * 1000;
     const pastMissing = (feeds.calendarEvents || []).filter(
       (ev) =>
@@ -3211,12 +3252,8 @@ app.post('/api/macro-news/analyze', async (req, res) => {
       return;
     }
 
-    // Step 3: Isolated API Key Lookup (GEMINI_NEWS_API_KEY -> fallback GEMINI_API_KEY)
-    const newsApiKey = (
-      process.env.GEMINI_NEWS_API_KEY ||
-      process.env.GEMINI_API_KEY ||
-      ''
-    ).trim();
+    // Step 3: Strictly Isolated API Key Lookup (ONLY GEMINI_NEWS_API_KEY — never touches GEMINI_API_KEY used by Scan Kilat!)
+    const newsApiKey = getNewsGeminiApiKeys()[0] || '';
 
     if (!newsApiKey) {
       lastServerMacroSnapshot = baselineSnapshot;
@@ -3237,10 +3274,7 @@ app.post('/api/macro-news/analyze', async (req, res) => {
       },
     });
 
-    const candidateModels = [
-      'gemini-4-hydrogen',
-      'gemini-3.1-flash-lite',
-    ];
+    const candidateModels = NEWS_MODEL_CASCADE;
 
     const promptPayload = {
       primaryEvent: baselineSnapshot.scenarioMatrix.primaryEvent,

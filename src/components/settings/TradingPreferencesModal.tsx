@@ -123,35 +123,38 @@ export const TradingPreferencesModal: React.FC<TradingPreferencesModalProps> = (
     adjustments: tr('Catat total modal masuk dan penarikan dana', 'Record cumulative deposits and withdrawals'),
   };
 
-  const labelClass = 'block text-xs font-semibold text-[#151D2A] dark:text-[#F2F5F9] mb-1.5';
+  const labelClass = 'block text-xs font-semibold text-[#0F172A] dark:text-[#F2F4F7] mb-1.5';
   const inputClass =
-    'w-full rounded-lg bg-[#F5F7FA] dark:bg-[#080A0E] border border-[#DDE3EA] dark:border-[#252B34] px-3 py-2 text-xs font-mono-numbers tabular-nums text-[#151D2A] dark:text-[#F2F5F9] placeholder-[#929BA9] focus:border-[#1769E8] focus:outline-none';
+    'w-full min-h-[40px] rounded-lg bg-[#F5F7FA] dark:bg-[#0B0E13] border border-[#D9E2EC] dark:border-[#20252D] px-3 py-2 text-xs font-mono-numbers tabular-nums text-[#0F172A] dark:text-[#F2F4F7] placeholder-[#929BA9] focus:border-[#0F172A] dark:focus:border-white focus:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/25 dark:focus-visible:ring-white/25';
 
   const netAdjustment = (formData.totalDeposits ?? 0) - (formData.totalWithdrawals ?? 0);
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 dark:bg-black/80 p-4 animate-in fade-in duration-150"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/55 dark:bg-black/75 p-4 animate-in fade-in duration-150"
       onClick={onClose}
     >
       <div
-        className="w-full max-w-lg bg-white dark:bg-[#11151B] border border-[#DDE3EA] dark:border-[#252B34] rounded-2xl shadow-2xl overflow-hidden text-[#151D2A] dark:text-[#F2F5F9]"
+        role="dialog"
+        aria-modal="true"
+        aria-label={categoryTitles[activeCategory]}
+        className="w-full max-w-lg bg-white dark:bg-[#101318] border border-[#D9E2EC] dark:border-[#20252D] rounded-2xl shadow-[0_20px_50px_-12px_rgba(15,23,42,0.22)] dark:shadow-[0_24px_60px_-12px_rgba(0,0,0,0.8)] overflow-hidden text-[#0F172A] dark:text-[#F2F4F7]"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
-        <div className="px-5 py-4 border-b border-[#DDE3EA] dark:border-[#252B34] flex items-center justify-between gap-3">
+        <div className="px-5 py-4 border-b border-[#D9E2EC] dark:border-[#20252D] flex items-center justify-between gap-3">
           <div className="min-w-0">
-            <h3 className="text-sm sm:text-base font-bold text-[#151D2A] dark:text-[#F2F5F9]">
+            <h3 className="text-sm sm:text-base font-bold text-[#0F172A] dark:text-[#F2F4F7]">
               {categoryTitles[activeCategory]}
             </h3>
-            <p className="text-[11px] text-[#697586] dark:text-[#929BA9] mt-0.5">
+            <p className="text-[11px] text-[#526071] dark:text-[#929BA9] mt-0.5">
               {categorySubtitles[activeCategory]}
             </p>
           </div>
           <button
             type="button"
             onClick={onClose}
-            className="p-1.5 rounded-lg text-[#697586] dark:text-[#929BA9] hover:text-[#151D2A] dark:hover:text-[#F2F5F9] hover:bg-[#F5F7FA] dark:hover:bg-[#171D26] transition-colors cursor-pointer shrink-0"
+            className="min-h-[38px] min-w-[38px] flex items-center justify-center rounded-full text-[#526071] dark:text-[#929BA9] hover:text-[#0F172A] dark:hover:text-[#F2F4F7] hover:bg-[#F5F7FA] dark:hover:bg-[#161A22] transition-colors cursor-pointer shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/35 dark:focus-visible:ring-white/35"
             aria-label={tr('Tutup', 'Close')}
           >
             <X className="h-4 w-4 stroke-[1.75]" />
@@ -162,16 +165,16 @@ export const TradingPreferencesModal: React.FC<TradingPreferencesModalProps> = (
         <form onSubmit={handleSubmit}>
           <div className="p-5 space-y-5">
             {/* Category Segmented Switcher */}
-            <div className="grid grid-cols-5 gap-1 p-1 rounded-lg bg-[#F5F7FA] dark:bg-[#080A0E] border border-[#DDE3EA] dark:border-[#252B34]">
+            <div className="grid grid-cols-5 gap-1 p-1 rounded-full bg-[#F5F7FA] dark:bg-[#0B0E13] border border-[#D9E2EC] dark:border-[#20252D]">
               {(['balance', 'currency', 'broker', 'risk', 'adjustments'] as PreferenceCategory[]).map((cat) => (
                 <button
                   key={cat}
                   type="button"
                   onClick={() => setActiveCategory(cat)}
-                  className={`py-1.5 px-1 text-[11px] rounded-md transition-colors cursor-pointer text-center truncate ${
+                  className={`min-h-[34px] py-1.5 px-1 text-[11px] rounded-full transition-colors cursor-pointer text-center truncate focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/35 dark:focus-visible:ring-white/35 ${
                     activeCategory === cat
-                      ? 'bg-white dark:bg-[#171D26] text-[#1769E8] dark:text-[#F2F5F9] font-semibold border border-[#DDE3EA] dark:border-[#252B34]'
-                      : 'text-[#697586] dark:text-[#929BA9] hover:text-[#151D2A] dark:hover:text-[#F2F5F9] font-medium'
+                      ? 'bg-[#0F172A] text-white dark:bg-white dark:text-[#0F172A] font-semibold'
+                      : 'text-[#526071] dark:text-[#929BA9] hover:text-[#0F172A] dark:hover:text-[#F2F4F7] font-medium'
                   }`}
                 >
                   {cat === 'balance' && tr('Modal', 'Capital')}
@@ -191,7 +194,7 @@ export const TradingPreferencesModal: React.FC<TradingPreferencesModalProps> = (
                     {tr('Nominal Modal Awal', 'Initial Capital Amount')} ({formData.currencySymbol})
                   </label>
                   <div className="relative">
-                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-xs font-semibold text-[#697586] dark:text-[#929BA9] font-mono-numbers">
+                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-xs font-semibold text-[#526071] dark:text-[#929BA9] font-mono-numbers">
                       {formData.currencySymbol}
                     </span>
                     <input
@@ -212,7 +215,7 @@ export const TradingPreferencesModal: React.FC<TradingPreferencesModalProps> = (
                       className={`${inputClass} pl-9`}
                     />
                   </div>
-                  <p className="text-[11px] text-[#697586] dark:text-[#929BA9] mt-1.5">
+                  <p className="text-[11px] text-[#526071] dark:text-[#929BA9] mt-1.5">
                     {tr(
                       'Menjadi acuan perhitungan persentase profit dan kurva ekuitas awal.',
                       'Serves as the baseline for profit percentage and starting equity curve.'
@@ -236,25 +239,25 @@ export const TradingPreferencesModal: React.FC<TradingPreferencesModalProps> = (
                         key={c}
                         type="button"
                         onClick={() => handleCurrencySelect(c)}
-                        className={`p-3.5 rounded-xl border text-left transition-colors cursor-pointer relative ${
+                        className={`p-3.5 rounded-xl border text-left transition-colors cursor-pointer relative focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/35 dark:focus-visible:ring-white/35 ${
                           isSelected
-                            ? 'border-[#1769E8] bg-[#F5F7FA] dark:bg-[#171D26]'
-                            : 'border-[#DDE3EA] dark:border-[#252B34] bg-white dark:bg-[#080A0E] hover:bg-[#F5F7FA] dark:hover:bg-[#171D26]/60'
+                            ? 'border-[#0F172A] dark:border-white bg-[#F5F7FA] dark:bg-[#161A22]'
+                            : 'border-[#D9E2EC] dark:border-[#20252D] bg-white dark:bg-[#0B0E13] hover:bg-[#F5F7FA] dark:hover:bg-[#161A22]/70'
                         }`}
                       >
                         <div className="flex items-center justify-between">
                           <span
                             className={`text-sm font-bold font-mono-numbers ${
                               isSelected
-                                ? 'text-[#1769E8] dark:text-[#60A5FA]'
-                                : 'text-[#151D2A] dark:text-[#F2F5F9]'
+                                ? 'text-[#0F172A] dark:text-white'
+                                : 'text-[#0F172A] dark:text-[#F2F4F7]'
                             }`}
                           >
                             {c}
                           </span>
-                          {isSelected && <Check className="h-3.5 w-3.5 text-[#1769E8] stroke-[2]" />}
+                          {isSelected && <Check className="h-3.5 w-3.5 text-[#0F172A] dark:text-white stroke-[2]" />}
                         </div>
-                        <span className="text-[11px] text-[#697586] dark:text-[#929BA9] block mt-1">
+                        <span className="text-[11px] text-[#526071] dark:text-[#929BA9] block mt-1">
                           {symbol} · {fullName}
                         </span>
                       </button>
@@ -291,25 +294,25 @@ export const TradingPreferencesModal: React.FC<TradingPreferencesModalProps> = (
                           key={opt.val}
                           type="button"
                           onClick={() => setFormData({ ...formData, xauusdPipSize: opt.val })}
-                          className={`p-3 rounded-xl border text-left transition-colors cursor-pointer ${
+                          className={`p-3 rounded-xl border text-left transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/35 dark:focus-visible:ring-white/35 ${
                             active
-                              ? 'border-[#1769E8] bg-[#F5F7FA] dark:bg-[#171D26]'
-                              : 'border-[#DDE3EA] dark:border-[#252B34] bg-white dark:bg-[#080A0E] hover:bg-[#F5F7FA] dark:hover:bg-[#171D26]/60'
+                              ? 'border-[#0F172A] dark:border-white bg-[#F5F7FA] dark:bg-[#161A22]'
+                              : 'border-[#D9E2EC] dark:border-[#20252D] bg-white dark:bg-[#0B0E13] hover:bg-[#F5F7FA] dark:hover:bg-[#161A22]/70'
                           }`}
                         >
                           <div className="flex items-center justify-between gap-1">
                             <span
                               className={`text-xs font-bold font-mono-numbers ${
                                 active
-                                  ? 'text-[#1769E8] dark:text-[#60A5FA]'
-                                  : 'text-[#151D2A] dark:text-[#F2F5F9]'
+                                  ? 'text-[#0F172A] dark:text-white'
+                                  : 'text-[#0F172A] dark:text-[#F2F4F7]'
                               }`}
                             >
                               {opt.title}
                             </span>
-                            {active && <Check className="h-3.5 w-3.5 text-[#1769E8] stroke-[2]" />}
+                            {active && <Check className="h-3.5 w-3.5 text-[#0F172A] dark:text-white stroke-[2]" />}
                           </div>
-                          <span className="text-[11px] text-[#697586] dark:text-[#929BA9] font-mono-numbers block mt-1">
+                          <span className="text-[11px] text-[#526071] dark:text-[#929BA9] font-mono-numbers block mt-1">
                             {opt.desc}
                           </span>
                         </button>
@@ -335,22 +338,22 @@ export const TradingPreferencesModal: React.FC<TradingPreferencesModalProps> = (
                           key={opt.val}
                           type="button"
                           onClick={() => setFormData({ ...formData, xauusdContractSize: opt.val })}
-                          className={`p-2.5 rounded-xl border text-left transition-colors cursor-pointer ${
+                          className={`p-2.5 rounded-xl border text-left transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/35 dark:focus-visible:ring-white/35 ${
                             active
-                              ? 'border-[#1769E8] bg-[#F5F7FA] dark:bg-[#171D26]'
-                              : 'border-[#DDE3EA] dark:border-[#252B34] bg-white dark:bg-[#080A0E] hover:bg-[#F5F7FA] dark:hover:bg-[#171D26]/60'
+                              ? 'border-[#0F172A] dark:border-white bg-[#F5F7FA] dark:bg-[#161A22]'
+                              : 'border-[#D9E2EC] dark:border-[#20252D] bg-white dark:bg-[#0B0E13] hover:bg-[#F5F7FA] dark:hover:bg-[#161A22]/70'
                           }`}
                         >
                           <span
                             className={`text-xs font-bold font-mono-numbers block ${
                               active
-                                ? 'text-[#1769E8] dark:text-[#60A5FA]'
-                                : 'text-[#151D2A] dark:text-[#F2F5F9]'
+                                ? 'text-[#0F172A] dark:text-white'
+                                : 'text-[#0F172A] dark:text-[#F2F4F7]'
                             }`}
                           >
                             {opt.label}
                           </span>
-                          <span className="text-[10px] text-[#697586] dark:text-[#929BA9] block mt-0.5">
+                          <span className="text-[10px] text-[#526071] dark:text-[#929BA9] block mt-0.5">
                             {opt.sub}
                           </span>
                         </button>
@@ -365,7 +368,7 @@ export const TradingPreferencesModal: React.FC<TradingPreferencesModalProps> = (
                     {tr('Komisi Broker per Lot ($)', 'Broker Commission per Lot ($)')}
                   </label>
                   <div className="relative">
-                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-xs font-semibold text-[#697586] dark:text-[#929BA9] font-mono-numbers">
+                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-xs font-semibold text-[#526071] dark:text-[#929BA9] font-mono-numbers">
                       $
                     </span>
                     <input
@@ -385,14 +388,14 @@ export const TradingPreferencesModal: React.FC<TradingPreferencesModalProps> = (
                       }}
                       className={`${inputClass} pl-7 pr-12`}
                     />
-                    <span className="absolute right-3 top-1/2 -translate-y-1/2 text-[11px] text-[#697586] dark:text-[#929BA9]">
+                    <span className="absolute right-3 top-1/2 -translate-y-1/2 text-[11px] text-[#526071] dark:text-[#929BA9]">
                       / lot
                     </span>
                   </div>
                 </div>
 
                 {/* Reference Note */}
-                <div className="px-3 py-2.5 rounded-lg bg-[#F5F7FA] dark:bg-[#080A0E] border border-[#DDE3EA] dark:border-[#252B34] text-[11px] text-[#697586] dark:text-[#929BA9] font-mono-numbers tabular-nums">
+                <div className="px-3 py-2.5 rounded-lg bg-[#F5F7FA] dark:bg-[#0B0E13] border border-[#D9E2EC] dark:border-[#20252D] text-[11px] text-[#526071] dark:text-[#929BA9] font-mono-numbers tabular-nums">
                   0.01 lot = $0.10/pip · 0.10 lot = $1.00/pip · 1.00 lot = $10.00/pip
                 </div>
               </div>
@@ -473,25 +476,25 @@ export const TradingPreferencesModal: React.FC<TradingPreferencesModalProps> = (
                           key={opt.val}
                           type="button"
                           onClick={() => setFormData({ ...formData, riskCapitalBasis: opt.val })}
-                          className={`p-3 rounded-xl border text-left transition-colors cursor-pointer ${
+                          className={`p-3 rounded-xl border text-left transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/35 dark:focus-visible:ring-white/35 ${
                             active
-                              ? 'border-[#1769E8] bg-[#F5F7FA] dark:bg-[#171D26]'
-                              : 'border-[#DDE3EA] dark:border-[#252B34] bg-white dark:bg-[#080A0E] hover:bg-[#F5F7FA] dark:hover:bg-[#171D26]/60'
+                              ? 'border-[#0F172A] dark:border-white bg-[#F5F7FA] dark:bg-[#161A22]'
+                              : 'border-[#D9E2EC] dark:border-[#20252D] bg-white dark:bg-[#0B0E13] hover:bg-[#F5F7FA] dark:hover:bg-[#161A22]/70'
                           }`}
                         >
                           <div className="flex items-center justify-between gap-1">
                             <span
                               className={`text-xs font-bold ${
                                 active
-                                  ? 'text-[#1769E8] dark:text-[#60A5FA]'
-                                  : 'text-[#151D2A] dark:text-[#F2F5F9]'
+                                  ? 'text-[#0F172A] dark:text-white'
+                                  : 'text-[#0F172A] dark:text-[#F2F4F7]'
                               }`}
                             >
                               {opt.title}
                             </span>
-                            {active && <Check className="h-3.5 w-3.5 text-[#1769E8] stroke-[2]" />}
+                            {active && <Check className="h-3.5 w-3.5 text-[#0F172A] dark:text-white stroke-[2]" />}
                           </div>
-                          <span className="text-[11px] text-[#697586] dark:text-[#929BA9] block mt-1">
+                          <span className="text-[11px] text-[#526071] dark:text-[#929BA9] block mt-1">
                             {opt.desc}
                           </span>
                         </button>
@@ -553,15 +556,15 @@ export const TradingPreferencesModal: React.FC<TradingPreferencesModalProps> = (
                   </div>
                 </div>
 
-                <div className="px-3.5 py-2.5 rounded-xl bg-[#F5F7FA] dark:bg-[#080A0E] border border-[#DDE3EA] dark:border-[#252B34] flex items-center justify-between text-xs">
-                  <span className="text-[#697586] dark:text-[#929BA9]">
+                <div className="px-3.5 py-2.5 rounded-xl bg-[#F5F7FA] dark:bg-[#0B0E13] border border-[#D9E2EC] dark:border-[#20252D] flex items-center justify-between text-xs">
+                  <span className="text-[#526071] dark:text-[#929BA9]">
                     {tr('Arus Kas Bersih', 'Net Cashflow')}
                   </span>
                   <span
                     className={`font-bold font-mono-numbers tabular-nums ${
                       netAdjustment >= 0
-                        ? 'text-[#059669] dark:text-[#10B981]'
-                        : 'text-[#E11D48] dark:text-[#F43F5E]'
+                        ? 'text-[#059669] dark:text-[#00A878]'
+                        : 'text-[#E11D48] dark:text-[#E05260]'
                     }`}
                   >
                     {netAdjustment >= 0 ? '+' : ''}
@@ -573,17 +576,17 @@ export const TradingPreferencesModal: React.FC<TradingPreferencesModalProps> = (
           </div>
 
           {/* Footer */}
-          <div className="px-5 py-3.5 border-t border-[#DDE3EA] dark:border-[#252B34] bg-[#F5F7FA]/60 dark:bg-[#080A0E]/40 flex items-center justify-end gap-2">
+          <div className="px-5 py-3.5 border-t border-[#D9E2EC] dark:border-[#20252D] bg-[#F5F7FA]/70 dark:bg-[#0B0E13]/60 flex items-center justify-end gap-2">
             <button
               type="button"
               onClick={onClose}
-              className="px-4 py-2 rounded-lg border border-[#DDE3EA] dark:border-[#252B34] bg-white dark:bg-[#11151B] hover:bg-[#F5F7FA] dark:hover:bg-[#171D26] text-xs font-semibold text-[#151D2A] dark:text-[#F2F5F9] transition-colors cursor-pointer"
+              className="min-h-[38px] px-4 py-2 rounded-full border border-[#D9E2EC] dark:border-[#20252D] bg-[#F5F7FA] hover:bg-[#EEF2F6] dark:bg-[#161A22] dark:hover:bg-[#1E2430] text-xs font-semibold text-[#0F172A] dark:text-[#F2F4F7] transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/35 dark:focus-visible:ring-white/35"
             >
               {tr('Batal', 'Cancel')}
             </button>
             <button
               type="submit"
-              className="px-4 py-2 rounded-lg bg-[#1769E8] hover:bg-[#1458C4] text-white text-xs font-semibold transition-colors cursor-pointer"
+              className="min-h-[38px] px-4 py-2 rounded-full bg-[#0F172A] hover:bg-[#1E293B] text-white dark:bg-white dark:hover:bg-[#E2E8F0] dark:text-[#0F172A] text-xs font-semibold transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/35 dark:focus-visible:ring-white/35"
             >
               {tr('Simpan Pengaturan', 'Save Settings')}
             </button>

@@ -339,6 +339,9 @@ export function resolveTradingViewSnapshotUrl(rawUrl: string): {
 export function normalizeScanInstrument(raw: string | null | undefined): string {
   if (!raw) return 'XAUUSD';
   let s = raw.toUpperCase().trim();
+  if (!s || s === 'NULL' || s === 'NONE' || s === 'UNKNOWN' || s === 'UNDEFINED' || s === 'N/A' || s === '-') {
+    return 'XAUUSD';
+  }
 
   if (s.includes(':')) {
     s = s.split(':').pop() || s;
@@ -1131,8 +1134,8 @@ export function normalizeGeminiScanResponse(
   const notesText = String(parsedData?.notes || '');
   const combinedLabelsText = `${leftLabelsStr} ${notesText}`;
 
-  const hasExplicitMt5Buy = /\bBUY(?:\s+(?:LIMIT|STOP))?\b/i.test(combinedLabelsText);
-  const hasExplicitMt5Sell = /\bSELL(?:\s+(?:LIMIT|STOP))?\b/i.test(combinedLabelsText);
+  const hasExplicitMt5Buy = /\b(?:BUY|BELI)(?:\s+(?:LIMIT|STOP))?\b/i.test(combinedLabelsText);
+  const hasExplicitMt5Sell = /\b(?:SELL|JUAL)(?:\s+(?:LIMIT|STOP))?\b/i.test(combinedLabelsText);
 
   const hasVerifiedDirection = Boolean(
     (source === 'TRADINGVIEW' &&
@@ -1142,6 +1145,7 @@ export function normalizeGeminiScanResponse(
       (hasExplicitMt5Sell && !hasExplicitMt5Buy)
   );
 
+  const rawPosUpper = String(parsedData?.position || '').toUpperCase();
   let position: TradePosition =
     source === 'TRADINGVIEW' &&
     canvasHints?.hasPositionBox &&
@@ -1151,7 +1155,7 @@ export function normalizeGeminiScanResponse(
       ? 'SELL'
       : hasExplicitMt5Buy && !hasExplicitMt5Sell
       ? 'BUY'
-      : String(parsedData?.position || '').toUpperCase() === 'SELL'
+      : rawPosUpper === 'SELL' || rawPosUpper === 'JUAL' || rawPosUpper === 'SHORT'
       ? 'SELL'
       : 'BUY';
 
@@ -1219,7 +1223,7 @@ export function normalizeGeminiScanResponse(
 
   // Detect PENDING / LIMIT / STOP status
   const rawStatus = String(parsedData?.status || '').toUpperCase();
-  const hasLimitOrStopKeyword = /\b(BUY\s+LIMIT|SELL\s+LIMIT|BUY\s+STOP|SELL\s+STOP|LIMIT|PENDING)\b/i.test(
+  const hasLimitOrStopKeyword = /\b(BUY\s+LIMIT|SELL\s+LIMIT|BUY\s+STOP|SELL\s+STOP|BELI\s+LIMIT|JUAL\s+LIMIT|LIMIT|PENDING)\b/i.test(
     combinedLabelsText
   );
 
@@ -1245,7 +1249,12 @@ export function normalizeGeminiScanResponse(
     }
   }
 
-  const hasAnyValidLevel = entryPrice !== null || stopLoss !== null || takeProfit !== null;
+  const hasAnyValidLevel =
+    entryPrice !== null ||
+    stopLoss !== null ||
+    takeProfit !== null ||
+    exitPrice !== null ||
+    (profit !== null && Number.isFinite(profit));
 
   return {
     detected: parsedData?.detected !== false && hasAnyValidLevel,
@@ -1846,8 +1855,9 @@ export async function scanTradeScreenshotOrUrl(inputSource: string): Promise<Ext
   }
 
   const scanEndpoints = getApiEndpointCandidates('/api/extract-trade-screenshot');
+  let lastServerError = '';
   for (const endpoint of scanEndpoints) {
-    const serverRes = await nativeAwarePostJson(endpoint, payload, 28000);
+    const serverRes = await nativeAwarePostJson(endpoint, payload, 55000);
 
     if (serverRes.ok && serverRes.json?.success && serverRes.json?.data) {
       const normalized = normalizeGeminiScanResponse(
@@ -1859,10 +1869,14 @@ export async function scanTradeScreenshotOrUrl(inputSource: string): Promise<Ext
       if (
         (normalized.entryPrice !== null && normalized.entryPrice > 0) ||
         normalized.stopLoss !== null ||
-        normalized.takeProfit !== null
+        normalized.takeProfit !== null ||
+        (normalized.exitPrice !== null && normalized.exitPrice > 0) ||
+        normalized.profit !== null
       ) {
         return normalized;
       }
+    } else if (serverRes.json?.error) {
+      lastServerError = String(serverRes.json.error);
     }
   }
 
@@ -1871,7 +1885,7 @@ export async function scanTradeScreenshotOrUrl(inputSource: string): Promise<Ext
     ? await runOcrSpaceOnDataUrl(dataUrlToAnalyze)
     : { fullText: '', lines: [], words: [] };
 
-  return synthesizeTradeScanFromSignals({
+  const fallbackResult = synthesizeTradeScanFromSignals({
     ocr,
     canvasGeom,
     urlMeta: {
@@ -1883,6 +1897,21 @@ export async function scanTradeScreenshotOrUrl(inputSource: string): Promise<Ext
       directImageUrl: !isDataUrl ? tvResolved.directImageUrl : '',
     },
   });
+
+  const hasFallbackPrice =
+    (fallbackResult.entryPrice !== null && fallbackResult.entryPrice > 0) ||
+    fallbackResult.stopLoss !== null ||
+    fallbackResult.takeProfit !== null ||
+    (fallbackResult.exitPrice !== null && fallbackResult.exitPrice > 0);
+
+  if (!hasFallbackPrice) {
+    throw new Error(
+      lastServerError ||
+        'Harga Entry, SL, atau TP tidak terbaca pada gambar. Pastikan angka harga di sisi kanan chart (Y-axis) atau baris posisi MT5 terlihat jelas.'
+    );
+  }
+
+  return fallbackResult;
 }
 
 // ============================================================================
@@ -2137,13 +2166,131 @@ export async function scanSingleMt5HistoryScreenshot(
 
     if (res.json?.error) {
       lastError = res.json.error;
-      if (res.json?.quotaExhausted) {
-        break;
-      }
+    }
+  }
+
+  // Tier 6 Fallback (When all 5 Gemini AI model tiers are quota-exhausted): Local OCR MT5 History Row Parser
+  if (trimmed.startsWith('data:image/')) {
+    const ocr = await runOcrSpaceOnDataUrl(trimmed);
+    const ocrRows = parseMt5HistoryRowsFromOcrText(ocr.fullText);
+    if (ocrRows.length > 0) {
+      const existingTrades = options?.existingTrades || [];
+      const defaultStrategy = options?.defaultStrategy || 'MT5 History Scan';
+      const fallbackNow = normalizeTradeDateTimeLocal(new Date());
+      const mappedOcr: Mt5HistoryTradeCandidate[] = ocrRows.map((row, idx) => {
+        const closeDateTime = row.closeDateTime || fallbackNow;
+        const dupId = detectDuplicateMt5Trade(
+          {
+            ticketId: null,
+            instrument: row.instrument,
+            position: row.position,
+            lotSize: row.lotSize,
+            entryPrice: row.entryPrice,
+            exitPrice: row.exitPrice,
+            netProfit: row.netProfit,
+            closeDateTime,
+          },
+          existingTrades
+        );
+        return {
+          tempId: `mt5_ocr_${Date.now()}_${options?.sourceImageIndex ?? 0}_${idx}`,
+          ticketId: null,
+          instrument: row.instrument,
+          position: row.position,
+          lotSize: row.lotSize,
+          entryPrice: row.entryPrice,
+          exitPrice: row.exitPrice,
+          stopLoss: null,
+          takeProfit: null,
+          commission: 0,
+          swap: 0,
+          netProfit: row.netProfit,
+          openDateTime: null,
+          closeDateTime,
+          closeType: row.netProfit > 0 ? 'TP' : row.netProfit < 0 ? 'SL' : 'Manual',
+          notes: 'OCR Fallback',
+          strategy: defaultStrategy,
+          session: detectTradingSessionFromDateTime(closeDateTime),
+          isDuplicate: Boolean(dupId),
+          duplicateMatchId: dupId || undefined,
+          selected: !dupId,
+          sourceImageIndex: options?.sourceImageIndex,
+        };
+      });
+      return {
+        trades: mappedOcr,
+        modelUsed: 'ocr-fallback-v1',
+        source: 'MT5_HISTORY_OCR',
+      };
     }
   }
 
   throw new Error(lastError);
+}
+
+function parseMt5HistoryRowsFromOcrText(rawText: string): Array<{
+  instrument: string;
+  position: TradePosition;
+  lotSize: number;
+  entryPrice: number;
+  exitPrice: number;
+  netProfit: number;
+  closeDateTime: string | null;
+}> {
+  if (!rawText || !rawText.trim()) return [];
+  const lines = rawText
+    .split(/\r?\n/)
+    .map((l) => l.trim())
+    .filter(Boolean);
+  const results: Array<{
+    instrument: string;
+    position: TradePosition;
+    lotSize: number;
+    entryPrice: number;
+    exitPrice: number;
+    netProfit: number;
+    closeDateTime: string | null;
+  }> = [];
+
+  for (let i = 0; i < lines.length; i++) {
+    const windowText = [lines[i], lines[i + 1] || '', lines[i + 2] || ''].join(' ');
+    const headerMatch = lines[i].match(
+      /\b([A-Za-z0-9._#]{3,12})\s*[, ]\s*(buy|sell|beli|jual)\s+(\d+(?:[.,]\d{1,2})?)/i
+    );
+    if (!headerMatch) continue;
+    const instrument = normalizeScanInstrument(headerMatch[1]);
+    const dirRaw = headerMatch[2].toUpperCase();
+    const position: TradePosition = dirRaw === 'SELL' || dirRaw === 'JUAL' ? 'SELL' : 'BUY';
+    const lotSize = parseFloat(headerMatch[3].replace(',', '.')) || 0.01;
+
+    const arrowMatch = windowText.match(
+      /([0-9]{1,6}(?:[.,][0-9]{1,5})+)\s*(?:->|→|-›|=>|-)\s*([0-9]{1,6}(?:[.,][0-9]{1,5})+)/
+    );
+    if (!arrowMatch) continue;
+    const entryPrice = normalizeChartPriceNumber(arrowMatch[1], instrument);
+    const exitPrice = normalizeChartPriceNumber(arrowMatch[2], instrument);
+    if (entryPrice === null || exitPrice === null) continue;
+
+    const dtMatch = windowText.match(/(\d{4})[.\-\/](\d{2})[.\-\/](\d{2})\s+(\d{2}:\d{2})/);
+    const closeDateTime = dtMatch
+      ? `${dtMatch[1]}-${dtMatch[2]}-${dtMatch[3]}T${dtMatch[4]}`
+      : null;
+
+    const profitMatches = windowText.match(/[+-]?\d+(?:[.,]\d{2})\b/g) || [];
+    const lastProfitStr = profitMatches.length > 0 ? profitMatches[profitMatches.length - 1] : '0';
+    const netProfit = parseFloat(lastProfitStr.replace(',', '.')) || 0;
+
+    results.push({
+      instrument,
+      position,
+      lotSize: Number(lotSize.toFixed(2)),
+      entryPrice,
+      exitPrice,
+      netProfit: Number(netProfit.toFixed(2)),
+      closeDateTime,
+    });
+  }
+  return results;
 }
 
 export function deduplicateBatchMt5Candidates(

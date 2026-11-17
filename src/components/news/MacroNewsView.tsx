@@ -21,6 +21,7 @@ import {
   NEWS_CYCLE_OFFLINE_MODE_STORAGE_KEY,
 } from '../../utils/apiConfig';
 import { useLanguage } from '../../utils/language';
+import { pushMacroNewsShortNotification } from '../../utils/appNotifications';
 import {
   MacroNewsSnapshot,
   MacroCalendarEvent,
@@ -346,6 +347,7 @@ export const MacroNewsView: React.FC<MacroNewsViewProps> = ({ isActive = true })
         }
 
         setSnapshot(finalSnap);
+        pushMacroNewsShortNotification(finalSnap, language === 'en');
         if (finalSnap.rssFeedHealth) {
           setLiveRssFeedHealth(finalSnap.rssFeedHealth);
         }
@@ -429,6 +431,7 @@ export const MacroNewsView: React.FC<MacroNewsViewProps> = ({ isActive = true })
 
       if (cached) {
         setSnapshot(cached);
+        pushMacroNewsShortNotification(cached, language === 'en');
         setIsLoading(false);
         // Immediately sync live Yahoo Finance Intermarket Pulse quotes even when macro snapshot is cached (< 15m)
         void syncLiveIntermarketPulse();
@@ -837,11 +840,11 @@ export const MacroNewsView: React.FC<MacroNewsViewProps> = ({ isActive = true })
   if (isLoading && !snapshot) {
     return (
       <div className="min-h-[60vh] flex flex-col items-center justify-center p-8 text-center font-sans">
-        <RefreshCw className="w-5 h-5 text-[#151D2A] dark:text-[#F2F4F7] animate-spin mb-4" />
-        <h3 className="text-sm sm:text-base font-semibold text-[#151D2A] dark:text-[#F2F4F7] tracking-tight">
+        <RefreshCw className="w-5 h-5 text-[#0F172A] dark:text-[#F2F4F7] animate-spin mb-4" />
+        <h3 className="text-sm sm:text-base font-semibold text-[#0F172A] dark:text-[#F2F4F7] tracking-tight">
           {tr('Memuat Trade News...', 'Loading Trade News...')}
         </h3>
-        <p className="text-xs sm:text-sm text-[#697586] dark:text-[#929BA9] mt-1.5 max-w-sm leading-relaxed">
+        <p className="text-xs sm:text-sm text-[#526071] dark:text-[#929BA9] mt-1.5 max-w-sm leading-relaxed">
           {tr(
             'Menghubungkan ke kalender ekonomi USD, data intermarket, dan umpan berita makro.',
             'Connecting to USD economic calendar, intermarket data, and macro news feeds.'
@@ -856,11 +859,11 @@ export const MacroNewsView: React.FC<MacroNewsViewProps> = ({ isActive = true })
       return (
         <div
           data-testid="macro-news-view"
-          className="space-y-5 pb-10 text-[#151D2A] dark:text-[#F2F4F7] font-sans"
+          className="space-y-5 pb-10 text-[#0F172A] dark:text-[#F2F4F7] font-sans"
         >
-          <div className="flex flex-wrap items-center justify-between gap-3 pb-3 border-b border-[#DDE3EA] dark:border-[#20252D]">
+          <div className="flex flex-wrap items-center justify-between gap-3 pb-3 border-b border-[#D9E2EC] dark:border-[#20252D]">
             <div className="min-w-0">
-              <h1 className="text-xs font-bold uppercase tracking-[0.12em] text-[#151D2A] dark:text-[#F2F4F7] truncate">
+              <h1 className="text-xs font-bold uppercase tracking-[0.12em] text-[#0F172A] dark:text-[#F2F4F7] truncate">
                 {tr('TRADE NEWS · XAU/USD', 'TRADE NEWS · XAU/USD')}
               </h1>
               <p className="text-[11px] text-[#D97706] dark:text-[#F59E0B] font-medium mt-0.5">
@@ -873,18 +876,18 @@ export const MacroNewsView: React.FC<MacroNewsViewProps> = ({ isActive = true })
             <button
               type="button"
               onClick={handleToggleOfflineMode}
-              className="h-9 inline-flex items-center justify-center gap-1.5 px-4 py-1.5 rounded-full bg-[#151D2A] dark:bg-white text-white dark:text-[#050607] hover:opacity-90 transition-opacity text-xs font-semibold cursor-pointer shrink-0"
+              className="h-9 inline-flex items-center justify-center gap-1.5 px-4 py-1.5 rounded-full bg-[#0F172A] dark:bg-white text-white dark:text-[#050607] hover:opacity-90 transition-opacity text-xs font-semibold cursor-pointer shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/35 dark:focus-visible:ring-white/35"
             >
               <Wifi className="w-3.5 h-3.5 stroke-[2]" />
               <span>{tr('Aktifkan Online & Muat Data', 'Go Online & Load Data')}</span>
             </button>
           </div>
-          <div className="rounded-xl bg-[#F5F7FA] dark:bg-[#101318] border border-[#DDE3EA] dark:border-[#20252D] p-5 space-y-2">
+          <div className="rounded-xl bg-white dark:bg-[#101318] border border-[#D9E2EC] dark:border-[#20252D] shadow-[0_1px_2px_rgba(15,23,42,0.04)] dark:shadow-none p-5 space-y-2">
             <div className="flex items-center gap-2 text-sm font-semibold">
               <WifiOff className="w-4 h-4 text-[#D97706] dark:text-[#F59E0B]" />
               <span>{tr('Belum Ada Cache Lokal Trade News', 'No Local Trade News Cache Yet')}</span>
             </div>
-            <p className="text-xs text-[#697586] dark:text-[#929BA9] leading-relaxed">
+            <p className="text-xs text-[#526071] dark:text-[#929BA9] leading-relaxed">
               {tr(
                 'Mode Offline aktif untuk Trade News & Cycle agar kuota Gemini News tidak terpakai. Silakan aktifkan Mode Online sebentar untuk menyimpan snapshot berita terbaru ke perangkat, lalu nyalakan kembali Mode Offline kapan saja. Scan Kilat AI tetap aktif online.',
                 'Offline Mode is active for Trade News & Cycle so Gemini News quota is not spent. Go Online briefly to cache the latest news snapshot locally, then re-enable Offline Mode anytime. Instant AI Scan remains online.'
@@ -1107,7 +1110,7 @@ export const MacroNewsView: React.FC<MacroNewsViewProps> = ({ isActive = true })
       ? 'text-[#059669] dark:text-[#00A878]'
       : activeMatrix.dominantBias === 'SELL'
       ? 'text-[#E11D48] dark:text-[#E05260]'
-      : 'text-[#151D2A] dark:text-[#F2F4F7]';
+      : 'text-[#0F172A] dark:text-[#F2F4F7]';
 
   const dominantProbability =
     activeMatrix.dominantBias === 'BUY'
@@ -1342,16 +1345,16 @@ export const MacroNewsView: React.FC<MacroNewsViewProps> = ({ isActive = true })
   return (
     <div
       data-testid="macro-news-view"
-      className="space-y-6 pb-10 text-[#151D2A] dark:text-[#F2F4F7] font-sans transition-colors duration-150"
+      className="space-y-6 pb-10 text-[#0F172A] dark:text-[#F2F4F7] font-sans transition-colors duration-150"
     >
       {/* SECTION 01 — HEADER & INLINE STATUS (DIRECT ON CANVAS) */}
-      <div className="space-y-3 pb-5 border-b border-[#DDE3EA] dark:border-[#20252D]">
-        <div className="flex flex-wrap items-center justify-between gap-3 pb-3 border-b border-[#DDE3EA] dark:border-[#20252D]">
+      <div className="space-y-3 pb-5 border-b border-[#D9E2EC] dark:border-[#20252D]">
+        <div className="flex flex-wrap items-center justify-between gap-3 pb-3 border-b border-[#D9E2EC] dark:border-[#20252D]">
           <div className="min-w-0">
-            <h1 className="text-xs font-bold uppercase tracking-[0.12em] text-[#151D2A] dark:text-[#F2F4F7] truncate">
+            <h1 className="text-xs font-bold uppercase tracking-[0.12em] text-[#0F172A] dark:text-[#F2F4F7] truncate">
               {tr('TRADE NEWS · XAU/USD', 'TRADE NEWS · XAU/USD')}
             </h1>
-            <p className="text-[11px] text-[#697586] dark:text-[#929BA9] font-mono-numbers tabular-nums truncate mt-0.5">
+            <p className="text-[11px] text-[#526071] dark:text-[#929BA9] font-mono-numbers tabular-nums truncate mt-0.5">
               {isOfflineMode
                 ? tr(
                     'Mode Offline Aktif · Cache Lokal (0 Kuota Gemini News)',
@@ -1379,10 +1382,10 @@ export const MacroNewsView: React.FC<MacroNewsViewProps> = ({ isActive = true })
                       'Enable Offline Mode for News & Cycle to save Gemini News quota (Instant AI Scan stays online).'
                     )
               }
-              className={`h-9 w-9 sm:w-auto p-0 sm:px-3.5 sm:py-1.5 inline-flex items-center justify-center gap-1.5 rounded-full border text-xs font-semibold transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
+              className={`h-9 w-9 sm:w-auto p-0 sm:px-3.5 sm:py-1.5 inline-flex items-center justify-center gap-1.5 rounded-full border text-xs font-semibold transition-colors whitespace-nowrap shrink-0 cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/35 dark:focus-visible:ring-white/35 ${
                 isOfflineMode
-                  ? 'bg-amber-500/15 border-amber-500/40 text-amber-700 dark:text-amber-300'
-                  : 'bg-[#F5F7FA] dark:bg-[#101318] border-[#DDE3EA] dark:border-[#20252D] hover:border-black/25 dark:hover:border-white/25 text-[#151D2A] dark:text-[#F2F4F7]'
+                  ? 'bg-[#D97706]/10 dark:bg-[#F59E0B]/15 border-[#D97706]/40 dark:border-[#F59E0B]/40 text-[#B45309] dark:text-[#F59E0B]'
+                  : 'bg-white dark:bg-[#101318] border-[#D9E2EC] dark:border-[#20252D] shadow-[0_1px_2px_rgba(15,23,42,0.04)] dark:shadow-none hover:bg-[#F8FAFC] dark:hover:bg-[#161A22] hover:border-[#0F172A]/30 dark:hover:border-white/30 text-[#0F172A] dark:text-[#F2F4F7]'
               }`}
             >
               {isOfflineMode ? (
@@ -1399,9 +1402,9 @@ export const MacroNewsView: React.FC<MacroNewsViewProps> = ({ isActive = true })
               type="button"
               onClick={() => setShowPlaybookGuide(true)}
               title={tr('Playbook Pre-News & 12 Hukum Makro', 'Pre-News & 12 Macro Rules Playbook')}
-              className="h-9 w-9 sm:w-auto p-0 sm:px-3.5 sm:py-1.5 inline-flex items-center justify-center gap-1.5 rounded-full bg-[#F5F7FA] dark:bg-[#101318] border border-[#DDE3EA] dark:border-[#20252D] hover:border-black/25 dark:hover:border-white/25 text-xs font-semibold text-[#151D2A] dark:text-[#F2F4F7] transition-colors whitespace-nowrap shrink-0 cursor-pointer"
+              className="h-9 w-9 sm:w-auto p-0 sm:px-3.5 sm:py-1.5 inline-flex items-center justify-center gap-1.5 rounded-full bg-white dark:bg-[#101318] border border-[#D9E2EC] dark:border-[#20252D] shadow-[0_1px_2px_rgba(15,23,42,0.04)] dark:shadow-none hover:bg-[#F8FAFC] dark:hover:bg-[#161A22] hover:border-[#0F172A]/30 dark:hover:border-white/30 text-xs font-semibold text-[#0F172A] dark:text-[#F2F4F7] transition-colors whitespace-nowrap shrink-0 cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/35 dark:focus-visible:ring-white/35"
             >
-              <Info className="w-3.5 h-3.5 stroke-[1.75] text-[#697586] dark:text-[#929BA9]" />
+              <Info className="w-3.5 h-3.5 stroke-[1.75] text-[#526071] dark:text-[#929BA9]" />
               <span className="hidden sm:inline">{tr('Playbook', 'Playbook')}</span>
             </button>
 
@@ -1409,7 +1412,7 @@ export const MacroNewsView: React.FC<MacroNewsViewProps> = ({ isActive = true })
               type="button"
               onClick={() => void runLiveAnalysis(true, snapshot, selectedEventId || undefined)}
               disabled={isRefreshing || isOfflineMode}
-              className="h-9 inline-flex items-center justify-center gap-1.5 px-3.5 sm:px-4 py-1.5 rounded-full bg-[#151D2A] dark:bg-white text-white dark:text-[#050607] hover:opacity-90 text-xs font-semibold transition-opacity disabled:opacity-45 disabled:cursor-not-allowed whitespace-nowrap shrink-0 cursor-pointer"
+              className="h-9 inline-flex items-center justify-center gap-1.5 px-3.5 sm:px-4 py-1.5 rounded-full bg-[#0F172A] dark:bg-white text-white dark:text-[#050607] hover:opacity-90 text-xs font-semibold transition-opacity disabled:opacity-45 disabled:cursor-not-allowed whitespace-nowrap shrink-0 cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/35 dark:focus-visible:ring-white/35"
             >
               <RefreshCw className={`w-3.5 h-3.5 stroke-[2] ${isRefreshing ? 'animate-spin' : ''}`} />
               <span>
@@ -1430,12 +1433,12 @@ export const MacroNewsView: React.FC<MacroNewsViewProps> = ({ isActive = true })
           className="space-y-2.5"
         >
           <div className="flex flex-wrap items-center justify-between gap-2 text-xs font-mono-numbers tabular-nums">
-            <div className="flex flex-wrap items-center gap-2 text-[#697586] dark:text-[#929BA9]">
+            <div className="flex flex-wrap items-center gap-2 text-[#526071] dark:text-[#929BA9]">
               <span
                 data-testid="macro-projection-status-badge"
                 className={`font-sans font-bold text-[11px] uppercase tracking-wider ${
                   isSelectedPrimaryReleased
-                    ? 'text-[#1769E8] dark:text-[#3478DC]'
+                    ? 'text-[#0F172A] dark:text-[#F2F4F7]'
                     : 'text-[#E11D48] dark:text-[#E05260]'
                 }`}
               >
@@ -1481,17 +1484,17 @@ export const MacroNewsView: React.FC<MacroNewsViewProps> = ({ isActive = true })
               </span>
             </div>
 
-            <div className="flex items-center gap-2 text-[11px] text-[#697586] dark:text-[#929BA9]">
+            <div className="flex items-center gap-2 text-[11px] text-[#526071] dark:text-[#929BA9]">
               <span
                 data-testid="macro-market-sentiment-bar"
                 className="font-mono-numbers tabular-nums"
               >
                 RSS{' '}
-                <span className="font-semibold text-[#151D2A] dark:text-[#F2F4F7]">
+                <span className="font-semibold text-[#0F172A] dark:text-[#F2F4F7]">
                   {wireBreadth.bullish}B
                 </span>{' '}
                 ·{' '}
-                <span className="font-semibold text-[#151D2A] dark:text-[#F2F4F7]">
+                <span className="font-semibold text-[#0F172A] dark:text-[#F2F4F7]">
                   {wireBreadth.bearish}S
                 </span>{' '}
                 · <span>{wireBreadth.neutral}N</span>
@@ -1500,21 +1503,21 @@ export const MacroNewsView: React.FC<MacroNewsViewProps> = ({ isActive = true })
           </div>
 
           {/* Top Breaking RSS Headline + Expandable Detail Toggles */}
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pt-2 border-t border-[#DDE3EA] dark:border-[#20252D]">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pt-2 border-t border-[#D9E2EC] dark:border-[#20252D]">
             {topBreaking ? (
               <div className="min-w-0 flex-1 flex items-center gap-2 text-xs">
-                <span className="shrink-0 text-[10px] font-bold uppercase tracking-wider text-[#697586] dark:text-[#929BA9]">
+                <span className="shrink-0 text-[10px] font-bold uppercase tracking-wider text-[#526071] dark:text-[#929BA9]">
                   {topBreaking.source}
                 </span>
-                <span className="text-[#697586] dark:text-[#929BA9]" aria-hidden="true">
+                <span className="text-[#526071] dark:text-[#929BA9]" aria-hidden="true">
                   ·
                 </span>
-                <p className="truncate font-medium text-[#151D2A] dark:text-[#F2F4F7]">
+                <p className="truncate font-medium text-[#0F172A] dark:text-[#F2F4F7]">
                   {topBreaking.title}
                 </p>
               </div>
             ) : (
-              <span className="text-xs text-[#697586] dark:text-[#929BA9]">
+              <span className="text-xs text-[#526071] dark:text-[#929BA9]">
                 {tr(
                   'Sumber RSS: FinancialJuice · CNBC · MarketWatch · FXStreet',
                   'RSS Sources: FinancialJuice · CNBC · MarketWatch · FXStreet'
@@ -1530,7 +1533,7 @@ export const MacroNewsView: React.FC<MacroNewsViewProps> = ({ isActive = true })
                 <button
                   type="button"
                   onClick={() => setShowAllHeadlines((prev) => !prev)}
-                  className="h-7 inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-[#F5F7FA] dark:bg-[#101318] border border-[#DDE3EA] dark:border-[#20252D] hover:border-black/25 dark:hover:border-white/25 text-[11px] font-semibold text-[#697586] dark:text-[#929BA9] hover:text-[#151D2A] dark:hover:text-[#F2F4F7] transition-colors cursor-pointer"
+                  className="h-7 inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-white dark:bg-[#101318] border border-[#D9E2EC] dark:border-[#20252D] shadow-[0_1px_2px_rgba(15,23,42,0.04)] dark:shadow-none hover:bg-[#F8FAFC] dark:hover:bg-[#161A22] hover:border-[#0F172A]/30 dark:hover:border-white/30 text-[11px] font-semibold text-[#526071] dark:text-[#929BA9] hover:text-[#0F172A] dark:hover:text-[#F2F4F7] transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/35 dark:focus-visible:ring-white/35"
                 >
                   <span>
                     {tr('Headline RSS', 'RSS')} ({snapshot.breakingNews.length})
@@ -1546,7 +1549,7 @@ export const MacroNewsView: React.FC<MacroNewsViewProps> = ({ isActive = true })
               <button
                 type="button"
                 onClick={() => setShowFedSpeeches((prev) => !prev)}
-                className="h-7 inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-[#F5F7FA] dark:bg-[#101318] border border-[#DDE3EA] dark:border-[#20252D] hover:border-black/25 dark:hover:border-white/25 text-[11px] font-semibold text-[#697586] dark:text-[#929BA9] hover:text-[#151D2A] dark:hover:text-[#F2F4F7] transition-colors cursor-pointer"
+                className="h-7 inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-white dark:bg-[#101318] border border-[#D9E2EC] dark:border-[#20252D] shadow-[0_1px_2px_rgba(15,23,42,0.04)] dark:shadow-none hover:bg-[#F8FAFC] dark:hover:bg-[#161A22] hover:border-[#0F172A]/30 dark:hover:border-white/30 text-[11px] font-semibold text-[#526071] dark:text-[#929BA9] hover:text-[#0F172A] dark:hover:text-[#F2F4F7] transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/35 dark:focus-visible:ring-white/35"
               >
                 <span>
                   {tr('Pidato Fed', 'Fed')} ({supportingContextEvents.length})
@@ -1561,7 +1564,7 @@ export const MacroNewsView: React.FC<MacroNewsViewProps> = ({ isActive = true })
           </div>
 
           {!isLiveCalendar && (
-            <div className="py-2 px-3 rounded-lg bg-[#F5F7FA] dark:bg-[#101318] border border-[#DDE3EA] dark:border-[#20252D] text-xs text-[#151D2A] dark:text-[#F2F4F7]">
+            <div className="py-2 px-3 rounded-lg bg-white dark:bg-[#101318] border border-[#D9E2EC] dark:border-[#20252D] shadow-[0_1px_2px_rgba(15,23,42,0.04)] dark:shadow-none text-xs text-[#0F172A] dark:text-[#F2F4F7]">
               {tr(
                 'Koneksi Kalender Live Gagal — Tekan Analisis Live untuk menyegarkan.',
                 'Live Calendar Connection Failed — Tap Live Sync to refresh.'
@@ -1572,13 +1575,13 @@ export const MacroNewsView: React.FC<MacroNewsViewProps> = ({ isActive = true })
           {supabaseFeedback && (
             <div
               data-testid="macro-supabase-feedback-banner"
-              className="flex items-center justify-between gap-3 py-2 px-3 rounded-lg bg-[#F5F7FA] dark:bg-[#101318] border border-[#DDE3EA] dark:border-[#20252D] text-xs text-[#697586] dark:text-[#929BA9]"
+              className="flex items-center justify-between gap-3 py-2 px-3 rounded-lg bg-white dark:bg-[#101318] border border-[#D9E2EC] dark:border-[#20252D] shadow-[0_1px_2px_rgba(15,23,42,0.04)] dark:shadow-none text-xs text-[#526071] dark:text-[#929BA9]"
             >
               <span className="leading-snug">{supabaseFeedback.message}</span>
               <button
                 type="button"
                 onClick={() => setSupabaseFeedback(null)}
-                className="h-7 px-3 py-0.5 rounded-full bg-white dark:bg-[#0A0C10] border border-[#DDE3EA] dark:border-[#20252D] text-xs font-semibold text-[#151D2A] dark:text-[#F2F4F7] shrink-0 cursor-pointer"
+                className="h-7 px-3 py-0.5 rounded-full bg-[#F5F7FA] dark:bg-[#0B0E13] border border-[#D9E2EC] dark:border-[#20252D] hover:bg-[#EAEEF4] dark:hover:bg-[#161A22] text-xs font-semibold text-[#0F172A] dark:text-[#F2F4F7] transition-colors shrink-0 cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/35 dark:focus-visible:ring-white/35"
               >
                 {tr('Tutup', 'Dismiss')}
               </button>
@@ -1587,11 +1590,11 @@ export const MacroNewsView: React.FC<MacroNewsViewProps> = ({ isActive = true })
 
           {/* Expandable RSS News Detail Panel */}
           {showAllHeadlines && contextualBreakingNews.length > 0 && (
-            <div className="pt-2 border-t border-[#DDE3EA] dark:border-[#20252D] divide-y divide-[#DDE3EA] dark:divide-[#20252D] max-h-72 lg:max-h-96 overflow-y-auto">
+            <div className="pt-2 border-t border-[#D9E2EC] dark:border-[#20252D] divide-y divide-[#D9E2EC] dark:divide-[#20252D] max-h-72 lg:max-h-96 overflow-y-auto">
               {contextualBreakingNews.map((item) => (
                 <div key={item.id} className="py-2.5 space-y-1">
                   <div className="flex items-center justify-between gap-2 text-[11px] font-mono-numbers tabular-nums">
-                    <span className="text-[#697586] dark:text-[#929BA9]">
+                    <span className="text-[#526071] dark:text-[#929BA9]">
                       {item.source} · {formatTimestampWib(item.pubDate, isEn ? 'en' : 'id')}
                     </span>
                     <span
@@ -1600,13 +1603,13 @@ export const MacroNewsView: React.FC<MacroNewsViewProps> = ({ isActive = true })
                           ? 'text-[#059669] dark:text-[#00A878]'
                           : item.sentimentForGold === 'BEARISH'
                           ? 'text-[#E11D48] dark:text-[#E05260]'
-                          : 'text-[#697586] dark:text-[#929BA9]'
+                          : 'text-[#526071] dark:text-[#929BA9]'
                       }`}
                     >
                       {item.sentimentForGold} XAU
                     </span>
                   </div>
-                  <p className="text-xs font-medium text-[#151D2A] dark:text-[#F2F4F7] leading-snug">
+                  <p className="text-xs font-medium text-[#0F172A] dark:text-[#F2F4F7] leading-snug">
                     {item.title}
                   </p>
                 </div>
@@ -1616,9 +1619,9 @@ export const MacroNewsView: React.FC<MacroNewsViewProps> = ({ isActive = true })
 
           {/* Expandable Fed Context Panel */}
           {showFedSpeeches && (
-            <div className="pt-2 border-t border-[#DDE3EA] dark:border-[#20252D] divide-y divide-[#DDE3EA] dark:divide-[#20252D]">
+            <div className="pt-2 border-t border-[#D9E2EC] dark:border-[#20252D] divide-y divide-[#D9E2EC] dark:divide-[#20252D]">
               {supportingContextEvents.length === 0 ? (
-                <p className="py-2 text-xs text-[#697586] dark:text-[#929BA9]">
+                <p className="py-2 text-xs text-[#526071] dark:text-[#929BA9]">
                   {tr(
                     'Belum ada jadwal pidato pejabat Fed atau rilis pendukung pada jendela waktu saat ini.',
                     'No Fed official speeches or supporting releases in the current window.'
@@ -1628,21 +1631,21 @@ export const MacroNewsView: React.FC<MacroNewsViewProps> = ({ isActive = true })
                 supportingContextEvents.map((ev) => (
                   <div key={ev.id} className="py-2.5 flex items-start justify-between gap-3">
                     <div className="min-w-0 space-y-0.5">
-                      <span className="text-[11px] font-mono-numbers tabular-nums text-[#697586] dark:text-[#929BA9] block">
+                      <span className="text-[11px] font-mono-numbers tabular-nums text-[#526071] dark:text-[#929BA9] block">
                         {formatTimestampWib(ev.date, isEn ? 'en' : 'id')} ·{' '}
                         {isFedSpeechEvent(ev.title) ? tr('Pidato Fed', 'Fed Speech') : tr('Konteks', 'Context')}
                       </span>
-                      <p className="text-xs font-semibold text-[#151D2A] dark:text-[#F2F4F7]">
+                      <p className="text-xs font-semibold text-[#0F172A] dark:text-[#F2F4F7]">
                         {ev.title}
                       </p>
                     </div>
-                    <div className="text-right font-mono-numbers tabular-nums text-xs text-[#151D2A] dark:text-[#F2F4F7] shrink-0">
+                    <div className="text-right font-mono-numbers tabular-nums text-xs text-[#0F172A] dark:text-[#F2F4F7] shrink-0">
                       {ev.previous !== '-' || ev.forecast !== '-' ? (
                         <span>
                           Prev {ev.previous || '-'} · Fcst {ev.forecast || '-'}
                         </span>
                       ) : (
-                        <span className="text-[#697586] dark:text-[#929BA9]">{ev.eventBiasForGold}</span>
+                        <span className="text-[#526071] dark:text-[#929BA9]">{ev.eventBiasForGold}</span>
                       )}
                     </div>
                   </div>
@@ -1656,21 +1659,21 @@ export const MacroNewsView: React.FC<MacroNewsViewProps> = ({ isActive = true })
       {/* SECTION 02 — DOMINANT BIAS, ANTI-SWEEP PROTOCOL, POST-NEWS CONFIRMATION & TWO-HORIZON ANALYSIS */}
       <section
         aria-label={tr('Bias Dominan', 'Dominant Bias')}
-        className="space-y-5 pb-6 border-b border-[#DDE3EA] dark:border-[#20252D]"
+        className="space-y-5 pb-6 border-b border-[#D9E2EC] dark:border-[#20252D]"
       >
         <div className="flex flex-wrap items-center justify-between gap-2.5">
           <div className="flex flex-wrap items-center gap-2">
-            <h2 className="text-[11px] font-semibold uppercase tracking-[0.08em] text-[#697586] dark:text-[#929BA9]">
+            <h2 className="text-[11px] font-semibold uppercase tracking-[0.08em] text-[#526071] dark:text-[#929BA9]">
               {tr('BIAS DOMINAN', 'DOMINANT BIAS')}
             </h2>
 
-            <span className="text-[#697586] dark:text-[#929BA9]" aria-hidden="true">
+            <span className="text-[#526071] dark:text-[#929BA9]" aria-hidden="true">
               ·
             </span>
 
             <span
               data-testid="macro-top-movement-status-badge"
-              className="inline-flex items-center px-2 py-0.5 rounded bg-[#F5F7FA] dark:bg-[#101318] border border-[#DDE3EA] dark:border-[#20252D] text-[10px] font-semibold uppercase tracking-wider font-mono-numbers tabular-nums text-[#151D2A] dark:text-[#F2F4F7]"
+              className="inline-flex items-center px-2 py-0.5 rounded bg-white dark:bg-[#101318] border border-[#D9E2EC] dark:border-[#20252D] shadow-[0_1px_2px_rgba(15,23,42,0.04)] dark:shadow-none text-[10px] font-semibold uppercase tracking-wider font-mono-numbers tabular-nums text-[#0F172A] dark:text-[#F2F4F7]"
             >
               {isEn ? dualHorizon.movementBadgeEn : dualHorizon.movementBadgeId}
             </span>
@@ -1678,7 +1681,7 @@ export const MacroNewsView: React.FC<MacroNewsViewProps> = ({ isActive = true })
             {dualHorizon.isPricedIn && (
               <span
                 data-testid="macro-priced-in-badge"
-                className="inline-flex items-center px-2 py-0.5 rounded bg-[#F5F7FA] dark:bg-[#101318] border border-[#D97706]/35 dark:border-[#F59E0B]/35 text-[10px] font-semibold uppercase tracking-wider font-mono-numbers tabular-nums text-[#D97706] dark:text-[#F59E0B]"
+                className="inline-flex items-center px-2 py-0.5 rounded bg-white dark:bg-[#101318] border border-[#D97706]/35 dark:border-[#F59E0B]/35 shadow-[0_1px_2px_rgba(15,23,42,0.04)] dark:shadow-none text-[10px] font-semibold uppercase tracking-wider font-mono-numbers tabular-nums text-[#D97706] dark:text-[#F59E0B]"
               >
                 PRICED-IN 6H ({dualHorizon.move6hUsd >= 0 ? '+' : ''}${dualHorizon.move6hUsd.toFixed(1)})
               </span>
@@ -1687,7 +1690,7 @@ export const MacroNewsView: React.FC<MacroNewsViewProps> = ({ isActive = true })
             {dualHorizon.hasSpeechEvent && (
               <span
                 data-testid="macro-speech-event-badge"
-                className="inline-flex items-center px-2 py-0.5 rounded bg-[#F5F7FA] dark:bg-[#101318] border border-[#DDE3EA] dark:border-[#20252D] text-[10px] font-semibold uppercase tracking-wider font-mono-numbers tabular-nums text-[#697586] dark:text-[#929BA9]"
+                className="inline-flex items-center px-2 py-0.5 rounded bg-white dark:bg-[#101318] border border-[#D9E2EC] dark:border-[#20252D] shadow-[0_1px_2px_rgba(15,23,42,0.04)] dark:shadow-none text-[10px] font-semibold uppercase tracking-wider font-mono-numbers tabular-nums text-[#526071] dark:text-[#929BA9]"
               >
                 SPEECH / FOMC WINDOW
               </span>
@@ -1697,22 +1700,22 @@ export const MacroNewsView: React.FC<MacroNewsViewProps> = ({ isActive = true })
           <button
             type="button"
             onClick={() => setShowTargetSelector(true)}
-            className="h-8 sm:h-9 inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full bg-[#F5F7FA] dark:bg-[#101318] border border-[#DDE3EA] dark:border-[#20252D] hover:border-[#3478DC] text-xs font-semibold text-[#151D2A] dark:text-[#F2F4F7] transition-colors whitespace-nowrap shrink-0 cursor-pointer"
+            className="h-8 sm:h-9 inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full bg-white dark:bg-[#101318] border border-[#D9E2EC] dark:border-[#20252D] shadow-[0_1px_2px_rgba(15,23,42,0.04)] dark:shadow-none hover:bg-[#F8FAFC] dark:hover:bg-[#161A22] hover:border-[#0F172A]/40 dark:hover:border-white/40 text-xs font-semibold text-[#0F172A] dark:text-[#F2F4F7] transition-colors whitespace-nowrap shrink-0 cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/35 dark:focus-visible:ring-white/35"
           >
             <span>
               {tr('Target Rilis (14H)', 'Target Release (14D)')} · {allEventGroups.length}
             </span>
-            <ChevronDown className="w-3.5 h-3.5 stroke-[2] text-[#697586] dark:text-[#929BA9]" />
+            <ChevronDown className="w-3.5 h-3.5 stroke-[2] text-[#526071] dark:text-[#929BA9]" />
           </button>
         </div>
 
         <div className="flex flex-col lg:flex-row lg:items-start justify-between gap-5">
           <div className="space-y-3.5 min-w-0 flex-1">
             <div className="space-y-1">
-              <p className="text-xs sm:text-sm font-medium text-[#151D2A] dark:text-[#F2F4F7] leading-snug">
+              <p className="text-xs sm:text-sm font-medium text-[#0F172A] dark:text-[#F2F4F7] leading-snug">
                 {activeClusterTitles}
               </p>
-              <p className="text-xs text-[#697586] dark:text-[#929BA9] font-mono-numbers tabular-nums">
+              <p className="text-xs text-[#526071] dark:text-[#929BA9] font-mono-numbers tabular-nums">
                 {formatTimestampWib(primaryEv.date, isEn ? 'en' : 'id')}{' '}
                 <span className="font-sans">
                   ·{' '}
@@ -1744,12 +1747,12 @@ export const MacroNewsView: React.FC<MacroNewsViewProps> = ({ isActive = true })
                 )}
               </div>
 
-              {/* Probability Distribution Bar (Buy: Blue, Mixed: Grey, Sell: Red) */}
+              {/* Probability Distribution Bar (Buy: Emerald, Mixed: Grey, Sell: Red) */}
               <div className="space-y-1.5">
-                <div className="h-1.5 w-full rounded-full overflow-hidden flex bg-[#EEF2F6] dark:bg-[#161A22]">
+                <div className="h-1.5 w-full rounded-full overflow-hidden flex bg-[#E2E8F0] dark:bg-[#161A22]">
                   <div
                     style={{ width: `${activeMatrix.buyProbability}%` }}
-                    className="bg-[#1769E8] dark:bg-[#3478DC] transition-all duration-200"
+                    className="bg-[#059669] dark:bg-[#00A878] transition-all duration-200"
                   />
                   <div
                     style={{ width: `${activeMatrix.mixedProbability}%` }}
@@ -1762,10 +1765,10 @@ export const MacroNewsView: React.FC<MacroNewsViewProps> = ({ isActive = true })
                 </div>
 
                 <div className="flex items-center justify-between text-[11px] font-mono-numbers tabular-nums">
-                  <span className="font-semibold text-[#1769E8] dark:text-[#3478DC]">
+                  <span className="font-semibold text-[#059669] dark:text-[#00A878]">
                     BUY {activeMatrix.buyProbability}%
                   </span>
-                  <span className="font-semibold text-[#697586] dark:text-[#929BA9]">
+                  <span className="font-semibold text-[#526071] dark:text-[#929BA9]">
                     MIXED {activeMatrix.mixedProbability}%
                   </span>
                   <span className="font-semibold text-[#E11D48] dark:text-[#E05260]">
@@ -1777,7 +1780,7 @@ export const MacroNewsView: React.FC<MacroNewsViewProps> = ({ isActive = true })
               {/* 1. Micro-Copy Penahan Ekspektasi */}
               <p
                 data-testid="macro-bias-expectation-microcopy"
-                className="text-xs text-[#697586] dark:text-[#929BA9] leading-relaxed"
+                className="text-xs text-[#526071] dark:text-[#929BA9] leading-relaxed"
               >
                 {tr(
                   'Probabilitas arah hasil sesi setelah volatilitas awal mereda — bukan arah candle detik ke-0.',
@@ -1790,7 +1793,7 @@ export const MacroNewsView: React.FC<MacroNewsViewProps> = ({ isActive = true })
             {antiSweepReasons.length > 0 ? (
               <div
                 data-testid="macro-anti-sweep-alert"
-                className="rounded-lg bg-[#F5F7FA] dark:bg-[#101318] border border-[#D97706]/35 dark:border-[#F59E0B]/35 px-3.5 py-2.5 space-y-1.5"
+                className="rounded-lg bg-white dark:bg-[#101318] border border-[#D97706]/35 dark:border-[#F59E0B]/35 shadow-[0_1px_2px_rgba(15,23,42,0.04)] dark:shadow-none px-3.5 py-2.5 space-y-1.5"
               >
                 <div className="flex items-center gap-2 text-xs font-bold tracking-wide text-[#D97706] dark:text-[#F59E0B]">
                   <AlertTriangle className="w-3.5 h-3.5 shrink-0 text-[#D97706] dark:text-[#F59E0B]" />
@@ -1801,13 +1804,13 @@ export const MacroNewsView: React.FC<MacroNewsViewProps> = ({ isActive = true })
                     )}
                   </span>
                 </div>
-                <ul className="space-y-1.5 text-xs text-[#697586] dark:text-[#929BA9] leading-relaxed">
+                <ul className="space-y-1.5 text-xs text-[#526071] dark:text-[#929BA9] leading-relaxed">
                   {antiSweepReasons.map((reason, idx) => (
                     <li key={idx} className="flex items-start gap-2">
                       <span className="font-mono-numbers shrink-0 text-[#D97706] dark:text-[#F59E0B]" aria-hidden="true">
                         —
                       </span>
-                      <span className="text-[#151D2A] dark:text-[#F2F4F7]">{reason}</span>
+                      <span className="text-[#0F172A] dark:text-[#F2F4F7]">{reason}</span>
                     </li>
                   ))}
                 </ul>
@@ -1820,7 +1823,7 @@ export const MacroNewsView: React.FC<MacroNewsViewProps> = ({ isActive = true })
                   activeMatrix.preNewsFlow.goldPositioning.state !== 'NEUTRAL')) && (
                 <p
                   data-testid="macro-prenews-meta-line"
-                  className="text-xs text-[#697586] dark:text-[#929BA9] leading-snug"
+                  className="text-xs text-[#526071] dark:text-[#929BA9] leading-snug"
                 >
                   {[
                     activeMatrix.preNewsFlow.fomcBlackoutActive
@@ -1853,9 +1856,9 @@ export const MacroNewsView: React.FC<MacroNewsViewProps> = ({ isActive = true })
           {/* 3. Unboxed 3-Phase Release Timer Column */}
           <div
             data-testid="macro-release-phase-timer"
-            className="lg:w-[290px] lg:text-right shrink-0 pt-4 lg:pt-0 border-t lg:border-t-0 lg:border-l border-[#DDE3EA] dark:border-[#20252D] lg:pl-6 space-y-1.5"
+            className="lg:w-[290px] lg:text-right shrink-0 pt-4 lg:pt-0 border-t lg:border-t-0 lg:border-l border-[#D9E2EC] dark:border-[#20252D] lg:pl-6 space-y-1.5"
           >
-            <span className="text-[11px] font-semibold uppercase tracking-[0.06em] block text-[#697586] dark:text-[#929BA9]">
+            <span className="text-[11px] font-semibold uppercase tracking-[0.06em] block text-[#526071] dark:text-[#929BA9]">
               {releaseTimerPhase === 'PHASE_2_SPIKE_ZONE'
                 ? tr('ZONA RAWAN SPIKE · TAHAN ENTRY', 'SPIKE RISK ZONE · HOLD ENTRY')
                 : releaseTimerPhase === 'PHASE_3_SWEEP'
@@ -1868,7 +1871,7 @@ export const MacroNewsView: React.FC<MacroNewsViewProps> = ({ isActive = true })
             <span
               className={`text-2xl sm:text-3xl font-bold font-mono-numbers tabular-nums block ${
                 isSelectedPrimaryReleased
-                  ? 'text-[#1769E8] dark:text-[#3478DC]'
+                  ? 'text-[#0F172A] dark:text-[#F2F4F7]'
                   : 'text-[#E11D48] dark:text-[#E05260]'
               }`}
             >
@@ -1876,13 +1879,13 @@ export const MacroNewsView: React.FC<MacroNewsViewProps> = ({ isActive = true })
             </span>
 
             {lockInfo.isLockedT5M && !isSelectedPrimaryReleased && (
-              <span className="text-[11px] font-semibold text-[#151D2A] dark:text-[#F2F4F7] block">
+              <span className="text-[11px] font-semibold text-[#0F172A] dark:text-[#F2F4F7] block">
                 {tr('T-5M Final Lock Aktif', 'T-5M Final Lock Active')}
               </span>
             )}
 
             {releaseTimerPhase === 'PHASE_2_SPIKE_ZONE' && (
-              <p className="text-[11px] text-[#697586] dark:text-[#929BA9] leading-snug">
+              <p className="text-[11px] text-[#526071] dark:text-[#929BA9] leading-snug">
                 {tr(
                   'Hindari pending order terlalu dekat dengan harga berjalan karena spread melebar.',
                   'Avoid placing pending orders too close to current price due to widening spread.'
@@ -1891,7 +1894,7 @@ export const MacroNewsView: React.FC<MacroNewsViewProps> = ({ isActive = true })
             )}
 
             {releaseTimerPhase === 'PHASE_3_SWEEP' && (
-              <p className="text-[11px] text-[#697586] dark:text-[#929BA9] leading-snug">
+              <p className="text-[11px] text-[#526071] dark:text-[#929BA9] leading-snug">
                 {tr(
                   'Dilarang instant entry — tunggu spike selesai menyapu likuiditas high/low terlebih dahulu.',
                   'No instant entry — wait for the spike to finish sweeping high/low liquidity first.'
@@ -1900,7 +1903,7 @@ export const MacroNewsView: React.FC<MacroNewsViewProps> = ({ isActive = true })
             )}
 
             {releaseTimerPhase === 'PHASE_4_CONFIRM' && (
-              <p className="text-[11px] text-[#697586] dark:text-[#929BA9] leading-snug">
+              <p className="text-[11px] text-[#526071] dark:text-[#929BA9] leading-snug">
                 {activeMatrix.dominantBias === 'SELL'
                   ? tr(
                       'Validasi pembentukan Lower High di bawah puncak spike sebelum entry SELL.',
@@ -1923,17 +1926,17 @@ export const MacroNewsView: React.FC<MacroNewsViewProps> = ({ isActive = true })
         {/* Seamless Two-Horizon Analysis */}
         <div
           data-testid="macro-dual-horizon-box"
-          className="pt-4 border-t border-[#DDE3EA] dark:border-[#20252D] space-y-3.5"
+          className="pt-4 border-t border-[#D9E2EC] dark:border-[#20252D] space-y-3.5"
         >
           <div className="flex flex-wrap items-center justify-between gap-2">
-            <span className="text-[11px] font-semibold uppercase tracking-[0.08em] text-[#697586] dark:text-[#929BA9]">
+            <span className="text-[11px] font-semibold uppercase tracking-[0.08em] text-[#526071] dark:text-[#929BA9]">
               {tr('PEMISAHAN 2 HORIZON ANALISIS', 'DUAL-HORIZON ANALYSIS')}
             </span>
 
             {manualAmdOverride !== 'AUTO' && manualAmdOptionMeta ? (
               <span
                 data-testid="macro-synced-amd-override-badge"
-                className="inline-flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wider text-[#151D2A] dark:text-[#F2F4F7]"
+                className="inline-flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wider text-[#0F172A] dark:text-[#F2F4F7]"
               >
                 <Lock className="w-3 h-3 stroke-[2]" />
                 <span>
@@ -1944,21 +1947,21 @@ export const MacroNewsView: React.FC<MacroNewsViewProps> = ({ isActive = true })
             ) : hasConfluenceCandles && amdState ? (
               <span
                 data-testid="macro-auto-amd-status-badge"
-                className="text-[10px] font-semibold uppercase tracking-wider font-mono-numbers tabular-nums text-[#697586] dark:text-[#929BA9]"
+                className="text-[10px] font-semibold uppercase tracking-wider font-mono-numbers tabular-nums text-[#526071] dark:text-[#929BA9]"
               >
                 AMD ENGINE: {amdState.phase} · {amdState.gatekeeperStatus}
               </span>
             ) : null}
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 divide-y sm:divide-y-0 sm:divide-x divide-[#DDE3EA] dark:divide-[#20252D] border-y border-[#DDE3EA] dark:border-[#20252D]">
+          <div className="grid grid-cols-1 sm:grid-cols-2 divide-y sm:divide-y-0 sm:divide-x divide-[#D9E2EC] dark:divide-[#20252D] border-y border-[#D9E2EC] dark:border-[#20252D]">
             {/* a) KATALIS AWAL / POTENSI SPIKE */}
             <div
               data-testid="macro-initial-catalyst-card"
               className="py-3 sm:pr-5 space-y-1.5"
             >
               <div className="flex items-center justify-between gap-2">
-                <span className="text-[11px] font-semibold uppercase tracking-[0.06em] text-[#697586] dark:text-[#929BA9]">
+                <span className="text-[11px] font-semibold uppercase tracking-[0.06em] text-[#526071] dark:text-[#929BA9]">
                   {tr('KATALIS AWAL / POTENSI SPIKE', 'INITIAL CATALYST / SPIKE POTENTIAL')}
                 </span>
                 <span
@@ -1967,13 +1970,13 @@ export const MacroNewsView: React.FC<MacroNewsViewProps> = ({ isActive = true })
                       ? 'text-[#059669] dark:text-[#00A878]'
                       : dualHorizon.initialCatalystBias === 'SELL'
                       ? 'text-[#E11D48] dark:text-[#E05260]'
-                      : 'text-[#151D2A] dark:text-[#F2F4F7]'
+                      : 'text-[#0F172A] dark:text-[#F2F4F7]'
                   }`}
                 >
                   {isEn ? dualHorizon.initialCatalystLabelEn : dualHorizon.initialCatalystLabelId}
                 </span>
               </div>
-              <p className="text-xs text-[#151D2A] dark:text-[#F2F4F7] leading-relaxed">
+              <p className="text-xs text-[#0F172A] dark:text-[#F2F4F7] leading-relaxed">
                 {isEn ? dualHorizon.initialCatalystReasonEn : dualHorizon.initialCatalystReasonId}
               </p>
             </div>
@@ -1984,7 +1987,7 @@ export const MacroNewsView: React.FC<MacroNewsViewProps> = ({ isActive = true })
               className="py-3 sm:pl-5 space-y-1.5"
             >
               <div className="flex items-center justify-between gap-2">
-                <span className="text-[11px] font-semibold uppercase tracking-[0.06em] text-[#697586] dark:text-[#929BA9]">
+                <span className="text-[11px] font-semibold uppercase tracking-[0.06em] text-[#526071] dark:text-[#929BA9]">
                   {tr('BIAS UTAMA SESI (HASIL AKHIR)', 'MAIN SESSION BIAS (FINAL OUTCOME)')}
                 </span>
                 <span
@@ -1993,37 +1996,37 @@ export const MacroNewsView: React.FC<MacroNewsViewProps> = ({ isActive = true })
                       ? 'text-[#059669] dark:text-[#00A878]'
                       : dualHorizon.sessionPrimaryBias === 'SELL'
                       ? 'text-[#E11D48] dark:text-[#E05260]'
-                      : 'text-[#151D2A] dark:text-[#F2F4F7]'
+                      : 'text-[#0F172A] dark:text-[#F2F4F7]'
                   }`}
                 >
                   {dualHorizon.sessionPrimaryBias} {dualHorizon.sessionPrimaryProbability}%
                 </span>
               </div>
-              <p className="text-xs text-[#151D2A] dark:text-[#F2F4F7] leading-relaxed">
+              <p className="text-xs text-[#0F172A] dark:text-[#F2F4F7] leading-relaxed">
                 {isEn ? dualHorizon.sessionPrimaryReasonEn : dualHorizon.sessionPrimaryReasonId}
               </p>
             </div>
           </div>
 
-          <p className="text-xs text-[#697586] dark:text-[#929BA9] leading-relaxed">
+          <p className="text-xs text-[#526071] dark:text-[#929BA9] leading-relaxed">
             {isEn ? dualHorizon.movementSummaryEn : dualHorizon.movementSummaryId}
           </p>
 
           {/* 3. Peta Manipulasi & Target Spike (Collapsible Bridge to Cycle & Confluence) */}
           <div
             data-testid="macro-manipulation-map-box"
-            className="rounded-lg bg-[#F5F7FA] dark:bg-[#101318] border border-[#DDE3EA] dark:border-[#20252D] overflow-hidden"
+            className="rounded-lg bg-white dark:bg-[#101318] border border-[#D9E2EC] dark:border-[#20252D] shadow-[0_1px_2px_rgba(15,23,42,0.04)] dark:shadow-none overflow-hidden"
           >
             <button
               type="button"
               data-testid="macro-manipulation-map-toggle"
               aria-expanded={showManipulationMap}
               onClick={() => setShowManipulationMap((prev) => !prev)}
-              className="w-full min-h-[46px] px-4 py-3 flex items-center justify-between gap-3 text-left hover:bg-black/[0.02] dark:hover:bg-white/[0.02] transition-colors cursor-pointer"
+              className="w-full min-h-[46px] px-4 py-3 flex items-center justify-between gap-3 text-left hover:bg-[#F8FAFC] dark:hover:bg-[#161A22] transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/35 dark:focus-visible:ring-white/35"
             >
               <div className="min-w-0 flex-1 space-y-0.5">
                 <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
-                  <span className="text-[11px] font-bold uppercase tracking-[0.08em] text-[#151D2A] dark:text-[#F2F4F7]">
+                  <span className="text-[11px] font-bold uppercase tracking-[0.08em] text-[#0F172A] dark:text-[#F2F4F7]">
                     {tr(
                       'PETA MANIPULASI & TARGET SPIKE',
                       'MANIPULATION MAP & SPIKE TARGETS'
@@ -2037,7 +2040,7 @@ export const MacroNewsView: React.FC<MacroNewsViewProps> = ({ isActive = true })
                           ? 'text-[#059669] dark:text-[#00A878]'
                           : spikeTargetMap.spikeTracking.overallState === 'IN_ZONE'
                           ? 'text-[#D97706] dark:text-[#F59E0B]'
-                          : 'text-[#697586] dark:text-[#929BA9]'
+                          : 'text-[#526071] dark:text-[#929BA9]'
                       }`}
                     >
                       ·{' '}
@@ -2049,7 +2052,7 @@ export const MacroNewsView: React.FC<MacroNewsViewProps> = ({ isActive = true })
                     </span>
                   )}
                 </div>
-                <p className="text-xs font-mono-numbers tabular-nums text-[#697586] dark:text-[#929BA9] truncate">
+                <p className="text-xs font-mono-numbers tabular-nums text-[#526071] dark:text-[#929BA9] truncate">
                   {hasConfluenceLevels && spikeTargetMap.hasValidData
                     ? dualHorizon.initialCatalystBias === 'BUY' &&
                       dualHorizon.sessionPrimaryBias === 'SELL'
@@ -2089,9 +2092,9 @@ export const MacroNewsView: React.FC<MacroNewsViewProps> = ({ isActive = true })
                 </p>
               </div>
 
-              <span className="w-7 h-7 rounded-full bg-white dark:bg-[#0A0C10] border border-[#DDE3EA] dark:border-[#20252D] inline-flex items-center justify-center shrink-0">
+              <span className="w-7 h-7 rounded-full bg-[#F5F7FA] dark:bg-[#0B0E13] border border-[#D9E2EC] dark:border-[#20252D] inline-flex items-center justify-center shrink-0">
                 <ChevronDown
-                  className={`w-3.5 h-3.5 text-[#697586] dark:text-[#929BA9] transition-transform duration-300 ease-out ${
+                  className={`w-3.5 h-3.5 text-[#526071] dark:text-[#929BA9] transition-transform duration-300 ease-out ${
                     showManipulationMap ? 'rotate-180' : 'rotate-0'
                   }`}
                 />
@@ -2106,12 +2109,12 @@ export const MacroNewsView: React.FC<MacroNewsViewProps> = ({ isActive = true })
               }`}
             >
               <div className="overflow-hidden">
-                <div className="px-4 pb-3.5 pt-3 border-t border-[#DDE3EA] dark:border-[#20252D] space-y-3">
-                  <div className="flex flex-wrap items-center justify-between gap-2 pb-2 border-b border-[#DDE3EA] dark:border-[#20252D]">
-                    <span className="text-[11px] font-semibold uppercase tracking-[0.08em] text-[#697586] dark:text-[#929BA9]">
+                <div className="px-4 pb-3.5 pt-3 border-t border-[#D9E2EC] dark:border-[#20252D] space-y-3">
+                  <div className="flex flex-wrap items-center justify-between gap-2 pb-2 border-b border-[#D9E2EC] dark:border-[#20252D]">
+                    <span className="text-[11px] font-semibold uppercase tracking-[0.08em] text-[#526071] dark:text-[#929BA9]">
                       {tr('JEMBATAN CYCLE & CONFLUENCE', 'CYCLE & CONFLUENCE BRIDGE')}
                     </span>
-                    <span className="text-[11px] font-mono-numbers tabular-nums font-semibold uppercase tracking-wider text-[#151D2A] dark:text-[#F2F4F7]">
+                    <span className="text-[11px] font-mono-numbers tabular-nums font-semibold uppercase tracking-wider text-[#0F172A] dark:text-[#F2F4F7]">
                       {hasConfluenceCandles && amdState
                         ? `${amdState.isManualOverride ? 'MANUAL LOCK · ' : 'AUTO · '}${amdState.phase} · ${amdState.gatekeeperStatus}`
                         : manualAmdOverride !== 'AUTO'
@@ -2122,7 +2125,7 @@ export const MacroNewsView: React.FC<MacroNewsViewProps> = ({ isActive = true })
 
                   {/* 1) Penyebab Spike / Status Keselarasan */}
                   <div className="space-y-1.5">
-                    <span className="text-[11px] font-semibold uppercase tracking-[0.06em] text-[#697586] dark:text-[#929BA9] block">
+                    <span className="text-[11px] font-semibold uppercase tracking-[0.06em] text-[#526071] dark:text-[#929BA9] block">
                       {tr('1. Penyebab Spike & Deteksi Pra-Rilis', '1. Pre-Release Detection & Spike Triggers')}
                     </span>
                     {(dualHorizon.spikeTriggerReasonsId?.length ?? 0) > 0 ? (
@@ -2133,26 +2136,26 @@ export const MacroNewsView: React.FC<MacroNewsViewProps> = ({ isActive = true })
                         )?.map((reason, idx) => (
                           <li key={idx} className="flex items-start gap-2">
                             <span
-                              className="font-mono-numbers shrink-0 text-[#697586] dark:text-[#929BA9]"
+                              className="font-mono-numbers shrink-0 text-[#526071] dark:text-[#929BA9]"
                               aria-hidden="true"
                             >
                               —
                             </span>
-                            <span className="text-[#151D2A] dark:text-[#F2F4F7]">{reason}</span>
+                            <span className="text-[#0F172A] dark:text-[#F2F4F7]">{reason}</span>
                           </li>
                         ))}
                       </ul>
                     ) : (
-                      <p className="text-xs text-[#151D2A] dark:text-[#F2F4F7] leading-relaxed">
+                      <p className="text-xs text-[#0F172A] dark:text-[#F2F4F7] leading-relaxed">
                         {isEn ? dualHorizon.movementSummaryEn : dualHorizon.movementSummaryId}
                       </p>
                     )}
                   </div>
 
                   {/* 2) Titik Akhir Spike & Otomasi Status Spike */}
-                  <div className="pt-2.5 border-t border-[#DDE3EA] dark:border-[#20252D] space-y-2.5">
+                  <div className="pt-2.5 border-t border-[#D9E2EC] dark:border-[#20252D] space-y-2.5">
                     <div className="flex flex-wrap items-center justify-between gap-2">
-                      <span className="text-[11px] font-semibold uppercase tracking-[0.06em] text-[#697586] dark:text-[#929BA9]">
+                      <span className="text-[11px] font-semibold uppercase tracking-[0.06em] text-[#526071] dark:text-[#929BA9]">
                         {tr(
                           '2. Titik Akhir Spike & Otomasi Status',
                           '2. Spike Termination & Automated Status'
@@ -2160,7 +2163,7 @@ export const MacroNewsView: React.FC<MacroNewsViewProps> = ({ isActive = true })
                       </span>
                       <span
                         data-testid="macro-spike-map-subheader"
-                        className="text-[10px] sm:text-[11px] font-mono-numbers tabular-nums font-semibold text-[#697586] dark:text-[#929BA9]"
+                        className="text-[10px] sm:text-[11px] font-mono-numbers tabular-nums font-semibold text-[#526071] dark:text-[#929BA9]"
                       >
                         MAKRO TF 4H: {spikeTargetMap.macro4hPdZone} · TARGET SPIKE: TF 1H/15M (CAP 1.8x ATR)
                       </span>
@@ -2169,20 +2172,20 @@ export const MacroNewsView: React.FC<MacroNewsViewProps> = ({ isActive = true })
                     {/* Skenario Manipulasi 2 Fase Waktu */}
                     <div
                       data-testid="macro-manipulation-two-phases"
-                      className="rounded-md border border-[#DDE3EA] dark:border-[#20252D] bg-white/70 dark:bg-[#0B0D11] p-3 space-y-2 text-xs leading-relaxed"
+                      className="rounded-lg border border-[#D9E2EC] dark:border-[#20252D] bg-[#F5F7FA] dark:bg-[#0B0E13] p-3 space-y-2 text-xs leading-relaxed"
                     >
-                      <span className="text-[10px] font-bold uppercase tracking-[0.08em] text-[#697586] dark:text-[#929BA9] block">
+                      <span className="text-[10px] font-bold uppercase tracking-[0.08em] text-[#526071] dark:text-[#929BA9] block">
                         {tr('SKENARIO MANIPULASI & EKSPANSI INTRADAY', 'INTRADAY MANIPULATION & EXPANSION SCENARIO')}
                       </span>
                       <div className="space-y-1.5 font-mono-numbers tabular-nums">
-                        <p className="text-[#697586] dark:text-[#929BA9]">
-                          <span className="font-sans font-semibold text-[#151D2A] dark:text-[#F2F4F7]">
+                        <p className="text-[#526071] dark:text-[#929BA9]">
+                          <span className="font-sans font-semibold text-[#0F172A] dark:text-[#F2F4F7]">
                             {tr('Fase 1 (Menit 0–5 Rilis): ', 'Phase 1 (Min 0–5 Release): ')}
                           </span>
                           {isEn ? dualHorizon.phase1Minute0to5En : dualHorizon.phase1Minute0to5Id}
                         </p>
-                        <p className="text-[#697586] dark:text-[#929BA9] pt-1.5 border-t border-[#DDE3EA] dark:border-[#20252D]">
-                          <span className="font-sans font-semibold text-[#151D2A] dark:text-[#F2F4F7]">
+                        <p className="text-[#526071] dark:text-[#929BA9] pt-1.5 border-t border-[#D9E2EC] dark:border-[#20252D]">
+                          <span className="font-sans font-semibold text-[#0F172A] dark:text-[#F2F4F7]">
                             {tr('Fase 2 (Menit 15+ / Lanjutan): ', 'Phase 2 (Min 15+ / Continuation): ')}
                           </span>
                           {isEn ? dualHorizon.phase2Minute15PlusEn : dualHorizon.phase2Minute15PlusId}
@@ -2193,13 +2196,13 @@ export const MacroNewsView: React.FC<MacroNewsViewProps> = ({ isActive = true })
                     {hasConfluenceLevels && spikeTargetMap.hasValidData && amdState ? (
                       <div
                         data-testid="macro-spike-levels-status-grid"
-                        className="rounded-md border border-[#DDE3EA] dark:border-[#20252D] bg-white/70 dark:bg-[#0B0D11] divide-y divide-[#DDE3EA] dark:divide-[#20252D] text-xs font-mono-numbers tabular-nums"
+                        className="rounded-lg border border-[#D9E2EC] dark:border-[#20252D] bg-[#F5F7FA] dark:bg-[#0B0E13] divide-y divide-[#D9E2EC] dark:divide-[#20252D] text-xs font-mono-numbers tabular-nums"
                       >
                         {/* Row 1: BSL Sesi & SSL Sesi */}
-                        <div className="grid grid-cols-1 sm:grid-cols-2 divide-y sm:divide-y-0 sm:divide-x divide-[#DDE3EA] dark:divide-[#20252D]">
+                        <div className="grid grid-cols-1 sm:grid-cols-2 divide-y sm:divide-y-0 sm:divide-x divide-[#D9E2EC] dark:divide-[#20252D]">
                           <div className="px-3 py-2.5 space-y-1">
                             <div className="flex items-center justify-between gap-2">
-                              <span className="font-sans text-[10px] font-semibold uppercase tracking-wider text-[#697586] dark:text-[#929BA9]">
+                              <span className="font-sans text-[10px] font-semibold uppercase tracking-wider text-[#526071] dark:text-[#929BA9]">
                                 {tr(
                                   `BSL Sesi (${getSessionLabelId(spikeTargetMap.bslSourceSession)})`,
                                   `Session BSL (${getSessionLabelId(spikeTargetMap.bslSourceSession)})`
@@ -2211,7 +2214,7 @@ export const MacroNewsView: React.FC<MacroNewsViewProps> = ({ isActive = true })
                                     ? 'text-[#059669] dark:text-[#00A878]'
                                     : spikeTargetMap.spikeTracking.bslState === 'IN_ZONE'
                                     ? 'text-[#D97706] dark:text-[#F59E0B]'
-                                    : 'text-[#697586] dark:text-[#929BA9]'
+                                    : 'text-[#526071] dark:text-[#929BA9]'
                                 }`}
                               >
                                 {spikeTargetMap.spikeTracking.bslState === 'SWEPT'
@@ -2222,10 +2225,10 @@ export const MacroNewsView: React.FC<MacroNewsViewProps> = ({ isActive = true })
                               </span>
                             </div>
                             <div className="flex items-baseline justify-between gap-2">
-                              <span className="text-sm font-bold text-[#151D2A] dark:text-[#F2F4F7]">
+                              <span className="text-sm font-bold text-[#0F172A] dark:text-[#F2F4F7]">
                                 ${spikeTargetMap.bslPrice.toFixed(2)}
                               </span>
-                              <span className="text-[11px] text-[#697586] dark:text-[#929BA9]">
+                              <span className="text-[11px] text-[#526071] dark:text-[#929BA9]">
                                 +${spikeTargetMap.spikeTracking.bslDistanceUsd.toFixed(2)} ·{' '}
                                 {spikeTargetMap.spikeTracking.bslCapRatioPct}% ATR Cap
                               </span>
@@ -2234,7 +2237,7 @@ export const MacroNewsView: React.FC<MacroNewsViewProps> = ({ isActive = true })
 
                           <div className="px-3 py-2.5 space-y-1">
                             <div className="flex items-center justify-between gap-2">
-                              <span className="font-sans text-[10px] font-semibold uppercase tracking-wider text-[#697586] dark:text-[#929BA9]">
+                              <span className="font-sans text-[10px] font-semibold uppercase tracking-wider text-[#526071] dark:text-[#929BA9]">
                                 {tr(
                                   `SSL Sesi (${getSessionLabelId(spikeTargetMap.sslSourceSession)})`,
                                   `Session SSL (${getSessionLabelId(spikeTargetMap.sslSourceSession)})`
@@ -2246,7 +2249,7 @@ export const MacroNewsView: React.FC<MacroNewsViewProps> = ({ isActive = true })
                                     ? 'text-[#059669] dark:text-[#00A878]'
                                     : spikeTargetMap.spikeTracking.sslState === 'IN_ZONE'
                                     ? 'text-[#D97706] dark:text-[#F59E0B]'
-                                    : 'text-[#697586] dark:text-[#929BA9]'
+                                    : 'text-[#526071] dark:text-[#929BA9]'
                                 }`}
                               >
                                 {spikeTargetMap.spikeTracking.sslState === 'SWEPT'
@@ -2257,10 +2260,10 @@ export const MacroNewsView: React.FC<MacroNewsViewProps> = ({ isActive = true })
                               </span>
                             </div>
                             <div className="flex items-baseline justify-between gap-2">
-                              <span className="text-sm font-bold text-[#151D2A] dark:text-[#F2F4F7]">
+                              <span className="text-sm font-bold text-[#0F172A] dark:text-[#F2F4F7]">
                                 ${spikeTargetMap.sslPrice.toFixed(2)}
                               </span>
-                              <span className="text-[11px] text-[#697586] dark:text-[#929BA9]">
+                              <span className="text-[11px] text-[#526071] dark:text-[#929BA9]">
                                 -${spikeTargetMap.spikeTracking.sslDistanceUsd.toFixed(2)} ·{' '}
                                 {spikeTargetMap.spikeTracking.sslCapRatioPct}% ATR Cap
                               </span>
@@ -2269,10 +2272,10 @@ export const MacroNewsView: React.FC<MacroNewsViewProps> = ({ isActive = true })
                         </div>
 
                         {/* Row 2: POI Lapis 1 & POI Lapis 2 */}
-                        <div className="grid grid-cols-1 sm:grid-cols-2 divide-y sm:divide-y-0 sm:divide-x divide-[#DDE3EA] dark:divide-[#20252D]">
+                        <div className="grid grid-cols-1 sm:grid-cols-2 divide-y sm:divide-y-0 sm:divide-x divide-[#D9E2EC] dark:divide-[#20252D]">
                           <div className="px-3 py-2.5 space-y-1">
                             <div className="flex items-center justify-between gap-2">
-                              <span className="font-sans text-[10px] font-semibold uppercase tracking-wider text-[#697586] dark:text-[#929BA9]">
+                              <span className="font-sans text-[10px] font-semibold uppercase tracking-wider text-[#526071] dark:text-[#929BA9]">
                                 {tr(
                                   'POI Lapis 1 (FVG / OTE 0.57–0.70)',
                                   'Layer 1 POI (FVG / OTE 0.57–0.70)'
@@ -2284,7 +2287,7 @@ export const MacroNewsView: React.FC<MacroNewsViewProps> = ({ isActive = true })
                                     ? 'text-[#059669] dark:text-[#00A878]'
                                     : spikeTargetMap.spikeTracking.layer1State === 'IN_ZONE'
                                     ? 'text-[#D97706] dark:text-[#F59E0B]'
-                                    : 'text-[#697586] dark:text-[#929BA9]'
+                                    : 'text-[#526071] dark:text-[#929BA9]'
                                 }`}
                               >
                                 {spikeTargetMap.spikeTracking.layer1State === 'SWEPT'
@@ -2295,11 +2298,11 @@ export const MacroNewsView: React.FC<MacroNewsViewProps> = ({ isActive = true })
                               </span>
                             </div>
                             <div className="flex items-baseline justify-between gap-2">
-                              <span className="text-sm font-bold text-[#151D2A] dark:text-[#F2F4F7]">
+                              <span className="text-sm font-bold text-[#0F172A] dark:text-[#F2F4F7]">
                                 ${spikeTargetMap.layer1FvgOte.low.toFixed(2)} – $
                                 {spikeTargetMap.layer1FvgOte.high.toFixed(2)}
                               </span>
-                              <span className="text-[11px] text-[#697586] dark:text-[#929BA9]">
+                              <span className="text-[11px] text-[#526071] dark:text-[#929BA9]">
                                 Δ ${spikeTargetMap.spikeTracking.layer1DistanceUsd.toFixed(2)}
                               </span>
                             </div>
@@ -2307,7 +2310,7 @@ export const MacroNewsView: React.FC<MacroNewsViewProps> = ({ isActive = true })
 
                           <div className="px-3 py-2.5 space-y-1">
                             <div className="flex items-center justify-between gap-2">
-                              <span className="font-sans text-[10px] font-semibold uppercase tracking-wider text-[#697586] dark:text-[#929BA9]">
+                              <span className="font-sans text-[10px] font-semibold uppercase tracking-wider text-[#526071] dark:text-[#929BA9]">
                                 {tr('POI Lapis 2 (Extreme OB)', 'Layer 2 POI (Extreme OB)')}
                               </span>
                               <span
@@ -2316,7 +2319,7 @@ export const MacroNewsView: React.FC<MacroNewsViewProps> = ({ isActive = true })
                                     ? 'text-[#059669] dark:text-[#00A878]'
                                     : spikeTargetMap.spikeTracking.layer2State === 'IN_ZONE'
                                     ? 'text-[#D97706] dark:text-[#F59E0B]'
-                                    : 'text-[#697586] dark:text-[#929BA9]'
+                                    : 'text-[#526071] dark:text-[#929BA9]'
                                 }`}
                               >
                                 {spikeTargetMap.spikeTracking.layer2State === 'SWEPT'
@@ -2327,11 +2330,11 @@ export const MacroNewsView: React.FC<MacroNewsViewProps> = ({ isActive = true })
                               </span>
                             </div>
                             <div className="flex items-baseline justify-between gap-2">
-                              <span className="text-sm font-bold text-[#151D2A] dark:text-[#F2F4F7]">
+                              <span className="text-sm font-bold text-[#0F172A] dark:text-[#F2F4F7]">
                                 ${spikeTargetMap.layer2ExtremeOb.low.toFixed(2)} – $
                                 {spikeTargetMap.layer2ExtremeOb.high.toFixed(2)}
                               </span>
-                              <span className="text-[11px] text-[#697586] dark:text-[#929BA9]">
+                              <span className="text-[11px] text-[#526071] dark:text-[#929BA9]">
                                 Δ ${spikeTargetMap.spikeTracking.layer2DistanceUsd.toFixed(2)}
                               </span>
                             </div>
@@ -2339,7 +2342,7 @@ export const MacroNewsView: React.FC<MacroNewsViewProps> = ({ isActive = true })
                         </div>
                       </div>
                     ) : (
-                      <div className="flex flex-wrap items-center justify-between gap-2 py-1 text-xs text-[#697586] dark:text-[#929BA9]">
+                      <div className="flex flex-wrap items-center justify-between gap-2 py-1 text-xs text-[#526071] dark:text-[#929BA9]">
                         <span>
                           {confluenceData.isLoading || confluenceData.isRefreshing
                             ? tr(
@@ -2357,7 +2360,7 @@ export const MacroNewsView: React.FC<MacroNewsViewProps> = ({ isActive = true })
                             type="button"
                             onClick={() => void confluenceData.refresh(true)}
                             disabled={confluenceData.isRefreshing}
-                            className="h-8 px-3.5 py-1 rounded-full bg-white dark:bg-[#0A0C10] border border-[#DDE3EA] dark:border-[#20252D] text-[11px] font-semibold text-[#151D2A] dark:text-[#F2F4F7] hover:border-black/25 dark:hover:border-white/25 transition-colors cursor-pointer disabled:opacity-50"
+                            className="h-8 px-3.5 py-1 rounded-full bg-[#F5F7FA] dark:bg-[#0B0E13] border border-[#D9E2EC] dark:border-[#20252D] text-[11px] font-semibold text-[#0F172A] dark:text-[#F2F4F7] hover:bg-[#EAEEF4] dark:hover:bg-[#161A22] hover:border-[#0F172A]/30 dark:hover:border-white/30 transition-colors cursor-pointer disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/35 dark:focus-visible:ring-white/35"
                           >
                             {tr('Sync Candle', 'Sync Candles')}
                           </button>
@@ -2365,7 +2368,7 @@ export const MacroNewsView: React.FC<MacroNewsViewProps> = ({ isActive = true })
                             <button
                               type="button"
                               onClick={() => confluenceData.loadSampleOrCachedCandles()}
-                              className="h-8 px-3.5 py-1 rounded-full bg-white dark:bg-[#0A0C10] border border-[#DDE3EA] dark:border-[#20252D] text-[11px] font-semibold text-[#697586] dark:text-[#929BA9] hover:text-[#151D2A] dark:hover:text-[#F2F4F7] transition-colors cursor-pointer"
+                              className="h-8 px-3.5 py-1 rounded-full bg-[#F5F7FA] dark:bg-[#0B0E13] border border-[#D9E2EC] dark:border-[#20252D] text-[11px] font-semibold text-[#526071] dark:text-[#929BA9] hover:text-[#0F172A] dark:hover:text-[#F2F4F7] hover:bg-[#EAEEF4] dark:hover:bg-[#161A22] transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/35 dark:focus-visible:ring-white/35"
                             >
                               {tr('Muat Cache', 'Load Cache')}
                             </button>
@@ -2376,8 +2379,8 @@ export const MacroNewsView: React.FC<MacroNewsViewProps> = ({ isActive = true })
                   </div>
 
                   {/* 3) Alasan Teknis AMD */}
-                  <div className="pt-2.5 border-t border-[#DDE3EA] dark:border-[#20252D] space-y-1">
-                    <span className="text-[11px] font-semibold uppercase tracking-[0.06em] text-[#697586] dark:text-[#929BA9] block">
+                  <div className="pt-2.5 border-t border-[#D9E2EC] dark:border-[#20252D] space-y-1">
+                    <span className="text-[11px] font-semibold uppercase tracking-[0.06em] text-[#526071] dark:text-[#929BA9] block">
                       {tr(
                         '3. Alasan Teknis AMD & Likuiditas Sesi',
                         '3. AMD Technical & Session Liquidity Rationale'
@@ -2385,16 +2388,16 @@ export const MacroNewsView: React.FC<MacroNewsViewProps> = ({ isActive = true })
                     </span>
                     {hasConfluenceCandles && amdState ? (
                       <>
-                        <p className="text-xs font-medium text-[#151D2A] dark:text-[#F2F4F7] leading-relaxed">
+                        <p className="text-xs font-medium text-[#0F172A] dark:text-[#F2F4F7] leading-relaxed">
                           {sessionLabelForAmd ? `${sessionLabelForAmd} · ` : ''}
                           {amdState.headlineId}
                         </p>
-                        <p className="text-xs text-[#697586] dark:text-[#929BA9] leading-relaxed">
+                        <p className="text-xs text-[#526071] dark:text-[#929BA9] leading-relaxed">
                           {amdState.detailId} {amdState.nextSessionProjectionId}
                         </p>
                       </>
                     ) : (
-                      <p className="text-xs text-[#697586] dark:text-[#929BA9] leading-relaxed">
+                      <p className="text-xs text-[#526071] dark:text-[#929BA9] leading-relaxed">
                         {manualAmdOverride === 'ACCUMULATION'
                           ? tr(
                               'Manual AMD Override mengunci status ke Akumulasi: likuiditas menumpuk di batas kotak sesi sehingga rilis berita cenderung menyapu sisi lemah terlebih dahulu.',
@@ -2417,10 +2420,10 @@ export const MacroNewsView: React.FC<MacroNewsViewProps> = ({ isActive = true })
                   {hasConfluenceLevels && spikeTargetMap.hasValidData && (
                     <div
                       data-testid="macro-spike-integration-audit"
-                      className="pt-2.5 border-t border-[#DDE3EA] dark:border-[#20252D] space-y-1.5"
+                      className="pt-2.5 border-t border-[#D9E2EC] dark:border-[#20252D] space-y-1.5"
                     >
                       <div className="flex flex-wrap items-center justify-between gap-2">
-                        <span className="text-[11px] font-semibold uppercase tracking-[0.06em] text-[#697586] dark:text-[#929BA9]">
+                        <span className="text-[11px] font-semibold uppercase tracking-[0.06em] text-[#526071] dark:text-[#929BA9]">
                           {tr(
                             '4. Audit Integrasi Cycle & Confluence',
                             '4. Cycle & Confluence Integration Audit'
@@ -2440,24 +2443,24 @@ export const MacroNewsView: React.FC<MacroNewsViewProps> = ({ isActive = true })
                         </span>
                       </div>
 
-                      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] font-mono-numbers tabular-nums text-[#697586] dark:text-[#929BA9]">
+                      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] font-mono-numbers tabular-nums text-[#526071] dark:text-[#929BA9]">
                         <span>
                           Spot Acuan:{' '}
-                          <strong className="font-semibold text-[#151D2A] dark:text-[#F2F4F7]">
+                          <strong className="font-semibold text-[#0F172A] dark:text-[#F2F4F7]">
                             ${spikeTargetMap.spotPrice.toFixed(2)}
                           </strong>
                         </span>
                         <span aria-hidden="true">·</span>
                         <span>
                           ATR(14) 1H:{' '}
-                          <strong className="font-semibold text-[#151D2A] dark:text-[#F2F4F7]">
+                          <strong className="font-semibold text-[#0F172A] dark:text-[#F2F4F7]">
                             ${spikeTargetMap.atr14_1h.toFixed(2)}
                           </strong>
                         </span>
                         <span aria-hidden="true">·</span>
                         <span>
                           Radius Cap (1.8x):{' '}
-                          <strong className="font-semibold text-[#151D2A] dark:text-[#F2F4F7]">
+                          <strong className="font-semibold text-[#0F172A] dark:text-[#F2F4F7]">
                             ±${spikeTargetMap.maxSweepDistance.toFixed(2)}
                           </strong>{' '}
                           (${spikeTargetMap.lowerAtrCapPrice.toFixed(2)}–${spikeTargetMap.upperAtrCapPrice.toFixed(2)})
@@ -2469,7 +2472,7 @@ export const MacroNewsView: React.FC<MacroNewsViewProps> = ({ isActive = true })
                             className={`font-semibold ${
                               dualHorizon.isPricedIn
                                 ? 'text-[#D97706] dark:text-[#F59E0B]'
-                                : 'text-[#151D2A] dark:text-[#F2F4F7]'
+                                : 'text-[#0F172A] dark:text-[#F2F4F7]'
                             }`}
                           >
                             {dualHorizon.move6hUsd >= 0 ? '+' : ''}${dualHorizon.move6hUsd.toFixed(2)}
@@ -2478,7 +2481,7 @@ export const MacroNewsView: React.FC<MacroNewsViewProps> = ({ isActive = true })
                         <span aria-hidden="true">·</span>
                         <span>
                           Clamp ATR:{' '}
-                          <strong className="font-semibold text-[#151D2A] dark:text-[#F2F4F7]">
+                          <strong className="font-semibold text-[#0F172A] dark:text-[#F2F4F7]">
                             {spikeTargetMap.integrationAudit.isBslClampedByAtr ||
                             spikeTargetMap.integrationAudit.isSslClampedByAtr ||
                             spikeTargetMap.integrationAudit.isPoiClampedByAtr
@@ -2503,7 +2506,7 @@ export const MacroNewsView: React.FC<MacroNewsViewProps> = ({ isActive = true })
                 type="button"
                 data-testid="macro-bias-history-toggle"
                 onClick={() => setShowBiasHistory((prev) => !prev)}
-                className="h-8 inline-flex items-center gap-1.5 px-3.5 py-1 rounded-full bg-[#F5F7FA] dark:bg-[#101318] border border-[#DDE3EA] dark:border-[#20252D] hover:border-black/25 dark:hover:border-white/25 text-xs font-semibold text-[#151D2A] dark:text-[#F2F4F7] transition-colors cursor-pointer"
+                className="h-8 inline-flex items-center gap-1.5 px-3.5 py-1 rounded-full bg-white dark:bg-[#101318] border border-[#D9E2EC] dark:border-[#20252D] shadow-[0_1px_2px_rgba(15,23,42,0.04)] dark:shadow-none hover:bg-[#F8FAFC] dark:hover:bg-[#161A22] hover:border-[#0F172A]/30 dark:hover:border-white/30 text-xs font-semibold text-[#0F172A] dark:text-[#F2F4F7] transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/35 dark:focus-visible:ring-white/35"
               >
                 <span>
                   {showBiasHistory
@@ -2516,13 +2519,13 @@ export const MacroNewsView: React.FC<MacroNewsViewProps> = ({ isActive = true })
               {showBiasHistory && (
                 <div
                   data-testid="macro-bias-history-panel"
-                  className="pt-3 border-t border-[#DDE3EA] dark:border-[#20252D] space-y-3"
+                  className="pt-3 border-t border-[#D9E2EC] dark:border-[#20252D] space-y-3"
                 >
-                  <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-[#697586] dark:text-[#929BA9]">
+                  <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-[#526071] dark:text-[#929BA9]">
                     <span>{tr('Tren Pergeseran Probabilitas', 'Probability Shift Trajectory')}</span>
                     <span className="font-mono-numbers tabular-nums">
                       {biasHistory[0].dominantBias} ({Math.max(biasHistory[0].buyProbability, biasHistory[0].sellProbability, biasHistory[0].mixedProbability)}%) →{' '}
-                      <span className="font-semibold text-[#151D2A] dark:text-[#F2F4F7]">
+                      <span className="font-semibold text-[#0F172A] dark:text-[#F2F4F7]">
                         {biasHistory[biasHistory.length - 1].dominantBias} ({Math.max(
                           biasHistory[biasHistory.length - 1].buyProbability,
                           biasHistory[biasHistory.length - 1].sellProbability,
@@ -2540,14 +2543,14 @@ export const MacroNewsView: React.FC<MacroNewsViewProps> = ({ isActive = true })
                       className="w-full h-full overflow-visible"
                       aria-label={tr('Grafik riwayat pergeseran bias', 'Bias shift history chart')}
                     >
-                      <line x1="0" y1="28" x2="320" y2="28" stroke="currentColor" className="text-[#DDE3EA] dark:text-[#20252D]" strokeWidth="1" strokeDasharray="3 3" />
+                      <line x1="0" y1="28" x2="320" y2="28" stroke="currentColor" className="text-[#D9E2EC] dark:text-[#20252D]" strokeWidth="1" strokeDasharray="3 3" />
                       {(['buyProbability', 'sellProbability', 'mixedProbability'] as const).map((key) => {
                         const strokeClass =
                           key === 'buyProbability'
                             ? 'text-[#059669] dark:text-[#00A878]'
                             : key === 'sellProbability'
                             ? 'text-[#E11D48] dark:text-[#E05260]'
-                            : 'text-[#929BA9]';
+                            : 'text-[#526071] dark:text-[#929BA9]';
                         const pts = biasHistory
                           .map((pt, idx) => {
                             const x = biasHistory.length === 1 ? 160 : (idx / (biasHistory.length - 1)) * 320;
@@ -2571,19 +2574,19 @@ export const MacroNewsView: React.FC<MacroNewsViewProps> = ({ isActive = true })
                     </svg>
                   </div>
 
-                  <div className="divide-y divide-[#DDE3EA] dark:divide-[#20252D] border-t border-[#DDE3EA] dark:border-[#20252D]">
+                  <div className="divide-y divide-[#D9E2EC] dark:divide-[#20252D] border-t border-[#D9E2EC] dark:border-[#20252D]">
                     {[...biasHistory].reverse().slice(0, 6).map((pt, idx) => (
                       <div
                         key={`${pt.analyzedAt}-${idx}`}
                         className="py-2 flex items-center justify-between gap-3 text-xs font-mono-numbers tabular-nums"
                       >
-                        <div className="min-w-0 truncate text-[#697586] dark:text-[#929BA9]">
+                        <div className="min-w-0 truncate text-[#526071] dark:text-[#929BA9]">
                           <span>{formatTimestampWib(pt.analyzedAt, isEn ? 'en' : 'id')}</span>
                           <span aria-hidden="true"> · </span>
                           <span
                             className={`font-sans font-semibold ${
                               pt.isPostNews
-                                ? 'text-[#1769E8] dark:text-[#3478DC]'
+                                ? 'text-[#0F172A] dark:text-[#F2F4F7]'
                                 : 'text-[#E11D48] dark:text-[#E05260]'
                             }`}
                           >
@@ -2597,12 +2600,12 @@ export const MacroNewsView: React.FC<MacroNewsViewProps> = ({ isActive = true })
                                 ? 'text-[#059669] dark:text-[#00A878]'
                                 : pt.dominantBias === 'SELL'
                                 ? 'text-[#E11D48] dark:text-[#E05260]'
-                                : 'text-[#151D2A] dark:text-[#F2F4F7]'
+                                : 'text-[#0F172A] dark:text-[#F2F4F7]'
                             }`}
                           >
                             {pt.dominantBias}
                           </span>
-                          <span className="text-[#697586] dark:text-[#929BA9]">
+                          <span className="text-[#526071] dark:text-[#929BA9]">
                             {pt.buyProbability}% / {pt.mixedProbability}% / {pt.sellProbability}%
                           </span>
                         </div>
@@ -2613,7 +2616,7 @@ export const MacroNewsView: React.FC<MacroNewsViewProps> = ({ isActive = true })
               )}
             </>
           ) : biasHistory.length === 1 ? (
-            <p className="text-[11px] text-[#697586] dark:text-[#929BA9]">
+            <p className="text-[11px] text-[#526071] dark:text-[#929BA9]">
               {tr(
                 'Titik histori bias pertama tercatat — overlay pergeseran multi-waktu muncul setelah pembaruan berikutnya.',
                 'First bias history snapshot recorded — multi-point shift overlay appears after the next refresh.'
@@ -2626,13 +2629,13 @@ export const MacroNewsView: React.FC<MacroNewsViewProps> = ({ isActive = true })
       {/* SECTION 03 — INTERMARKET PULSE (SEAMLESS UNIFIED 2x2 GRID, DIRECT ON CANVAS) */}
       <section
         aria-label={tr('Intermarket Pulse', 'Intermarket Pulse')}
-        className="space-y-3 pb-6 border-b border-[#DDE3EA] dark:border-[#20252D]"
+        className="space-y-3 pb-6 border-b border-[#D9E2EC] dark:border-[#20252D]"
       >
         <div className="flex items-center justify-between gap-2">
-          <h2 className="text-[11px] font-semibold uppercase tracking-[0.08em] text-[#697586] dark:text-[#929BA9]">
+          <h2 className="text-[11px] font-semibold uppercase tracking-[0.08em] text-[#526071] dark:text-[#929BA9]">
             {tr('INTERMARKET PULSE', 'INTERMARKET PULSE')}
           </h2>
-          <div className="flex items-center gap-2 text-xs text-[#697586] dark:text-[#929BA9] font-mono-numbers tabular-nums">
+          <div className="flex items-center gap-2 text-xs text-[#526071] dark:text-[#929BA9] font-mono-numbers tabular-nums">
             <span>
               {tr('Live', 'Live')} ·{' '}
               {formatLiveUpdateClockWib(
@@ -2648,7 +2651,7 @@ export const MacroNewsView: React.FC<MacroNewsViewProps> = ({ isActive = true })
 
         <div
           data-testid="macro-intermarket-grid"
-          className="grid grid-cols-2 md:grid-cols-4 divide-x divide-y md:divide-y-0 divide-[#DDE3EA] dark:divide-[#20252D] border-y border-[#DDE3EA] dark:border-[#20252D]"
+          className="grid grid-cols-2 md:grid-cols-4 divide-x divide-y md:divide-y-0 divide-[#D9E2EC] dark:divide-[#20252D] border-y border-[#D9E2EC] dark:border-[#20252D]"
         >
           {intermarketList.map((asset) => {
             const displayLabel =
@@ -2676,10 +2679,10 @@ export const MacroNewsView: React.FC<MacroNewsViewProps> = ({ isActive = true })
                 type="button"
                 data-testid={`intermarket-card-${asset.symbol.toLowerCase()}`}
                 onClick={() => setSelectedIntermarketAsset(asset)}
-                className="text-left p-4 sm:py-4 sm:px-5 bg-transparent hover:bg-[#F5F7FA] dark:hover:bg-[#101318] transition-colors duration-150 min-h-[104px] flex flex-col justify-between gap-2 cursor-pointer"
+                className="text-left p-4 sm:py-4 sm:px-5 bg-transparent hover:bg-white dark:hover:bg-[#101318] transition-colors duration-150 min-h-[104px] flex flex-col justify-between gap-2 cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/35 dark:focus-visible:ring-white/35"
               >
                 <div className="flex items-center justify-between gap-1.5 w-full">
-                  <span className="text-xs font-semibold text-[#697586] dark:text-[#929BA9] truncate">
+                  <span className="text-xs font-semibold text-[#526071] dark:text-[#929BA9] truncate">
                     {displayLabel}
                   </span>
                   <span
@@ -2688,7 +2691,7 @@ export const MacroNewsView: React.FC<MacroNewsViewProps> = ({ isActive = true })
                         ? 'text-[#059669] dark:text-[#00A878]'
                         : isDown
                         ? 'text-[#E11D48] dark:text-[#E05260]'
-                        : 'text-[#697586] dark:text-[#929BA9]'
+                        : 'text-[#526071] dark:text-[#929BA9]'
                     }`}
                   >
                     {isUp ? (
@@ -2708,7 +2711,7 @@ export const MacroNewsView: React.FC<MacroNewsViewProps> = ({ isActive = true })
                   </span>
                 </div>
 
-                <div className="text-xl sm:text-2xl font-bold font-mono-numbers tabular-nums tracking-tight text-[#151D2A] dark:text-[#F2F4F7]">
+                <div className="text-xl sm:text-2xl font-bold font-mono-numbers tabular-nums tracking-tight text-[#0F172A] dark:text-[#F2F4F7]">
                   {formattedPrice}
                 </div>
 
@@ -2720,7 +2723,7 @@ export const MacroNewsView: React.FC<MacroNewsViewProps> = ({ isActive = true })
                         ? 'text-[#059669] dark:text-[#00A878]'
                         : asset.goldCorrelationEffect === 'BEARISH_GOLD'
                         ? 'text-[#E11D48] dark:text-[#E05260]'
-                        : 'text-[#697586] dark:text-[#929BA9]'
+                        : 'text-[#526071] dark:text-[#929BA9]'
                     }`}
                   >
                     {asset.goldCorrelationEffect === 'BULLISH_GOLD'
@@ -2729,7 +2732,7 @@ export const MacroNewsView: React.FC<MacroNewsViewProps> = ({ isActive = true })
                       ? 'BEARISH XAU'
                       : tr('NETRAL XAU', 'NEUTRAL XAU')}
                   </span>
-                  <span className="text-[11px] font-sans text-[#697586] dark:text-[#929BA9] font-medium">
+                  <span className="text-[11px] font-sans text-[#526071] dark:text-[#929BA9] font-medium">
                     {tr('Detail', 'Detail')}
                   </span>
                 </div>
@@ -2747,7 +2750,7 @@ export const MacroNewsView: React.FC<MacroNewsViewProps> = ({ isActive = true })
           snapshot.intermarketPulse.goldPositioning?.isAvailable) && (
           <div
             data-testid="macro-intermarket-context-bar"
-            className="pt-1 flex flex-wrap items-center gap-x-5 gap-y-1 text-xs text-[#697586] dark:text-[#929BA9] font-mono-numbers tabular-nums"
+            className="pt-1 flex flex-wrap items-center gap-x-5 gap-y-1 text-xs text-[#526071] dark:text-[#929BA9] font-mono-numbers tabular-nums"
           >
             {(() => {
               const liveSpread =
@@ -2760,8 +2763,8 @@ export const MacroNewsView: React.FC<MacroNewsViewProps> = ({ isActive = true })
               if (liveSpread === null || !Number.isFinite(liveSpread)) return null;
               return (
                 <span>
-                  <span className="font-sans font-medium text-[#697586] dark:text-[#929BA9]">2s10s:</span>{' '}
-                  <span className="font-semibold text-[#151D2A] dark:text-[#F2F4F7]">
+                  <span className="font-sans font-medium text-[#526071] dark:text-[#929BA9]">2s10s:</span>{' '}
+                  <span className="font-semibold text-[#0F172A] dark:text-[#F2F4F7]">
                     {liveSpread >= 0 ? '+' : ''}
                     {liveSpread.toFixed(2)}%
                   </span>
@@ -2770,8 +2773,8 @@ export const MacroNewsView: React.FC<MacroNewsViewProps> = ({ isActive = true })
             })()}
             {snapshot.intermarketPulse.vix?.isAvailable && (
               <span>
-                <span className="font-sans font-medium text-[#697586] dark:text-[#929BA9]">VIX:</span>{' '}
-                <span className="font-semibold text-[#151D2A] dark:text-[#F2F4F7]">
+                <span className="font-sans font-medium text-[#526071] dark:text-[#929BA9]">VIX:</span>{' '}
+                <span className="font-semibold text-[#0F172A] dark:text-[#F2F4F7]">
                   {snapshot.intermarketPulse.vix.price.toFixed(2)}
                 </span>{' '}
                 (
@@ -2781,8 +2784,8 @@ export const MacroNewsView: React.FC<MacroNewsViewProps> = ({ isActive = true })
             )}
             {snapshot.intermarketPulse.goldPositioning?.isAvailable && (
               <span>
-                <span className="font-sans font-medium text-[#697586] dark:text-[#929BA9]">GC=F 3D:</span>{' '}
-                <span className="font-semibold text-[#151D2A] dark:text-[#F2F4F7]">
+                <span className="font-sans font-medium text-[#526071] dark:text-[#929BA9]">GC=F 3D:</span>{' '}
+                <span className="font-semibold text-[#0F172A] dark:text-[#F2F4F7]">
                   {snapshot.intermarketPulse.goldPositioning.change3dPercent >= 0 ? '+' : ''}
                   {snapshot.intermarketPulse.goldPositioning.change3dPercent.toFixed(2)}%
                 </span>
@@ -2796,14 +2799,14 @@ export const MacroNewsView: React.FC<MacroNewsViewProps> = ({ isActive = true })
       <section
         aria-label={tr('Ekspektasi Fed dan CME FedWatch', 'Fed Expectations & CME FedWatch')}
         data-testid="macro-cme-fedwatch-card"
-        className="space-y-4 pb-6 border-b border-[#DDE3EA] dark:border-[#20252D]"
+        className="space-y-4 pb-6 border-b border-[#D9E2EC] dark:border-[#20252D]"
       >
         <div className="flex flex-wrap items-baseline justify-between gap-2">
           <div className="space-y-0.5">
-            <h2 className="text-[11px] font-semibold uppercase tracking-[0.08em] text-[#697586] dark:text-[#929BA9]">
+            <h2 className="text-[11px] font-semibold uppercase tracking-[0.08em] text-[#526071] dark:text-[#929BA9]">
               {tr('EKSPEKTASI FED · CME FEDWATCH (FOMC TARGET)', 'FED EXPECTATIONS · CME FEDWATCH (FOMC TARGET)')}
             </h2>
-            <p className="text-sm sm:text-base font-semibold text-[#151D2A] dark:text-[#F2F4F7]">
+            <p className="text-sm sm:text-base font-semibold text-[#0F172A] dark:text-[#F2F4F7]">
               {activeFedWatch.fomcMeetingDate}
             </p>
           </div>
@@ -2811,7 +2814,7 @@ export const MacroNewsView: React.FC<MacroNewsViewProps> = ({ isActive = true })
           <div className="text-right space-y-0.5">
             <span
               data-testid="macro-cme-fedwatch-source"
-              className="text-xs text-[#697586] dark:text-[#929BA9] block"
+              className="text-xs text-[#526071] dark:text-[#929BA9] block"
             >
               {activeFedWatch.isAvailable
                 ? activeFedWatch.sourceLabel || tr('Live FedWatch Sync', 'Live FedWatch Sync')
@@ -2823,10 +2826,10 @@ export const MacroNewsView: React.FC<MacroNewsViewProps> = ({ isActive = true })
         {/* Implied Rate & Target Range Metadata */}
         <div className="flex flex-wrap items-center justify-between gap-3 text-xs">
           <div className="flex items-baseline gap-2">
-            <span className="text-[#697586] dark:text-[#929BA9]">
+            <span className="text-[#526071] dark:text-[#929BA9]">
               {tr('Implied Fed Funds Rate:', 'Implied Fed Funds Rate:')}
             </span>
-            <span className="font-bold font-mono-numbers tabular-nums text-[#151D2A] dark:text-[#F2F4F7]">
+            <span className="font-bold font-mono-numbers tabular-nums text-[#0F172A] dark:text-[#F2F4F7]">
               {activeFedWatch.isAvailable && typeof activeFedWatch.impliedFedFundsRate === 'number'
                 ? `${activeFedWatch.impliedFedFundsRate.toFixed(2)}%`
                 : '—'}
@@ -2834,19 +2837,19 @@ export const MacroNewsView: React.FC<MacroNewsViewProps> = ({ isActive = true })
           </div>
 
           {activeFedWatch.isAvailable && activeFedWatch.targetRateRange && (
-            <span className="text-xs font-mono-numbers tabular-nums text-[#697586] dark:text-[#929BA9]">
+            <span className="text-xs font-mono-numbers tabular-nums text-[#526071] dark:text-[#929BA9]">
               {activeFedWatch.targetRateRange}
             </span>
           )}
         </div>
 
         {/* Unified Monochrome 3-Probability Comparison Row */}
-        <div className="grid grid-cols-3 divide-x divide-[#DDE3EA] dark:divide-[#20252D] py-3 border-y border-[#DDE3EA] dark:border-[#20252D] font-mono-numbers tabular-nums">
+        <div className="grid grid-cols-3 divide-x divide-[#D9E2EC] dark:divide-[#20252D] py-3 border-y border-[#D9E2EC] dark:border-[#20252D] font-mono-numbers tabular-nums">
           <div className="pr-3">
-            <span className="text-[11px] font-sans font-medium text-[#697586] dark:text-[#929BA9] block">
+            <span className="text-[11px] font-sans font-medium text-[#526071] dark:text-[#929BA9] block">
               {tr('Rate Hike', 'Rate Hike')}
             </span>
-            <span className="text-xl sm:text-2xl font-bold text-[#151D2A] dark:text-[#F2F4F7] mt-0.5 block">
+            <span className="text-xl sm:text-2xl font-bold text-[#0F172A] dark:text-[#F2F4F7] mt-0.5 block">
               {activeFedWatch.isAvailable && activeFedWatch.hikeProbability !== null
                 ? `${activeFedWatch.hikeProbability.toFixed(1)}%`
                 : '—'}
@@ -2854,10 +2857,10 @@ export const MacroNewsView: React.FC<MacroNewsViewProps> = ({ isActive = true })
           </div>
 
           <div className="px-3">
-            <span className="text-[11px] font-sans font-medium text-[#697586] dark:text-[#929BA9] block">
+            <span className="text-[11px] font-sans font-medium text-[#526071] dark:text-[#929BA9] block">
               {tr('Hold', 'Hold')}
             </span>
-            <span className="text-xl sm:text-2xl font-bold text-[#151D2A] dark:text-[#F2F4F7] mt-0.5 block">
+            <span className="text-xl sm:text-2xl font-bold text-[#0F172A] dark:text-[#F2F4F7] mt-0.5 block">
               {activeFedWatch.isAvailable && activeFedWatch.holdProbability !== null
                 ? `${activeFedWatch.holdProbability.toFixed(1)}%`
                 : '—'}
@@ -2865,10 +2868,10 @@ export const MacroNewsView: React.FC<MacroNewsViewProps> = ({ isActive = true })
           </div>
 
           <div className="pl-3">
-            <span className="text-[11px] font-sans font-medium text-[#697586] dark:text-[#929BA9] block">
+            <span className="text-[11px] font-sans font-medium text-[#526071] dark:text-[#929BA9] block">
               {tr('Rate Cut', 'Rate Cut')}
             </span>
-            <span className="text-xl sm:text-2xl font-bold text-[#151D2A] dark:text-[#F2F4F7] mt-0.5 block">
+            <span className="text-xl sm:text-2xl font-bold text-[#0F172A] dark:text-[#F2F4F7] mt-0.5 block">
               {activeFedWatch.isAvailable && activeFedWatch.cutProbability !== null
                 ? `${activeFedWatch.cutProbability.toFixed(1)}%`
                 : '—'}
@@ -2876,7 +2879,7 @@ export const MacroNewsView: React.FC<MacroNewsViewProps> = ({ isActive = true })
           </div>
         </div>
 
-        <p className="text-xs sm:text-[13px] text-[#697586] dark:text-[#929BA9] leading-relaxed">
+        <p className="text-xs sm:text-[13px] text-[#526071] dark:text-[#929BA9] leading-relaxed">
           {activeFedWatch.isAvailable
             ? isEn
               ? activeFedWatch.summaryNoteEn
@@ -2892,18 +2895,18 @@ export const MacroNewsView: React.FC<MacroNewsViewProps> = ({ isActive = true })
       <section
         aria-label={tr('Rencana Eksekusi dan Tesis', 'Execution Plan & Thesis')}
         data-testid="macro-tactic-thesis-tab-card"
-        className="space-y-4 pb-6 border-b border-[#DDE3EA] dark:border-[#20252D]"
+        className="space-y-4 pb-6 border-b border-[#D9E2EC] dark:border-[#20252D]"
       >
         <div className="flex flex-wrap items-center justify-between gap-2">
-          <div className="inline-flex items-center p-1 rounded-full bg-[#F5F7FA] dark:bg-[#101318] border border-[#DDE3EA] dark:border-[#20252D]">
+          <div className="inline-flex items-center p-1 rounded-full bg-white dark:bg-[#101318] border border-[#D9E2EC] dark:border-[#20252D] shadow-[0_1px_2px_rgba(15,23,42,0.04)] dark:shadow-none">
             <button
               type="button"
               data-testid="macro-tab-execution-plan"
               onClick={() => setStrategyTab('EXECUTION')}
-              className={`min-h-[32px] px-3.5 py-1 rounded-full text-xs font-semibold transition-colors cursor-pointer ${
+              className={`min-h-[32px] px-3.5 py-1 rounded-full text-xs font-semibold transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/35 dark:focus-visible:ring-white/35 ${
                 strategyTab === 'EXECUTION'
-                  ? 'bg-[#151D2A] text-white dark:bg-white dark:text-[#050607]'
-                  : 'text-[#697586] dark:text-[#929BA9] hover:text-[#151D2A] dark:hover:text-[#F2F4F7]'
+                  ? 'bg-[#0F172A] text-white dark:bg-white dark:text-[#050607]'
+                  : 'text-[#526071] dark:text-[#929BA9] hover:text-[#0F172A] dark:hover:text-[#F2F4F7]'
               }`}
             >
               {tr('Rencana Eksekusi', 'Execution Plan')}
@@ -2912,17 +2915,17 @@ export const MacroNewsView: React.FC<MacroNewsViewProps> = ({ isActive = true })
               type="button"
               data-testid="macro-tab-thesis-pillars"
               onClick={() => setStrategyTab('THESIS')}
-              className={`min-h-[32px] px-3.5 py-1 rounded-full text-xs font-semibold transition-colors cursor-pointer ${
+              className={`min-h-[32px] px-3.5 py-1 rounded-full text-xs font-semibold transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/35 dark:focus-visible:ring-white/35 ${
                 strategyTab === 'THESIS'
-                  ? 'bg-[#151D2A] text-white dark:bg-white dark:text-[#050607]'
-                  : 'text-[#697586] dark:text-[#929BA9] hover:text-[#151D2A] dark:hover:text-[#F2F4F7]'
+                  ? 'bg-[#0F172A] text-white dark:bg-white dark:text-[#050607]'
+                  : 'text-[#526071] dark:text-[#929BA9] hover:text-[#0F172A] dark:hover:text-[#F2F4F7]'
               }`}
             >
               {tr('Tesis & 3 Pilar', 'Thesis & 3 Pillars')}
             </button>
           </div>
 
-          <span className="text-[11px] font-medium text-[#697586] dark:text-[#929BA9]">
+          <span className="text-[11px] font-medium text-[#526071] dark:text-[#929BA9]">
             {activeMatrix.evaluationMode === 'FOMC_MEETING'
               ? tr('3 Pilar FOMC Penuh', 'Full 3 FOMC Pillars')
               : pillarBadgeLabel(primaryEv.pillar)}
@@ -2930,10 +2933,10 @@ export const MacroNewsView: React.FC<MacroNewsViewProps> = ({ isActive = true })
         </div>
 
         {strategyTab === 'EXECUTION' ? (
-          <div className="divide-y divide-[#DDE3EA] dark:divide-[#20252D]">
+          <div className="divide-y divide-[#D9E2EC] dark:divide-[#20252D]">
             {conciseExecutionPoints.slice(0, 3).map((pt, idx) => (
               <div key={idx} className="py-3 first:pt-0 last:pb-0 space-y-1">
-                <span className="text-xs font-semibold flex items-center gap-1.5 text-[#697586] dark:text-[#929BA9]">
+                <span className="text-xs font-semibold flex items-center gap-1.5 text-[#526071] dark:text-[#929BA9]">
                   {pt.tone === 'warning' && (
                     <AlertTriangle className="w-3.5 h-3.5 shrink-0 text-[#D97706] dark:text-[#F59E0B]" />
                   )}
@@ -2941,7 +2944,7 @@ export const MacroNewsView: React.FC<MacroNewsViewProps> = ({ isActive = true })
                     {pt.title}
                   </span>
                 </span>
-                <p className="text-xs sm:text-[13px] text-[#151D2A] dark:text-[#F2F4F7] leading-relaxed">
+                <p className="text-xs sm:text-[13px] text-[#0F172A] dark:text-[#F2F4F7] leading-relaxed">
                   {pt.body}
                 </p>
               </div>
@@ -2949,13 +2952,13 @@ export const MacroNewsView: React.FC<MacroNewsViewProps> = ({ isActive = true })
           </div>
         ) : (
           <div className="space-y-3">
-            <div className="divide-y divide-[#DDE3EA] dark:divide-[#20252D]">
+            <div className="divide-y divide-[#D9E2EC] dark:divide-[#20252D]">
               {conciseThesisPoints.slice(0, 3).map((pt, idx) => (
                 <div key={idx} className="py-3 first:pt-0 last:pb-0 space-y-1">
-                  <span className="text-xs font-semibold text-[#697586] dark:text-[#929BA9] block">
+                  <span className="text-xs font-semibold text-[#526071] dark:text-[#929BA9] block">
                     {pt.title}
                   </span>
-                  <p className="text-xs sm:text-[13px] text-[#151D2A] dark:text-[#F2F4F7] leading-relaxed">
+                  <p className="text-xs sm:text-[13px] text-[#0F172A] dark:text-[#F2F4F7] leading-relaxed">
                     {pt.body}
                   </p>
                 </div>
@@ -2963,12 +2966,12 @@ export const MacroNewsView: React.FC<MacroNewsViewProps> = ({ isActive = true })
             </div>
 
             {activeMatrix.preNewsFlow && (
-              <div className="pt-2.5 border-t border-[#DDE3EA] dark:border-[#20252D]">
+              <div className="pt-2.5 border-t border-[#D9E2EC] dark:border-[#20252D]">
                 <button
                   type="button"
                   data-testid="macro-prenews-flow-toggle"
                   onClick={() => setShowPreNewsFlow((prev) => !prev)}
-                  className="h-8 inline-flex items-center gap-1.5 px-3.5 py-1 rounded-full bg-[#F5F7FA] dark:bg-[#101318] border border-[#DDE3EA] dark:border-[#20252D] hover:border-black/25 dark:hover:border-white/25 text-xs font-semibold text-[#151D2A] dark:text-[#F2F4F7] transition-colors cursor-pointer"
+                  className="h-8 inline-flex items-center gap-1.5 px-3.5 py-1 rounded-full bg-white dark:bg-[#101318] border border-[#D9E2EC] dark:border-[#20252D] shadow-[0_1px_2px_rgba(15,23,42,0.04)] dark:shadow-none hover:bg-[#F8FAFC] dark:hover:bg-[#161A22] hover:border-[#0F172A]/30 dark:hover:border-white/30 text-xs font-semibold text-[#0F172A] dark:text-[#F2F4F7] transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/35 dark:focus-visible:ring-white/35"
                 >
                   <span>
                     {showPreNewsFlow
@@ -2985,22 +2988,22 @@ export const MacroNewsView: React.FC<MacroNewsViewProps> = ({ isActive = true })
                 {showPreNewsFlow && (
                   <div
                     data-testid="macro-prenews-flow-panel"
-                    className="mt-2 divide-y divide-[#DDE3EA] dark:divide-[#20252D] border-t border-[#DDE3EA] dark:border-[#20252D] text-xs"
+                    className="mt-2 divide-y divide-[#D9E2EC] dark:divide-[#20252D] border-t border-[#D9E2EC] dark:border-[#20252D] text-xs"
                   >
                     <div className="py-2.5 space-y-0.5">
-                      <span className="font-semibold text-[#151D2A] dark:text-[#F2F4F7]">
+                      <span className="font-semibold text-[#0F172A] dark:text-[#F2F4F7]">
                         {tr('Margin Konsensus', 'Consensus Margin')} · {activeMatrix.preNewsFlow.consensusTightness}
                       </span>
-                      <p className="text-[#697586] dark:text-[#929BA9] leading-relaxed">
+                      <p className="text-[#526071] dark:text-[#929BA9] leading-relaxed">
                         {isEn ? activeMatrix.preNewsFlow.consensusNoteEn : activeMatrix.preNewsFlow.consensusNoteId}
                       </p>
                     </div>
                     <div className="py-2.5 space-y-0.5">
-                      <span className="font-semibold text-[#151D2A] dark:text-[#F2F4F7]">
+                      <span className="font-semibold text-[#0F172A] dark:text-[#F2F4F7]">
                         {tr('Rantai Indikator Pendahulu', 'Leading Indicator Chain')} ·{' '}
                         {activeMatrix.preNewsFlow.leadingChain.direction}
                       </span>
-                      <p className="text-[#697586] dark:text-[#929BA9] leading-relaxed">
+                      <p className="text-[#526071] dark:text-[#929BA9] leading-relaxed">
                         {isEn
                           ? activeMatrix.preNewsFlow.leadingChain.summaryEn
                           : activeMatrix.preNewsFlow.leadingChain.summaryId}
@@ -3018,14 +3021,14 @@ export const MacroNewsView: React.FC<MacroNewsViewProps> = ({ isActive = true })
       <section
         aria-label={tr('Kalender Ekonomi USD', 'USD Economic Calendar')}
         data-testid="macro-calendar-section"
-        className="space-y-4 pb-6 border-b border-[#DDE3EA] dark:border-[#20252D]"
+        className="space-y-4 pb-6 border-b border-[#D9E2EC] dark:border-[#20252D]"
       >
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="space-y-0.5">
-            <h2 className="text-[11px] font-semibold uppercase tracking-[0.08em] text-[#697586] dark:text-[#929BA9]">
+            <h2 className="text-[11px] font-semibold uppercase tracking-[0.08em] text-[#526071] dark:text-[#929BA9]">
               {tr('KALENDER EKONOMI USD', 'USD ECONOMIC CALENDAR')}
             </h2>
-            <p className="text-xs text-[#697586] dark:text-[#929BA9] font-mono-numbers tabular-nums">
+            <p className="text-xs text-[#526071] dark:text-[#929BA9] font-mono-numbers tabular-nums">
               {filteredCalendarEvents.length} / {snapshot.calendarEvents.length}{' '}
               {tr('jadwal ditampilkan', 'events shown')}
             </p>
@@ -3034,15 +3037,15 @@ export const MacroNewsView: React.FC<MacroNewsViewProps> = ({ isActive = true })
           <div className="flex flex-wrap items-center gap-2">
             <div
               data-testid="macro-calendar-view-switch"
-              className="inline-flex items-center p-1 rounded-full bg-[#F5F7FA] dark:bg-[#101318] border border-[#DDE3EA] dark:border-[#20252D]"
+              className="inline-flex items-center p-1 rounded-full bg-white dark:bg-[#101318] border border-[#D9E2EC] dark:border-[#20252D] shadow-[0_1px_2px_rgba(15,23,42,0.04)] dark:shadow-none"
             >
               <button
                 type="button"
                 onClick={() => setCalendarViewMode('LIST')}
-                className={`min-h-[32px] px-3.5 py-1 rounded-full text-xs font-semibold transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
+                className={`min-h-[32px] px-3.5 py-1 rounded-full text-xs font-semibold transition-colors whitespace-nowrap shrink-0 cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/35 dark:focus-visible:ring-white/35 ${
                   calendarViewMode === 'LIST'
-                    ? 'bg-[#151D2A] text-white dark:bg-white dark:text-[#050607]'
-                    : 'text-[#697586] dark:text-[#929BA9] hover:text-[#151D2A] dark:hover:text-[#F2F4F7]'
+                    ? 'bg-[#0F172A] text-white dark:bg-white dark:text-[#050607]'
+                    : 'text-[#526071] dark:text-[#929BA9] hover:text-[#0F172A] dark:hover:text-[#F2F4F7]'
                 }`}
               >
                 {tr('Daftar', 'List')}
@@ -3050,24 +3053,24 @@ export const MacroNewsView: React.FC<MacroNewsViewProps> = ({ isActive = true })
               <button
                 type="button"
                 onClick={() => setCalendarViewMode('TIMELINE')}
-                className={`min-h-[32px] px-3.5 py-1 rounded-full text-xs font-semibold transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
+                className={`min-h-[32px] px-3.5 py-1 rounded-full text-xs font-semibold transition-colors whitespace-nowrap shrink-0 cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/35 dark:focus-visible:ring-white/35 ${
                   calendarViewMode === 'TIMELINE'
-                    ? 'bg-[#151D2A] text-white dark:bg-white dark:text-[#050607]'
-                    : 'text-[#697586] dark:text-[#929BA9] hover:text-[#151D2A] dark:hover:text-[#F2F4F7]'
+                    ? 'bg-[#0F172A] text-white dark:bg-white dark:text-[#050607]'
+                    : 'text-[#526071] dark:text-[#929BA9] hover:text-[#0F172A] dark:hover:text-[#F2F4F7]'
                 }`}
               >
                 {tr('Timeline', 'Timeline')}
               </button>
             </div>
 
-            <div className="inline-flex items-center p-1 rounded-full bg-[#F5F7FA] dark:bg-[#101318] border border-[#DDE3EA] dark:border-[#20252D]">
+            <div className="inline-flex items-center p-1 rounded-full bg-white dark:bg-[#101318] border border-[#D9E2EC] dark:border-[#20252D] shadow-[0_1px_2px_rgba(15,23,42,0.04)] dark:shadow-none">
               <button
                 type="button"
                 onClick={() => setShowFullCalendar(false)}
-                className={`min-h-[32px] px-3.5 py-1 rounded-full text-xs font-semibold transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
+                className={`min-h-[32px] px-3.5 py-1 rounded-full text-xs font-semibold transition-colors whitespace-nowrap shrink-0 cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/35 dark:focus-visible:ring-white/35 ${
                   !showFullCalendar
-                    ? 'bg-[#151D2A] text-white dark:bg-white dark:text-[#050607]'
-                    : 'text-[#697586] dark:text-[#929BA9] hover:text-[#151D2A] dark:hover:text-[#F2F4F7]'
+                    ? 'bg-[#0F172A] text-white dark:bg-white dark:text-[#050607]'
+                    : 'text-[#526071] dark:text-[#929BA9] hover:text-[#0F172A] dark:hover:text-[#F2F4F7]'
                 }`}
               >
                 {tr('High-Impact', 'High-Impact Only')}
@@ -3075,10 +3078,10 @@ export const MacroNewsView: React.FC<MacroNewsViewProps> = ({ isActive = true })
               <button
                 type="button"
                 onClick={() => setShowFullCalendar(true)}
-                className={`min-h-[32px] px-3.5 py-1 rounded-full text-xs font-semibold transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
+                className={`min-h-[32px] px-3.5 py-1 rounded-full text-xs font-semibold transition-colors whitespace-nowrap shrink-0 cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/35 dark:focus-visible:ring-white/35 ${
                   showFullCalendar
-                    ? 'bg-[#151D2A] text-white dark:bg-white dark:text-[#050607]'
-                    : 'text-[#697586] dark:text-[#929BA9] hover:text-[#151D2A] dark:hover:text-[#F2F4F7]'
+                    ? 'bg-[#0F172A] text-white dark:bg-white dark:text-[#050607]'
+                    : 'text-[#526071] dark:text-[#929BA9] hover:text-[#0F172A] dark:hover:text-[#F2F4F7]'
                 }`}
               >
                 {tr('Semua Event', 'All Events')}
@@ -3091,17 +3094,17 @@ export const MacroNewsView: React.FC<MacroNewsViewProps> = ({ isActive = true })
         <div className="space-y-2.5">
           <div className="flex flex-col sm:flex-row sm:items-center gap-2.5">
             <div className="relative flex-1 min-w-0">
-              <Search className="w-4 h-4 text-[#697586] dark:text-[#929BA9] absolute left-3.5 top-1/2 -translate-y-1/2" />
+              <Search className="w-4 h-4 text-[#526071] dark:text-[#929BA9] absolute left-3.5 top-1/2 -translate-y-1/2" />
               <input
                 type="text"
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
                 placeholder={tr('Cari rilis USD (CPI, PPI, NFP, FOMC)...', 'Search USD release (CPI, PPI, NFP, FOMC)...')}
-                className="w-full min-h-[40px] pl-10 pr-4 py-2 rounded-full bg-[#F5F7FA] dark:bg-[#101318] border border-[#DDE3EA] dark:border-[#20252D] text-xs sm:text-sm text-[#151D2A] dark:text-[#F2F4F7] placeholder-[#697586] dark:placeholder-[#929BA9] focus:outline-none focus:border-black/40 dark:focus:border-white/40"
+                className="w-full min-h-[40px] pl-10 pr-4 py-2 rounded-full bg-white dark:bg-[#101318] border border-[#D9E2EC] dark:border-[#20252D] shadow-[0_1px_2px_rgba(15,23,42,0.04)] dark:shadow-none text-xs sm:text-sm text-[#0F172A] dark:text-[#F2F4F7] placeholder-[#526071] dark:placeholder-[#929BA9] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/35 dark:focus-visible:ring-white/35 focus:border-[#0F172A] dark:focus:border-white"
               />
             </div>
 
-            <div className="inline-flex items-center p-1 rounded-full bg-[#F5F7FA] dark:bg-[#101318] border border-[#DDE3EA] dark:border-[#20252D] self-start sm:self-auto shrink-0">
+            <div className="inline-flex items-center p-1 rounded-full bg-white dark:bg-[#101318] border border-[#D9E2EC] dark:border-[#20252D] shadow-[0_1px_2px_rgba(15,23,42,0.04)] dark:shadow-none self-start sm:self-auto shrink-0">
               {(
                 [
                   { key: 'ALL', labelId: 'Semua', labelEn: 'All' },
@@ -3113,10 +3116,10 @@ export const MacroNewsView: React.FC<MacroNewsViewProps> = ({ isActive = true })
                   key={opt.key}
                   type="button"
                   onClick={() => setEventWindowFilter(opt.key)}
-                  className={`min-h-[32px] px-3.5 py-1 rounded-full text-xs font-semibold transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
+                  className={`min-h-[32px] px-3.5 py-1 rounded-full text-xs font-semibold transition-colors whitespace-nowrap shrink-0 cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/35 dark:focus-visible:ring-white/35 ${
                     eventWindowFilter === opt.key
-                      ? 'bg-[#151D2A] text-white dark:bg-white dark:text-[#050607]'
-                      : 'text-[#697586] dark:text-[#929BA9] hover:text-[#151D2A] dark:hover:text-[#F2F4F7]'
+                      ? 'bg-[#0F172A] text-white dark:bg-white dark:text-[#050607]'
+                      : 'text-[#526071] dark:text-[#929BA9] hover:text-[#0F172A] dark:hover:text-[#F2F4F7]'
                   }`}
                 >
                   {tr(opt.labelId, opt.labelEn)}
@@ -3133,10 +3136,10 @@ export const MacroNewsView: React.FC<MacroNewsViewProps> = ({ isActive = true })
                   key={tag}
                   type="button"
                   onClick={() => setSearchQuery(tag === 'ALL' ? '' : tag)}
-                  className={`min-h-[32px] px-3.5 py-1 rounded-full text-xs font-semibold whitespace-nowrap shrink-0 transition-colors cursor-pointer ${
+                  className={`min-h-[32px] px-3.5 py-1 rounded-full text-xs font-semibold whitespace-nowrap shrink-0 transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/35 dark:focus-visible:ring-white/35 ${
                     isSelected
-                      ? 'bg-[#151D2A] text-white dark:bg-white dark:text-[#050607]'
-                      : 'bg-[#F5F7FA] dark:bg-[#101318] text-[#697586] dark:text-[#929BA9] border border-[#DDE3EA] dark:border-[#20252D] hover:text-[#151D2A] dark:hover:text-[#F2F4F7]'
+                      ? 'bg-[#0F172A] text-white dark:bg-white dark:text-[#050607]'
+                      : 'bg-white dark:bg-[#101318] text-[#526071] dark:text-[#929BA9] border border-[#D9E2EC] dark:border-[#20252D] shadow-[0_1px_2px_rgba(15,23,42,0.04)] dark:shadow-none hover:bg-[#F8FAFC] dark:hover:bg-[#161A22] hover:text-[#0F172A] dark:hover:text-[#F2F4F7]'
                   }`}
                 >
                   {tag === 'ALL' ? tr('Semua', 'All') : tag}
@@ -3148,8 +3151,8 @@ export const MacroNewsView: React.FC<MacroNewsViewProps> = ({ isActive = true })
 
         {/* Clean Scannable Calendar Rows or Event Impact Timeline */}
         {filteredCalendarEvents.length === 0 ? (
-          <div className="py-8 text-center space-y-2 border-t border-[#DDE3EA] dark:border-[#20252D]">
-            <p className="text-sm text-[#697586] dark:text-[#929BA9]">
+          <div className="py-8 text-center space-y-2 border-t border-[#D9E2EC] dark:border-[#20252D]">
+            <p className="text-sm text-[#526071] dark:text-[#929BA9]">
               {tr('Tidak ada jadwal ekonomi yang cocok dengan filter ini.', 'No economic events match this filter.')}
             </p>
             {(searchQuery || eventWindowFilter !== 'ALL' || !showFullCalendar) && (
@@ -3160,7 +3163,7 @@ export const MacroNewsView: React.FC<MacroNewsViewProps> = ({ isActive = true })
                   setEventWindowFilter('ALL');
                   setShowFullCalendar(true);
                 }}
-                className="min-h-[36px] px-4 py-1.5 rounded-full bg-[#F5F7FA] dark:bg-[#101318] border border-[#DDE3EA] dark:border-[#20252D] hover:border-black/25 dark:hover:border-white/25 text-xs font-semibold text-[#151D2A] dark:text-[#F2F4F7] transition-colors cursor-pointer"
+                className="min-h-[36px] px-4 py-1.5 rounded-full bg-white dark:bg-[#101318] border border-[#D9E2EC] dark:border-[#20252D] shadow-[0_1px_2px_rgba(15,23,42,0.04)] dark:shadow-none hover:bg-[#F8FAFC] dark:hover:bg-[#161A22] hover:border-[#0F172A]/30 dark:hover:border-white/30 text-xs font-semibold text-[#0F172A] dark:text-[#F2F4F7] transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/35 dark:focus-visible:ring-white/35"
               >
                 {tr('Tampilkan Semua Jadwal', 'Show All Releases')}
               </button>
@@ -3169,7 +3172,7 @@ export const MacroNewsView: React.FC<MacroNewsViewProps> = ({ isActive = true })
         ) : calendarViewMode === 'TIMELINE' ? (
           <div
             data-testid="macro-event-impact-timeline"
-            className="relative border-t border-[#DDE3EA] dark:border-[#20252D] pt-4 space-y-5"
+            className="relative border-t border-[#D9E2EC] dark:border-[#20252D] pt-4 space-y-5"
           >
             {timelineClusters.map((grp, idx) => {
               const grpTimeMs = new Date(grp.releaseDateIso).getTime();
@@ -3179,9 +3182,9 @@ export const MacroNewsView: React.FC<MacroNewsViewProps> = ({ isActive = true })
               const hasPrimaryInGrp = grp.events.some((e) => isPrimaryHighImpactEvent(e));
 
               const nodeColorClass = isTargetGrp
-                ? 'bg-[#151D2A] dark:bg-white'
+                ? 'bg-[#0F172A] dark:bg-white'
                 : hasActualInGrp
-                ? 'bg-[#697586] dark:bg-[#929BA9]'
+                ? 'bg-[#526071] dark:bg-[#929BA9]'
                 : 'bg-[#CBD5E1] dark:bg-[#3A4250]';
 
               return (
@@ -3189,24 +3192,24 @@ export const MacroNewsView: React.FC<MacroNewsViewProps> = ({ isActive = true })
                   {idx < timelineClusters.length - 1 && (
                     <span
                       aria-hidden="true"
-                      className="absolute left-[3.5px] top-3 bottom-[-22px] w-px bg-[#DDE3EA] dark:bg-[#20252D]"
+                      className="absolute left-[3.5px] top-3 bottom-[-22px] w-px bg-[#D9E2EC] dark:bg-[#20252D]"
                     />
                   )}
                   <span
                     aria-hidden="true"
-                    className={`absolute left-0 top-1.5 w-2 h-2 rounded-full ${nodeColorClass}`}
+                    className={`absolute left-0 top-1.5 w-2 h-2 rounded-sm ${nodeColorClass}`}
                   />
 
-                  <div className="space-y-1.5 pb-3 border-b border-[#DDE3EA] dark:border-[#20252D]">
+                  <div className="space-y-1.5 pb-3 border-b border-[#D9E2EC] dark:border-[#20252D]">
                     <div className="flex items-start justify-between gap-3">
                       <div className="min-w-0 space-y-0.5">
-                        <div className="flex flex-wrap items-center gap-1.5 text-xs text-[#697586] dark:text-[#929BA9] font-mono-numbers tabular-nums">
+                        <div className="flex flex-wrap items-center gap-1.5 text-xs text-[#526071] dark:text-[#929BA9] font-mono-numbers tabular-nums">
                           <span>{isEn ? grp.formattedScheduleEn : grp.formattedScheduleId}</span>
                           <span aria-hidden="true">·</span>
                           <span
                             className={`font-sans font-semibold ${
                               isPastGrp
-                                ? 'text-[#1769E8] dark:text-[#3478DC]'
+                                ? 'text-[#0F172A] dark:text-[#F2F4F7]'
                                 : 'text-[#E11D48] dark:text-[#E05260]'
                             }`}
                           >
@@ -3219,13 +3222,13 @@ export const MacroNewsView: React.FC<MacroNewsViewProps> = ({ isActive = true })
                           {isTargetGrp && (
                             <>
                               <span aria-hidden="true">·</span>
-                              <span className="font-sans font-semibold text-[#151D2A] dark:text-white">
+                              <span className="font-sans font-semibold text-[#0F172A] dark:text-white">
                                 {tr('Target Aktif', 'Active Target')}
                               </span>
                             </>
                           )}
                         </div>
-                        <h3 className="text-sm font-semibold text-[#151D2A] dark:text-[#F2F4F7]">
+                        <h3 className="text-sm font-semibold text-[#0F172A] dark:text-[#F2F4F7]">
                           {grp.combinedTitle}
                         </h3>
                       </div>
@@ -3234,7 +3237,7 @@ export const MacroNewsView: React.FC<MacroNewsViewProps> = ({ isActive = true })
                         <button
                           type="button"
                           onClick={() => handleSelectEventGroup(grp.primaryEvent.id)}
-                          className="min-h-[32px] px-3.5 py-1 rounded-full bg-[#F5F7FA] dark:bg-[#101318] border border-[#DDE3EA] dark:border-[#20252D] hover:border-[#3478DC] text-xs font-semibold text-[#151D2A] dark:text-[#F2F4F7] transition-colors whitespace-nowrap shrink-0 cursor-pointer"
+                          className="min-h-[32px] px-3.5 py-1 rounded-full bg-white dark:bg-[#101318] border border-[#D9E2EC] dark:border-[#20252D] shadow-[0_1px_2px_rgba(15,23,42,0.04)] dark:shadow-none hover:bg-[#F8FAFC] dark:hover:bg-[#161A22] hover:border-[#0F172A]/40 dark:hover:border-white/40 text-xs font-semibold text-[#0F172A] dark:text-[#F2F4F7] transition-colors whitespace-nowrap shrink-0 cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/35 dark:focus-visible:ring-white/35"
                         >
                           {tr('Analisis', 'Analyze')}
                         </button>
@@ -3246,12 +3249,12 @@ export const MacroNewsView: React.FC<MacroNewsViewProps> = ({ isActive = true })
                         const hasAct = Boolean(ev.actual && ev.actual.trim() && ev.actual.trim() !== '-');
                         const isRelWithAct = hasAct && (isPastGrp || ev.actualNum !== null);
                         const actColor = !isRelWithAct
-                          ? 'text-[#151D2A] dark:text-[#F2F4F7]'
+                          ? 'text-[#0F172A] dark:text-[#F2F4F7]'
                           : ev.eventBiasForGold === 'SELL'
                           ? 'text-[#059669] dark:text-[#00A878]'
                           : ev.eventBiasForGold === 'BUY'
                           ? 'text-[#E11D48] dark:text-[#E05260]'
-                          : 'text-[#151D2A] dark:text-[#F2F4F7]';
+                          : 'text-[#0F172A] dark:text-[#F2F4F7]';
                         const preEval =
                           isRelWithAct && ev.forecastNum !== null && ev.previousNum !== null
                             ? evaluateSingleEventForGold(ev.title, null, ev.forecastNum, ev.previousNum)
@@ -3268,10 +3271,10 @@ export const MacroNewsView: React.FC<MacroNewsViewProps> = ({ isActive = true })
                             key={ev.id}
                             className="flex flex-wrap items-center justify-between gap-2 text-xs font-mono-numbers tabular-nums"
                           >
-                            <span className="font-sans text-[#697586] dark:text-[#929BA9]">
+                            <span className="font-sans text-[#526071] dark:text-[#929BA9]">
                               {ev.title} · {pillarBadgeLabel(ev.pillar)}
                             </span>
-                            <div className="flex flex-wrap items-center gap-2 text-[#151D2A] dark:text-[#F2F4F7]">
+                            <div className="flex flex-wrap items-center gap-2 text-[#0F172A] dark:text-[#F2F4F7]">
                               <span>Prev {ev.previous || '—'}</span>
                               <span>· Fcst {ev.forecast || '—'}</span>
                               <span>
@@ -3281,7 +3284,7 @@ export const MacroNewsView: React.FC<MacroNewsViewProps> = ({ isActive = true })
                                 </span>
                               </span>
                               {flipped && (
-                                <span className="font-sans font-semibold text-[#151D2A] dark:text-[#F2F4F7]">
+                                <span className="font-sans font-semibold text-[#0F172A] dark:text-[#F2F4F7]">
                                   · {tr('Surprise Reversal', 'Surprise Reversal')}
                                 </span>
                               )}
@@ -3296,7 +3299,7 @@ export const MacroNewsView: React.FC<MacroNewsViewProps> = ({ isActive = true })
             })}
           </div>
         ) : (
-          <div className="divide-y divide-[#DDE3EA] dark:divide-[#20252D] border-t border-[#DDE3EA] dark:border-[#20252D]">
+          <div className="divide-y divide-[#D9E2EC] dark:divide-[#20252D] border-t border-[#D9E2EC] dark:border-[#20252D]">
             {filteredCalendarEvents.map((ev) => {
               const isPrimaryItem = isPrimaryHighImpactEvent(ev);
               const isActiveTarget = clusterEvents.some((c) => c.id === ev.id);
@@ -3308,17 +3311,17 @@ export const MacroNewsView: React.FC<MacroNewsViewProps> = ({ isActive = true })
               const isReleasedWithActual = hasActualItem && (isPastItem || ev.actualNum !== null);
 
               // MANDATORY COLOR RULES FOR ACTUAL:
-              // - Before release: White (#F2F4F7 dark / #151D2A light)
+              // - Before release: White (#F2F4F7 dark / #0F172A light)
               // - After release Good for USD (engine eventBiasForGold === 'SELL'): Green
               // - After release Bad for USD (engine eventBiasForGold === 'BUY'): Red
               // - After release Neutral / no conclusion (engine eventBiasForGold === 'MIXED'): White
               const actualTextColorClass = !isReleasedWithActual
-                ? 'text-[#151D2A] dark:text-[#F2F4F7]'
+                ? 'text-[#0F172A] dark:text-[#F2F4F7]'
                 : ev.eventBiasForGold === 'SELL'
                 ? 'text-[#059669] dark:text-[#00A878]'
                 : ev.eventBiasForGold === 'BUY'
                 ? 'text-[#E11D48] dark:text-[#E05260]'
-                : 'text-[#151D2A] dark:text-[#F2F4F7]';
+                : 'text-[#0F172A] dark:text-[#F2F4F7]';
 
               const usdInterpretationLabel = !isReleasedWithActual
                 ? ev.eventBiasForGold === 'SELL'
@@ -3351,7 +3354,7 @@ export const MacroNewsView: React.FC<MacroNewsViewProps> = ({ isActive = true })
                 >
                   <div className="flex items-start justify-between gap-3 lg:col-span-7 min-w-0">
                     <div className="min-w-0 space-y-1 flex-1">
-                      <div className="flex flex-wrap items-center gap-1.5 text-xs text-[#697586] dark:text-[#929BA9] font-mono-numbers tabular-nums">
+                      <div className="flex flex-wrap items-center gap-1.5 text-xs text-[#526071] dark:text-[#929BA9] font-mono-numbers tabular-nums">
                         <span>{formatTimestampWib(ev.date, isEn ? 'en' : 'id')}</span>
                         <span aria-hidden="true">·</span>
                         <span className="font-sans">{pillarBadgeLabel(ev.pillar)}</span>
@@ -3361,7 +3364,7 @@ export const MacroNewsView: React.FC<MacroNewsViewProps> = ({ isActive = true })
                         <span
                           className={`font-sans font-semibold ${
                             isPastItem
-                              ? 'text-[#1769E8] dark:text-[#3478DC]'
+                              ? 'text-[#0F172A] dark:text-[#F2F4F7]'
                               : 'text-[#E11D48] dark:text-[#E05260]'
                           }`}
                         >
@@ -3370,14 +3373,14 @@ export const MacroNewsView: React.FC<MacroNewsViewProps> = ({ isActive = true })
                         {isActiveTarget && (
                           <>
                             <span aria-hidden="true">·</span>
-                            <span className="font-sans font-semibold text-[#151D2A] dark:text-white">
+                            <span className="font-sans font-semibold text-[#0F172A] dark:text-white">
                               {tr('Target Aktif', 'Active Target')}
                             </span>
                           </>
                         )}
                       </div>
 
-                      <h3 className="text-sm sm:text-[15px] font-semibold text-[#151D2A] dark:text-[#F2F4F7]">
+                      <h3 className="text-sm sm:text-[15px] font-semibold text-[#0F172A] dark:text-[#F2F4F7]">
                         {ev.title}
                       </h3>
                     </div>
@@ -3386,7 +3389,7 @@ export const MacroNewsView: React.FC<MacroNewsViewProps> = ({ isActive = true })
                       <button
                         type="button"
                         onClick={() => handleSelectEventGroup(ev.id)}
-                        className="min-h-[32px] px-3.5 py-1 rounded-full bg-[#F5F7FA] dark:bg-[#101318] border border-[#DDE3EA] dark:border-[#20252D] hover:border-[#3478DC] text-xs font-semibold text-[#151D2A] dark:text-[#F2F4F7] transition-colors whitespace-nowrap shrink-0 cursor-pointer"
+                        className="min-h-[32px] px-3.5 py-1 rounded-full bg-white dark:bg-[#101318] border border-[#D9E2EC] dark:border-[#20252D] shadow-[0_1px_2px_rgba(15,23,42,0.04)] dark:shadow-none hover:bg-[#F8FAFC] dark:hover:bg-[#161A22] hover:border-[#0F172A]/40 dark:hover:border-white/40 text-xs font-semibold text-[#0F172A] dark:text-[#F2F4F7] transition-colors whitespace-nowrap shrink-0 cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/35 dark:focus-visible:ring-white/35"
                       >
                         {tr('Analisis', 'Analyze')}
                       </button>
@@ -3394,32 +3397,32 @@ export const MacroNewsView: React.FC<MacroNewsViewProps> = ({ isActive = true })
                   </div>
 
                   {/* Aligned 3-Column Numbers: Previous = White, Forecast = White, Actual = White pre-release / USD semantic post-release */}
-                  <div className="grid grid-cols-3 gap-3 py-1 lg:py-0 lg:col-span-5 lg:col-start-8 lg:row-start-1 lg:row-span-2 lg:self-center lg:pl-6 lg:border-l lg:border-[#DDE3EA] lg:dark:border-[#20252D] font-mono-numbers tabular-nums">
+                  <div className="grid grid-cols-3 gap-3 py-1 lg:py-0 lg:col-span-5 lg:col-start-8 lg:row-start-1 lg:row-span-2 lg:self-center lg:pl-6 lg:border-l lg:border-[#D9E2EC] lg:dark:border-[#20252D] font-mono-numbers tabular-nums">
                     <div>
-                      <span className="text-[11px] font-sans text-[#697586] dark:text-[#929BA9] block">
+                      <span className="text-[11px] font-sans text-[#526071] dark:text-[#929BA9] block">
                         Previous
                       </span>
-                      <span className="text-sm font-semibold text-[#151D2A] dark:text-[#F2F4F7]">
+                      <span className="text-sm font-semibold text-[#0F172A] dark:text-[#F2F4F7]">
                         {ev.previous || '—'}
                       </span>
                       {ev.previousRevisedFrom && (
-                        <span className="text-[11px] font-sans text-[#697586] dark:text-[#929BA9] block mt-0.5">
+                        <span className="text-[11px] font-sans text-[#526071] dark:text-[#929BA9] block mt-0.5">
                           {tr(`Rev. dari ${ev.previousRevisedFrom}`, `Rev. from ${ev.previousRevisedFrom}`)}
                         </span>
                       )}
                     </div>
 
                     <div>
-                      <span className="text-[11px] font-sans text-[#697586] dark:text-[#929BA9] block">
+                      <span className="text-[11px] font-sans text-[#526071] dark:text-[#929BA9] block">
                         Forecast
                       </span>
-                      <span className="text-sm font-semibold text-[#151D2A] dark:text-[#F2F4F7]">
+                      <span className="text-sm font-semibold text-[#0F172A] dark:text-[#F2F4F7]">
                         {ev.forecast || '—'}
                       </span>
                     </div>
 
                     <div>
-                      <span className="text-[11px] font-sans text-[#697586] dark:text-[#929BA9] block">
+                      <span className="text-[11px] font-sans text-[#526071] dark:text-[#929BA9] block">
                         Actual
                       </span>
                       <span
@@ -3435,16 +3438,16 @@ export const MacroNewsView: React.FC<MacroNewsViewProps> = ({ isActive = true })
                   <div className="space-y-1 lg:col-span-7 lg:col-start-1 min-w-0">
                     <div className="flex flex-wrap items-center justify-between gap-2">
                       <div className="flex flex-wrap items-center gap-2 text-xs">
-                        <span className="font-medium text-[#697586] dark:text-[#929BA9]">
+                        <span className="font-medium text-[#526071] dark:text-[#929BA9]">
                           {usdInterpretationLabel}
                         </span>
                         {preNewsEval && (
-                          <span className="font-mono-numbers tabular-nums text-[#697586] dark:text-[#929BA9]">
+                          <span className="font-mono-numbers tabular-nums text-[#526071] dark:text-[#929BA9]">
                             · {`Pre ${preNewsEval.bias} → Post ${ev.eventBiasForGold}`}
                           </span>
                         )}
                         {isFlipped && (
-                          <span className="font-semibold text-[#151D2A] dark:text-[#F2F4F7]">
+                          <span className="font-semibold text-[#0F172A] dark:text-[#F2F4F7]">
                             · {tr('Surprise Reversal', 'Surprise Reversal')}
                           </span>
                         )}
@@ -3453,7 +3456,7 @@ export const MacroNewsView: React.FC<MacroNewsViewProps> = ({ isActive = true })
                       <button
                         type="button"
                         onClick={() => toggleExpandedEvent(ev.id)}
-                        className="h-7 inline-flex items-center gap-1 px-3 py-1 rounded-full bg-[#F5F7FA] dark:bg-[#101318] border border-[#DDE3EA] dark:border-[#20252D] hover:border-black/25 dark:hover:border-white/25 text-[11px] font-semibold text-[#697586] dark:text-[#929BA9] hover:text-[#151D2A] dark:hover:text-[#F2F4F7] transition-colors cursor-pointer"
+                        className="h-7 inline-flex items-center gap-1 px-3 py-1 rounded-full bg-white dark:bg-[#101318] border border-[#D9E2EC] dark:border-[#20252D] shadow-[0_1px_2px_rgba(15,23,42,0.04)] dark:shadow-none hover:bg-[#F8FAFC] dark:hover:bg-[#161A22] hover:border-[#0F172A]/30 dark:hover:border-white/30 text-[11px] font-semibold text-[#526071] dark:text-[#929BA9] hover:text-[#0F172A] dark:hover:text-[#F2F4F7] transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/35 dark:focus-visible:ring-white/35"
                       >
                         <span>
                           {isExpanded ? tr('Tutup Detail', 'Hide Note') : tr('Interpretasi', 'Interpretation')}
@@ -3467,7 +3470,7 @@ export const MacroNewsView: React.FC<MacroNewsViewProps> = ({ isActive = true })
                     </div>
 
                     {isExpanded && (
-                      <p className="text-xs sm:text-[13px] text-[#697586] dark:text-[#929BA9] leading-relaxed pt-1">
+                      <p className="text-xs sm:text-[13px] text-[#526071] dark:text-[#929BA9] leading-relaxed pt-1">
                         {isEn ? ev.biasReasonEn : ev.biasReasonId}
                       </p>
                     )}
@@ -3487,24 +3490,24 @@ export const MacroNewsView: React.FC<MacroNewsViewProps> = ({ isActive = true })
       >
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="space-y-0.5">
-            <h2 className="text-[11px] font-semibold uppercase tracking-[0.08em] text-[#697586] dark:text-[#929BA9]">
+            <h2 className="text-[11px] font-semibold uppercase tracking-[0.08em] text-[#526071] dark:text-[#929BA9]">
               {tr('ADU ARGUMEN FUNDAMENTAL', 'FUNDAMENTAL ARGUMENTS')}
             </h2>
-            <p className="text-xs text-[#697586] dark:text-[#929BA9]">
+            <p className="text-xs text-[#526071] dark:text-[#929BA9]">
               {tr('Ketuk faktor argumen untuk detail pendukung', 'Tap any argument for supporting detail')}
             </p>
           </div>
 
-          <div className="inline-flex items-center p-1 rounded-full bg-[#F5F7FA] dark:bg-[#101318] border border-[#DDE3EA] dark:border-[#20252D]">
+          <div className="inline-flex items-center p-1 rounded-full bg-white dark:bg-[#101318] border border-[#D9E2EC] dark:border-[#20252D] shadow-[0_1px_2px_rgba(15,23,42,0.04)] dark:shadow-none">
             {(['BOTH', 'BUY', 'SELL'] as const).map((tab) => (
               <button
                 key={tab}
                 type="button"
                 onClick={() => setArgumentTab(tab)}
-                className={`min-h-[32px] px-3.5 py-1 rounded-full text-xs font-semibold transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
+                className={`min-h-[32px] px-3.5 py-1 rounded-full text-xs font-semibold transition-colors whitespace-nowrap shrink-0 cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/35 dark:focus-visible:ring-white/35 ${
                   argumentTab === tab
-                    ? 'bg-[#151D2A] text-white dark:bg-white dark:text-[#050607]'
-                    : 'text-[#697586] dark:text-[#929BA9] hover:text-[#151D2A] dark:hover:text-[#F2F4F7]'
+                    ? 'bg-[#0F172A] text-white dark:bg-white dark:text-[#050607]'
+                    : 'text-[#526071] dark:text-[#929BA9] hover:text-[#0F172A] dark:hover:text-[#F2F4F7]'
                 }`}
               >
                 {tab === 'BOTH' ? tr('Semua', 'Both') : tab}
@@ -3520,32 +3523,32 @@ export const MacroNewsView: React.FC<MacroNewsViewProps> = ({ isActive = true })
         >
           {(argumentTab === 'BOTH' || argumentTab === 'BUY') && (
             <div className="space-y-2">
-              <div className="pb-2 border-b border-[#DDE3EA] dark:border-[#20252D] flex items-center justify-between">
+              <div className="pb-2 border-b border-[#D9E2EC] dark:border-[#20252D] flex items-center justify-between">
                 <h3 className="text-xs font-bold uppercase tracking-[0.08em] text-[#059669] dark:text-[#00A878]">
                   {tr('BULLISH ARGUMENTS · BUY', 'BULLISH ARGUMENTS · BUY')}
                 </h3>
-                <span className="text-xs font-mono-numbers tabular-nums text-[#697586] dark:text-[#929BA9]">
+                <span className="text-xs font-mono-numbers tabular-nums text-[#526071] dark:text-[#929BA9]">
                   {activeMatrix.buyArguments.length}
                 </span>
               </div>
 
-              <div className="divide-y divide-[#DDE3EA] dark:divide-[#20252D]">
+              <div className="divide-y divide-[#D9E2EC] dark:divide-[#20252D]">
                 {activeMatrix.buyArguments.map((arg, i) => (
                   <button
                     key={`buy-${i}`}
                     type="button"
                     onClick={() => setSelectedArgument({ side: 'BUY', item: arg })}
-                    className="w-full py-3.5 px-2 text-left flex items-start justify-between gap-3 rounded-lg hover:bg-[#F5F7FA] dark:hover:bg-[#101318] transition-colors cursor-pointer min-h-[52px]"
+                    className="w-full py-3.5 px-2 text-left flex items-start justify-between gap-3 rounded-lg hover:bg-[#F8FAFC] dark:hover:bg-[#101318] transition-colors cursor-pointer min-h-[52px] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/35 dark:focus-visible:ring-white/35"
                   >
                     <div className="min-w-0 space-y-1">
                       <span className="text-[11px] font-semibold text-[#059669] dark:text-[#00A878] block">
                         {pillarBadgeLabel(arg.pillar)} · {arg.tag}
                       </span>
-                      <p className="text-xs sm:text-[13px] text-[#151D2A] dark:text-[#F2F4F7] leading-relaxed">
+                      <p className="text-xs sm:text-[13px] text-[#0F172A] dark:text-[#F2F4F7] leading-relaxed">
                         {isEn ? arg.textEn : arg.textId}
                       </p>
                     </div>
-                    <ChevronRight className="w-4 h-4 text-[#697586] dark:text-[#929BA9] shrink-0 mt-1" />
+                    <ChevronRight className="w-4 h-4 text-[#526071] dark:text-[#929BA9] shrink-0 mt-1" />
                   </button>
                 ))}
               </div>
@@ -3554,32 +3557,32 @@ export const MacroNewsView: React.FC<MacroNewsViewProps> = ({ isActive = true })
 
           {(argumentTab === 'BOTH' || argumentTab === 'SELL') && (
             <div className="space-y-2">
-              <div className="pb-2 border-b border-[#DDE3EA] dark:border-[#20252D] flex items-center justify-between">
+              <div className="pb-2 border-b border-[#D9E2EC] dark:border-[#20252D] flex items-center justify-between">
                 <h3 className="text-xs font-bold uppercase tracking-[0.08em] text-[#E11D48] dark:text-[#E05260]">
                   {tr('BEARISH ARGUMENTS · SELL', 'BEARISH ARGUMENTS · SELL')}
                 </h3>
-                <span className="text-xs font-mono-numbers tabular-nums text-[#697586] dark:text-[#929BA9]">
+                <span className="text-xs font-mono-numbers tabular-nums text-[#526071] dark:text-[#929BA9]">
                   {activeMatrix.sellArguments.length}
                 </span>
               </div>
 
-              <div className="divide-y divide-[#DDE3EA] dark:divide-[#20252D]">
+              <div className="divide-y divide-[#D9E2EC] dark:divide-[#20252D]">
                 {activeMatrix.sellArguments.map((arg, i) => (
                   <button
                     key={`sell-${i}`}
                     type="button"
                     onClick={() => setSelectedArgument({ side: 'SELL', item: arg })}
-                    className="w-full py-3.5 px-2 text-left flex items-start justify-between gap-3 rounded-lg hover:bg-[#F5F7FA] dark:hover:bg-[#101318] transition-colors cursor-pointer min-h-[52px]"
+                    className="w-full py-3.5 px-2 text-left flex items-start justify-between gap-3 rounded-lg hover:bg-[#F8FAFC] dark:hover:bg-[#101318] transition-colors cursor-pointer min-h-[52px] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/35 dark:focus-visible:ring-white/35"
                   >
                     <div className="min-w-0 space-y-1">
                       <span className="text-[11px] font-semibold text-[#E11D48] dark:text-[#E05260] block">
                         {pillarBadgeLabel(arg.pillar)} · {arg.tag}
                       </span>
-                      <p className="text-xs sm:text-[13px] text-[#151D2A] dark:text-[#F2F4F7] leading-relaxed">
+                      <p className="text-xs sm:text-[13px] text-[#0F172A] dark:text-[#F2F4F7] leading-relaxed">
                         {isEn ? arg.textEn : arg.textId}
                       </p>
                     </div>
-                    <ChevronRight className="w-4 h-4 text-[#697586] dark:text-[#929BA9] shrink-0 mt-1" />
+                    <ChevronRight className="w-4 h-4 text-[#526071] dark:text-[#929BA9] shrink-0 mt-1" />
                   </button>
                 ))}
               </div>

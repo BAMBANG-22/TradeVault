@@ -3,7 +3,8 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React from 'react';
+import React, { useId } from 'react';
+import { VLO_BODY_PATH, VLO_CORE_PATH, VLO_PULSE_PATH } from './BrandLogo';
 
 type DotRole = 'body' | 'pulse' | 'core';
 type DotPoint = readonly [number, number, DotRole];
@@ -81,17 +82,19 @@ const ROLE_CLASS: Record<DotRole, string> = {
 };
 
 /**
- * VLO BD-D Dot-to-Solid Reveal Logo (60fps GPU-composited)
- * Isolated compositor containment (`contain: layout style paint`, `translateZ(0)`)
- * ensures zero repaint bleed onto surrounding UI.
+ * VLO BD-D Liquid Dot-to-Solid Reveal Logo (60fps GPU-composited)
+ * Combines a liquid-coalesce dot wave with an orbital Flow Pulse sweep
+ * and spring-settled Emerald Core.
  */
 export const VloDotRevealLogo: React.FC<VloDotRevealLogoProps> = ({
   size = 128,
   speed = 'normal',
-  roundedClassName = 'rounded-[22%]',
+  roundedClassName = 'rounded-[26%]',
   className = '',
   title = 'VLO',
 }) => {
+  const rawId = useId();
+  const filterId = `vlo-liquid-${rawId.replace(/[:]/g, '')}`;
   const speedClass = speed === 'fast' ? 'vlo-reveal-fast' : 'vlo-reveal-normal';
 
   return (
@@ -104,9 +107,9 @@ export const VloDotRevealLogo: React.FC<VloDotRevealLogoProps> = ({
         contain: 'layout style paint',
         transform: 'translateZ(0)',
       }}
-      className={`relative shrink-0 overflow-hidden bg-white dark:bg-[#11151B] border border-[#DDE3EA] dark:border-[#252B34] ${roundedClassName} ${speedClass} ${className}`}
+      className={`relative shrink-0 overflow-hidden bg-white/95 dark:bg-[#11151B]/95 border border-black/[0.06] dark:border-white/[0.08] shadow-[inset_0_1px_0_rgba(255,255,255,0.9),0_12px_32px_-8px_rgba(15,23,42,0.08)] dark:shadow-[inset_0_1px_0_rgba(255,255,255,0.06),0_16px_36px_-10px_rgba(0,0,0,0.45)] ${roundedClassName} ${speedClass} ${className}`}
     >
-      {/* Phase 1: 8-wave GPU-composited dot matrix */}
+      {/* Phase 1: 8-wave GPU-composited dot matrix with subtle liquid-coalesce filter */}
       <svg
         xmlns="http://www.w3.org/2000/svg"
         viewBox="14 14 228 228"
@@ -114,22 +117,36 @@ export const VloDotRevealLogo: React.FC<VloDotRevealLogoProps> = ({
         aria-hidden="true"
         className="vlo-dots-layer absolute inset-0 h-full w-full block"
       >
-        {VLO_DOT_WAVES.map((points, waveIndex) => (
-          <g key={waveIndex} className={`vlo-dot-wave vlo-dot-wave-${waveIndex}`}>
-            {points.map(([cx, cy, role], idx) => (
-              <circle
-                key={idx}
-                cx={cx}
-                cy={cy}
-                r={3.8}
-                className={ROLE_CLASS[role]}
-              />
-            ))}
-          </g>
-        ))}
+        <defs>
+          <filter id={filterId} x="-10%" y="-10%" width="120%" height="120%">
+            <feGaussianBlur in="SourceGraphic" stdDeviation="1.45" result="blur" />
+            <feColorMatrix
+              in="blur"
+              mode="matrix"
+              values="1 0 0 0 0  0 1 0 0 0  0 0 1 0 0  0 0 0 14 -4.5"
+              result="liquid"
+            />
+            <feComposite in="SourceGraphic" in2="liquid" operator="over" />
+          </filter>
+        </defs>
+        <g filter={`url(#${filterId})`}>
+          {VLO_DOT_WAVES.map((points, waveIndex) => (
+            <g key={waveIndex} className={`vlo-dot-wave vlo-dot-wave-${waveIndex}`}>
+              {points.map(([cx, cy, role], idx) => (
+                <circle
+                  key={idx}
+                  cx={cx}
+                  cy={cy}
+                  r={4.1}
+                  className={ROLE_CLASS[role]}
+                />
+              ))}
+            </g>
+          ))}
+        </g>
       </svg>
 
-      {/* Phase 2: Solid crisp BD-D vector mark */}
+      {/* Phase 2: Solid crisp BD-D continuous-curve vector mark with orbital pulse & core spring */}
       <svg
         xmlns="http://www.w3.org/2000/svg"
         viewBox="14 14 228 228"
@@ -138,17 +155,17 @@ export const VloDotRevealLogo: React.FC<VloDotRevealLogoProps> = ({
         className="vlo-solid-layer absolute inset-0 h-full w-full block"
       >
         <path
-          className="fill-[#151D2A] dark:fill-[#F2F5F9]"
+          className="vlo-solid-body fill-[#151D2A] dark:fill-[#F2F5F9]"
           fillRule="evenodd"
-          d="M 34.21 74.65 A 18.00 18.00 0 0 1 65.79 57.35 L 95.13 110.93 A 58.00 58.00 0 1 1 80.00 150.00 C 80.00 124.00, 54.00 106.00, 34.21 74.65 Z M 138.00 125.00 A 25.00 25.00 0 1 0 138.10 125.00 Z"
+          d={VLO_BODY_PATH}
         />
         <path
-          className="fill-[#1769E8]"
-          d="M 174.61 67.78 A 90.00 90.00 0 0 1 223.60 122.19 A 10.00 10.00 0 0 1 204.57 128.37 A 70.00 70.00 0 0 0 166.47 86.05 A 10.00 10.00 0 0 1 174.61 67.78 Z"
+          className="vlo-solid-pulse fill-[#1769E8]"
+          d={VLO_PULSE_PATH}
         />
         <path
-          className="fill-[#059669] dark:fill-[#10B981]"
-          d="M 138.00 136.00 A 14.00 14.00 0 1 1 137.90 136.00 Z"
+          className="vlo-solid-core fill-[#059669] dark:fill-[#10B981]"
+          d={VLO_CORE_PATH}
         />
       </svg>
     </div>
