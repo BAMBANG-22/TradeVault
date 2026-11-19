@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useEffect, useLayoutEffect, useRef, useCallback, Suspense, lazy } from 'react';
+import React, { useState, useEffect, useLayoutEffect, useRef, useCallback, Suspense, lazy, Component, ErrorInfo, ReactNode } from 'react';
 import { Check, AlertCircle, X } from 'lucide-react';
 import { Trade } from './types/trade';
 import { AppSettings } from './types/settings';
@@ -61,22 +61,103 @@ import { DashboardView } from './components/dashboard/DashboardView';
 import { TradeTable } from './components/trades/TradeTable';
 import { TradeForm } from './components/trades/TradeForm';
 
-const AnalyticsView = lazy(() =>
+function lazyWithRetry<T extends React.ComponentType<any>>(
+  factory: () => Promise<{ default: T }>
+) {
+  return lazy(async () => {
+    let lastError: unknown;
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        return await factory();
+      } catch (err) {
+        lastError = err;
+        if (attempt < 2) {
+          await new Promise((r) => setTimeout(r, 250 * (attempt + 1)));
+        }
+      }
+    }
+    throw lastError;
+  });
+}
+
+class LazyViewErrorBoundary extends Component<
+  { resetKey: string; tr: (id: string, en: string) => string; children: ReactNode },
+  { hasError: boolean; errorMessage: string }
+> {
+  constructor(props: { resetKey: string; tr: (id: string, en: string) => string; children: ReactNode }) {
+    super(props);
+    this.state = { hasError: false, errorMessage: '' };
+  }
+
+  static getDerivedStateFromError(error: Error) {
+    return { hasError: true, errorMessage: error?.message || 'Module load error' };
+  }
+
+  componentDidCatch(error: Error, info: ErrorInfo) {
+    console.error('[LazyViewErrorBoundary]', error, info);
+  }
+
+  componentDidUpdate(prevProps: { resetKey: string }) {
+    if (prevProps.resetKey !== this.props.resetKey && this.state.hasError) {
+      this.setState({ hasError: false, errorMessage: '' });
+    }
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div className="my-8 mx-auto max-w-md rounded-xl bg-white dark:bg-[#101318] border border-[#D9E2EC] dark:border-[#20252D] p-5 text-center space-y-3">
+          <p className="text-sm font-semibold text-[#0F172A] dark:text-[#F2F4F7]">
+            {this.props.tr('Gagal Memuat Modul Tampilan', 'Failed to Load View Module')}
+          </p>
+          <p className="text-xs text-[#526071] dark:text-[#929BA9] leading-relaxed">
+            {this.props.tr(
+              'Koneksi ke modul tampilan sempat terputus atau cache halaman belum diperbarui. Silakan coba muat ulang.',
+              'The view module request was interrupted or stale. Please retry loading.'
+            )}
+          </p>
+          <div className="flex items-center justify-center gap-2 pt-1">
+            <button
+              type="button"
+              onClick={() => this.setState({ hasError: false, errorMessage: '' })}
+              className="h-9 px-4 rounded-full border border-[#D9E2EC] dark:border-[#20252D] text-xs font-semibold text-[#0F172A] dark:text-[#F2F4F7] hover:bg-[#F8FAFC] dark:hover:bg-[#161A22] cursor-pointer"
+            >
+              {this.props.tr('Coba Lagi', 'Retry')}
+            </button>
+            <button
+              type="button"
+              onClick={() => window.location.reload()}
+              className="h-9 px-4 rounded-full bg-[#0F172A] dark:bg-white text-white dark:text-[#050607] text-xs font-semibold hover:opacity-90 cursor-pointer"
+            >
+              {this.props.tr('Muat Ulang Halaman', 'Reload Page')}
+            </button>
+          </div>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
+const AnalyticsView = lazyWithRetry(() =>
   import('./components/analytics/AnalyticsView').then((m) => ({ default: m.AnalyticsView }))
 );
-const RiskCalculatorView = lazy(() =>
+const RiskCalculatorView = lazyWithRetry(() =>
   import('./components/risk/RiskCalculatorView').then((m) => ({ default: m.RiskCalculatorView }))
 );
-const MarketChartView = lazy(() =>
+const MarketChartView = lazyWithRetry(() =>
   import('./components/chart/MarketChartView').then((m) => ({ default: m.MarketChartView }))
 );
-const MacroNewsView = lazy(() =>
+const MacroNewsView = lazyWithRetry(() =>
   import('./components/news/MacroNewsView').then((m) => ({ default: m.MacroNewsView }))
 );
-const CycleConfluencePage = lazy(() =>
+const CycleConfluencePage = lazyWithRetry(() =>
   import('./pages/CycleConfluencePage').then((m) => ({ default: m.CycleConfluencePage }))
 );
-const SettingsView = lazy(() =>
+const SmcSignalPage = lazyWithRetry(() =>
+  import('./pages/SmcSignalPage').then((m) => ({ default: m.SmcSignalPage }))
+);
+const SettingsView = lazyWithRetry(() =>
   import('./components/settings/SettingsView').then((m) => ({ default: m.SettingsView }))
 );
 
@@ -2112,6 +2193,7 @@ export default function App() {
               </div>
             )}
 
+            <LazyViewErrorBoundary resetKey={activeTab} tr={tr}>
             <Suspense
               fallback={
                 <div className="flex items-center justify-center gap-2.5 py-20 text-xs font-medium text-[#526071] dark:text-[#929BA9]">
@@ -2168,7 +2250,19 @@ export default function App() {
 
               {(activeTab === 'cycle-confluence' || visitedTabs['cycle-confluence']) && (
                 <div className={activeTab === 'cycle-confluence' ? 'block' : 'hidden'} aria-hidden={activeTab !== 'cycle-confluence'}>
-                  <CycleConfluencePage isActive={activeTab === 'cycle-confluence'} />
+                  <CycleConfluencePage
+                    isActive={activeTab === 'cycle-confluence'}
+                    onNavigate={handleNavigateTab}
+                  />
+                </div>
+              )}
+
+              {(activeTab === 'smc-signal' || visitedTabs['smc-signal']) && (
+                <div className={activeTab === 'smc-signal' ? 'block' : 'hidden'} aria-hidden={activeTab !== 'smc-signal'}>
+                  <SmcSignalPage
+                    isActive={activeTab === 'smc-signal'}
+                    onNavigate={handleNavigateTab}
+                  />
                 </div>
               )}
 
@@ -2199,6 +2293,7 @@ export default function App() {
                 </div>
               )}
             </Suspense>
+            </LazyViewErrorBoundary>
           </main>
         </div>
       </div>

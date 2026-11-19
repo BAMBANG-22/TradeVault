@@ -30,6 +30,7 @@ import {
   computeDeterministicMacroSnapshot,
   computeDualHorizonAnalysis,
   isSnapshotFresh,
+  mapRawTradingViewEventsToCalendarEvents,
 } from './src/utils/macroNewsEngine';
 import { isMarketDay } from './src/utils/date';
 
@@ -99,6 +100,7 @@ const NEWS_MODEL_CASCADE = [
   'gemini-3-flash-preview',
   'gemini-3.1-flash-lite',
   'gemini-2.5-flash',
+  'gemini-2.5-flash-lite',
 ] as const;
 
 function isGeminiQuotaError(err: any): boolean {
@@ -113,6 +115,37 @@ function isGeminiQuotaError(err: any): boolean {
     msg.includes('too many requests') ||
     msg.includes('limit exceeded')
   );
+}
+
+function isGeminiModelUnavailableError(err: any): boolean {
+  const msg = String(err?.message || err || '').toLowerCase();
+  const status = Number(err?.status || err?.statusCode || 0);
+  return (
+    status === 404 ||
+    msg.includes('404') ||
+    msg.includes('not_found') ||
+    msg.includes('not found') ||
+    msg.includes('is not supported') ||
+    msg.includes('unsupported model')
+  );
+}
+
+function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      reject(new Error(`${label} timed out after ${timeoutMs}ms`));
+    }, timeoutMs);
+    promise.then(
+      (val) => {
+        clearTimeout(timer);
+        resolve(val);
+      },
+      (err) => {
+        clearTimeout(timer);
+        reject(err);
+      }
+    );
+  });
 }
 
 // Standalone healthcheck endpoint for APK & external server verification
@@ -644,9 +677,13 @@ ${geometryHintBlock}
     const candidateModels = SCANNER_MODEL_CASCADE;
     let responseText = '';
     let usedModel = '';
+    const scanCascadeStartMs = Date.now();
+    const MAX_SCAN_WALL_MS = 42_000;
 
     for (const model of candidateModels) {
+      if (Date.now() - scanCascadeStartMs >= MAX_SCAN_WALL_MS) break;
       for (let keyIdx = 0; keyIdx < scannerApiKeys.length; keyIdx++) {
+        if (Date.now() - scanCascadeStartMs >= MAX_SCAN_WALL_MS) break;
         const cooldownKey = `${keyIdx}:${model}`;
         const cooldownUntil = quotaCooldownUntilByModel.get(cooldownKey) || 0;
         if (Date.now() < cooldownUntil) {
@@ -663,9 +700,11 @@ ${geometryHintBlock}
         });
 
         for (let attempt = 1; attempt <= 2; attempt++) {
+          if (Date.now() - scanCascadeStartMs >= MAX_SCAN_WALL_MS) break;
           try {
-            const response = await ai.models.generateContent({
-              model,
+            const response = await withTimeout(
+              ai.models.generateContent({
+                model,
               contents: [
                 {
                   inlineData: {
@@ -704,7 +743,10 @@ ${geometryHintBlock}
                   required: ['detected', 'instrument', 'position'],
                 },
               },
-            });
+            }),
+              20_000,
+              `Scan Kilat (${model})`
+            );
 
             if (response && response.text) {
               responseText = response.text;
@@ -713,7 +755,7 @@ ${geometryHintBlock}
             }
           } catch (err: any) {
             const errMsg = err?.message || String(err);
-            if (isGeminiQuotaError(err)) {
+            if (isGeminiQuotaError(err) || isGeminiModelUnavailableError(err)) {
               quotaCooldownUntilByModel.set(cooldownKey, Date.now() + 20 * 60 * 1000);
               break;
             }
@@ -1070,9 +1112,13 @@ STRICT EXTRACTION RULES:
     const candidateModels = SCANNER_MODEL_CASCADE;
     let responseText = '';
     let usedModel = '';
+    const mt5CascadeStartMs = Date.now();
+    const MAX_MT5_WALL_MS = 45_000;
 
     for (const model of candidateModels) {
+      if (Date.now() - mt5CascadeStartMs >= MAX_MT5_WALL_MS) break;
       for (let keyIdx = 0; keyIdx < scannerApiKeys.length; keyIdx++) {
+        if (Date.now() - mt5CascadeStartMs >= MAX_MT5_WALL_MS) break;
         const cooldownKey = `${keyIdx}:${model}`;
         const cooldownUntil = quotaCooldownUntilByModel.get(cooldownKey) || 0;
         if (Date.now() < cooldownUntil) {
@@ -1089,9 +1135,11 @@ STRICT EXTRACTION RULES:
         });
 
         for (let attempt = 1; attempt <= 2; attempt++) {
+          if (Date.now() - mt5CascadeStartMs >= MAX_MT5_WALL_MS) break;
           try {
-            const response = await ai.models.generateContent({
-              model,
+            const response = await withTimeout(
+              ai.models.generateContent({
+                model,
               contents: [
                 {
                   inlineData: {
@@ -1146,7 +1194,10 @@ STRICT EXTRACTION RULES:
                   required: ['detected', 'trades'],
                 },
               },
-            });
+            }),
+              24_000,
+              `MT5 Scan (${model})`
+            );
 
             if (response && response.text) {
               responseText = response.text;
@@ -1155,7 +1206,7 @@ STRICT EXTRACTION RULES:
             }
           } catch (err: any) {
             const errMsg = err?.message || String(err);
-            if (isGeminiQuotaError(err)) {
+            if (isGeminiQuotaError(err) || isGeminiModelUnavailableError(err)) {
               quotaCooldownUntilByModel.set(cooldownKey, Date.now() + 20 * 60 * 1000);
               break;
             }
@@ -1500,13 +1551,17 @@ CRITICAL RULE: Do NOT invent or fabricate numbers. Only include events whose exa
     if (Date.now() < cooldownUntil) continue;
 
     try {
-      const response = await ai.models.generateContent({
-        model,
-        contents: calendarPrompt,
-        config: {
-          tools: [{ googleSearch: {} }],
-        },
-      });
+      const response = await withTimeout(
+        ai.models.generateContent({
+          model,
+          contents: calendarPrompt,
+          config: {
+            tools: [{ googleSearch: {} }],
+          },
+        }),
+        15_000,
+        `FF Calendar Search (${model})`
+      );
 
       const text = (response?.text || '').trim();
       if (!text) continue;
@@ -1609,10 +1664,10 @@ async function fetchLiveCmeFedWatchWithGrounding(
   us10yPulse?: IntermarketAssetPulse
 ): Promise<CmeFedWatchState> {
   if (
-    !forceRefresh &&
     cachedCmeFedWatch &&
     cachedCmeFedWatch.data.isAvailable &&
-    Date.now() - cachedCmeFedWatch.fetchedAt < 10 * 60 * 1000
+    ((!forceRefresh && Date.now() - cachedCmeFedWatch.fetchedAt < 4 * 60 * 60 * 1000) ||
+      (forceRefresh && Date.now() - cachedCmeFedWatch.fetchedAt < 15 * 60 * 1000))
   ) {
     return cachedCmeFedWatch.data;
   }
@@ -1667,13 +1722,17 @@ CRITICAL RULE: Do not invent numbers. If search results do not contain the exact
     if (Date.now() < cooldownUntil) continue;
 
     try {
-      const response = await ai.models.generateContent({
-        model,
-        contents: fedWatchPrompt,
-        config: {
-          tools: [{ googleSearch: {} }],
-        },
-      });
+      const response = await withTimeout(
+        ai.models.generateContent({
+          model,
+          contents: fedWatchPrompt,
+          config: {
+            tools: [{ googleSearch: {} }],
+          },
+        }),
+        15_000,
+        `CME FedWatch Grounding (${model})`
+      );
 
       const rawText = (response?.text || '').trim();
       if (rawText) {
@@ -2958,6 +3017,83 @@ app.get('/api/macro-news/feeds', async (_req, res) => {
   }
 });
 
+// 90-day USD released actuals backfill endpoint (0 Gemini tokens)
+let cachedHistoryBackfill: { fetchedAt: number; days: number; events: MacroCalendarEvent[] } | null = null;
+
+app.get('/api/macro-news/history-backfill', async (req, res) => {
+  try {
+    const rawDays = Number(req.query.days ?? 90);
+    const days = Number.isFinite(rawDays) ? Math.min(180, Math.max(7, Math.round(rawDays))) : 90;
+
+    if (
+      cachedHistoryBackfill &&
+      cachedHistoryBackfill.days >= days &&
+      Date.now() - cachedHistoryBackfill.fetchedAt < 15 * 60 * 1000 &&
+      cachedHistoryBackfill.events.length > 0
+    ) {
+      return res.json({
+        success: true,
+        days,
+        count: cachedHistoryBackfill.events.length,
+        events: cachedHistoryBackfill.events,
+      });
+    }
+
+    const nowMs = Date.now();
+    const fromIso = new Date(nowMs - days * 24 * 60 * 60 * 1000).toISOString();
+    const toIso = new Date(nowMs + 60 * 60 * 1000).toISOString();
+    const tvUrl = `https://economic-calendar.tradingview.com/events?from=${encodeURIComponent(fromIso)}&to=${encodeURIComponent(toIso)}&countries=US`;
+
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 8000);
+    const tvRes = await fetch(tvUrl, {
+      cache: 'no-store',
+      headers: {
+        Origin: 'https://www.tradingview.com',
+        Referer: 'https://www.tradingview.com/',
+        'User-Agent':
+          'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+        Accept: 'application/json',
+      },
+      signal: controller.signal,
+    });
+    clearTimeout(timeout);
+
+    if (!tvRes.ok) {
+      return res.json({
+        success: cachedHistoryBackfill ? true : false,
+        days,
+        count: cachedHistoryBackfill?.events.length || 0,
+        events: cachedHistoryBackfill?.events || [],
+      });
+    }
+
+    const json = await tvRes.json();
+    const rawList = Array.isArray(json?.result) ? json.result : [];
+    const mappedEvents = mapRawTradingViewEventsToCalendarEvents(rawList, nowMs);
+    if (mappedEvents.length > 0) {
+      cachedHistoryBackfill = {
+        fetchedAt: Date.now(),
+        days,
+        events: mappedEvents,
+      };
+    }
+
+    res.json({
+      success: true,
+      days,
+      count: mappedEvents.length,
+      events: mappedEvents,
+    });
+  } catch (err: any) {
+    res.status(500).json({
+      success: false,
+      events: [],
+      error: err?.message || 'Gagal mengambil backfill arsip historis USD.',
+    });
+  }
+});
+
 // Full Macro News & Pre-News Scenario Matrix Analyzer
 
 async function fetchPastActualsViaGoogleSearch(missingEvents: MacroCalendarEvent[], apiKey: string): Promise<Record<string, string>> {
@@ -2979,13 +3115,17 @@ async function fetchPastActualsViaGoogleSearch(missingEvents: MacroCalendarEvent
     if (Date.now() < cooldownUntil) continue;
 
     try {
-      const response = await ai.models.generateContent({
-        model,
-        contents: prompt,
-        config: {
-          tools: [{ googleSearch: {} }],
-        },
-      });
+      const response = await withTimeout(
+        ai.models.generateContent({
+          model,
+          contents: prompt,
+          config: {
+            tools: [{ googleSearch: {} }],
+          },
+        }),
+        15_000,
+        `Past Actuals Search (${model})`
+      );
 
       const rawText = (response?.text || '').trim();
       const jsonMatch = rawText.match(/\{[\s\S]*\}/);
@@ -3276,19 +3416,36 @@ app.post('/api/macro-news/analyze', async (req, res) => {
 
     const candidateModels = NEWS_MODEL_CASCADE;
 
+    const recentReleasedActuals = feeds.calendarEvents
+      .filter(
+        (ev) =>
+          ev.id !== baselineSnapshot.scenarioMatrix.primaryEvent.id &&
+          ev.actualNum !== null &&
+          new Date(ev.date).getTime() <= Date.now()
+      )
+      .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
+      .slice(0, 8);
+    const mergedSupportMap = new Map<string, MacroCalendarEvent>();
+    for (const ev of [...recentReleasedActuals, ...getSupportingContextEvents(feeds.calendarEvents)]) {
+      const k = ev.id || `${ev.title}|${ev.date}`;
+      if (!mergedSupportMap.has(k)) mergedSupportMap.set(k, ev);
+    }
+
     const promptPayload = {
       primaryEvent: baselineSnapshot.scenarioMatrix.primaryEvent,
       simultaneousEvents: baselineSnapshot.scenarioMatrix.simultaneousEvents,
-      supportingContextEvents: getSupportingContextEvents(feeds.calendarEvents).map((ev) => ({
-        title: ev.title,
-        date: ev.date,
-        impact: ev.impact,
-        previous: ev.previous,
-        forecast: ev.forecast,
-        actual: ev.actual,
-        eventBiasForGold: ev.eventBiasForGold,
-        biasReasonId: ev.biasReasonId,
-      })),
+      supportingContextEvents: Array.from(mergedSupportMap.values())
+        .slice(0, 14)
+        .map((ev) => ({
+          title: ev.title,
+          date: ev.date,
+          impact: ev.impact,
+          previous: ev.previous,
+          forecast: ev.forecast,
+          actual: ev.actual,
+          eventBiasForGold: ev.eventBiasForGold,
+          biasReasonId: ev.biasReasonId,
+        })),
       cmeFedWatch: feeds.cmeFedWatch,
       intermarketPulse: {
         dxy: {
@@ -3345,11 +3502,12 @@ app.post('/api/macro-news/analyze', async (req, res) => {
       if (Date.now() < cooldownUntil) continue;
 
       try {
-        const response = await ai.models.generateContent({
-          model,
-          contents: `Analyze this real-time XAU/USD macro dataset (including CME FedWatch probabilities, simultaneous USD High-Impact events, and preNewsFlow intelligence such as Leading Indicator Chain, Consensus Tightness, 2s10s Yield Curve Spread, VIX risk regime, Gold 3-day GC=F positioning, and FOMC Blackout window while strictly preserving Master Playbook rules) and return the structured JSON Scenario Matrix in both Bahasa Indonesia (Id) and English (En):\n${JSON.stringify(
-            promptPayload
-          )}`,
+        const response = await withTimeout(
+          ai.models.generateContent({
+            model,
+            contents: `Analyze this real-time XAU/USD macro dataset (including CME FedWatch probabilities, simultaneous USD High-Impact events, and preNewsFlow intelligence such as Leading Indicator Chain, Consensus Tightness, 2s10s Yield Curve Spread, VIX risk regime, Gold 3-day GC=F positioning, and FOMC Blackout window while strictly preserving Master Playbook rules) and return the structured JSON Scenario Matrix in both Bahasa Indonesia (Id) and English (En):\n${JSON.stringify(
+              promptPayload
+            )}`,
           config: {
             systemInstruction: XAUUSD_MACRO_MASTER_PLAYBOOK_SYSTEM_INSTRUCTION,
             responseMimeType: 'application/json',
@@ -3450,7 +3608,10 @@ app.post('/api/macro-news/analyze', async (req, res) => {
               ],
             },
           },
-        });
+        }),
+          20_000,
+          `Macro AI (${model})`
+        );
 
         if (response && response.text) {
           aiResponseText = response.text;
@@ -3458,16 +3619,10 @@ app.post('/api/macro-news/analyze', async (req, res) => {
           break;
         }
       } catch (err: any) {
-        const msg = err?.message || String(err);
-        if (
-          msg.includes('429') ||
-          msg.includes('RESOURCE_EXHAUSTED') ||
-          msg.includes('Quota exceeded')
-        ) {
+        if (isGeminiQuotaError(err) || isGeminiModelUnavailableError(err)) {
           newsQuotaCooldownUntilByModel.set(model, Date.now() + 30 * 60 * 1000);
-          continue;
         }
-        break;
+        continue;
       }
     }
 

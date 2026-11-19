@@ -16,6 +16,7 @@ import {
   isPrimaryHighImpactEvent,
   computeImpliedFedWatchFromMarketQuotes,
   createUnavailableFedWatchState,
+  mapRawTradingViewEventsToCalendarEvents,
 } from './macroNewsEngine';
 import { isMarketDay } from './date';
 import {
@@ -448,6 +449,61 @@ export async function fetchClientForexFactoryCalendar(): Promise<MacroCalendarEv
     });
   } catch (err) {
     console.warn('[MacroClient] Live ForexFactory calendar fetch failed:', err);
+    return [];
+  }
+}
+
+/**
+ * Fetches 90-day USD released historical economic calendar events (CPI, PPI, NFP, PCE, FOMC, GDP, Retail Sales, ISM)
+ * with 0 Gemini tokens consumed. Tries TradeVault server `/api/macro-news/history-backfill` first,
+ * falling back to direct CORS-proxy / native Capacitor fetch against TradingView Economic Calendar API.
+ */
+export async function fetchClientHistoricalActualsBackfill(days = 90): Promise<MacroCalendarEvent[]> {
+  const safeDays = Math.min(180, Math.max(7, Math.round(days)));
+  const endpoints = getApiEndpointCandidates(`/api/macro-news/history-backfill?days=${safeDays}`);
+
+  for (const endpoint of endpoints) {
+    try {
+      if (isNativeAndroidOrIos() && /^https?:\/\//i.test(endpoint)) {
+        const raw = await nativeHttpGetText(endpoint, 8000, 'application/json');
+        if (raw) {
+          const json = JSON.parse(raw);
+          if (json?.success && Array.isArray(json.events) && json.events.length > 0) {
+            return json.events as MacroCalendarEvent[];
+          }
+        }
+      } else {
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), 8000);
+        const res = await fetch(endpoint, {
+          cache: 'no-store',
+          headers: { Accept: 'application/json' },
+          signal: controller.signal,
+        });
+        clearTimeout(timer);
+        if (res.ok) {
+          const json = await res.json();
+          if (json?.success && Array.isArray(json.events) && json.events.length > 0) {
+            return json.events as MacroCalendarEvent[];
+          }
+        }
+      }
+    } catch {
+      // Fall through to direct proxy-assisted TradingView calendar fetch
+    }
+  }
+
+  try {
+    const nowMs = Date.now();
+    const fromIso = new Date(nowMs - safeDays * 24 * 60 * 60 * 1000).toISOString();
+    const toIso = new Date(nowMs + 60 * 60 * 1000).toISOString();
+    const tvUrl = `https://economic-calendar.tradingview.com/events?from=${encodeURIComponent(fromIso)}&to=${encodeURIComponent(toIso)}&countries=US`;
+    const jsonStr = await fetchWithCorsProxy(tvUrl, 9000, 'application/json');
+    const json = JSON.parse(jsonStr);
+    const rawList = Array.isArray(json?.result) ? json.result : [];
+    return mapRawTradingViewEventsToCalendarEvents(rawList, nowMs);
+  } catch (err) {
+    console.warn('[MacroClient] Historical actuals backfill failed:', err);
     return [];
   }
 }

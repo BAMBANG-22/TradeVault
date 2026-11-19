@@ -69,6 +69,7 @@ export const Navbar: React.FC<NavbarProps> = ({
     'market-chart': tr('Chart Pasar', 'Market Chart'),
     'macro-news': 'Trade News',
     'cycle-confluence': 'Cycle & Confluence',
+    'smc-signal': 'SMC Signal',
     settings: tr('Pengaturan', 'Settings'),
   };
   const desktopSectionTitle = desktopSectionLabels[activeTab] || 'VLO';
@@ -76,6 +77,7 @@ export const Navbar: React.FC<NavbarProps> = ({
     activeTab === 'market-chart' ||
     activeTab === 'macro-news' ||
     activeTab === 'cycle-confluence' ||
+    activeTab === 'smc-signal' ||
     activeTab === 'settings';
 
   return (

@@ -124,7 +124,7 @@ export const Mt5HistoryScanModal: React.FC<Mt5HistoryScanModalProps> = ({
       const prepared: UploadedScreenshotItem[] = [];
       for (let i = 0; i < imageFiles.length; i++) {
         const file = imageFiles[i];
-        const dataUrl = await compressAndResizeImage(file, 2000, 4200, 0.92);
+        const dataUrl = await compressAndResizeImage(file, 1440, 3000, 0.82);
         prepared.push({
           id: `ss_${Date.now()}_${i}_${Math.random().toString(36).slice(2, 6)}`,
           name: file.name || `Screenshot ${screenshots.length + i + 1}`,

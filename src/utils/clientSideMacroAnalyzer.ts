@@ -14,9 +14,17 @@ import {
   analyzeMacroEvent,
   detectPreviousRevisionsAndStreaks,
   loadLocalCachedMacroSnapshotSync,
+  isPlaceholderMacroValue,
+  recordReleasedActualsToOfflineArchive,
+  hydrateEventsWithOfflineArchive,
+  computeMacroThreeSystemState,
+  recordBreakingNewsToMonthlyArchive,
+  ensureHistoricalActualsArchiveSeeded,
+  loadOfflineActualsArchive,
 } from './macroNewsEngine';
 import {
   fetchClientForexFactoryCalendar,
+  fetchClientHistoricalActualsBackfill,
   fetchClientYahooAsset,
   fetchClientBreakingHeadlinesWithHealth,
   fetchClientFedFundsFuturesBackup,
@@ -52,7 +60,7 @@ export async function analyzeMacroWithGeminiClient(params: {
   priorCalendarEvents?: MacroCalendarEvent[];
 }): Promise<MacroNewsSnapshot> {
   const {
-    calendarEvents,
+    calendarEvents: rawCalendarEvents,
     intermarketPulse,
     breakingNews,
     rssFeedHealth,
@@ -61,6 +69,10 @@ export async function analyzeMacroWithGeminiClient(params: {
     forceRefresh = false,
     priorCalendarEvents,
   } = params;
+
+  // Persist any verified live actuals immediately, then hydrate missing/rolled-off actuals from Offline Archive
+  recordReleasedActualsToOfflineArchive(rawCalendarEvents, 'LIVE_FEED');
+  const calendarEvents = hydrateEventsWithOfflineArchive(rawCalendarEvents);
 
   const fallbackFedWatch =
     cmeFedWatchBackup && cmeFedWatchBackup.isAvailable
@@ -79,6 +91,10 @@ export async function analyzeMacroWithGeminiClient(params: {
     priorCalendarEvents,
   });
   baselineSnapshot.rssFeedHealth = rssFeedHealth;
+  baselineSnapshot.threeSystemState = computeMacroThreeSystemState({
+    snapshot: baselineSnapshot,
+    selectedEventId,
+  });
 
   const requestPayload = {
     forceRefresh,
@@ -98,10 +114,10 @@ export async function analyzeMacroWithGeminiClient(params: {
     return baselineSnapshot;
   }
 
-  // 2. Call standalone server Gemini proxy (configured via VITE_API_BASE_URL or in-app setting for APK)
+  // 2. Call standalone server Gemini proxy (configured via VITE_API_BASE_URL or Supabase Edge for APK)
   const endpoints = getApiEndpointCandidates('/api/macro-news/analyze');
   for (const endpoint of endpoints) {
-    const res = await nativeAwarePostJson(endpoint, requestPayload, 18000);
+    const res = await nativeAwarePostJson(endpoint, requestPayload, 45000);
 
     if (res.ok && res.json?.success && res.json?.snapshot) {
       return res.json.snapshot as MacroNewsSnapshot;
@@ -116,8 +132,58 @@ export async function analyzeMacroWithGeminiClient(params: {
  * End-to-end client-side workflow:
  * 1. Parallel fetch of ForexFactory + Yahoo Finance 2x2 Grid (DXY, US02Y, US10Y, USOIL) + VIX + GC=F + ZQ=F / ^IRX + Breaking News RSS.
  * 2. Analyze via server-side Gemini proxy (/api/macro-news/analyze) including Google Search Grounding for CME FedWatch & live ZQ=F Futures backup.
- * 3. Save to Supabase `macro_news_snapshots` table with full error reporting.
+ * 3. Persist verified actuals to Offline Archive & save snapshot to Supabase `macro_news_snapshots`.
  */
+const HIST_BACKFILL_LAST_SYNC_KEY = 'tradevault_macro_hist_backfill_last_v1';
+const HIST_BACKFILL_COOLDOWN_MS = 6 * 60 * 60 * 1000;
+
+/**
+ * Ensures the offline archive has the verified Sep–Nov 2026 baseline and pulls up to 90 days
+ * of released USD macro actuals (CPI, PPI, NFP, PCE, FOMC, GDP, Retail Sales, ISM) at 0 Gemini tokens.
+ */
+export async function syncHistoricalActualsArchive(force = false): Promise<{
+  totalRecords: number;
+  syncedLiveCount: number;
+}> {
+  const seeded = ensureHistoricalActualsArchiveSeeded();
+  if (isNewsCycleOfflineMode()) {
+    return { totalRecords: seeded.length, syncedLiveCount: 0 };
+  }
+
+  let shouldFetch = force || seeded.length < 25;
+  if (!shouldFetch && typeof window !== 'undefined' && typeof localStorage !== 'undefined') {
+    try {
+      const lastRaw = localStorage.getItem(HIST_BACKFILL_LAST_SYNC_KEY);
+      const lastMs = lastRaw ? Number(lastRaw) : 0;
+      if (!Number.isFinite(lastMs) || Date.now() - lastMs >= HIST_BACKFILL_COOLDOWN_MS) {
+        shouldFetch = true;
+      }
+    } catch {
+      shouldFetch = true;
+    }
+  }
+
+  if (!shouldFetch) {
+    return { totalRecords: seeded.length, syncedLiveCount: 0 };
+  }
+
+  try {
+    const backfillEvents = await fetchClientHistoricalActualsBackfill(90);
+    if (backfillEvents.length > 0) {
+      const updated = recordReleasedActualsToOfflineArchive(backfillEvents, 'TV_ENRICH');
+      if (typeof window !== 'undefined' && typeof localStorage !== 'undefined') {
+        try {
+          localStorage.setItem(HIST_BACKFILL_LAST_SYNC_KEY, String(Date.now()));
+        } catch {}
+      }
+      return { totalRecords: updated.length, syncedLiveCount: backfillEvents.length };
+    }
+  } catch {
+    // Non-blocking: baseline seed remains available offline
+  }
+  return { totalRecords: loadOfflineActualsArchive().length, syncedLiveCount: 0 };
+}
+
 export async function executeClientSideMacroAnalysis(
   selectedEventId?: string,
   forceRefresh = false,
@@ -126,30 +192,46 @@ export async function executeClientSideMacroAnalysis(
   snapshot: MacroNewsSnapshot;
   supabaseResult: { success: boolean; error?: string; remoteSaved: boolean };
 }> {
+  ensureHistoricalActualsArchiveSeeded();
+
   if (isNewsCycleOfflineMode()) {
     const cachedSnap = loadLocalCachedMacroSnapshotSync();
     if (cachedSnap) {
       return {
-        snapshot: cachedSnap,
+        snapshot: {
+          ...cachedSnap,
+          calendarEvents: hydrateEventsWithOfflineArchive(cachedSnap.calendarEvents),
+        },
         supabaseResult: { success: false, remoteSaved: false },
       };
     }
     throw new Error('Mode Offline aktif dan belum ada cache lokal Trade News tersimpan.');
   }
 
-  // Step 1: Pull all live public feeds in parallel (never hangs even if one fails)
-  const [calendarEvents, dxy, us02y, usoil, us10y, vix, goldPositioning, rssResult] = await Promise.all([
-    fetchClientForexFactoryCalendar(),
-    fetchClientYahooAsset('DXY', 'DX-Y.NYB', 'US Dollar Index (DXY)', 104.85, 104.42),
-    fetchClientYahooAsset('US02Y', '2YY=F', 'US 2Y Treasury Yield', 4.25, 4.22),
-    fetchClientYahooAsset('USOIL', 'CL=F', 'US Oil WTI Crude', 73.4, 71.95),
-    fetchClientYahooAsset('US10Y', '^TNX', 'US 10Y Treasury Yield', 4.38, 4.31),
-    fetchClientVixPulse(),
-    fetchClientGoldPositioning(),
-    fetchClientBreakingHeadlinesWithHealth(),
-  ]);
+  // Step 1: Pull all live public feeds + throttled 90-day 0-token historical backfill in parallel
+  const [rawCalendarEvents, _backfillRes, dxy, us02y, usoil, us10y, vix, goldPositioning, rssResult] =
+    await Promise.all([
+      fetchClientForexFactoryCalendar(),
+      syncHistoricalActualsArchive(forceRefresh),
+      fetchClientYahooAsset('DXY', 'DX-Y.NYB', 'US Dollar Index (DXY)', 104.85, 104.42),
+      fetchClientYahooAsset('US02Y', '2YY=F', 'US 2Y Treasury Yield', 4.25, 4.22),
+      fetchClientYahooAsset('USOIL', 'CL=F', 'US Oil WTI Crude', 73.4, 71.95),
+      fetchClientYahooAsset('US10Y', '^TNX', 'US 10Y Treasury Yield', 4.38, 4.31),
+      fetchClientVixPulse(),
+      fetchClientGoldPositioning(),
+      fetchClientBreakingHeadlinesWithHealth(),
+    ]);
+
+  // Persist any fresh calendar actuals immediately and fill gaps/prior-week releases from Offline Archive
+  if (rawCalendarEvents.length > 0) {
+    recordReleasedActualsToOfflineArchive(rawCalendarEvents, 'LIVE_FEED');
+  }
+  const calendarEvents = hydrateEventsWithOfflineArchive(rawCalendarEvents);
 
   const breakingNews = rssResult.headlines;
+  if (breakingNews.length > 0) {
+    recordBreakingNewsToMonthlyArchive(breakingNews);
+  }
   const rssFeedHealth = rssResult.rssFeedHealth;
 
   const intermarketPulse = { dxy, us02y, usoil, us10y, vix, goldPositioning };
@@ -175,8 +257,14 @@ export async function executeClientSideMacroAnalysis(
     const serverActualBySlot = new Map<string, { actual: string; actualNum: number | null; unit?: string }>();
     const serverActualByTitle = new Map<string, { actual: string; actualNum: number | null; unit?: string }>();
     if (Array.isArray(analyzedSnapshot.calendarEvents)) {
+      const serverEnrichedWithNums = analyzedSnapshot.calendarEvents.filter(
+        (sEv) => !isPlaceholderMacroValue(sEv.actual)
+      );
+      if (serverEnrichedWithNums.length > 0) {
+        recordReleasedActualsToOfflineArchive(serverEnrichedWithNums, 'TV_ENRICH');
+      }
       for (const sEv of analyzedSnapshot.calendarEvents) {
-        if (sEv.actual && sEv.actual.trim()) {
+        if (!isPlaceholderMacroValue(sEv.actual)) {
           const titleKey = sEv.title.trim().toLowerCase();
           const slotKey = `${titleKey}|${(sEv.date || '').slice(0, 13)}`;
           const entry = {
@@ -192,8 +280,8 @@ export async function executeClientSideMacroAnalysis(
       }
     }
     let anyActualUpdated = false;
-    analyzedSnapshot.calendarEvents = calendarEvents.map((cEv) => {
-      if (!cEv.actual || !cEv.actual.trim()) {
+    const mergedCal = calendarEvents.map((cEv) => {
+      if (isPlaceholderMacroValue(cEv.actual)) {
         const titleKey = cEv.title.trim().toLowerCase();
         const slotKey = `${titleKey}|${(cEv.date || '').slice(0, 13)}`;
         const enriched = serverActualBySlot.get(slotKey) || serverActualByTitle.get(titleKey);
@@ -213,11 +301,13 @@ export async function executeClientSideMacroAnalysis(
             eventBiasForGold: evalResult.bias,
             biasReasonId: evalResult.reasonId,
             biasReasonEn: evalResult.reasonEn,
+            actualSource: 'TV_ENRICH' as const,
           };
         }
       }
       return cEv;
     });
+    analyzedSnapshot.calendarEvents = hydrateEventsWithOfflineArchive(mergedCal);
     if (anyActualUpdated) {
       const refreshed = analyzeMacroEvent({
         calendarEvents: analyzedSnapshot.calendarEvents,
@@ -235,6 +325,10 @@ export async function executeClientSideMacroAnalysis(
     }
     analyzedSnapshot.isCalendarLiveFeed = true;
   } else {
+    if (Array.isArray(analyzedSnapshot.calendarEvents)) {
+      recordReleasedActualsToOfflineArchive(analyzedSnapshot.calendarEvents, 'LIVE_FEED');
+      analyzedSnapshot.calendarEvents = hydrateEventsWithOfflineArchive(analyzedSnapshot.calendarEvents);
+    }
     analyzedSnapshot.isCalendarLiveFeed =
       Array.isArray(analyzedSnapshot.calendarEvents) &&
       analyzedSnapshot.calendarEvents.length > 0 &&
@@ -283,6 +377,13 @@ export async function executeClientSideMacroAnalysis(
   if (forceRefresh) {
     analyzedSnapshot.analyzedAt = new Date().toISOString();
   }
+
+  // Compute unified 3-System state and keep dominantBias aligned for Cycle & Signal (0 tokens)
+  analyzedSnapshot.threeSystemState = computeMacroThreeSystemState({
+    snapshot: analyzedSnapshot,
+    selectedEventId,
+  });
+  analyzedSnapshot.dominantBias = analyzedSnapshot.threeSystemState.effectiveFundamentalBias;
 
   // Step 3: Insert directly into Supabase `macro_news_snapshots` (only if live calendar is verified)
   const supabaseResult = await saveMacroSnapshotToCache(analyzedSnapshot);

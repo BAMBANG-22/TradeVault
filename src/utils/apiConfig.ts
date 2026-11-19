@@ -457,14 +457,14 @@ export async function nativeAwarePostJson(
   url: string,
   payload: unknown,
   timeoutMs = 18000
-): Promise<{ ok: boolean; json: any | null }> {
+): Promise<{ ok: boolean; json: any | null; status?: number; errorMessage?: string }> {
   const authHeaders = buildBackendAuthHeaders(url);
 
   if (isNativeAndroidOrIos() && /^https?:\/\//i.test(url)) {
     try {
       const response = await CapacitorHttp.post({
         url,
-        connectTimeout: timeoutMs,
+        connectTimeout: Math.min(timeoutMs, 20000),
         readTimeout: timeoutMs,
         headers: {
           'Content-Type': 'application/json',
@@ -475,17 +475,59 @@ export async function nativeAwarePostJson(
         data: payload,
       });
 
-      const ok = response.status >= 200 && response.status < 300;
+      const status = Number(response.status || 0);
+      const ok = status >= 200 && status < 300;
       if (typeof response.data === 'string') {
+        const trimmed = response.data.trim();
+        if (
+          trimmed.startsWith('<!doctype') ||
+          trimmed.startsWith('<!DOCTYPE') ||
+          trimmed.startsWith('<html') ||
+          trimmed.startsWith('<')
+        ) {
+          return {
+            ok: false,
+            json: null,
+            status,
+            errorMessage: `Backend mengembalikan halaman HTML (HTTP ${status || 'N/A'}).`,
+          };
+        }
         try {
-          return { ok, json: JSON.parse(response.data) };
+          const parsed = JSON.parse(response.data);
+          return {
+            ok,
+            json: parsed,
+            status,
+            errorMessage: ok ? undefined : String(parsed?.error || parsed?.message || `HTTP ${status}`),
+          };
         } catch {
-          return { ok: false, json: null };
+          return {
+            ok: false,
+            json: null,
+            status,
+            errorMessage: `Respon backend tidak valid (HTTP ${status || 'N/A'}).`,
+          };
         }
       }
-      return { ok, json: response.data ?? null };
-    } catch {
-      return { ok: false, json: null };
+      const obj = response.data ?? null;
+      return {
+        ok,
+        json: obj,
+        status,
+        errorMessage: ok
+          ? undefined
+          : String((obj as any)?.error || (obj as any)?.message || `HTTP ${status || 'Error'}`),
+      };
+    } catch (err: any) {
+      const rawMsg = String(err?.message || err || 'Network error');
+      const isTimeout = /timeout|timed out|abort/i.test(rawMsg);
+      return {
+        ok: false,
+        json: null,
+        errorMessage: isTimeout
+          ? `Waktu koneksi habis (${Math.round(timeoutMs / 1000)} dtk) ke server APK.`
+          : `Koneksi APK ke server gagal: ${rawMsg.slice(0, 120)}`,
+      };
     }
   }
 
@@ -514,15 +556,41 @@ export async function nativeAwarePostJson(
       trimmed.startsWith('<html') ||
       trimmed.startsWith('<')
     ) {
-      return { ok: false, json: null };
+      return {
+        ok: false,
+        json: null,
+        status: res.status,
+        errorMessage: `Backend mengembalikan halaman HTML (HTTP ${res.status}).`,
+      };
     }
     try {
-      return { ok: res.ok, json: JSON.parse(rawText) };
+      const parsed = JSON.parse(rawText);
+      return {
+        ok: res.ok,
+        json: parsed,
+        status: res.status,
+        errorMessage: res.ok
+          ? undefined
+          : String(parsed?.error || parsed?.message || `HTTP ${res.status}`),
+      };
     } catch {
-      return { ok: false, json: null };
+      return {
+        ok: false,
+        json: null,
+        status: res.status,
+        errorMessage: `Respon JSON tidak valid dari backend (HTTP ${res.status}).`,
+      };
     }
-  } catch {
-    return { ok: false, json: null };
+  } catch (err: any) {
+    const rawMsg = String(err?.message || err || 'Network error');
+    const isTimeout = err?.name === 'AbortError' || /timeout|abort/i.test(rawMsg);
+    return {
+      ok: false,
+      json: null,
+      errorMessage: isTimeout
+        ? `Waktu koneksi habis (${Math.round(timeoutMs / 1000)} dtk).`
+        : `Gagal menghubungi server: ${rawMsg.slice(0, 120)}`,
+    };
   } finally {
     clearTimeout(timer);
   }

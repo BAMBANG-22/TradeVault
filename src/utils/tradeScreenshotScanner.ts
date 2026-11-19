@@ -1877,6 +1877,10 @@ export async function scanTradeScreenshotOrUrl(inputSource: string): Promise<Ext
       }
     } else if (serverRes.json?.error) {
       lastServerError = String(serverRes.json.error);
+    } else if (serverRes.errorMessage) {
+      lastServerError = serverRes.errorMessage;
+    } else if (serverRes.status) {
+      lastServerError = `HTTP ${serverRes.status} dari backend Scan Kilat.`;
     }
   }
 
@@ -2165,7 +2169,11 @@ export async function scanSingleMt5HistoryScreenshot(
     }
 
     if (res.json?.error) {
-      lastError = res.json.error;
+      lastError = String(res.json.error);
+    } else if (res.errorMessage) {
+      lastError = res.errorMessage;
+    } else if (res.status) {
+      lastError = `HTTP ${res.status} dari backend Scan MT5.`;
     }
   }
 

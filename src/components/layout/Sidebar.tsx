@@ -12,6 +12,7 @@ import {
   CandlestickChart,
   Newspaper,
   Compass,
+  Target,
   User,
   ChevronRight,
   Moon,
@@ -59,6 +60,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
     { id: 'market-chart', label: tr('Chart Pasar', 'Market Chart'), icon: CandlestickChart },
     { id: 'macro-news', label: 'Trade News', icon: Newspaper },
     { id: 'cycle-confluence', label: 'Cycle & Confluence', icon: Compass },
+    { id: 'smc-signal', label: 'SMC Signal', icon: Target },
   ];
 
   return (

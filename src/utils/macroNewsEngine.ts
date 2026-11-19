@@ -1,11 +1,14 @@
 import { LocalNotifications } from '@capacitor/local-notifications';
 import { getSupabase, isSupabaseConfigured } from './supabaseClient';
 import { isMarketDay, normalizeToMarketDayIso } from './date';
+import { HISTORICAL_MACRO_ACTUALS_SEED } from '../data/historicalMacroActualsSeed';
 
 export type FomcPillarType = 'GROWTH' | 'LABOR' | 'INFLATION' | 'POLICY';
 export type MacroBiasDirection = 'BUY' | 'SELL' | 'MIXED';
 export type MacroImpactLevel = 'HIGH' | 'MEDIUM' | 'LOW';
 export type BreakingSentimentType = 'BULLISH' | 'BEARISH' | 'NEUTRAL';
+
+export type ActualSourceType = 'LIVE_FEED' | 'TV_ENRICH' | 'SEARCH_ENRICH' | 'OFFLINE_ARCHIVE';
 
 export interface MacroCalendarEvent {
   id: string;
@@ -28,6 +31,95 @@ export interface MacroCalendarEvent {
   isLiveFeed?: boolean;
   eventCategory?: 'PRIMARY_HIGH_IMPACT' | 'SUPPORTING_REFERENCE';
   previousRevisedFrom?: string;
+  isOfflineArchived?: boolean;
+  actualSource?: ActualSourceType;
+}
+
+export interface ArchivedMacroActualRecord {
+  archiveKey: string;
+  id: string;
+  title: string;
+  date: string;
+  impact: 'High' | 'Medium' | 'Low';
+  previous: string;
+  forecast: string;
+  actual: string;
+  previousNum: number | null;
+  forecastNum: number | null;
+  actualNum: number | null;
+  unit: string;
+  pillar: FomcPillarType;
+  isInverseIndicator: boolean;
+  eventCategory?: 'PRIMARY_HIGH_IMPACT' | 'SUPPORTING_REFERENCE';
+  actualSource: ActualSourceType;
+  recordedAt: string;
+}
+
+export interface PreNewsSystemState {
+  clusterKey: string;
+  primaryEventId: string;
+  primaryTitle: string;
+  releaseDateIso: string;
+  phase: 'PRE_ACTIVE' | 'T5M_LOCKED' | 'OFF_RELEASED';
+  isLocked: boolean;
+  lockedAt: string | null;
+  forecast: string;
+  previous: string;
+  buyProbability: number;
+  sellProbability: number;
+  mixedProbability: number;
+  dominantBias: MacroBiasDirection;
+  thesisId: string;
+  thesisEn: string;
+  reconstructedWithoutPreCapture?: boolean;
+}
+
+export interface PostNewsSystemState {
+  clusterKey: string;
+  primaryEventId: string;
+  primaryTitle: string;
+  releaseDateIso: string;
+  status: 'WAITING_RELEASE' | 'PENDING_ACTUAL' | 'ACTIVE_2H' | 'OFF_ARCHIVED_2H';
+  windowRemainingMs: number;
+  expiresAtIso: string | null;
+  archivedAt: string | null;
+  hasVerifiedActual: boolean;
+  actualSummary: string;
+  buyProbability: number;
+  sellProbability: number;
+  mixedProbability: number;
+  dominantBias: MacroBiasDirection;
+  shiftVsPreNews: 'STRENGTHENED' | 'WEAKENED' | 'REVERSED_PIVOT' | 'UNCHANGED' | 'PENDING';
+  buyDeltaVsPreNews: number;
+  sellDeltaVsPreNews: number;
+  summaryId: string;
+  summaryEn: string;
+}
+
+export interface LiveFundamentalPulseState {
+  status: 'LIVE_CONTINUOUS' | 'WEEKEND_FROZEN';
+  updatedAt: string;
+  buyProbability: number;
+  sellProbability: number;
+  mixedProbability: number;
+  dominantBias: MacroBiasDirection;
+  speechAlertActive: boolean;
+  topCatalystTitle: string;
+  topCatalystSource: string;
+  topCatalystChannel: string;
+  offlineActualsCount: number;
+  offlinePillarSummaryId: string;
+  offlinePillarSummaryEn: string;
+  summaryId: string;
+  summaryEn: string;
+}
+
+export interface MacroThreeSystemState {
+  system1PreNews: PreNewsSystemState;
+  system2PostNews: PostNewsSystemState;
+  system3LivePulse: LiveFundamentalPulseState;
+  effectiveFundamentalBias: MacroBiasDirection;
+  effectiveSourceSystem: 'SYSTEM_1_PRE_NEWS' | 'SYSTEM_2_POST_NEWS' | 'SYSTEM_3_LIVE_PULSE';
 }
 
 export interface GoldPositioningPulse {
@@ -341,13 +433,36 @@ export interface MacroNewsSnapshot {
   scenarioMatrix: PreNewsScenarioMatrix;
   isCalendarLiveFeed?: boolean;
   rssFeedHealth?: RssFeedHealthStatus;
+  threeSystemState?: MacroThreeSystemState;
 }
 
 export const MACRO_SNAPSHOT_LOCAL_STORAGE_KEY = 'tradevault_macro_news_snapshot_v1';
 export const MACRO_GROUP_SNAPSHOT_CACHE_KEY = 'tradevault_macro_group_snapshots_v1';
 export const MACRO_BIAS_HISTORY_STORAGE_KEY = 'tradevault_macro_bias_history_v1';
 export const MACRO_NOTIFIED_FINGERPRINT_KEY = 'tradevault_macro_notified_fp_v1';
+export const MACRO_ACTUALS_ARCHIVE_STORAGE_KEY = 'tradevault_macro_actuals_archive_v1';
+export const MACRO_PRE_NEWS_LOCK_ARCHIVE_KEY = 'tradevault_macro_prenews_locks_v1';
+export const MACRO_POST_NEWS_ARCHIVE_KEY = 'tradevault_macro_postnews_locks_v1';
+export const MACRO_MONTHLY_NEWS_SPEECH_ARCHIVE_KEY = 'tradevault_macro_monthly_news_speech_v1';
+export const MACRO_LOCAL_SYNC_EVENT = 'tradevault:macro-local-sync';
+export const POST_NEWS_ACTIVE_WINDOW_MS = 2 * 60 * 60 * 1000; // 2 hours
 export const SNAPSHOT_TTL_MINUTES = 30;
+
+export function dispatchMacroLocalSyncEvent(): void {
+  if (typeof window !== 'undefined' && typeof window.dispatchEvent === 'function') {
+    try {
+      window.dispatchEvent(new CustomEvent(MACRO_LOCAL_SYNC_EVENT));
+    } catch {
+      // ignore event dispatch errors in restricted contexts
+    }
+  }
+}
+
+export interface MonthlyNewsSpeechArchive {
+  monthKey: string; // YYYY-MM in WIB (Asia/Jakarta)
+  updatedAt: string;
+  items: BreakingNewsHeadline[];
+}
 
 export const BREAKING_NEWS_KEYWORDS = [
   'Fed',
@@ -2871,22 +2986,33 @@ export function computeDeterministicMacroSnapshot(params: {
     }
   }
 
-  // Calculate 3 FOMC Pillars Recap (Inflation, Labor, Growth) across all calendar events
+  // Calculate 3 FOMC Pillars Recap (Inflation, Labor, Growth) with recency priority
+  // so fresh current-month (e.g. November) releases carry stronger authority than 60-90 day old prints.
   let inflBuy = 0, inflSell = 0;
   let laborBuy = 0, laborSell = 0;
   let growthBuy = 0, growthSell = 0;
+  const TWENTY_ONE_DAYS_MS = 21 * 24 * 60 * 60 * 1000;
+  const FORTY_FIVE_DAYS_MS = 45 * 24 * 60 * 60 * 1000;
 
   for (const ev of workingCalendarEvents) {
     if (isFedSpeechEvent(ev.title)) continue;
+    const evMs = new Date(ev.date).getTime();
+    const ageMs = Number.isFinite(evMs) ? Math.max(0, nowMs - evMs) : 0;
+    const pillarVoteWeight =
+      evMs > nowMs || ageMs <= TWENTY_ONE_DAYS_MS
+        ? 3
+        : ageMs <= FORTY_FIVE_DAYS_MS
+        ? 2
+        : 1;
     if (ev.pillar === 'INFLATION') {
-      if (ev.eventBiasForGold === 'BUY') inflBuy++;
-      else if (ev.eventBiasForGold === 'SELL') inflSell++;
+      if (ev.eventBiasForGold === 'BUY') inflBuy += pillarVoteWeight;
+      else if (ev.eventBiasForGold === 'SELL') inflSell += pillarVoteWeight;
     } else if (ev.pillar === 'LABOR') {
-      if (ev.eventBiasForGold === 'BUY') laborBuy++;
-      else if (ev.eventBiasForGold === 'SELL') laborSell++;
+      if (ev.eventBiasForGold === 'BUY') laborBuy += pillarVoteWeight;
+      else if (ev.eventBiasForGold === 'SELL') laborSell += pillarVoteWeight;
     } else if (ev.pillar === 'GROWTH') {
-      if (ev.eventBiasForGold === 'BUY') growthBuy++;
-      else if (ev.eventBiasForGold === 'SELL') growthSell++;
+      if (ev.eventBiasForGold === 'BUY') growthBuy += pillarVoteWeight;
+      else if (ev.eventBiasForGold === 'SELL') growthSell += pillarVoteWeight;
     }
   }
 
@@ -2965,10 +3091,31 @@ export function computeDeterministicMacroSnapshot(params: {
       });
     }
   } else {
-    // Mode A (Individual Release): Add background context with smaller weight (8-10)
-    for (const ev of workingCalendarEvents) {
-      if (allClusterEvents.some((c) => c.id === ev.id)) continue;
-      if (isFedSpeechEvent(ev.title)) continue;
+    // Mode A (Individual Release): Add background context prioritizing newest actual releases
+    // (e.g., November data before older September/October prints) and near-term scheduled events.
+    const THIRTY_FIVE_DAYS_MS = 35 * 24 * 60 * 60 * 1000;
+    const backgroundCandidates = workingCalendarEvents
+      .filter((ev) => !allClusterEvents.some((c) => c.id === ev.id) && !isFedSpeechEvent(ev.title))
+      .sort((a, b) => {
+        const aMs = new Date(a.date).getTime();
+        const bMs = new Date(b.date).getTime();
+        const aValid = Number.isFinite(aMs);
+        const bValid = Number.isFinite(bMs);
+        const aIsRecentReleased = aValid && aMs <= nowMs && nowMs - aMs <= THIRTY_FIVE_DAYS_MS && !isPlaceholderMacroValue(a.actual);
+        const bIsRecentReleased = bValid && bMs <= nowMs && nowMs - bMs <= THIRTY_FIVE_DAYS_MS && !isPlaceholderMacroValue(b.actual);
+        if (aIsRecentReleased !== bIsRecentReleased) return aIsRecentReleased ? -1 : 1;
+        if (aIsRecentReleased && bIsRecentReleased) return bMs - aMs;
+
+        const aIsUpcoming = aValid && aMs > nowMs;
+        const bIsUpcoming = bValid && bMs > nowMs;
+        if (aIsUpcoming !== bIsUpcoming) return aIsUpcoming ? -1 : 1;
+        if (aIsUpcoming && bIsUpcoming) return aMs - bMs;
+
+        if (aValid && bValid) return bMs - aMs;
+        return 0;
+      });
+
+    for (const ev of backgroundCandidates) {
       const isSupporting = isSupportingReferenceEvent(ev);
       const contextWeight = isSupporting ? 6 : 8;
       const tagPrefix = `KONTEKS LATAR BELAKANG (${ev.pillar})`;
@@ -2989,6 +3136,7 @@ export function computeDeterministicMacroSnapshot(params: {
           textEn: ev.biasReasonEn,
         });
       }
+      if (buyArguments.length >= 4 && sellArguments.length >= 4) break;
     }
   }
 
@@ -4068,9 +4216,17 @@ export async function loadLatestCachedMacroSnapshot(options?: {
           .select('id, data_fingerprint, snapshot_payload, analyzed_at')
           .eq('instrument', 'XAUUSD')
           .order('analyzed_at', { ascending: false })
-          .limit(5);
+          .limit(12);
 
         if (!error && Array.isArray(data)) {
+          // Harvest any released actuals across prior Supabase snapshots into offline archive (0 Gemini tokens)
+          for (const row of data) {
+            const snapCandidate = row?.snapshot_payload as MacroNewsSnapshot | undefined;
+            if (snapCandidate && Array.isArray(snapCandidate.calendarEvents) && snapCandidate.calendarEvents.length > 0) {
+              recordReleasedActualsToOfflineArchive(snapCandidate.calendarEvents, 'OFFLINE_ARCHIVE');
+            }
+          }
+
           // Prefer snapshots analyzed on a weekday (Senin–Jumat) via isMarketDay
           const sortedRows = [...data].sort((a, b) => {
             const aMarket = isMarketDay(a.analyzed_at || a.snapshot_payload?.analyzedAt) ? 1 : 0;
@@ -4094,8 +4250,13 @@ export async function loadLatestCachedMacroSnapshot(options?: {
                 (remoteIsWeekday && !localIsWeekday) ||
                 (remoteIsWeekday === localIsWeekday && remoteTime >= localTime)
               ) {
+                const hydratedEvents = hydrateEventsWithOfflineArchive(remoteSnap.calendarEvents);
+                if (Array.isArray(remoteSnap.breakingNews) && remoteSnap.breakingNews.length > 0) {
+                  recordBreakingNewsToMonthlyArchive(remoteSnap.breakingNews);
+                }
                 const hydrated: MacroNewsSnapshot = {
                   ...remoteSnap,
+                  calendarEvents: hydratedEvents,
                   sourceMode: 'SUPABASE_CACHE',
                 };
                 if (typeof window !== 'undefined' && typeof localStorage !== 'undefined') {
@@ -4118,6 +4279,15 @@ export async function loadLatestCachedMacroSnapshot(options?: {
     }
   }
 
+  if (localSnap) {
+    if (Array.isArray(localSnap.breakingNews) && localSnap.breakingNews.length > 0) {
+      recordBreakingNewsToMonthlyArchive(localSnap.breakingNews);
+    }
+    return {
+      ...localSnap,
+      calendarEvents: hydrateEventsWithOfflineArchive(localSnap.calendarEvents),
+    };
+  }
   return localSnap;
 }
 
@@ -4200,6 +4370,8 @@ export async function saveMacroSnapshotToCache(
     };
   }
 
+  recordReleasedActualsToOfflineArchive(snapshot.calendarEvents);
+
   if (typeof window !== 'undefined' && typeof localStorage !== 'undefined') {
     try {
       localStorage.setItem(MACRO_SNAPSHOT_LOCAL_STORAGE_KEY, JSON.stringify(snapshot));
@@ -4212,6 +4384,7 @@ export async function saveMacroSnapshotToCache(
         }
         localStorage.setItem(MACRO_GROUP_SNAPSHOT_CACHE_KEY, JSON.stringify(parsedMap));
       }
+      dispatchMacroLocalSyncEvent();
 
       // Append verified live snapshot to chronological bias history cache (max 24 points)
       const primaryEv = snapshot.scenarioMatrix?.primaryEvent;
@@ -4459,3 +4632,1490 @@ export async function loadMacroBiasHistory(
 
   return sorted.slice(-limit);
 }
+
+// ============================================================================
+// OFFLINE ACTUALS ARCHIVE & 3-SYSTEM ARCHITECTURE (PRE-NEWS / POST-NEWS 2H / LIVE PULSE)
+// ============================================================================
+
+let inMemoryActualsArchive: ArchivedMacroActualRecord[] = [];
+let inMemoryPreNewsLocks: Record<string, PreNewsSystemState> = {};
+let inMemoryPostNewsLocks: Record<string, PostNewsSystemState> = {};
+let inMemoryMonthlyNewsSpeechArchive: MonthlyNewsSpeechArchive | null = null;
+
+export function isPlaceholderMacroValue(raw: unknown): boolean {
+  if (raw === null || raw === undefined) return true;
+  const trimmed = String(raw).trim();
+  if (!trimmed) return true;
+  return /^(-|—|–|n\/a|na|null|undefined|menunggu|pending|tba|tbd)$/i.test(trimmed);
+}
+
+export function normalizeActualArchiveKey(title: string, dateIso: string): string {
+  const cleanTitle = String(title || '')
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, ' ');
+  let dayKey = '';
+  try {
+    const dt = new Date(dateIso);
+    if (!isNaN(dt.getTime())) {
+      dayKey = dt.toISOString().slice(0, 10);
+    }
+  } catch {
+    // ignore invalid date
+  }
+  return `${cleanTitle}|${dayKey || String(dateIso || '').slice(0, 10)}`;
+}
+
+export function loadOfflineActualsArchive(): ArchivedMacroActualRecord[] {
+  if (typeof localStorage !== 'undefined') {
+    try {
+      const raw = localStorage.getItem(MACRO_ACTUALS_ARCHIVE_STORAGE_KEY);
+      if (!raw) {
+        inMemoryActualsArchive = [];
+        return [];
+      }
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) {
+        const valid = parsed.filter(
+          (r): r is ArchivedMacroActualRecord =>
+            Boolean(r && r.title && !isPlaceholderMacroValue(r.actual))
+        );
+        inMemoryActualsArchive = valid;
+        return valid;
+      }
+    } catch {
+      // ignore storage parse failure
+    }
+  }
+  return inMemoryActualsArchive;
+}
+
+export function saveOfflineActualsArchive(records: ArchivedMacroActualRecord[]): void {
+  const cleaned = records
+    .filter((r) => Boolean(r && r.title && !isPlaceholderMacroValue(r.actual)))
+    .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
+    .slice(0, 500);
+  inMemoryActualsArchive = cleaned;
+
+  if (typeof localStorage !== 'undefined') {
+    try {
+      localStorage.setItem(MACRO_ACTUALS_ARCHIVE_STORAGE_KEY, JSON.stringify(cleaned));
+    } catch {
+      // ignore storage quota errors
+    }
+  }
+}
+
+/**
+ * Records all verified released USD `actual` prints into persistent Offline Archive.
+ * CRITICAL RULE: Never overwrites an already saved non-empty actual with blank/"Menunggu".
+ */
+export function recordReleasedActualsToOfflineArchive(
+  events: MacroCalendarEvent[],
+  defaultSource: ActualSourceType = 'LIVE_FEED',
+  archiveOverride?: ArchivedMacroActualRecord[]
+): ArchivedMacroActualRecord[] {
+  const baseRecords = archiveOverride ? [...archiveOverride] : [...loadOfflineActualsArchive()];
+  const map = new Map<string, ArchivedMacroActualRecord>();
+  for (const r of baseRecords) {
+    if (r && r.archiveKey && !isPlaceholderMacroValue(r.actual)) {
+      map.set(r.archiveKey, r);
+    }
+  }
+
+  for (const ev of events || []) {
+    if (!ev || !ev.title || isFedSpeechEvent(ev.title)) continue;
+    if (isPlaceholderMacroValue(ev.actual)) continue;
+
+    const key = normalizeActualArchiveKey(ev.title, ev.date);
+    const existing = map.get(key);
+    const parsedAct =
+      ev.actualNum !== null && ev.actualNum !== undefined
+        ? ev.actualNum
+        : parseMacroNumeric(ev.actual).value;
+
+    const record: ArchivedMacroActualRecord = {
+      archiveKey: key,
+      id: ev.id || existing?.id || `arch-${key.replace(/[^a-z0-9]/gi, '').slice(0, 20)}`,
+      title: ev.title.trim(),
+      date: ev.date,
+      impact: ev.impact || existing?.impact || 'Medium',
+      previous: !isPlaceholderMacroValue(ev.previous)
+        ? ev.previous
+        : existing?.previous || '—',
+      forecast: !isPlaceholderMacroValue(ev.forecast)
+        ? ev.forecast
+        : existing?.forecast || '—',
+      actual: ev.actual.trim(),
+      previousNum:
+        ev.previousNum !== null && ev.previousNum !== undefined
+          ? ev.previousNum
+          : existing?.previousNum ?? null,
+      forecastNum:
+        ev.forecastNum !== null && ev.forecastNum !== undefined
+          ? ev.forecastNum
+          : existing?.forecastNum ?? null,
+      actualNum: parsedAct,
+      unit: ev.unit || existing?.unit || parseMacroNumeric(ev.actual).unit || '',
+      pillar: ev.pillar || existing?.pillar || classifyFomcPillar(ev.title),
+      isInverseIndicator:
+        typeof ev.isInverseIndicator === 'boolean'
+          ? ev.isInverseIndicator
+          : isInverseUsdIndicator(ev.title),
+      eventCategory: ev.eventCategory || existing?.eventCategory,
+      actualSource: ev.actualSource || existing?.actualSource || defaultSource,
+      recordedAt: new Date().toISOString(),
+    };
+    map.set(key, record);
+  }
+
+  const next = Array.from(map.values())
+    .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
+    .slice(0, 500);
+
+  if (!archiveOverride) {
+    saveOfflineActualsArchive(next);
+  }
+  return next;
+}
+
+/**
+ * Ensures the permanent offline archive contains verified historical USD releases
+ * (Sep–Nov 2026 CPI, PPI, NFP, PCE, FOMC, GDP, Retail Sales, ISM) for newly installed APKs
+ * without ever overwriting existing LIVE_FEED / TV_ENRICH / SEARCH_ENRICH records.
+ */
+export function ensureHistoricalActualsArchiveSeeded(
+  archiveOverride?: ArchivedMacroActualRecord[]
+): ArchivedMacroActualRecord[] {
+  const existing = archiveOverride ? [...archiveOverride] : [...loadOfflineActualsArchive()];
+  const byKey = new Map<string, ArchivedMacroActualRecord>();
+  for (const r of existing) {
+    if (r && r.archiveKey && !isPlaceholderMacroValue(r.actual)) {
+      byKey.set(r.archiveKey, r);
+    }
+  }
+
+  let addedAny = false;
+  for (const seed of HISTORICAL_MACRO_ACTUALS_SEED) {
+    const key = normalizeActualArchiveKey(seed.title, seed.date);
+    if (byKey.has(key)) continue;
+
+    // Also avoid duplicating if an alias title (e.g. "Core Inflation Rate MoM" vs "Core CPI m/m") exists on the same date window
+    const seedMs = new Date(seed.date).getTime();
+    const seedLower = seed.title.toLowerCase();
+    const isDuplicateEquivalent = existing.some((rec) => {
+      const recMs = new Date(rec.date).getTime();
+      if (!Number.isFinite(recMs) || Math.abs(recMs - seedMs) > 12 * 60 * 60 * 1000) return false;
+      const recLower = rec.title.toLowerCase();
+      if (recLower === seedLower) return true;
+      if (seedLower === 'core cpi m/m' && /core.*(cpi|inflation).*m/.test(recLower)) return true;
+      if (seedLower === 'cpi m/m' && !recLower.includes('core') && /^(cpi|inflation rate).*m/.test(recLower)) return true;
+      if (seedLower === 'core cpi y/y' && /core.*(cpi|inflation).*y/.test(recLower)) return true;
+      if (seedLower === 'cpi y/y' && !recLower.includes('core') && /^(cpi|inflation rate).*y/.test(recLower)) return true;
+      if (seedLower === 'non-farm employment change' && /(non[\s-]*farm|nfp)/.test(recLower) && !recLower.includes('adp') && !recLower.includes('private')) return true;
+      if (seedLower === 'core retail sales m/m' && /retail sales ex autos/.test(recLower)) return true;
+      if (seedLower === 'federal funds rate' && /(interest rate|federal funds|fomc)/.test(recLower)) return true;
+      return false;
+    });
+    if (isDuplicateEquivalent) continue;
+
+    const record: ArchivedMacroActualRecord = {
+      archiveKey: key,
+      id: `seed-${key.replace(/[^a-z0-9]/gi, '').slice(0, 22)}`,
+      title: seed.title,
+      date: seed.date,
+      impact: seed.impact,
+      previous: seed.previous,
+      forecast: seed.forecast,
+      actual: seed.actual,
+      previousNum: seed.previousNum,
+      forecastNum: seed.forecastNum,
+      actualNum: seed.actualNum,
+      unit: seed.unit,
+      pillar: seed.pillar,
+      isInverseIndicator: seed.isInverseIndicator,
+      eventCategory: seed.eventCategory,
+      actualSource: 'OFFLINE_ARCHIVE',
+      recordedAt: seed.date,
+    };
+    byKey.set(key, record);
+    existing.push(record);
+    addedAny = true;
+  }
+
+  if (!addedAny) {
+    return existing.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+  }
+
+  const next = Array.from(byKey.values())
+    .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
+    .slice(0, 500);
+
+  if (!archiveOverride) {
+    saveOfflineActualsArchive(next);
+    dispatchMacroLocalSyncEvent();
+  }
+  return next;
+}
+
+export interface RawTradingViewCalendarEvent {
+  id?: string | number;
+  title?: string;
+  indicator?: string;
+  country?: string;
+  date?: string;
+  actual?: number | null;
+  forecast?: number | null;
+  previous?: number | null;
+  unit?: string;
+  scale?: string;
+  importance?: number;
+}
+
+function mapTradingViewTitleToCanonical(rawTitle: string): {
+  canonicalTitle: string;
+  forceHighImpact: boolean;
+} | null {
+  const t = String(rawTitle || '').trim();
+  const lower = t.toLowerCase();
+
+  // Exact match map for primary USD High/Medium macro releases (skipping secondary noise series)
+  const exactMap: Record<string, { title: string; high: boolean }> = {
+    'core inflation rate mom': { title: 'Core CPI m/m', high: true },
+    'inflation rate mom': { title: 'CPI m/m', high: true },
+    'core inflation rate yoy': { title: 'Core CPI y/y', high: true },
+    'inflation rate yoy': { title: 'CPI y/y', high: true },
+    'ppi mom': { title: 'PPI m/m', high: true },
+    'core ppi mom': { title: 'Core PPI m/m', high: true },
+    'ppi yoy': { title: 'PPI y/y', high: false },
+    'core ppi yoy': { title: 'Core PPI y/y', high: false },
+    'non farm payrolls': { title: 'Non-Farm Employment Change', high: true },
+    'unemployment rate': { title: 'Unemployment Rate', high: true },
+    'average hourly earnings mom': { title: 'Average Hourly Earnings m/m', high: true },
+    'average hourly earnings yoy': { title: 'Average Hourly Earnings y/y', high: false },
+    'core pce price index mom': { title: 'Core PCE Price Index m/m', high: true },
+    'pce price index mom': { title: 'PCE Price Index m/m', high: false },
+    'core pce price index yoy': { title: 'Core PCE Price Index y/y', high: false },
+    'pce price index yoy': { title: 'PCE Price Index y/y', high: false },
+    'retail sales mom': { title: 'Retail Sales m/m', high: true },
+    'retail sales ex autos mom': { title: 'Core Retail Sales m/m', high: false },
+    'gdp growth rate qoq adv': { title: 'Advance GDP q/q', high: true },
+    'gdp growth rate qoq 2nd est': { title: 'Prelim GDP q/q', high: true },
+    'gdp growth rate qoq final': { title: 'Final GDP q/q', high: true },
+    'gdp price index qoq adv': { title: 'Advance GDP Price Index q/q', high: false },
+    'gdp price index qoq 2nd est': { title: 'Prelim GDP Price Index q/q', high: false },
+    'gdp price index qoq final': { title: 'Final GDP Price Index q/q', high: false },
+    'ism manufacturing pmi': { title: 'ISM Manufacturing PMI', high: true },
+    'ism services pmi': { title: 'ISM Services PMI', high: true },
+    'ism manufacturing prices': { title: 'ISM Manufacturing Prices', high: false },
+    'ism services prices': { title: 'ISM Services Prices', high: false },
+    'interest rate': { title: 'Federal Funds Rate', high: true },
+    'fed interest rate decision': { title: 'Federal Funds Rate', high: true },
+    'initial jobless claims': { title: 'Initial Jobless Claims', high: false },
+    'adp employment change': { title: 'ADP Non-Farm Employment Change', high: false },
+    'jolts job openings': { title: 'JOLTS Job Openings', high: true },
+    'durable goods orders mom': { title: 'Durable Goods Orders m/m', high: false },
+    'existing home sales': { title: 'Existing Home Sales', high: false },
+    'new home sales': { title: 'New Home Sales', high: false },
+    'michigan consumer sentiment prel': { title: 'Prelim UoM Consumer Sentiment', high: false },
+    'michigan consumer sentiment final': { title: 'Final UoM Consumer Sentiment', high: false },
+  };
+
+  const hit = exactMap[lower];
+  if (!hit) return null;
+  return { canonicalTitle: hit.title, forceHighImpact: hit.high };
+}
+
+/**
+ * Converts raw TradingView US Economic Calendar items (already released) into canonical
+ * `MacroCalendarEvent[]` entries for 0-token 90-day offline archive backfill.
+ */
+export function mapRawTradingViewEventsToCalendarEvents(
+  rawEvents: RawTradingViewCalendarEvent[],
+  nowMs: number = Date.now()
+): MacroCalendarEvent[] {
+  if (!Array.isArray(rawEvents) || rawEvents.length === 0) return [];
+
+  const out: MacroCalendarEvent[] = [];
+  const seenKeys = new Set<string>();
+
+  for (let i = 0; i < rawEvents.length; i++) {
+    const raw = rawEvents[i];
+    if (!raw || raw.actual === null || raw.actual === undefined || !Number.isFinite(Number(raw.actual))) {
+      continue;
+    }
+    const country = String(raw.country || 'US').toUpperCase().trim();
+    if (country !== 'US' && country !== 'USD') continue;
+
+    const dt = new Date(String(raw.date || ''));
+    const evMs = dt.getTime();
+    if (!Number.isFinite(evMs) || evMs > nowMs + 5 * 60 * 1000) continue;
+
+    const mapped = mapTradingViewTitleToCanonical(String(raw.title || ''));
+    if (!mapped) continue;
+
+    const isoDate = dt.toISOString();
+    const dedupeKey = normalizeActualArchiveKey(mapped.canonicalTitle, isoDate);
+    if (seenKeys.has(dedupeKey)) continue;
+    seenKeys.add(dedupeKey);
+
+    const tvUnit = String(raw.unit || '').trim();
+    const tvScale = String(raw.scale || '').trim();
+    const effectiveUnit =
+      tvUnit === '%'
+        ? '%'
+        : tvScale === 'K' || tvScale === 'M' || tvScale === 'B'
+        ? tvScale
+        : tvUnit;
+
+    const formatNumber = (val: number | null | undefined): { text: string; num: number | null; unit: string } => {
+      if (val === null || val === undefined || !Number.isFinite(Number(val))) {
+        return { text: '—', num: null, unit: effectiveUnit };
+      }
+      let num = Number(val);
+      let u = effectiveUnit;
+      const isKSeries = /employment|payrolls|claims/i.test(mapped.canonicalTitle);
+      if (isKSeries && !u && Math.abs(num) >= 1000) {
+        num = Number((num / 1000).toFixed(1));
+        u = 'K';
+      }
+      return {
+        text: `${num}${u}`,
+        num,
+        unit: u,
+      };
+    };
+
+    const actParsed = formatNumber(raw.actual);
+    const fcstParsed = formatNumber(raw.forecast);
+    const prevParsed = formatNumber(raw.previous);
+    const finalUnit = actParsed.unit || fcstParsed.unit || prevParsed.unit || '';
+
+    const impact: 'High' | 'Medium' =
+      mapped.forceHighImpact || Number(raw.importance) >= 1 ? 'High' : 'Medium';
+
+    const evalRes = evaluateSingleEventForGold(
+      mapped.canonicalTitle,
+      actParsed.num,
+      fcstParsed.num,
+      prevParsed.num
+    );
+
+    const eventCategory: MacroCalendarEvent['eventCategory'] = isPrimaryHighImpactEvent({
+      title: mapped.canonicalTitle,
+      impact,
+      country: 'USD',
+    })
+      ? 'PRIMARY_HIGH_IMPACT'
+      : 'SUPPORTING_REFERENCE';
+
+    out.push({
+      id: `tv-hist-${String(raw.id || i)}-${mapped.canonicalTitle.replace(/[^a-zA-Z0-9]/g, '').slice(0, 12)}`,
+      title: mapped.canonicalTitle,
+      country: 'USD',
+      date: isoDate,
+      impact,
+      previous: prevParsed.text,
+      forecast: fcstParsed.text,
+      actual: actParsed.text,
+      previousNum: prevParsed.num,
+      forecastNum: fcstParsed.num,
+      actualNum: actParsed.num,
+      unit: finalUnit,
+      pillar: classifyFomcPillar(mapped.canonicalTitle),
+      isInverseIndicator: isInverseUsdIndicator(mapped.canonicalTitle),
+      eventBiasForGold: evalRes.bias,
+      biasReasonId: evalRes.reasonId,
+      biasReasonEn: evalRes.reasonEn,
+      isLiveFeed: true,
+      eventCategory,
+      actualSource: 'TV_ENRICH',
+    });
+  }
+
+  return out.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+}
+
+/**
+ * Hydrates incoming calendar events from the Offline Actuals Archive:
+ * 1) Restores missing/blank past `actual` values on matching current-week events.
+ * 2) Re-attaches prior-week/prior-month released High-Impact USD events (default 90 days) that rolled off
+ *    `ff_calendar_thisweek.json` on week/month change so CPI/PPI/NFP actual history remains available offline.
+ */
+export function hydrateEventsWithOfflineArchive(
+  events: MacroCalendarEvent[],
+  nowMs: number = Date.now(),
+  archiveOverride?: ArchivedMacroActualRecord[],
+  retentionDays: number = 90
+): MacroCalendarEvent[] {
+  const archive = archiveOverride ?? loadOfflineActualsArchive();
+  if (!archive || archive.length === 0) return events || [];
+
+  const exactMap = new Map<string, ArchivedMacroActualRecord>();
+  const byTitle = new Map<string, ArchivedMacroActualRecord[]>();
+  for (const r of archive) {
+    if (!r || isPlaceholderMacroValue(r.actual)) continue;
+    exactMap.set(r.archiveKey, r);
+    const tKey = r.title.trim().toLowerCase();
+    const arr = byTitle.get(tKey) || [];
+    arr.push(r);
+    byTitle.set(tKey, arr);
+  }
+
+  const findArchiveMatch = (title: string, dateIso: string): ArchivedMacroActualRecord | undefined => {
+    const exact = exactMap.get(normalizeActualArchiveKey(title, dateIso));
+    if (exact) return exact;
+    const evMs = new Date(dateIso).getTime();
+    if (!Number.isFinite(evMs)) return undefined;
+    const candidates = byTitle.get(title.trim().toLowerCase()) || [];
+    let best: ArchivedMacroActualRecord | undefined;
+    let bestDiff = Infinity;
+    for (const cand of candidates) {
+      const candMs = new Date(cand.date).getTime();
+      if (!Number.isFinite(candMs)) continue;
+      const diff = Math.abs(evMs - candMs);
+      if (diff <= 36 * 60 * 60 * 1000 && diff < bestDiff) {
+        bestDiff = diff;
+        best = cand;
+      }
+    }
+    return best;
+  };
+
+  const hydratedKeys = new Set<string>();
+  const hydratedEvents: MacroCalendarEvent[] = (events || []).map((ev) => {
+    const key = normalizeActualArchiveKey(ev.title, ev.date);
+    hydratedKeys.add(key);
+
+    if (!isPlaceholderMacroValue(ev.actual)) {
+      return ev;
+    }
+
+    const match = findArchiveMatch(ev.title, ev.date);
+    if (!match) return ev;
+
+    hydratedKeys.add(match.archiveKey);
+    const parsedNum =
+      match.actualNum !== null && match.actualNum !== undefined
+        ? match.actualNum
+        : parseMacroNumeric(match.actual).value;
+    const evalRes = evaluateSingleEventForGold(
+      ev.title,
+      parsedNum,
+      ev.forecastNum ?? match.forecastNum,
+      ev.previousNum ?? match.previousNum
+    );
+
+    return {
+      ...ev,
+      actual: match.actual,
+      actualNum: parsedNum,
+      unit: match.unit || ev.unit,
+      eventBiasForGold: evalRes.bias,
+      biasReasonId: evalRes.reasonId,
+      biasReasonEn: evalRes.reasonEn,
+      actualSource: 'OFFLINE_ARCHIVE',
+    };
+  });
+
+  // Re-attach prior-week & prior-month released primary/high-impact events missing from current feed
+  const RETENTION_MS = retentionDays * 24 * 60 * 60 * 1000;
+  for (const rec of archive) {
+    if (hydratedKeys.has(rec.archiveKey)) continue;
+    const recMs = new Date(rec.date).getTime();
+    if (!Number.isFinite(recMs) || nowMs - recMs > RETENTION_MS || recMs > nowMs + 60 * 60 * 1000) {
+      continue;
+    }
+    const alreadyPresentByTitleWindow = hydratedEvents.some((ev) => {
+      if (ev.title.trim().toLowerCase() !== rec.title.trim().toLowerCase()) return false;
+      const evMs = new Date(ev.date).getTime();
+      return Number.isFinite(evMs) && Math.abs(evMs - recMs) <= 36 * 60 * 60 * 1000;
+    });
+    if (alreadyPresentByTitleWindow) continue;
+
+    const isImportant =
+      rec.impact === 'High' ||
+      rec.eventCategory === 'PRIMARY_HIGH_IMPACT' ||
+      isPrimaryHighImpactEvent({ title: rec.title, impact: rec.impact, country: 'USD' });
+    if (!isImportant) continue;
+
+    const evalRes = evaluateSingleEventForGold(
+      rec.title,
+      rec.actualNum,
+      rec.forecastNum,
+      rec.previousNum
+    );
+    hydratedEvents.push({
+      id: rec.id || `ff-arch-${rec.archiveKey.replace(/[^a-z0-9]/gi, '').slice(0, 18)}`,
+      title: rec.title,
+      country: 'USD',
+      date: rec.date,
+      impact: rec.impact,
+      previous: rec.previous || '—',
+      forecast: rec.forecast || '—',
+      actual: rec.actual,
+      previousNum: rec.previousNum,
+      forecastNum: rec.forecastNum,
+      actualNum: rec.actualNum,
+      unit: rec.unit || '',
+      pillar: rec.pillar || classifyFomcPillar(rec.title),
+      isInverseIndicator: rec.isInverseIndicator,
+      eventBiasForGold: evalRes.bias,
+      biasReasonId: evalRes.reasonId,
+      biasReasonEn: evalRes.reasonEn,
+      isLiveFeed: true,
+      eventCategory:
+        rec.eventCategory ||
+        (isPrimaryHighImpactEvent({ title: rec.title, impact: rec.impact, country: 'USD' })
+          ? 'PRIMARY_HIGH_IMPACT'
+          : 'SUPPORTING_REFERENCE'),
+      isOfflineArchived: true,
+      actualSource: 'OFFLINE_ARCHIVE',
+    });
+    hydratedKeys.add(rec.archiveKey);
+  }
+
+  return hydratedEvents.sort(
+    (a, b) => new Date(a.date).getTime() - new Date(b.date).getTime()
+  );
+}
+
+export function loadPreNewsLockArchive(): Record<string, PreNewsSystemState> {
+  if (typeof window !== 'undefined' && typeof localStorage !== 'undefined') {
+    try {
+      const raw = localStorage.getItem(MACRO_PRE_NEWS_LOCK_ARCHIVE_KEY);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (parsed && typeof parsed === 'object') {
+          inMemoryPreNewsLocks = parsed;
+          return parsed;
+        }
+      }
+    } catch {
+      // ignore storage errors
+    }
+  }
+  return inMemoryPreNewsLocks;
+}
+
+export function savePreNewsLockArchive(map: Record<string, PreNewsSystemState>): void {
+  const entries = Object.entries(map).slice(-60);
+  const pruned = Object.fromEntries(entries);
+  inMemoryPreNewsLocks = pruned;
+  if (typeof window !== 'undefined' && typeof localStorage !== 'undefined') {
+    try {
+      localStorage.setItem(MACRO_PRE_NEWS_LOCK_ARCHIVE_KEY, JSON.stringify(pruned));
+      dispatchMacroLocalSyncEvent();
+    } catch {
+      // ignore storage quota errors
+    }
+  }
+}
+
+export function loadPostNewsArchive(): Record<string, PostNewsSystemState> {
+  if (typeof window !== 'undefined' && typeof localStorage !== 'undefined') {
+    try {
+      const raw = localStorage.getItem(MACRO_POST_NEWS_ARCHIVE_KEY);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (parsed && typeof parsed === 'object') {
+          inMemoryPostNewsLocks = parsed;
+          return parsed;
+        }
+      }
+    } catch {
+      // ignore storage errors
+    }
+  }
+  return inMemoryPostNewsLocks;
+}
+
+export function savePostNewsArchive(map: Record<string, PostNewsSystemState>): void {
+  const entries = Object.entries(map).slice(-250);
+  const pruned = Object.fromEntries(entries);
+  inMemoryPostNewsLocks = pruned;
+  if (typeof window !== 'undefined' && typeof localStorage !== 'undefined') {
+    try {
+      localStorage.setItem(MACRO_POST_NEWS_ARCHIVE_STORAGE_KEY_COMPAT, JSON.stringify(pruned));
+      dispatchMacroLocalSyncEvent();
+    } catch {
+      // ignore storage quota errors
+    }
+  }
+}
+
+const MACRO_POST_NEWS_ARCHIVE_STORAGE_KEY_COMPAT = MACRO_POST_NEWS_ARCHIVE_KEY;
+
+/**
+ * Returns ALL released/archived USD actual calendar events across months (NEVER reset at month turnover),
+ * sorted newest-first for the dedicated Post-News workspace.
+ */
+export function getAllOfflineActualCalendarEvents(
+  liveEvents: MacroCalendarEvent[] = [],
+  nowMs: number = Date.now(),
+  archiveOverride?: ArchivedMacroActualRecord[]
+): MacroCalendarEvent[] {
+  const archive = archiveOverride ?? loadOfflineActualsArchive();
+  const byKey = new Map<string, MacroCalendarEvent>();
+
+  for (const ev of liveEvents) {
+    if (!ev || isFedSpeechEvent(ev.title)) continue;
+    const evMs = new Date(ev.date).getTime();
+    const hasAct = !isPlaceholderMacroValue(ev.actual);
+    const isPast = Number.isFinite(evMs) && evMs <= nowMs;
+    if (!hasAct && !isPast) continue;
+    const key = normalizeActualArchiveKey(ev.title, ev.date);
+    byKey.set(key, ev);
+  }
+
+  for (const rec of archive) {
+    if (!rec || isPlaceholderMacroValue(rec.actual) || isFedSpeechEvent(rec.title)) continue;
+    const key = normalizeActualArchiveKey(rec.title, rec.date);
+    const existing = byKey.get(key);
+    if (existing && !isPlaceholderMacroValue(existing.actual)) continue;
+
+    const evalRes = evaluateSingleEventForGold(
+      rec.title,
+      rec.actualNum,
+      rec.forecastNum,
+      rec.previousNum
+    );
+    byKey.set(key, {
+      id: existing?.id || rec.id || `ff-arch-${rec.archiveKey.replace(/[^a-z0-9]/gi, '').slice(0, 18)}`,
+      title: rec.title,
+      country: 'USD',
+      date: rec.date,
+      impact: rec.impact,
+      previous: existing?.previous && existing.previous !== '—' ? existing.previous : rec.previous || '—',
+      forecast: existing?.forecast && existing.forecast !== '—' ? existing.forecast : rec.forecast || '—',
+      actual: rec.actual,
+      previousNum: existing?.previousNum ?? rec.previousNum,
+      forecastNum: existing?.forecastNum ?? rec.forecastNum,
+      actualNum: rec.actualNum,
+      unit: rec.unit || existing?.unit || '',
+      pillar: rec.pillar || classifyFomcPillar(rec.title),
+      isInverseIndicator: rec.isInverseIndicator,
+      eventBiasForGold: evalRes.bias,
+      biasReasonId: evalRes.reasonId,
+      biasReasonEn: evalRes.reasonEn,
+      isLiveFeed: true,
+      eventCategory:
+        rec.eventCategory ||
+        existing?.eventCategory ||
+        (isPrimaryHighImpactEvent({ title: rec.title, impact: rec.impact, country: 'USD' })
+          ? 'PRIMARY_HIGH_IMPACT'
+          : 'SUPPORTING_REFERENCE'),
+      isOfflineArchived: true,
+      actualSource: rec.actualSource || 'OFFLINE_ARCHIVE',
+    });
+  }
+
+  return Array.from(byKey.values()).sort(
+    (a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()
+  );
+}
+
+/**
+ * Returns the YYYY-MM month key in WIB (UTC+7 / Asia/Jakarta).
+ */
+export function getWibMonthKey(tsMs: number = Date.now()): string {
+  const safeMs = Number.isFinite(tsMs) ? tsMs : Date.now();
+  const wibDate = new Date(safeMs + 7 * 60 * 60 * 1000);
+  const year = wibDate.getUTCFullYear();
+  const month = String(wibDate.getUTCMonth() + 1).padStart(2, '0');
+  return `${year}-${month}`;
+}
+
+function normalizeMonthlyHeadlineKey(item: BreakingNewsHeadline): string {
+  const cleanTitle = String(item.title || '')
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 80);
+  const cleanSource = String(item.source || '').toLowerCase().trim();
+  return `${cleanSource}|${cleanTitle}`;
+}
+
+/**
+ * Loads the 1-calendar-month Offline Archive for Breaking News & Fed Speeches (System 3).
+ * Automatically resets when entering a new WIB calendar month (`YYYY-MM` rollover).
+ */
+export function loadMonthlyNewsSpeechArchive(
+  nowMs: number = Date.now()
+): MonthlyNewsSpeechArchive {
+  const currentMonthKey = getWibMonthKey(nowMs);
+  const emptyArchive: MonthlyNewsSpeechArchive = {
+    monthKey: currentMonthKey,
+    updatedAt: new Date(nowMs).toISOString(),
+    items: [],
+  };
+
+  if (typeof window !== 'undefined' && typeof localStorage !== 'undefined') {
+    try {
+      const raw = localStorage.getItem(MACRO_MONTHLY_NEWS_SPEECH_ARCHIVE_KEY);
+      if (raw) {
+        const parsed = JSON.parse(raw) as MonthlyNewsSpeechArchive;
+        if (parsed && parsed.monthKey === currentMonthKey && Array.isArray(parsed.items)) {
+          inMemoryMonthlyNewsSpeechArchive = parsed;
+          return parsed;
+        }
+        // Calendar month rolled over -> reset archive cleanly for the new month
+        inMemoryMonthlyNewsSpeechArchive = emptyArchive;
+        localStorage.setItem(MACRO_MONTHLY_NEWS_SPEECH_ARCHIVE_KEY, JSON.stringify(emptyArchive));
+        return emptyArchive;
+      }
+    } catch {
+      // ignore storage parse failure
+    }
+  }
+
+  if (
+    inMemoryMonthlyNewsSpeechArchive &&
+    inMemoryMonthlyNewsSpeechArchive.monthKey === currentMonthKey
+  ) {
+    return inMemoryMonthlyNewsSpeechArchive;
+  }
+  inMemoryMonthlyNewsSpeechArchive = emptyArchive;
+  return emptyArchive;
+}
+
+export function saveMonthlyNewsSpeechArchive(archive: MonthlyNewsSpeechArchive): void {
+  const sortedItems = [...(archive.items || [])]
+    .sort((a, b) => new Date(b.pubDate).getTime() - new Date(a.pubDate).getTime())
+    .slice(0, 400);
+  const next: MonthlyNewsSpeechArchive = {
+    monthKey: archive.monthKey,
+    updatedAt: archive.updatedAt || new Date().toISOString(),
+    items: sortedItems,
+  };
+  inMemoryMonthlyNewsSpeechArchive = next;
+
+  if (typeof window !== 'undefined' && typeof localStorage !== 'undefined') {
+    try {
+      localStorage.setItem(MACRO_MONTHLY_NEWS_SPEECH_ARCHIVE_KEY, JSON.stringify(next));
+      dispatchMacroLocalSyncEvent();
+    } catch {
+      // ignore storage quota errors
+    }
+  }
+}
+
+export function mergeBreakingHeadlinesForPulse(
+  primary: BreakingNewsHeadline[] = [],
+  archiveItems: BreakingNewsHeadline[] = []
+): BreakingNewsHeadline[] {
+  const deduped = new Map<string, BreakingNewsHeadline>();
+  for (const h of [...(primary || []), ...(archiveItems || [])]) {
+    if (!h || !h.title) continue;
+    const key = normalizeMonthlyHeadlineKey(h);
+    const prev = deduped.get(key);
+    if (!prev || new Date(h.pubDate).getTime() > new Date(prev.pubDate).getTime()) {
+      deduped.set(key, h);
+    }
+  }
+  return Array.from(deduped.values()).sort(
+    (a, b) => new Date(b.pubDate).getTime() - new Date(a.pubDate).getTime()
+  );
+}
+
+/**
+ * Immediately saves incoming Breaking News & Fed Speeches offline for the active calendar month.
+ * Items from prior calendar months are NOT carried over once the new month begins.
+ */
+export function recordBreakingNewsToMonthlyArchive(
+  incomingHeadlines: BreakingNewsHeadline[],
+  nowMs: number = Date.now()
+): MonthlyNewsSpeechArchive {
+  const currentMonthKey = getWibMonthKey(nowMs);
+  const base = loadMonthlyNewsSpeechArchive(nowMs);
+  const map = new Map<string, BreakingNewsHeadline>();
+
+  for (const item of base.items) {
+    if (!item || !item.title) continue;
+    const pubMs = new Date(item.pubDate).getTime();
+    if (Number.isFinite(pubMs) && getWibMonthKey(pubMs) !== currentMonthKey) continue;
+    map.set(normalizeMonthlyHeadlineKey(item), item);
+  }
+
+  for (const item of incomingHeadlines || []) {
+    if (!item || !item.title) continue;
+    const pubMs = new Date(item.pubDate).getTime();
+    const effectivePubDate = Number.isFinite(pubMs)
+      ? item.pubDate
+      : new Date(nowMs).toISOString();
+    const effectiveMonthKey = Number.isFinite(pubMs) ? getWibMonthKey(pubMs) : currentMonthKey;
+
+    // Do not back-import prior-month headlines after monthly reset
+    if (effectiveMonthKey !== currentMonthKey) continue;
+
+    const ctx = evaluateBreakingHeadlineContext(
+      item.title,
+      undefined,
+      item.matchedKeywords || []
+    );
+    const enriched: BreakingNewsHeadline =
+      ctx.sentimentForGold !== 'NEUTRAL'
+        ? {
+            ...item,
+            pubDate: effectivePubDate,
+            impact: ctx.impact,
+            sentimentForGold: ctx.sentimentForGold,
+            channelType: ctx.channelType,
+            aiEvaluationId: ctx.aiEvaluationId,
+            aiEvaluationEn: ctx.aiEvaluationEn,
+          }
+        : {
+            ...item,
+            pubDate: effectivePubDate,
+          };
+
+    const key = normalizeMonthlyHeadlineKey(enriched);
+    const existing = map.get(key);
+    if (!existing) {
+      map.set(key, enriched);
+    } else if (
+      existing.sentimentForGold === 'NEUTRAL' &&
+      enriched.sentimentForGold !== 'NEUTRAL'
+    ) {
+      map.set(key, enriched);
+    }
+  }
+
+  const next: MonthlyNewsSpeechArchive = {
+    monthKey: currentMonthKey,
+    updatedAt: new Date(nowMs).toISOString(),
+    items: Array.from(map.values())
+      .sort((a, b) => new Date(b.pubDate).getTime() - new Date(a.pubDate).getTime())
+      .slice(0, 400),
+  };
+  saveMonthlyNewsSpeechArchive(next);
+  return next;
+}
+
+function computePreReleaseBaselineEvents(
+  allCalendarEvents: MacroCalendarEvent[],
+  clusterIds: Set<string>
+): MacroCalendarEvent[] {
+  return allCalendarEvents.map((ev) => {
+    if (!clusterIds.has(ev.id)) return ev;
+    const evalPre = evaluateSingleEventForGold(ev.title, null, ev.forecastNum, ev.previousNum);
+    return {
+      ...ev,
+      actual: '',
+      actualNum: null,
+      eventBiasForGold: evalPre.bias,
+      biasReasonId: evalPre.reasonId,
+      biasReasonEn: evalPre.reasonEn,
+    };
+  });
+}
+
+function buildClusterKey(primaryEv: MacroCalendarEvent): string {
+  const cleanTitle = (primaryEv.title || '').trim().toLowerCase().replace(/[^a-z0-9]+/g, '-');
+  const hourIso = String(primaryEv.date || '').slice(0, 13);
+  return `${cleanTitle}|${hourIso}`;
+}
+
+export function resolveSystem1PreNewsState(params: {
+  primaryEvent: MacroCalendarEvent;
+  simultaneousEvents: MacroCalendarEvent[];
+  calendarEvents: MacroCalendarEvent[];
+  intermarketPulse: MacroNewsSnapshot['intermarketPulse'];
+  breakingNews: BreakingNewsHeadline[];
+  cmeFedWatch?: CmeFedWatchState;
+  currentMatrix: PreNewsScenarioMatrix;
+  nowMs?: number;
+  archiveOverride?: Record<string, PreNewsSystemState>;
+}): PreNewsSystemState {
+  const {
+    primaryEvent,
+    simultaneousEvents,
+    calendarEvents,
+    intermarketPulse,
+    breakingNews,
+    cmeFedWatch,
+    currentMatrix,
+    nowMs = Date.now(),
+    archiveOverride,
+  } = params;
+
+  const clusterEvents = [primaryEvent, ...simultaneousEvents];
+  const clusterKey = buildClusterKey(primaryEvent);
+  const targetMs = new Date(primaryEvent.date).getTime();
+  const isReleasedByClock = Number.isFinite(targetMs) && nowMs >= targetMs;
+  const hasActual = clusterEvents.some((e) => !isPlaceholderMacroValue(e.actual));
+  const remainingMs = Number.isFinite(targetMs) ? targetMs - nowMs : 0;
+  const isLockedT5M = !isReleasedByClock && !hasActual && remainingMs > 0 && remainingMs <= 5 * 60 * 1000;
+
+  const archive = archiveOverride ?? { ...loadPreNewsLockArchive() };
+  const existing = archive[clusterKey];
+
+  // If release already happened or actual already landed, keep Pre-News permanently OFF / frozen
+  if (isReleasedByClock || hasActual) {
+    if (existing) {
+      if (existing.phase !== 'OFF_RELEASED' || !existing.isLocked) {
+        const finalized: PreNewsSystemState = {
+          ...existing,
+          phase: 'OFF_RELEASED',
+          isLocked: true,
+          lockedAt: existing.lockedAt || new Date(nowMs).toISOString(),
+        };
+        archive[clusterKey] = finalized;
+        if (!archiveOverride) savePreNewsLockArchive(archive);
+        return finalized;
+      }
+      return existing;
+    }
+
+    // Reconstruct deterministic Pre-News baseline (Forecast vs Previous, strictly without Actual)
+    const clusterIdSet = new Set(clusterEvents.map((e) => e.id));
+    const preEvents = computePreReleaseBaselineEvents(calendarEvents, clusterIdSet);
+    const preSnap = computeDeterministicMacroSnapshot({
+      calendarEvents: preEvents,
+      intermarketPulse,
+      breakingNews,
+      cmeFedWatch,
+      selectedEventId: primaryEvent.id,
+      sourceMode: 'RULE_BASED_FALLBACK',
+      modelUsed: 'system1-prenews-baseline',
+    });
+    const m = preSnap.scenarioMatrix;
+    const finalized: PreNewsSystemState = {
+      clusterKey,
+      primaryEventId: primaryEvent.id,
+      primaryTitle: clusterEvents.map((e) => e.title).join(' & '),
+      releaseDateIso: primaryEvent.date,
+      phase: 'OFF_RELEASED',
+      isLocked: true,
+      lockedAt: new Date(nowMs).toISOString(),
+      forecast: primaryEvent.forecast || '—',
+      previous: primaryEvent.previous || '—',
+      buyProbability: m.buyProbability,
+      sellProbability: m.sellProbability,
+      mixedProbability: m.mixedProbability,
+      dominantBias: m.dominantBias,
+      thesisId: m.finalTakeId,
+      thesisEn: m.finalTakeEn,
+      reconstructedWithoutPreCapture: true,
+    };
+    archive[clusterKey] = finalized;
+    if (!archiveOverride) savePreNewsLockArchive(archive);
+    return finalized;
+  }
+
+  // Inside T-5M Final Lock: capture once and hold frozen until release
+  if (isLockedT5M) {
+    if (existing && existing.phase === 'T5M_LOCKED' && existing.isLocked) {
+      return existing;
+    }
+    const locked: PreNewsSystemState = {
+      clusterKey,
+      primaryEventId: primaryEvent.id,
+      primaryTitle: clusterEvents.map((e) => e.title).join(' & '),
+      releaseDateIso: primaryEvent.date,
+      phase: 'T5M_LOCKED',
+      isLocked: true,
+      lockedAt: new Date(nowMs).toISOString(),
+      forecast: primaryEvent.forecast || '—',
+      previous: primaryEvent.previous || '—',
+      buyProbability: currentMatrix.buyProbability,
+      sellProbability: currentMatrix.sellProbability,
+      mixedProbability: currentMatrix.mixedProbability,
+      dominantBias: currentMatrix.dominantBias,
+      thesisId: currentMatrix.finalTakeId,
+      thesisEn: currentMatrix.finalTakeEn,
+    };
+    archive[clusterKey] = locked;
+    if (!archiveOverride) savePreNewsLockArchive(archive);
+    return locked;
+  }
+
+  // > T-5M before release: Pre-News is ACTIVE and tracks live consensus + intermarket
+  const active: PreNewsSystemState = {
+    clusterKey,
+    primaryEventId: primaryEvent.id,
+    primaryTitle: clusterEvents.map((e) => e.title).join(' & '),
+    releaseDateIso: primaryEvent.date,
+    phase: 'PRE_ACTIVE',
+    isLocked: false,
+    lockedAt: null,
+    forecast: primaryEvent.forecast || '—',
+    previous: primaryEvent.previous || '—',
+    buyProbability: currentMatrix.buyProbability,
+    sellProbability: currentMatrix.sellProbability,
+    mixedProbability: currentMatrix.mixedProbability,
+    dominantBias: currentMatrix.dominantBias,
+    thesisId: currentMatrix.finalTakeId,
+    thesisEn: currentMatrix.finalTakeEn,
+  };
+  archive[clusterKey] = active;
+  if (!archiveOverride) savePreNewsLockArchive(archive);
+  return active;
+}
+
+export function resolveSystem2PostNewsState(params: {
+  primaryEvent: MacroCalendarEvent;
+  simultaneousEvents: MacroCalendarEvent[];
+  calendarEvents: MacroCalendarEvent[];
+  intermarketPulse: MacroNewsSnapshot['intermarketPulse'];
+  breakingNews: BreakingNewsHeadline[];
+  cmeFedWatch?: CmeFedWatchState;
+  preNewsState: PreNewsSystemState;
+  nowMs?: number;
+  archiveOverride?: Record<string, PostNewsSystemState>;
+}): PostNewsSystemState {
+  const {
+    primaryEvent,
+    simultaneousEvents,
+    calendarEvents,
+    intermarketPulse,
+    breakingNews,
+    cmeFedWatch,
+    preNewsState,
+    nowMs = Date.now(),
+    archiveOverride,
+  } = params;
+
+  const clusterEvents = [primaryEvent, ...simultaneousEvents];
+  const clusterKey = buildClusterKey(primaryEvent);
+  const targetMs = new Date(primaryEvent.date).getTime();
+  const isReleased = Number.isFinite(targetMs) && nowMs >= targetMs;
+  const elapsedAfterReleaseMs = isReleased ? Math.max(0, nowMs - targetMs) : 0;
+  const expiresAtIso = Number.isFinite(targetMs)
+    ? new Date(targetMs + POST_NEWS_ACTIVE_WINDOW_MS).toISOString()
+    : null;
+  const windowRemainingMs = isReleased
+    ? Math.max(0, POST_NEWS_ACTIVE_WINDOW_MS - elapsedAfterReleaseMs)
+    : POST_NEWS_ACTIVE_WINDOW_MS;
+  const isWindowExpired = isReleased && elapsedAfterReleaseMs > POST_NEWS_ACTIVE_WINDOW_MS;
+  const hasActual = clusterEvents.some((e) => !isPlaceholderMacroValue(e.actual));
+  const actualSummary = clusterEvents
+    .map((e) =>
+      !isPlaceholderMacroValue(e.actual)
+        ? `${e.title}: ${e.actual} (Fcst ${e.forecast || '—'})`
+        : `${e.title}: Menunggu`
+    )
+    .join(' · ');
+
+  const archive = archiveOverride ?? { ...loadPostNewsArchive() };
+  const existingArchived = archive[clusterKey];
+
+  // If already archived (>2h) with verified actuals, freeze forever as OFF
+  if (
+    isWindowExpired &&
+    existingArchived &&
+    existingArchived.status === 'OFF_ARCHIVED_2H' &&
+    existingArchived.hasVerifiedActual
+  ) {
+    return existingArchived;
+  }
+
+  if (!isReleased && !hasActual) {
+    return {
+      clusterKey,
+      primaryEventId: primaryEvent.id,
+      primaryTitle: clusterEvents.map((e) => e.title).join(' & '),
+      releaseDateIso: primaryEvent.date,
+      status: 'WAITING_RELEASE',
+      windowRemainingMs: POST_NEWS_ACTIVE_WINDOW_MS,
+      expiresAtIso,
+      archivedAt: null,
+      hasVerifiedActual: false,
+      actualSummary,
+      buyProbability: preNewsState.buyProbability,
+      sellProbability: preNewsState.sellProbability,
+      mixedProbability: preNewsState.mixedProbability,
+      dominantBias: preNewsState.dominantBias,
+      shiftVsPreNews: 'PENDING',
+      buyDeltaVsPreNews: 0,
+      sellDeltaVsPreNews: 0,
+      summaryId: `Menunggu jadwal rilis ${primaryEvent.title}. Modul Post-News aktif selama 2 jam setelah angka Actual keluar.`,
+      summaryEn: `Awaiting ${primaryEvent.title} release. Post-News module remains active for 2 hours once Actual prints.`,
+    };
+  }
+
+  if (isReleased && !hasActual) {
+    const status: PostNewsSystemState['status'] = isWindowExpired
+      ? 'OFF_ARCHIVED_2H'
+      : 'PENDING_ACTUAL';
+    return {
+      clusterKey,
+      primaryEventId: primaryEvent.id,
+      primaryTitle: clusterEvents.map((e) => e.title).join(' & '),
+      releaseDateIso: primaryEvent.date,
+      status,
+      windowRemainingMs: isWindowExpired ? 0 : windowRemainingMs,
+      expiresAtIso,
+      archivedAt: isWindowExpired ? new Date(nowMs).toISOString() : null,
+      hasVerifiedActual: false,
+      actualSummary,
+      buyProbability: preNewsState.buyProbability,
+      sellProbability: preNewsState.sellProbability,
+      mixedProbability: preNewsState.mixedProbability,
+      dominantBias: preNewsState.dominantBias,
+      shiftVsPreNews: 'PENDING',
+      buyDeltaVsPreNews: 0,
+      sellDeltaVsPreNews: 0,
+      summaryId: isWindowExpired
+        ? `Jendela 2 jam pasca-rilis ${primaryEvent.title} telah berakhir tanpa angka Actual.`
+        : `Jadwal rilis ${primaryEvent.title} telah lewat — menyinkronkan angka Actual untuk kalkulasi Post-News.`,
+      summaryEn: isWindowExpired
+        ? `The 2-hour post-release window for ${primaryEvent.title} ended without an Actual print.`
+        : `${primaryEvent.title} release time passed — syncing Actual data for Post-News evaluation.`,
+    };
+  }
+
+  // Evaluate Actual prints explicitly (Post-News deterministic calculation)
+  const postSnap = computeDeterministicMacroSnapshot({
+    calendarEvents,
+    intermarketPulse,
+    breakingNews,
+    cmeFedWatch,
+    selectedEventId: primaryEvent.id,
+    sourceMode: 'RULE_BASED_FALLBACK',
+    modelUsed: 'system2-postnews-2h',
+  });
+  const pm = postSnap.scenarioMatrix;
+  const buyDelta = pm.buyProbability - preNewsState.buyProbability;
+  const sellDelta = pm.sellProbability - preNewsState.sellProbability;
+
+  let shiftVsPreNews: PostNewsSystemState['shiftVsPreNews'] = 'UNCHANGED';
+  if (
+    (preNewsState.dominantBias === 'BUY' && pm.dominantBias === 'SELL') ||
+    (preNewsState.dominantBias === 'SELL' && pm.dominantBias === 'BUY')
+  ) {
+    shiftVsPreNews = 'REVERSED_PIVOT';
+  } else if (pm.dominantBias === 'BUY') {
+    if (buyDelta >= 5 || preNewsState.dominantBias === 'MIXED') shiftVsPreNews = 'STRENGTHENED';
+    else if (buyDelta <= -5) shiftVsPreNews = 'WEAKENED';
+  } else if (pm.dominantBias === 'SELL') {
+    if (sellDelta >= 5 || preNewsState.dominantBias === 'MIXED') shiftVsPreNews = 'STRENGTHENED';
+    else if (sellDelta <= -5) shiftVsPreNews = 'WEAKENED';
+  } else if (preNewsState.dominantBias !== 'MIXED') {
+    shiftVsPreNews = 'WEAKENED';
+  }
+
+  const shiftLabelId =
+    shiftVsPreNews === 'REVERSED_PIVOT'
+      ? `PINDAH HALUAN vs Pre-News (${preNewsState.dominantBias} → ${pm.dominantBias})`
+      : shiftVsPreNews === 'STRENGTHENED'
+      ? `KEYAKINAN MENINGKAT vs Pre-News (${pm.dominantBias} +${Math.max(Math.abs(buyDelta), Math.abs(sellDelta))}%)`
+      : shiftVsPreNews === 'WEAKENED'
+      ? `KEYAKINAN MELEMAH vs Pre-News`
+      : `SEJALAN DENGAN PRE-NEWS (${pm.dominantBias})`;
+
+  const shiftLabelEn =
+    shiftVsPreNews === 'REVERSED_PIVOT'
+      ? `REVERSED vs Pre-News (${preNewsState.dominantBias} → ${pm.dominantBias})`
+      : shiftVsPreNews === 'STRENGTHENED'
+      ? `CONVICTION STRENGTHENED vs Pre-News (${pm.dominantBias} +${Math.max(Math.abs(buyDelta), Math.abs(sellDelta))}%)`
+      : shiftVsPreNews === 'WEAKENED'
+      ? `CONVICTION WEAKENED vs Pre-News`
+      : `ALIGNED WITH PRE-NEWS (${pm.dominantBias})`;
+
+  const status: PostNewsSystemState['status'] = isWindowExpired ? 'OFF_ARCHIVED_2H' : 'ACTIVE_2H';
+  const result: PostNewsSystemState = {
+    clusterKey,
+    primaryEventId: primaryEvent.id,
+    primaryTitle: clusterEvents.map((e) => e.title).join(' & '),
+    releaseDateIso: primaryEvent.date,
+    status,
+    windowRemainingMs: isWindowExpired ? 0 : windowRemainingMs,
+    expiresAtIso,
+    archivedAt: isWindowExpired ? new Date(nowMs).toISOString() : null,
+    hasVerifiedActual: true,
+    actualSummary,
+    buyProbability: pm.buyProbability,
+    sellProbability: pm.sellProbability,
+    mixedProbability: pm.mixedProbability,
+    dominantBias: pm.dominantBias,
+    shiftVsPreNews,
+    buyDeltaVsPreNews: buyDelta,
+    sellDeltaVsPreNews: sellDelta,
+    summaryId: isWindowExpired
+      ? `[ARSIP OFF · >2 JAM] ${shiftLabelId}. Actual: ${actualSummary}.`
+      : `[POST-NEWS AKTIF] ${shiftLabelId}. Actual: ${actualSummary}.`,
+    summaryEn: isWindowExpired
+      ? `[OFF ARCHIVE · >2H] ${shiftLabelEn}. Actual: ${actualSummary}.`
+      : `[POST-NEWS ACTIVE] ${shiftLabelEn}. Actual: ${actualSummary}.`,
+  };
+
+  if (status === 'OFF_ARCHIVED_2H') {
+    archive[clusterKey] = result;
+    if (!archiveOverride) savePostNewsArchive(archive);
+  }
+  return result;
+}
+
+/**
+ * SYSTEM 3 — Live News, Fed Speeches & Fundamental Pulse (0 Gemini Tokens).
+ * Runs continuously while market is open, combining breaking RSS news/speeches, live Intermarket,
+ * CME FedWatch, and the Offline Actuals Archive track record without mutating System 1 or locked System 2.
+ */
+export function computeLiveFundamentalPulse(params: {
+  calendarEvents: MacroCalendarEvent[];
+  intermarketPulse: MacroNewsSnapshot['intermarketPulse'];
+  breakingNews: BreakingNewsHeadline[];
+  cmeFedWatch?: CmeFedWatchState;
+  nowMs?: number;
+  offlineArchive?: ArchivedMacroActualRecord[];
+}): LiveFundamentalPulseState {
+  const {
+    calendarEvents,
+    intermarketPulse,
+    breakingNews,
+    cmeFedWatch: rawFedWatch,
+    nowMs = Date.now(),
+    offlineArchive,
+  } = params;
+
+  const isMarketOpen = isMarketDay(nowMs, { useUtc: true, enforceFridayCloseUtc: true });
+  const cmeFedWatch = evaluateCmeFedWatchScoring(rawFedWatch);
+  const archiveRecords = offlineArchive ?? loadOfflineActualsArchive();
+
+  let buyScore = 20;
+  let sellScore = 20;
+  let mixedScore = 20;
+
+  // 1) Breaking News & Fed Speeches with recency weight (fresher headlines carry stronger pulse weight)
+  let speechAlertActive = false;
+  const recentHeadlines = (breakingNews || []).slice(0, 12);
+  for (const h of recentHeadlines) {
+    const pubMs = new Date(h.pubDate).getTime();
+    const ageHours = Number.isFinite(pubMs) ? Math.max(0, (nowMs - pubMs) / (60 * 60 * 1000)) : 4;
+    const recencyWeight = ageHours <= 2 ? 1.5 : ageHours <= 6 ? 1.0 : 0.5;
+    const baseWeight = h.impact === 'HIGH' ? 12 : 5;
+    const weight = Math.round(baseWeight * recencyWeight);
+
+    if (h.channelType === 'FED_SPEECH' && ageHours <= 8) {
+      speechAlertActive = true;
+    }
+
+    if (h.sentimentForGold === 'BULLISH') buyScore += weight;
+    else if (h.sentimentForGold === 'BEARISH') sellScore += weight;
+    else mixedScore += Math.round(weight * 0.4);
+  }
+
+  // 2) Live Intermarket Transmission (DXY, US02Y, US10Y, USOIL, VIX)
+  const { dxy, us02y, us10y, usoil, vix } = intermarketPulse;
+  if (dxy?.isAvailable !== false && dxy?.price > 0) {
+    if (dxy.direction === 'UP') sellScore += 18;
+    else if (dxy.direction === 'DOWN') buyScore += 18;
+  }
+  if (us02y && us02y.isAvailable !== false && us02y.price > 0) {
+    if (us02y.direction === 'UP') sellScore += 16;
+    else if (us02y.direction === 'DOWN') buyScore += 16;
+  }
+  if (us10y?.isAvailable !== false && us10y?.price > 0) {
+    if (us10y.direction === 'UP') sellScore += 12;
+    else if (us10y.direction === 'DOWN') buyScore += 12;
+  }
+  if (usoil?.isAvailable !== false && usoil?.price > 0) {
+    if (usoil.changePercent >= 1.0) sellScore += 12; // Inflation channel
+    else if (usoil.changePercent <= -1.0) buyScore += 10;
+  }
+  if (vix?.isAvailable && vix.price >= 22 && vix.direction === 'UP') {
+    buyScore += 10;
+  }
+
+  // 3) CME FedWatch baseline
+  if (cmeFedWatch.isAvailable) {
+    if (cmeFedWatch.dominantOutcome === 'CUT') buyScore += 14;
+    else if (cmeFedWatch.dominantOutcome === 'HIKE') sellScore += 16;
+    else if (cmeFedWatch.hawkishShiftDetected) sellScore += 10;
+    else mixedScore += 8;
+  }
+
+  // 4) Offline Historical Actuals Track Record (0 network/tokens — uses prior released CPI/PPI/NFP)
+  const streakInfo = detectPreviousRevisionsAndStreaks(calendarEvents);
+  const releasedArchiveCount = Math.max(
+    archiveRecords.length,
+    calendarEvents.filter((e) => !isPlaceholderMacroValue(e.actual) && !isFedSpeechEvent(e.title)).length
+  );
+  let histBuy = 0;
+  let histSell = 0;
+  for (const ev of calendarEvents) {
+    if (isPlaceholderMacroValue(ev.actual) || isFedSpeechEvent(ev.title)) continue;
+    const evMs = new Date(ev.date).getTime();
+    const ageDays = Number.isFinite(evMs) ? Math.max(0, (nowMs - evMs) / (24 * 60 * 60 * 1000)) : 30;
+    const w =
+      ageDays <= 21
+        ? ev.impact === 'High'
+          ? 5
+          : 2
+        : ageDays <= 45
+        ? ev.impact === 'High'
+          ? 3
+          : 1
+        : 1;
+    if (ev.eventBiasForGold === 'BUY') {
+      buyScore += w;
+      histBuy++;
+    } else if (ev.eventBiasForGold === 'SELL') {
+      sellScore += w;
+      histSell++;
+    }
+  }
+
+  // Anti-whipsaw balance check when DXY & yields diverge
+  if (
+    dxy?.isAvailable !== false &&
+    us02y?.isAvailable !== false &&
+    ((dxy.direction === 'UP' && us02y?.direction === 'DOWN') ||
+      (dxy.direction === 'DOWN' && us02y?.direction === 'UP'))
+  ) {
+    mixedScore += 14;
+  }
+
+  const total = buyScore + sellScore + mixedScore;
+  const buyProbability = Math.round((buyScore / total) * 100);
+  const sellProbability = Math.round((sellScore / total) * 100);
+  const mixedProbability = Math.max(0, 100 - buyProbability - sellProbability);
+
+  let dominantBias: MacroBiasDirection = 'MIXED';
+  if (buyProbability >= sellProbability + 6 && buyProbability > mixedProbability) {
+    dominantBias = 'BUY';
+  } else if (sellProbability >= buyProbability + 6 && sellProbability > mixedProbability) {
+    dominantBias = 'SELL';
+  }
+
+  const topHl =
+    recentHeadlines.find((h) => h.channelType === 'FED_SPEECH' || h.impact === 'HIGH') ||
+    recentHeadlines[0];
+
+  const offlinePillarSummaryId =
+    streakInfo.pillarStreakSummaryId ||
+    `Arsip offline ${releasedArchiveCount} rilis aktual (${histSell} pro-SELL / ${histBuy} pro-BUY Gold).`;
+  const offlinePillarSummaryEn =
+    streakInfo.pillarStreakSummaryEn ||
+    `Offline archive ${releasedArchiveCount} actual prints (${histSell} pro-SELL / ${histBuy} pro-BUY Gold).`;
+
+  const summaryId =
+    dominantBias === 'SELL'
+      ? `Pulse fundamental berkelanjutan condong BEARISH Gold (${sellProbability}%) dari ${
+          topHl ? `berita/pidato "${topHl.title}"` : 'tekanan DXY/Yield'
+        } serta ${releasedArchiveCount} rekam rilis aktual offline.`
+      : dominantBias === 'BUY'
+      ? `Pulse fundamental berkelanjutan condong BULLISH Gold (${buyProbability}%) didukung ${
+          topHl ? `berita/pidato "${topHl.title}"` : 'pelonggaran DXY/Yield'
+        } dan ${releasedArchiveCount} arsip data aktual offline.`
+      : `Pulse berita & pidato terkini masih seimbang (${mixedProbability}% MIXED) sementara pasar mencerna katalis lintas aset dan ${releasedArchiveCount} arsip aktual.`;
+
+  const summaryEn =
+    dominantBias === 'SELL'
+      ? `Continuous fundamental pulse leans BEARISH Gold (${sellProbability}%) driven by ${
+          topHl ? `"${topHl.title}"` : 'firm DXY/Yields'
+        } and ${releasedArchiveCount} archived offline actuals.`
+      : dominantBias === 'BUY'
+      ? `Continuous fundamental pulse leans BULLISH Gold (${buyProbability}%) backed by ${
+          topHl ? `"${topHl.title}"` : 'softer DXY/Yields'
+        } and ${releasedArchiveCount} archived offline actuals.`
+      : `Live news & speech pulse remains balanced (${mixedProbability}% MIXED) as markets digest cross-asset flows and ${releasedArchiveCount} archived actuals.`;
+
+  return {
+    status: isMarketOpen ? 'LIVE_CONTINUOUS' : 'WEEKEND_FROZEN',
+    updatedAt: new Date(nowMs).toISOString(),
+    buyProbability,
+    sellProbability,
+    mixedProbability,
+    dominantBias,
+    speechAlertActive,
+    topCatalystTitle: topHl?.title || (isMarketOpen ? 'Memantau feed RSS & pidato Fed' : 'Akhir pekan — data Jumat'),
+    topCatalystSource: topHl?.source || 'Multi-RSS',
+    topCatalystChannel: topHl?.channelType || 'MACRO_DATA',
+    offlineActualsCount: releasedArchiveCount,
+    offlinePillarSummaryId,
+    offlinePillarSummaryEn,
+    summaryId,
+    summaryEn,
+  };
+}
+
+export function computeMacroThreeSystemState(params: {
+  snapshot: MacroNewsSnapshot;
+  selectedEventId?: string | null;
+  nowMs?: number;
+  offlineArchive?: ArchivedMacroActualRecord[];
+  preNewsArchive?: Record<string, PreNewsSystemState>;
+  postNewsArchive?: Record<string, PostNewsSystemState>;
+}): MacroThreeSystemState {
+  const {
+    snapshot,
+    selectedEventId,
+    nowMs = Date.now(),
+    offlineArchive,
+    preNewsArchive,
+    postNewsArchive,
+  } = params;
+
+  const matrix =
+    selectedEventId && snapshot.scenarioMatrix.primaryEvent.id !== selectedEventId
+      ? analyzeMacroEvent({
+          calendarEvents: snapshot.calendarEvents,
+          intermarketPulse: snapshot.intermarketPulse,
+          breakingNews: snapshot.breakingNews,
+          cmeFedWatch: snapshot.cmeFedWatch || snapshot.scenarioMatrix.cmeFedWatch,
+          selectedEventId,
+          sourceMode: snapshot.sourceMode,
+          modelUsed: snapshot.modelUsed,
+        }).scenarioMatrix
+      : snapshot.scenarioMatrix;
+
+  const system1PreNews = resolveSystem1PreNewsState({
+    primaryEvent: matrix.primaryEvent,
+    simultaneousEvents: matrix.simultaneousEvents || [],
+    calendarEvents: snapshot.calendarEvents,
+    intermarketPulse: snapshot.intermarketPulse,
+    breakingNews: snapshot.breakingNews,
+    cmeFedWatch: snapshot.cmeFedWatch || matrix.cmeFedWatch,
+    currentMatrix: matrix,
+    nowMs,
+    archiveOverride: preNewsArchive,
+  });
+
+  const system2PostNews = resolveSystem2PostNewsState({
+    primaryEvent: matrix.primaryEvent,
+    simultaneousEvents: matrix.simultaneousEvents || [],
+    calendarEvents: snapshot.calendarEvents,
+    intermarketPulse: snapshot.intermarketPulse,
+    breakingNews: snapshot.breakingNews,
+    cmeFedWatch: snapshot.cmeFedWatch || matrix.cmeFedWatch,
+    preNewsState: system1PreNews,
+    nowMs,
+    archiveOverride: postNewsArchive,
+  });
+
+  const system3LivePulse = computeLiveFundamentalPulse({
+    calendarEvents: snapshot.calendarEvents,
+    intermarketPulse: snapshot.intermarketPulse,
+    breakingNews: snapshot.breakingNews,
+    cmeFedWatch: snapshot.cmeFedWatch || matrix.cmeFedWatch,
+    nowMs,
+    offlineArchive,
+  });
+
+  let effectiveSourceSystem: MacroThreeSystemState['effectiveSourceSystem'] = 'SYSTEM_3_LIVE_PULSE';
+  let effectiveFundamentalBias: MacroBiasDirection = system3LivePulse.dominantBias;
+
+  if (system2PostNews.status === 'ACTIVE_2H' && system2PostNews.hasVerifiedActual) {
+    effectiveSourceSystem = 'SYSTEM_2_POST_NEWS';
+    effectiveFundamentalBias = system2PostNews.dominantBias;
+  } else if (system1PreNews.phase === 'T5M_LOCKED') {
+    effectiveSourceSystem = 'SYSTEM_1_PRE_NEWS';
+    effectiveFundamentalBias = system1PreNews.dominantBias;
+  } else if (system1PreNews.phase === 'PRE_ACTIVE') {
+    // Before release, blend/respect System 1 + System 3 (System 3 reflects live headlines/speeches + Pre-News)
+    effectiveSourceSystem = 'SYSTEM_3_LIVE_PULSE';
+    effectiveFundamentalBias = system3LivePulse.dominantBias;
+  }
+
+  return {
+    system1PreNews,
+    system2PostNews,
+    system3LivePulse,
+    effectiveFundamentalBias,
+    effectiveSourceSystem,
+  };
+}
+
