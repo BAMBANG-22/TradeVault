@@ -2049,6 +2049,11 @@ export async function scanSingleMt5HistoryScreenshot(
 
   const endpoints = getApiEndpointCandidates('/api/extract-mt5-history');
   let lastError = 'Gagal menghubungi layanan AI Scan Kilat MT5.';
+  let emptyBackendSuccess: {
+    trades: Mt5HistoryTradeCandidate[];
+    modelUsed: string;
+    source: string;
+  } | null = null;
 
   for (const endpoint of endpoints) {
     const res = await nativeAwarePostJson(endpoint, { imageBase64: trimmed }, 65000);
@@ -2161,11 +2166,20 @@ export async function scanSingleMt5HistoryScreenshot(
         };
       });
 
-      return {
-        trades: mapped,
+      if (mapped.length > 0) {
+        return {
+          trades: mapped,
+          modelUsed: String(res.json.data.modelUsed || 'gemini-4-hydrogen'),
+          source: String(res.json.data.source || 'MT5_HISTORY'),
+        };
+      }
+
+      emptyBackendSuccess = {
+        trades: [],
         modelUsed: String(res.json.data.modelUsed || 'gemini-4-hydrogen'),
         source: String(res.json.data.source || 'MT5_HISTORY'),
       };
+      continue;
     }
 
     if (res.json?.error) {
@@ -2233,6 +2247,10 @@ export async function scanSingleMt5HistoryScreenshot(
     }
   }
 
+  if (emptyBackendSuccess) {
+    return emptyBackendSuccess;
+  }
+
   throw new Error(lastError);
 }
 
@@ -2263,17 +2281,21 @@ function parseMt5HistoryRowsFromOcrText(rawText: string): Array<{
   for (let i = 0; i < lines.length; i++) {
     const windowText = [lines[i], lines[i + 1] || '', lines[i + 2] || ''].join(' ');
     const headerMatch = lines[i].match(
-      /\b([A-Za-z0-9._#]{3,12})\s*[, ]\s*(buy|sell|beli|jual)\s+(\d+(?:[.,]\d{1,2})?)/i
+      /\b([A-Za-z0-9._#]{3,14})\s*[, ]\s*(buy|sell|beli|jual)(?:\s+(\d+(?:[.,]\d{1,2})?))?/i
     );
     if (!headerMatch) continue;
     const instrument = normalizeScanInstrument(headerMatch[1]);
     const dirRaw = headerMatch[2].toUpperCase();
     const position: TradePosition = dirRaw === 'SELL' || dirRaw === 'JUAL' ? 'SELL' : 'BUY';
-    const lotSize = parseFloat(headerMatch[3].replace(',', '.')) || 0.01;
+    const lotSize = headerMatch[3] ? parseFloat(headerMatch[3].replace(',', '.')) || 0.01 : 0.01;
 
-    const arrowMatch = windowText.match(
-      /([0-9]{1,6}(?:[.,][0-9]{1,5})+)\s*(?:->|→|-›|=>|-)\s*([0-9]{1,6}(?:[.,][0-9]{1,5})+)/
-    );
+    const arrowMatch =
+      windowText.match(
+        /([0-9]{1,6}(?:[.,][0-9]{1,5})+)\s*(?:->|→|-›|=>|-)\s*([0-9]{1,6}(?:[.,][0-9]{1,5})+)/
+      ) ||
+      windowText.match(
+        /([0-9]{1,6}(?:[.,][0-9]{1,5})?)\s*(?:->|→|-›|=>)\s*([0-9]{1,6}(?:[.,][0-9]{1,5})?)/
+      );
     if (!arrowMatch) continue;
     const entryPrice = normalizeChartPriceNumber(arrowMatch[1], instrument);
     const exitPrice = normalizeChartPriceNumber(arrowMatch[2], instrument);

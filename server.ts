@@ -130,12 +130,151 @@ function isGeminiModelUnavailableError(err: any): boolean {
   );
 }
 
+function sanitizeGeminiErrMsg(err: any): string {
+  return String(err?.message || err || 'Unknown error')
+    .replace(/AIza[0-9A-Za-z\-_]{20,}/g, '[REDACTED_KEY]')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function classifyGeminiFailure(err: any): {
+  code: 'KEY_INVALID' | 'QUOTA_429' | 'MODEL_404' | 'BAD_REQUEST_400' | 'SERVER_503' | 'TIMEOUT' | 'EMPTY_RESPONSE' | 'UNKNOWN';
+  summary: string;
+} {
+  const raw = sanitizeGeminiErrMsg(err);
+  const msg = raw.toLowerCase();
+  const status = Number(err?.status || err?.statusCode || 0);
+
+  if (
+    status === 401 ||
+    status === 403 ||
+    msg.includes('api_key_invalid') ||
+    msg.includes('api key not valid') ||
+    msg.includes('permission_denied') ||
+    msg.includes('unauthenticated')
+  ) {
+    return { code: 'KEY_INVALID', summary: `KEY_INVALID: ${raw.slice(0, 90)}` };
+  }
+  if (isGeminiQuotaError(err)) {
+    return { code: 'QUOTA_429', summary: `QUOTA_429: ${raw.slice(0, 90)}` };
+  }
+  if (isGeminiModelUnavailableError(err)) {
+    return { code: 'MODEL_404', summary: `MODEL_404: ${raw.slice(0, 90)}` };
+  }
+  if (msg.includes('timed out') || msg.includes('abort')) {
+    return { code: 'TIMEOUT', summary: `TIMEOUT: ${raw.slice(0, 90)}` };
+  }
+  if (
+    status === 503 ||
+    status === 500 ||
+    msg.includes('503') ||
+    msg.includes('500') ||
+    msg.includes('unavailable') ||
+    msg.includes('overloaded') ||
+    msg.includes('high demand')
+  ) {
+    return { code: 'SERVER_503', summary: `SERVER_503: ${raw.slice(0, 90)}` };
+  }
+  if (status === 400 || msg.includes('invalid_argument')) {
+    return { code: 'BAD_REQUEST_400', summary: `BAD_REQUEST_400: ${raw.slice(0, 90)}` };
+  }
+  return { code: 'UNKNOWN', summary: raw.slice(0, 90) };
+}
+
+function buildScanFailureResponse(
+  failures: Array<{ model: string; code: string; summary: string }>,
+  isMt5History: boolean
+): { success: false; quotaExhausted: boolean; error: string; diagnostics: string[] } {
+  const diagnostics = failures.map((f) => `${f.model} -> ${f.summary}`);
+  const shortDiag = failures
+    .slice(0, 5)
+    .map((f) => `${f.model}: ${f.code}`)
+    .join(', ');
+  const diagSuffix = shortDiag ? ` [${shortDiag}]` : '';
+  const hasKeyInvalid = failures.some((f) => f.code === 'KEY_INVALID');
+  const hasQuota429 = failures.some((f) => f.code === 'QUOTA_429');
+  const allNonUnsupportedWereQuota =
+    hasQuota429 && failures.every((f) => f.code === 'QUOTA_429' || f.code === 'MODEL_404');
+  const hasServerOrTimeout = failures.some((f) => f.code === 'TIMEOUT' || f.code === 'SERVER_503');
+  const hasOnlyUnsupported =
+    failures.length > 0 && failures.every((f) => f.code === 'MODEL_404' || f.code === 'BAD_REQUEST_400');
+
+  if (hasKeyInvalid) {
+    return {
+      success: false,
+      quotaExhausted: false,
+      error: `API Key Gemini Scan Kilat tidak valid atau tidak memiliki izin akses. Periksa GEMINI_SCAN_API_KEY / GEMINI_API_KEY di server.${diagSuffix}`,
+      diagnostics,
+    };
+  }
+  if (allNonUnsupportedWereQuota) {
+    return {
+      success: false,
+      quotaExhausted: true,
+      error: isMt5History
+        ? `Kuota AI Scan Kilat penuh sementara (HTTP 429). Jika GEMINI_SCAN_API_KEY dan GEMINI_NEWS_API_KEY dibuat di 1 project Google Cloud yang sama, pisahkan ke 2 project berbeda agar kuota harian tidak terbagi.${diagSuffix}`
+        : `Batas kuota harian tier gratis tercapai sementara (HTTP 429); beralih otomatis ke pemindai geometri kanvas & OCR.${diagSuffix}`,
+      diagnostics,
+    };
+  }
+  if (hasOnlyUnsupported) {
+    return {
+      success: false,
+      quotaExhausted: false,
+      error: `Model AI Scan Kilat tidak didukung oleh API Key saat ini. Pastikan Gemini API aktif di Google Cloud Project key tersebut.${diagSuffix}`,
+      diagnostics,
+    };
+  }
+  if (hasServerOrTimeout) {
+    return {
+      success: false,
+      quotaExhausted: false,
+      error: isMt5History
+        ? `Server AI Gemini sedang sibuk atau lambat merespons (timeout). Silakan coba pindai lagi beberapa saat lagi.${diagSuffix}`
+        : `Server AI Gemini timeout sementara; beralih otomatis ke pemindai geometri kanvas & OCR.${diagSuffix}`,
+      diagnostics,
+    };
+  }
+  return {
+    success: false,
+    quotaExhausted: hasQuota429,
+    error: isMt5History
+      ? `Scan Kilat MT5 belum menerima respons dari AI. Silakan coba lagi.${diagSuffix}`
+      : `Pemindai AI gagal merespons; beralih otomatis ke pemindai geometri kanvas & OCR.${diagSuffix}`,
+    diagnostics,
+  };
+}
+
 function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> {
   return new Promise<T>((resolve, reject) => {
     const timer = setTimeout(() => {
       reject(new Error(`${label} timed out after ${timeoutMs}ms`));
     }, timeoutMs);
     promise.then(
+      (val) => {
+        clearTimeout(timer);
+        resolve(val);
+      },
+      (err) => {
+        clearTimeout(timer);
+        reject(err);
+      }
+    );
+  });
+}
+
+function withTimeoutAbort<T>(
+  fn: (signal: AbortSignal) => Promise<T>,
+  timeoutMs: number,
+  label: string
+): Promise<T> {
+  const controller = new AbortController();
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      controller.abort();
+      reject(new Error(`${label} timed out after ${timeoutMs}ms`));
+    }, timeoutMs);
+    fn(controller.signal).then(
       (val) => {
         clearTimeout(timer);
         resolve(val);
@@ -678,15 +817,18 @@ ${geometryHintBlock}
     let responseText = '';
     let usedModel = '';
     const scanCascadeStartMs = Date.now();
-    const MAX_SCAN_WALL_MS = 42_000;
+    const MAX_SCAN_WALL_MS = 45_000;
+    const scanFailures: Array<{ model: string; code: string; summary: string }> = [];
 
     for (const model of candidateModels) {
-      if (Date.now() - scanCascadeStartMs >= MAX_SCAN_WALL_MS) break;
+      if (MAX_SCAN_WALL_MS - (Date.now() - scanCascadeStartMs) < 2500) break;
       for (let keyIdx = 0; keyIdx < scannerApiKeys.length; keyIdx++) {
-        if (Date.now() - scanCascadeStartMs >= MAX_SCAN_WALL_MS) break;
+        const remainingWallMs = MAX_SCAN_WALL_MS - (Date.now() - scanCascadeStartMs);
+        if (remainingWallMs < 2500) break;
         const cooldownKey = `${keyIdx}:${model}`;
         const cooldownUntil = quotaCooldownUntilByModel.get(cooldownKey) || 0;
         if (Date.now() < cooldownUntil) {
+          scanFailures.push({ model, code: 'QUOTA_429', summary: 'Cooldown cache active' });
           continue;
         }
 
@@ -696,96 +838,78 @@ ${geometryHintBlock}
             headers: {
               'User-Agent': 'aistudio-build',
             },
+            retryOptions: { attempts: 1 },
           },
         });
 
-        for (let attempt = 1; attempt <= 2; attempt++) {
-          if (Date.now() - scanCascadeStartMs >= MAX_SCAN_WALL_MS) break;
-          try {
-            const response = await withTimeout(
+        try {
+          const response = await withTimeoutAbort(
+            (abortSignal) =>
               ai.models.generateContent({
                 model,
-              contents: [
-                {
-                  inlineData: {
-                    mimeType,
-                    data: base64Data,
+                contents: [
+                  {
+                    inlineData: {
+                      mimeType,
+                      data: base64Data,
+                    },
+                  },
+                  prompt,
+                ],
+                config: {
+                  abortSignal,
+                  ...(model === 'gemini-4-hydrogen' || model === 'gemini-3-flash-preview'
+                    ? { thinkingConfig: { thinkingLevel: ThinkingLevel.LOW } }
+                    : {}),
+                  responseMimeType: 'application/json',
+                  responseSchema: {
+                    type: Type.OBJECT,
+                    properties: {
+                      detected: { type: Type.BOOLEAN, description: 'True if trade setup or order is detected' },
+                      source: { type: Type.STRING, description: 'MT5, TRADINGVIEW, or CHART' },
+                      instrument: { type: Type.STRING, description: 'Clean instrument symbol, e.g. XAUUSD, EURUSD, GBPUSD, USDJPY, BTCUSD, US30, NAS100' },
+                      leftEdgeLabels: { type: Type.STRING, description: 'Verbatim order/line labels on left edge (e.g. "TP, BUY LIMIT 0.12, SL") or "TradingView Position Box"' },
+                      rightAxisPriceTags: { type: Type.STRING, description: 'Highlighted/bordered Y-axis price badges listed top-to-bottom with colors/borders before assigning prices' },
+                      position: { type: Type.STRING, description: 'BUY or SELL' },
+                      lotSize: { type: Type.NUMBER, description: 'Lot size ONLY if source is MT5 (e.g. 0.01, 0.12, 0.25). Null for TradingView.' },
+                      entryPrice: { type: Type.NUMBER, description: 'Exact entry price from right Y-axis bordered box/badge or MT5 row, or null if not detected' },
+                      stopLoss: { type: Type.NUMBER, description: 'Exact Stop Loss price from right Y-axis bordered box/badge or MT5 row, or null if not detected' },
+                      takeProfit: { type: Type.NUMBER, description: 'Exact Take Profit price from right Y-axis bordered box/badge or MT5 row, or null if not detected' },
+                      exitPrice: { type: Type.NUMBER, description: 'Close/exit price if trade is closed' },
+                      profit: { type: Type.NUMBER, description: 'Floating or closed profit/loss amount' },
+                      plannedRiskReward: { type: Type.NUMBER, description: 'Risk/Reward ratio number (e.g. 2.0 for 1:2 RR)' },
+                      timeframe: { type: Type.STRING, description: 'Chart timeframe (e.g. M1, M5, M15, M30, H1, H4, D1)' },
+                      currentPrice: { type: Type.NUMBER, description: 'Current live running market price on the right price scale' },
+                      status: { type: Type.STRING, description: 'PLANNED (when LIMIT or STOP is present, or TradingView setup), ACTIVE (open market order), or CLOSED' },
+                      notes: { type: Type.STRING, description: 'Brief summary of visual readings including left-edge order labels' },
+                    },
+                    required: ['detected', 'instrument', 'position'],
                   },
                 },
-                prompt,
-              ],
-              config: {
-                ...(model === 'gemini-4-hydrogen' || model === 'gemini-3-flash-preview'
-                  ? { thinkingConfig: { thinkingLevel: ThinkingLevel.LOW } }
-                  : {}),
-                responseMimeType: 'application/json',
-                responseSchema: {
-                  type: Type.OBJECT,
-                  properties: {
-                    detected: { type: Type.BOOLEAN, description: 'True if trade setup or order is detected' },
-                    source: { type: Type.STRING, description: 'MT5, TRADINGVIEW, or CHART' },
-                    instrument: { type: Type.STRING, description: 'Clean instrument symbol, e.g. XAUUSD, EURUSD, GBPUSD, USDJPY, BTCUSD, US30, NAS100' },
-                    leftEdgeLabels: { type: Type.STRING, description: 'Verbatim order/line labels on left edge (e.g. "TP, BUY LIMIT 0.12, SL") or "TradingView Position Box"' },
-                    rightAxisPriceTags: { type: Type.STRING, description: 'Highlighted/bordered Y-axis price badges listed top-to-bottom with colors/borders before assigning prices' },
-                    position: { type: Type.STRING, description: 'BUY or SELL' },
-                    lotSize: { type: Type.NUMBER, description: 'Lot size ONLY if source is MT5 (e.g. 0.01, 0.12, 0.25). Null for TradingView.' },
-                    entryPrice: { type: Type.NUMBER, description: 'Exact entry price from right Y-axis bordered box/badge or MT5 row, or null if not detected' },
-                    stopLoss: { type: Type.NUMBER, description: 'Exact Stop Loss price from right Y-axis bordered box/badge or MT5 row, or null if not detected' },
-                    takeProfit: { type: Type.NUMBER, description: 'Exact Take Profit price from right Y-axis bordered box/badge or MT5 row, or null if not detected' },
-                    exitPrice: { type: Type.NUMBER, description: 'Close/exit price if trade is closed' },
-                    profit: { type: Type.NUMBER, description: 'Floating or closed profit/loss amount' },
-                    plannedRiskReward: { type: Type.NUMBER, description: 'Risk/Reward ratio number (e.g. 2.0 for 1:2 RR)' },
-                    timeframe: { type: Type.STRING, description: 'Chart timeframe (e.g. M1, M5, M15, M30, H1, H4, D1)' },
-                    currentPrice: { type: Type.NUMBER, description: 'Current live running market price on the right price scale' },
-                    status: { type: Type.STRING, description: 'PLANNED (when LIMIT or STOP is present, or TradingView setup), ACTIVE (open market order), or CLOSED' },
-                    notes: { type: Type.STRING, description: 'Brief summary of visual readings including left-edge order labels' },
-                  },
-                  required: ['detected', 'instrument', 'position'],
-                },
-              },
-            }),
-              20_000,
-              `Scan Kilat (${model})`
-            );
+              }),
+            Math.min(12_000, remainingWallMs),
+            `Scan Kilat (${model})`
+          );
 
-            if (response && response.text) {
-              responseText = response.text;
-              usedModel = model;
-              break;
-            }
-          } catch (err: any) {
-            const errMsg = err?.message || String(err);
-            if (isGeminiQuotaError(err) || isGeminiModelUnavailableError(err)) {
-              quotaCooldownUntilByModel.set(cooldownKey, Date.now() + 20 * 60 * 1000);
-              break;
-            }
-
-            const isTransientServerOverload =
-              errMsg.includes('503') ||
-              errMsg.includes('high demand') ||
-              errMsg.includes('overloaded') ||
-              errMsg.includes('UNAVAILABLE') ||
-              errMsg.includes('500');
-
-            if (isTransientServerOverload && attempt < 2) {
-              await new Promise((resolve) => setTimeout(resolve, 450));
-              continue;
-            }
+          if (response && response.text) {
+            responseText = response.text;
+            usedModel = model;
             break;
           }
+          scanFailures.push({ model, code: 'EMPTY_RESPONSE', summary: 'Empty response text' });
+        } catch (err: any) {
+          const classified = classifyGeminiFailure(err);
+          scanFailures.push({ model, code: classified.code, summary: classified.summary });
+          if (classified.code === 'QUOTA_429' || classified.code === 'MODEL_404') {
+            quotaCooldownUntilByModel.set(cooldownKey, Date.now() + 20 * 60 * 1000);
+          }
         }
-        if (responseText) break;
       }
       if (responseText) break;
     }
 
     if (!responseText) {
-      res.status(200).json({
-        success: false,
-        quotaExhausted: true,
-        error:
-          'Batas kuota harian tier gratis tercapai sementara; beralih otomatis ke pemindai geometri kanvas & OCR.',
-      });
+      res.status(200).json(buildScanFailureResponse(scanFailures, false));
       return;
     }
 
@@ -1028,6 +1152,119 @@ function inferMt5CloseType(params: {
   return 'Manual';
 }
 
+function parseAndNormalizeMt5HistoryResponse(responseText: string): {
+  parsedValidArray: boolean;
+  explicitNoTrades: boolean;
+  source: string;
+  normalizedTrades: any[];
+} {
+  let parsedData = parseAiJsonResponse(responseText);
+  if (!Array.isArray(parsedData.trades)) {
+    const tradesIdx = responseText.indexOf('"trades"');
+    if (tradesIdx !== -1) {
+      const arrStart = responseText.indexOf('[', tradesIdx);
+      if (arrStart !== -1) {
+        const recovered: any[] = [];
+        const objMatches = responseText.slice(arrStart).match(/\{[^{}]+\}/g) || [];
+        for (const rawObj of objMatches) {
+          try {
+            recovered.push(JSON.parse(rawObj));
+          } catch {}
+        }
+        if (recovered.length > 0) {
+          parsedData = { detected: true, source: 'MT5_HISTORY', trades: recovered };
+        }
+      }
+    }
+  }
+
+  const parsedValidArray = Array.isArray(parsedData.trades);
+  const rawTrades = parsedValidArray ? parsedData.trades : [];
+
+  const normalizedTrades = rawTrades
+    .map((row: any) => {
+      if (!row || typeof row !== 'object') return null;
+      const rawPos = String(row.position || '').trim().toUpperCase();
+      const isSell =
+        rawPos.includes('SELL') || rawPos.includes('JUAL') || rawPos.includes('SHORT');
+      const isBuy =
+        rawPos.includes('BUY') || rawPos.includes('BELI') || rawPos.includes('LONG');
+      if (!isBuy && !isSell) {
+        return null;
+      }
+      const position: 'BUY' | 'SELL' = isSell && !isBuy ? 'SELL' : isSell ? 'SELL' : 'BUY';
+      const instrument = normalizeInstrument(row.instrument);
+      const lotRaw = parseNumericValue(row.lotSize, 'EURUSD');
+      const entryPrice = parseNumericValue(row.entryPrice, instrument);
+      const exitPrice = parseNumericValue(row.exitPrice, instrument);
+      const stopLoss = parseNumericValue(row.stopLoss, instrument);
+      const takeProfit = parseNumericValue(row.takeProfit, instrument);
+      const rawComm = parseNumericValue(row.commission, 'EURUSD');
+      const rawSwap = parseNumericValue(row.swap, 'EURUSD');
+      const rawProfit = parseNumericValue(row.netProfit, 'EURUSD');
+
+      if (entryPrice === null && exitPrice === null && rawProfit === null) {
+        return null;
+      }
+
+      const cleanStr = (v: unknown): string => {
+        if (typeof v !== 'string') return '';
+        const t = v.trim();
+        return /^(null|undefined|none|n\/a)$/i.test(t) ? '' : t;
+      };
+
+      const openDateTime = normalizeMt5DateTimeOutput(cleanStr(row.openDateTime));
+      const closeDateTime = normalizeMt5DateTimeOutput(cleanStr(row.closeDateTime));
+      const notes = cleanStr(row.notes);
+      const closeType = inferMt5CloseType({
+        rawCloseType: row.closeType,
+        notes,
+        position,
+        exitPrice,
+        stopLoss,
+        takeProfit,
+        netProfit: rawProfit,
+        instrument,
+      });
+
+      const rawTicket =
+        typeof row.ticketId === 'string' || typeof row.ticketId === 'number'
+          ? String(row.ticketId).replace(/^#/, '').trim()
+          : '';
+      const cleanTicket =
+        rawTicket && !/^(null|undefined|none|n\/a|-)$/i.test(rawTicket) ? rawTicket : null;
+
+      return {
+        ticketId: cleanTicket,
+        instrument,
+        position,
+        lotSize: lotRaw !== null && lotRaw > 0 ? Number(lotRaw.toFixed(2)) : 0.01,
+        entryPrice: entryPrice !== null && entryPrice > 0 ? entryPrice : exitPrice || 0,
+        exitPrice: exitPrice !== null && exitPrice > 0 ? exitPrice : entryPrice || 0,
+        stopLoss: stopLoss !== null && stopLoss > 0 ? stopLoss : null,
+        takeProfit: takeProfit !== null && takeProfit > 0 ? takeProfit : null,
+        commission: rawComm !== null ? Number(Math.abs(rawComm).toFixed(2)) : 0,
+        swap: rawSwap !== null ? Number(rawSwap.toFixed(2)) : 0,
+        netProfit: rawProfit !== null ? Number(rawProfit.toFixed(2)) : 0,
+        openDateTime,
+        closeDateTime,
+        closeType,
+        notes,
+      };
+    })
+    .filter((item: any) => item !== null);
+
+  const explicitNoTrades =
+    parsedValidArray && normalizedTrades.length === 0 && parsedData.detected === false;
+
+  return {
+    parsedValidArray,
+    explicitNoTrades,
+    source: String(parsedData.source || 'MT5_HISTORY'),
+    normalizedTrades,
+  };
+}
+
 // AI Vision Endpoint: Batch extract closed MT5/MT4 trade history rows from a screenshot
 app.post('/api/extract-mt5-history', async (req, res) => {
   try {
@@ -1110,18 +1347,22 @@ STRICT EXTRACTION RULES:
    - Never invent trades that are not visibly printed on screen.`;
 
     const candidateModels = SCANNER_MODEL_CASCADE;
-    let responseText = '';
+    let winningResult: ReturnType<typeof parseAndNormalizeMt5HistoryResponse> | null = null;
     let usedModel = '';
+    let confirmedEmptyModel = '';
     const mt5CascadeStartMs = Date.now();
-    const MAX_MT5_WALL_MS = 45_000;
+    const MAX_MT5_WALL_MS = 50_000;
+    const mt5Failures: Array<{ model: string; code: string; summary: string }> = [];
 
     for (const model of candidateModels) {
-      if (Date.now() - mt5CascadeStartMs >= MAX_MT5_WALL_MS) break;
+      if (MAX_MT5_WALL_MS - (Date.now() - mt5CascadeStartMs) < 2500) break;
       for (let keyIdx = 0; keyIdx < scannerApiKeys.length; keyIdx++) {
-        if (Date.now() - mt5CascadeStartMs >= MAX_MT5_WALL_MS) break;
+        const remainingWallMs = MAX_MT5_WALL_MS - (Date.now() - mt5CascadeStartMs);
+        if (remainingWallMs < 2500) break;
         const cooldownKey = `${keyIdx}:${model}`;
         const cooldownUntil = quotaCooldownUntilByModel.get(cooldownKey) || 0;
         if (Date.now() < cooldownUntil) {
+          mt5Failures.push({ model, code: 'QUOTA_429', summary: 'Cooldown cache active' });
           continue;
         }
 
@@ -1131,220 +1372,132 @@ STRICT EXTRACTION RULES:
             headers: {
               'User-Agent': 'aistudio-build',
             },
+            retryOptions: { attempts: 1 },
           },
         });
 
-        for (let attempt = 1; attempt <= 2; attempt++) {
-          if (Date.now() - mt5CascadeStartMs >= MAX_MT5_WALL_MS) break;
-          try {
-            const response = await withTimeout(
+        try {
+          const response = await withTimeoutAbort(
+            (abortSignal) =>
               ai.models.generateContent({
                 model,
-              contents: [
-                {
-                  inlineData: {
-                    mimeType,
-                    data: base64Data,
+                contents: [
+                  {
+                    inlineData: {
+                      mimeType,
+                      data: base64Data,
+                    },
                   },
-                },
-                prompt,
-              ],
-              config: {
-                ...(model === 'gemini-4-hydrogen' || model === 'gemini-3-flash-preview'
-                  ? { thinkingConfig: { thinkingLevel: ThinkingLevel.LOW } }
-                  : {}),
-                responseMimeType: 'application/json',
-                responseSchema: {
-                  type: Type.OBJECT,
-                  properties: {
-                    detected: {
-                      type: Type.BOOLEAN,
-                      description: 'True if at least one closed MT5/MT4 trade row is visible',
-                    },
-                    source: {
-                      type: Type.STRING,
-                      description: 'MT5_HISTORY_MOBILE, MT5_HISTORY_DESKTOP, or MT4_HISTORY',
-                    },
-                    trades: {
-                      type: Type.ARRAY,
-                      description: 'All visible closed trade rows ordered top-to-bottom as shown in screenshot',
-                      items: {
-                        type: Type.OBJECT,
-                        properties: {
-                          ticketId: { type: Type.STRING, description: 'MT5 ticket/deal/position ID if visible, else empty string' },
-                          instrument: { type: Type.STRING, description: 'Clean symbol e.g. XAUUSD, EURUSD, BTCUSD' },
-                          position: { type: Type.STRING, description: 'BUY or SELL' },
-                          lotSize: { type: Type.NUMBER, description: 'Volume / lot size e.g. 0.10' },
-                          entryPrice: { type: Type.NUMBER, description: 'Entry / Open price before ->' },
-                          exitPrice: { type: Type.NUMBER, description: 'Exit / Close price after ->' },
-                          stopLoss: { type: Type.NUMBER, description: 'S/L price if shown, else null' },
-                          takeProfit: { type: Type.NUMBER, description: 'T/P price if shown, else null' },
-                          commission: { type: Type.NUMBER, description: 'Commission fee amount if shown, else 0' },
-                          swap: { type: Type.NUMBER, description: 'Swap amount if shown (signed), else 0' },
-                          netProfit: { type: Type.NUMBER, description: 'Realized profit/loss on the row (negative if loss)' },
-                          openDateTime: { type: Type.STRING, description: 'Open timestamp YYYY-MM-DD HH:mm if visible, else empty string' },
-                          closeDateTime: { type: Type.STRING, description: 'Close timestamp YYYY-MM-DD HH:mm if visible, else empty string' },
-                          closeType: { type: Type.STRING, description: 'TP, SL, or Manual' },
-                          notes: { type: Type.STRING, description: 'Optional visible row tag e.g. [tp], [sl], or empty string' },
+                  prompt,
+                ],
+                config: {
+                  abortSignal,
+                  ...(model === 'gemini-4-hydrogen' || model === 'gemini-3-flash-preview'
+                    ? { thinkingConfig: { thinkingLevel: ThinkingLevel.LOW } }
+                    : {}),
+                  responseMimeType: 'application/json',
+                  responseSchema: {
+                    type: Type.OBJECT,
+                    properties: {
+                      detected: {
+                        type: Type.BOOLEAN,
+                        description: 'True if at least one closed MT5/MT4 trade row is visible',
+                      },
+                      source: {
+                        type: Type.STRING,
+                        description: 'MT5_HISTORY_MOBILE, MT5_HISTORY_DESKTOP, or MT4_HISTORY',
+                      },
+                      trades: {
+                        type: Type.ARRAY,
+                        description: 'All visible closed trade rows ordered top-to-bottom as shown in screenshot',
+                        items: {
+                          type: Type.OBJECT,
+                          properties: {
+                            ticketId: { type: Type.STRING, description: 'MT5 ticket/deal/position ID if visible, else empty string' },
+                            instrument: { type: Type.STRING, description: 'Clean symbol e.g. XAUUSD, EURUSD, BTCUSD' },
+                            position: { type: Type.STRING, description: 'BUY or SELL' },
+                            lotSize: { type: Type.NUMBER, description: 'Volume / lot size e.g. 0.10' },
+                            entryPrice: { type: Type.NUMBER, description: 'Entry / Open price before ->' },
+                            exitPrice: { type: Type.NUMBER, description: 'Exit / Close price after ->' },
+                            stopLoss: { type: Type.NUMBER, description: 'S/L price if shown, else null' },
+                            takeProfit: { type: Type.NUMBER, description: 'T/P price if shown, else null' },
+                            commission: { type: Type.NUMBER, description: 'Commission fee amount if shown, else 0' },
+                            swap: { type: Type.NUMBER, description: 'Swap amount if shown (signed), else 0' },
+                            netProfit: { type: Type.NUMBER, description: 'Realized profit/loss on the row (negative if loss)' },
+                            openDateTime: { type: Type.STRING, description: 'Open timestamp YYYY-MM-DD HH:mm if visible, else empty string' },
+                            closeDateTime: { type: Type.STRING, description: 'Close timestamp YYYY-MM-DD HH:mm if visible, else empty string' },
+                            closeType: { type: Type.STRING, description: 'TP, SL, or Manual' },
+                            notes: { type: Type.STRING, description: 'Optional visible row tag e.g. [tp], [sl], or empty string' },
+                          },
+                          required: ['instrument', 'position'],
                         },
-                        required: ['instrument', 'position'],
                       },
                     },
+                    required: ['detected', 'trades'],
                   },
-                  required: ['detected', 'trades'],
                 },
-              },
-            }),
-              24_000,
-              `MT5 Scan (${model})`
-            );
+              }),
+            Math.min(13_000, remainingWallMs),
+            `MT5 Scan (${model})`
+          );
 
-            if (response && response.text) {
-              responseText = response.text;
+          if (response && response.text) {
+            const candidate = parseAndNormalizeMt5HistoryResponse(response.text);
+            if (candidate.normalizedTrades.length > 0) {
+              winningResult = candidate;
               usedModel = model;
               break;
             }
-          } catch (err: any) {
-            const errMsg = err?.message || String(err);
-            if (isGeminiQuotaError(err) || isGeminiModelUnavailableError(err)) {
-              quotaCooldownUntilByModel.set(cooldownKey, Date.now() + 20 * 60 * 1000);
-              break;
+            if (candidate.explicitNoTrades && !confirmedEmptyModel) {
+              confirmedEmptyModel = model;
             }
-
-            const isTransientServerOverload =
-              errMsg.includes('503') ||
-              errMsg.includes('high demand') ||
-              errMsg.includes('overloaded') ||
-              errMsg.includes('UNAVAILABLE') ||
-              errMsg.includes('500');
-
-            if (isTransientServerOverload && attempt < 2) {
-              await new Promise((resolve) => setTimeout(resolve, 450));
-              continue;
-            }
-            break;
+            mt5Failures.push({
+              model,
+              code: 'EMPTY_RESPONSE',
+              summary: candidate.parsedValidArray ? 'Model returned 0 trade rows' : 'Truncated or invalid JSON output',
+            });
+          } else {
+            mt5Failures.push({ model, code: 'EMPTY_RESPONSE', summary: 'Empty response text' });
+          }
+        } catch (err: any) {
+          const classified = classifyGeminiFailure(err);
+          mt5Failures.push({ model, code: classified.code, summary: classified.summary });
+          if (classified.code === 'QUOTA_429' || classified.code === 'MODEL_404') {
+            quotaCooldownUntilByModel.set(cooldownKey, Date.now() + 20 * 60 * 1000);
           }
         }
-        if (responseText) break;
       }
-      if (responseText) break;
+      if (winningResult) break;
     }
 
-    if (!responseText) {
-      res.status(200).json({
-        success: false,
-        quotaExhausted: true,
-        error:
-          'Kuota AI Scan Kilat sedang penuh sementara. Silakan coba beberapa saat lagi.',
-      });
+    if (!winningResult) {
+      const hasRealModelFailure = mt5Failures.some((f) => f.code !== 'EMPTY_RESPONSE');
+      if (confirmedEmptyModel && !hasRealModelFailure) {
+        res.json({
+          success: true,
+          data: {
+            detected: false,
+            source: 'MT5_HISTORY',
+            trades: [],
+            modelUsed: confirmedEmptyModel,
+          },
+        });
+        return;
+      }
+      res.status(200).json(buildScanFailureResponse(mt5Failures, true));
       return;
     }
 
-    let parsedData = parseAiJsonResponse(responseText);
-    if (!Array.isArray(parsedData.trades)) {
-      const tradesIdx = responseText.indexOf('"trades"');
-      if (tradesIdx !== -1) {
-        const arrStart = responseText.indexOf('[', tradesIdx);
-        if (arrStart !== -1) {
-          const recovered: any[] = [];
-          const objMatches = responseText.slice(arrStart).match(/\{[^{}]+\}/g) || [];
-          for (const rawObj of objMatches) {
-            try {
-              recovered.push(JSON.parse(rawObj));
-            } catch {}
-          }
-          if (recovered.length > 0) {
-            parsedData = { detected: true, source: 'MT5_HISTORY', trades: recovered };
-          }
-        }
-      }
-    }
-
-    const rawTrades = Array.isArray(parsedData.trades) ? parsedData.trades : [];
-
-    const normalizedTrades = rawTrades
-      .map((row: any) => {
-        if (!row || typeof row !== 'object') return null;
-        const rawPos = String(row.position || '').trim().toUpperCase();
-        const isSell =
-          rawPos.includes('SELL') || rawPos.includes('JUAL') || rawPos.includes('SHORT');
-        const isBuy =
-          rawPos.includes('BUY') || rawPos.includes('BELI') || rawPos.includes('LONG');
-        if (!isBuy && !isSell) {
-          return null;
-        }
-        const position: 'BUY' | 'SELL' = isSell && !isBuy ? 'SELL' : isSell ? 'SELL' : 'BUY';
-        const instrument = normalizeInstrument(row.instrument);
-        const lotRaw = parseNumericValue(row.lotSize, 'EURUSD');
-        const entryPrice = parseNumericValue(row.entryPrice, instrument);
-        const exitPrice = parseNumericValue(row.exitPrice, instrument);
-        const stopLoss = parseNumericValue(row.stopLoss, instrument);
-        const takeProfit = parseNumericValue(row.takeProfit, instrument);
-        const rawComm = parseNumericValue(row.commission, 'EURUSD');
-        const rawSwap = parseNumericValue(row.swap, 'EURUSD');
-        const rawProfit = parseNumericValue(row.netProfit, 'EURUSD');
-
-        if (entryPrice === null && exitPrice === null && rawProfit === null) {
-          return null;
-        }
-
-        const cleanStr = (v: unknown): string => {
-          if (typeof v !== 'string') return '';
-          const t = v.trim();
-          return /^(null|undefined|none|n\/a)$/i.test(t) ? '' : t;
-        };
-
-        const openDateTime = normalizeMt5DateTimeOutput(cleanStr(row.openDateTime));
-        const closeDateTime = normalizeMt5DateTimeOutput(cleanStr(row.closeDateTime));
-        const notes = cleanStr(row.notes);
-        const closeType = inferMt5CloseType({
-          rawCloseType: row.closeType,
-          notes,
-          position,
-          exitPrice,
-          stopLoss,
-          takeProfit,
-          netProfit: rawProfit,
-          instrument,
-        });
-
-        const rawTicket =
-          typeof row.ticketId === 'string' || typeof row.ticketId === 'number'
-            ? String(row.ticketId).replace(/^#/, '').trim()
-            : '';
-        const cleanTicket =
-          rawTicket && !/^(null|undefined|none|n\/a|-)$/i.test(rawTicket) ? rawTicket : null;
-
-        return {
-          ticketId: cleanTicket,
-          instrument,
-          position,
-          lotSize: lotRaw !== null && lotRaw > 0 ? Number(lotRaw.toFixed(2)) : 0.01,
-          entryPrice: entryPrice !== null && entryPrice > 0 ? entryPrice : exitPrice || 0,
-          exitPrice: exitPrice !== null && exitPrice > 0 ? exitPrice : entryPrice || 0,
-          stopLoss: stopLoss !== null && stopLoss > 0 ? stopLoss : null,
-          takeProfit: takeProfit !== null && takeProfit > 0 ? takeProfit : null,
-          commission: rawComm !== null ? Number(Math.abs(rawComm).toFixed(2)) : 0,
-          swap: rawSwap !== null ? Number(rawSwap.toFixed(2)) : 0,
-          netProfit: rawProfit !== null ? Number(rawProfit.toFixed(2)) : 0,
-          openDateTime,
-          closeDateTime,
-          closeType,
-          notes,
-        };
-      })
-      .filter((item): item is NonNullable<typeof item> => item !== null);
-
     console.log(
-      `[MT5HistoryExtract] model=${usedModel}, raw=${rawTrades.length}, normalized=${normalizedTrades.length}`
+      `[MT5HistoryExtract] model=${usedModel}, normalized=${winningResult.normalizedTrades.length}`
     );
 
     res.json({
       success: true,
       data: {
-        detected: normalizedTrades.length > 0 && parsedData.detected !== false,
-        source: String(parsedData.source || 'MT5_HISTORY'),
-        trades: normalizedTrades,
+        detected: true,
+        source: winningResult.source,
+        trades: winningResult.normalizedTrades,
         modelUsed: usedModel || 'gemini-4-hydrogen',
       },
     });
@@ -1537,7 +1690,10 @@ async function fetchForexFactoryCalendarViaGoogleSearch(): Promise<any[]> {
 
   const ai = new GoogleGenAI({
     apiKey: newsApiKey,
-    httpOptions: { headers: { 'User-Agent': 'aistudio-build' } },
+    httpOptions: {
+      headers: { 'User-Agent': 'aistudio-build' },
+      retryOptions: { attempts: 1 },
+    },
   });
 
   const todayIso = new Date().toISOString().slice(0, 10);
@@ -1551,15 +1707,17 @@ CRITICAL RULE: Do NOT invent or fabricate numbers. Only include events whose exa
     if (Date.now() < cooldownUntil) continue;
 
     try {
-      const response = await withTimeout(
-        ai.models.generateContent({
-          model,
-          contents: calendarPrompt,
-          config: {
-            tools: [{ googleSearch: {} }],
-          },
-        }),
-        15_000,
+      const response = await withTimeoutAbort(
+        (abortSignal) =>
+          ai.models.generateContent({
+            model,
+            contents: calendarPrompt,
+            config: {
+              abortSignal,
+              tools: [{ googleSearch: {} }],
+            },
+          }),
+        12_000,
         `FF Calendar Search (${model})`
       );
 
@@ -1572,16 +1730,10 @@ CRITICAL RULE: Do NOT invent or fabricate numbers. Only include events whose exa
       const parsed = JSON.parse(clean.slice(firstBracket, lastBracket + 1));
       if (Array.isArray(parsed) && parsed.length > 0) return parsed;
     } catch (err: any) {
-      const msg = String(err?.message || err || '');
-      if (
-        msg.includes('429') ||
-        msg.includes('RESOURCE_EXHAUSTED') ||
-        msg.includes('Quota exceeded')
-      ) {
+      if (isGeminiQuotaError(err) || isGeminiModelUnavailableError(err)) {
         newsQuotaCooldownUntilByModel.set(model, Date.now() + 30 * 60 * 1000);
-        continue;
       }
-      break;
+      continue;
     }
   }
   return [];
@@ -1690,15 +1842,14 @@ async function fetchLiveCmeFedWatchWithGrounding(
 
   const ai = new GoogleGenAI({
     apiKey: newsApiKey,
-    httpOptions: { headers: { 'User-Agent': 'aistudio-build' } },
+    httpOptions: {
+      headers: { 'User-Agent': 'aistudio-build' },
+      retryOptions: { attempts: 1 },
+    },
   });
 
   const todayIso = new Date().toISOString().slice(0, 10);
-  const fedWatchPrompt = `Today is ${todayIso}. Use Google Search with these exact specific search queries:
-1) "CME FedWatch December 2026 FOMC rate probability hike hold cut"
-2) "FedWatch tool target rate probabilities December 2026"
-
-Find the latest CME FedWatch Tool target rate probabilities for the December 2026 FOMC meeting (FOMC Desember 2026).
+  const fedWatchPrompt = `Today is ${todayIso}. Search for the latest CME FedWatch Tool target rate probabilities for the December 2026 FOMC meeting (FOMC Desember 2026).
 Extract the exact percentages (with 1 decimal place, e.g. XX.X) for:
 - Rate Hike (+25 bps or more): hikeProbability
 - Hold (Unchanged): holdProbability
@@ -1722,15 +1873,17 @@ CRITICAL RULE: Do not invent numbers. If search results do not contain the exact
     if (Date.now() < cooldownUntil) continue;
 
     try {
-      const response = await withTimeout(
-        ai.models.generateContent({
-          model,
-          contents: fedWatchPrompt,
-          config: {
-            tools: [{ googleSearch: {} }],
-          },
-        }),
-        15_000,
+      const response = await withTimeoutAbort(
+        (abortSignal) =>
+          ai.models.generateContent({
+            model,
+            contents: fedWatchPrompt,
+            config: {
+              abortSignal,
+              tools: [{ googleSearch: {} }],
+            },
+          }),
+        12_000,
         `CME FedWatch Grounding (${model})`
       );
 
@@ -1784,16 +1937,10 @@ CRITICAL RULE: Do not invent numbers. If search results do not contain the exact
         }
       }
     } catch (err: any) {
-      const msg = String(err?.message || err || '');
-      if (
-        msg.includes('429') ||
-        msg.includes('RESOURCE_EXHAUSTED') ||
-        msg.includes('Quota exceeded')
-      ) {
+      if (isGeminiQuotaError(err) || isGeminiModelUnavailableError(err)) {
         newsQuotaCooldownUntilByModel.set(model, Date.now() + 30 * 60 * 1000);
-        continue;
       }
-      break;
+      continue;
     }
   }
 
@@ -3107,7 +3254,10 @@ async function fetchPastActualsViaGoogleSearch(missingEvents: MacroCalendarEvent
 
   const ai = new GoogleGenAI({
     apiKey,
-    httpOptions: { headers: { 'User-Agent': 'aistudio-build' } },
+    httpOptions: {
+      headers: { 'User-Agent': 'aistudio-build' },
+      retryOptions: { attempts: 1 },
+    },
   });
 
   for (const model of candidateModels) {
@@ -3115,15 +3265,17 @@ async function fetchPastActualsViaGoogleSearch(missingEvents: MacroCalendarEvent
     if (Date.now() < cooldownUntil) continue;
 
     try {
-      const response = await withTimeout(
-        ai.models.generateContent({
-          model,
-          contents: prompt,
-          config: {
-            tools: [{ googleSearch: {} }],
-          },
-        }),
-        15_000,
+      const response = await withTimeoutAbort(
+        (abortSignal) =>
+          ai.models.generateContent({
+            model,
+            contents: prompt,
+            config: {
+              abortSignal,
+              tools: [{ googleSearch: {} }],
+            },
+          }),
+        12_000,
         `Past Actuals Search (${model})`
       );
 
@@ -3139,16 +3291,10 @@ async function fetchPastActualsViaGoogleSearch(missingEvents: MacroCalendarEvent
       }
       return out;
     } catch (err: any) {
-      const msg = String(err?.message || err || '');
-      if (
-        msg.includes('429') ||
-        msg.includes('RESOURCE_EXHAUSTED') ||
-        msg.includes('Quota exceeded')
-      ) {
+      if (isGeminiQuotaError(err) || isGeminiModelUnavailableError(err)) {
         newsQuotaCooldownUntilByModel.set(model, Date.now() + 30 * 60 * 1000);
-        continue;
       }
-      break;
+      continue;
     }
   }
   return {};
@@ -3411,6 +3557,7 @@ app.post('/api/macro-news/analyze', async (req, res) => {
         headers: {
           'User-Agent': 'aistudio-build',
         },
+        retryOptions: { attempts: 1 },
       },
     });
 
@@ -3502,114 +3649,116 @@ app.post('/api/macro-news/analyze', async (req, res) => {
       if (Date.now() < cooldownUntil) continue;
 
       try {
-        const response = await withTimeout(
-          ai.models.generateContent({
-            model,
-            contents: `Analyze this real-time XAU/USD macro dataset (including CME FedWatch probabilities, simultaneous USD High-Impact events, and preNewsFlow intelligence such as Leading Indicator Chain, Consensus Tightness, 2s10s Yield Curve Spread, VIX risk regime, Gold 3-day GC=F positioning, and FOMC Blackout window while strictly preserving Master Playbook rules) and return the structured JSON Scenario Matrix in both Bahasa Indonesia (Id) and English (En):\n${JSON.stringify(
-              promptPayload
-            )}`,
-          config: {
-            systemInstruction: XAUUSD_MACRO_MASTER_PLAYBOOK_SYSTEM_INSTRUCTION,
-            responseMimeType: 'application/json',
-            responseSchema: {
-              type: Type.OBJECT,
-              properties: {
-                impactLevel: {
-                  type: Type.STRING,
-                  description: 'HIGH, MEDIUM, or LOW',
+        const response = await withTimeoutAbort(
+          (abortSignal) =>
+            ai.models.generateContent({
+              model,
+              contents: `Analyze this real-time XAU/USD macro dataset (including CME FedWatch probabilities, simultaneous USD High-Impact events, and preNewsFlow intelligence such as Leading Indicator Chain, Consensus Tightness, 2s10s Yield Curve Spread, VIX risk regime, Gold 3-day GC=F positioning, and FOMC Blackout window while strictly preserving Master Playbook rules) and return the structured JSON Scenario Matrix in both Bahasa Indonesia (Id) and English (En):\n${JSON.stringify(
+                promptPayload
+              )}`,
+              config: {
+                abortSignal,
+                systemInstruction: XAUUSD_MACRO_MASTER_PLAYBOOK_SYSTEM_INSTRUCTION,
+                responseMimeType: 'application/json',
+                responseSchema: {
+                  type: Type.OBJECT,
+                  properties: {
+                    impactLevel: {
+                      type: Type.STRING,
+                      description: 'HIGH, MEDIUM, or LOW',
+                    },
+                    dominantBias: {
+                      type: Type.STRING,
+                      description: 'BUY, SELL, or MIXED',
+                    },
+                    buyProbability: {
+                      type: Type.INTEGER,
+                      description: 'Estimated BUY XAU/USD probability percentage (0-100)',
+                    },
+                    sellProbability: {
+                      type: Type.INTEGER,
+                      description: 'Estimated SELL XAU/USD probability percentage (0-100)',
+                    },
+                    mixedProbability: {
+                      type: Type.INTEGER,
+                      description: 'Estimated MIXED/WHIPSAW probability percentage (0-100)',
+                    },
+                    dynamicPivotTriggered: {
+                      type: Type.BOOLEAN,
+                      description: 'True if Dynamic Pivot Rule (Aturan Pindah Haluan) flipped bias to 1-Way SELL',
+                    },
+                    topBreakingEvalId: {
+                      type: Type.STRING,
+                      description: 'Concise Bahasa Indonesia AI evaluation of the top breaking news headline',
+                    },
+                    topBreakingEvalEn: {
+                      type: Type.STRING,
+                      description: 'Concise English AI evaluation of the top breaking news headline',
+                    },
+                    finalTakeId: {
+                      type: Type.STRING,
+                      description: 'Decisive Bahasa Indonesia final conclusion for XAU/USD based on the 3 FOMC Pillars, CME FedWatch, and Intermarket correlation',
+                    },
+                    finalTakeEn: {
+                      type: Type.STRING,
+                      description: 'Decisive English final conclusion for XAU/USD based on the 3 FOMC Pillars, CME FedWatch, and Intermarket correlation',
+                    },
+                    actionPlanId: {
+                      type: Type.STRING,
+                      description: 'Step-by-step tactical execution plan in Bahasa Indonesia',
+                    },
+                    actionPlanEn: {
+                      type: Type.STRING,
+                      description: 'Step-by-step tactical execution plan in English',
+                    },
+                    whipsawWarningId: {
+                      type: Type.STRING,
+                      description: 'Whipsaw / fake move risk warning in Bahasa Indonesia',
+                    },
+                    whipsawWarningEn: {
+                      type: Type.STRING,
+                      description: 'Whipsaw / fake move risk warning in English',
+                    },
+                    institutionalDeskThesisId: {
+                      type: Type.STRING,
+                      description: 'Concise Institutional Desk Thesis in Bahasa Indonesia covering cross-asset confirmation (DXY, US02Y, US10Y, USOIL), priced-in positioning, and pivot condition',
+                    },
+                    institutionalDeskThesisEn: {
+                      type: Type.STRING,
+                      description: 'Concise Institutional Desk Thesis in English covering cross-asset confirmation (DXY, US02Y, US10Y, USOIL), priced-in positioning, and pivot condition',
+                    },
+                    phase1Minute0to5Id: {
+                      type: Type.STRING,
+                      description: 'Fase 1 (Menit 0–5 Rilis): Initial sweep/push direction in Bahasa Indonesia, including warnings if IS_PRICED_IN or HAS_SPEECH_EVENT is active',
+                    },
+                    phase1Minute0to5En: {
+                      type: Type.STRING,
+                      description: 'Phase 1 (Minute 0–5 Release): Initial sweep/push direction in English, including warnings if IS_PRICED_IN or HAS_SPEECH_EVENT is active',
+                    },
+                    phase2Minute15PlusId: {
+                      type: Type.STRING,
+                      description: 'Fase 2 (Menit 15+ / Lanjutan): Primary institutional expansion direction in Bahasa Indonesia after intraday liquidity is swept',
+                    },
+                    phase2Minute15PlusEn: {
+                      type: Type.STRING,
+                      description: 'Phase 2 (Minute 15+ / Continuation): Primary institutional expansion direction in English after intraday liquidity is swept',
+                    },
+                  },
+                  required: [
+                    'impactLevel',
+                    'dominantBias',
+                    'buyProbability',
+                    'sellProbability',
+                    'mixedProbability',
+                    'finalTakeId',
+                    'finalTakeEn',
+                    'actionPlanId',
+                    'actionPlanEn',
+                  ],
                 },
-                dominantBias: {
-                  type: Type.STRING,
-                  description: 'BUY, SELL, or MIXED',
-                },
-                buyProbability: {
-                  type: Type.INTEGER,
-                  description: 'Estimated BUY XAU/USD probability percentage (0-100)',
-                },
-                sellProbability: {
-                  type: Type.INTEGER,
-                  description: 'Estimated SELL XAU/USD probability percentage (0-100)',
-                },
-                mixedProbability: {
-                  type: Type.INTEGER,
-                  description: 'Estimated MIXED/WHIPSAW probability percentage (0-100)',
-                },
-                dynamicPivotTriggered: {
-                  type: Type.BOOLEAN,
-                  description: 'True if Dynamic Pivot Rule (Aturan Pindah Haluan) flipped bias to 1-Way SELL',
-                },
-                topBreakingEvalId: {
-                  type: Type.STRING,
-                  description: 'Concise Bahasa Indonesia AI evaluation of the top breaking news headline',
-                },
-                topBreakingEvalEn: {
-                  type: Type.STRING,
-                  description: 'Concise English AI evaluation of the top breaking news headline',
-                },
-                finalTakeId: {
-                  type: Type.STRING,
-                  description: 'Decisive Bahasa Indonesia final conclusion for XAU/USD based on the 3 FOMC Pillars, CME FedWatch, and Intermarket correlation',
-                },
-                finalTakeEn: {
-                  type: Type.STRING,
-                  description: 'Decisive English final conclusion for XAU/USD based on the 3 FOMC Pillars, CME FedWatch, and Intermarket correlation',
-                },
-                actionPlanId: {
-                  type: Type.STRING,
-                  description: 'Step-by-step tactical execution plan in Bahasa Indonesia',
-                },
-                actionPlanEn: {
-                  type: Type.STRING,
-                  description: 'Step-by-step tactical execution plan in English',
-                },
-                whipsawWarningId: {
-                  type: Type.STRING,
-                  description: 'Whipsaw / fake move risk warning in Bahasa Indonesia',
-                },
-                whipsawWarningEn: {
-              type: Type.STRING,
-              description: 'Whipsaw / fake move risk warning in English',
-            },
-            institutionalDeskThesisId: {
-              type: Type.STRING,
-              description: 'Concise Institutional Desk Thesis in Bahasa Indonesia covering cross-asset confirmation (DXY, US02Y, US10Y, USOIL), priced-in positioning, and pivot condition',
-            },
-            institutionalDeskThesisEn: {
-              type: Type.STRING,
-              description: 'Concise Institutional Desk Thesis in English covering cross-asset confirmation (DXY, US02Y, US10Y, USOIL), priced-in positioning, and pivot condition',
-            },
-            phase1Minute0to5Id: {
-              type: Type.STRING,
-              description: 'Fase 1 (Menit 0–5 Rilis): Initial sweep/push direction in Bahasa Indonesia, including warnings if IS_PRICED_IN or HAS_SPEECH_EVENT is active',
-            },
-            phase1Minute0to5En: {
-              type: Type.STRING,
-              description: 'Phase 1 (Minute 0–5 Release): Initial sweep/push direction in English, including warnings if IS_PRICED_IN or HAS_SPEECH_EVENT is active',
-            },
-            phase2Minute15PlusId: {
-              type: Type.STRING,
-              description: 'Fase 2 (Menit 15+ / Lanjutan): Primary institutional expansion direction in Bahasa Indonesia after intraday liquidity is swept',
-            },
-            phase2Minute15PlusEn: {
-              type: Type.STRING,
-              description: 'Phase 2 (Minute 15+ / Continuation): Primary institutional expansion direction in English after intraday liquidity is swept',
-            },
               },
-              required: [
-                'impactLevel',
-                'dominantBias',
-                'buyProbability',
-                'sellProbability',
-                'mixedProbability',
-                'finalTakeId',
-                'finalTakeEn',
-                'actionPlanId',
-                'actionPlanEn',
-              ],
-            },
-          },
-        }),
-          20_000,
+            }),
+          16_000,
           `Macro AI (${model})`
         );
 

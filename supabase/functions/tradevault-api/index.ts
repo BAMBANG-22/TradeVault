@@ -326,6 +326,121 @@ function isGeminiModelUnavailableError(err: any): boolean {
   );
 }
 
+function sanitizeGeminiErrMsg(err: any): string {
+  return String(err?.message || err || 'Unknown error')
+    .replace(/AIza[0-9A-Za-z\-_]{20,}/g, '[REDACTED_KEY]')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function classifyGeminiFailure(err: any): {
+  code: 'KEY_INVALID' | 'QUOTA_429' | 'MODEL_404' | 'BAD_REQUEST_400' | 'SERVER_503' | 'TIMEOUT' | 'EMPTY_RESPONSE' | 'UNKNOWN';
+  summary: string;
+} {
+  const raw = sanitizeGeminiErrMsg(err);
+  const msg = raw.toLowerCase();
+  const status = Number(err?.status || err?.statusCode || 0);
+
+  if (
+    status === 401 ||
+    status === 403 ||
+    msg.includes('api_key_invalid') ||
+    msg.includes('api key not valid') ||
+    msg.includes('permission_denied') ||
+    msg.includes('unauthenticated')
+  ) {
+    return { code: 'KEY_INVALID', summary: `KEY_INVALID: ${raw.slice(0, 90)}` };
+  }
+  if (isGeminiQuotaError(err)) {
+    return { code: 'QUOTA_429', summary: `QUOTA_429: ${raw.slice(0, 90)}` };
+  }
+  if (isGeminiModelUnavailableError(err)) {
+    return { code: 'MODEL_404', summary: `MODEL_404: ${raw.slice(0, 90)}` };
+  }
+  if (msg.includes('timed out') || msg.includes('abort')) {
+    return { code: 'TIMEOUT', summary: `TIMEOUT: ${raw.slice(0, 90)}` };
+  }
+  if (
+    status === 503 ||
+    status === 500 ||
+    msg.includes('503') ||
+    msg.includes('500') ||
+    msg.includes('unavailable') ||
+    msg.includes('overloaded') ||
+    msg.includes('high demand')
+  ) {
+    return { code: 'SERVER_503', summary: `SERVER_503: ${raw.slice(0, 90)}` };
+  }
+  if (status === 400 || msg.includes('invalid_argument')) {
+    return { code: 'BAD_REQUEST_400', summary: `BAD_REQUEST_400: ${raw.slice(0, 90)}` };
+  }
+  return { code: 'UNKNOWN', summary: raw.slice(0, 90) };
+}
+
+function buildScanFailureResponse(
+  failures: Array<{ model: string; code: string; summary: string }>,
+  isMt5History: boolean
+): { success: false; quotaExhausted: boolean; error: string; diagnostics: string[] } {
+  const diagnostics = failures.map((f) => `${f.model} -> ${f.summary}`);
+  const shortDiag = failures
+    .slice(0, 5)
+    .map((f) => `${f.model}: ${f.code}`)
+    .join(', ');
+  const diagSuffix = shortDiag ? ` [${shortDiag}]` : '';
+  const hasKeyInvalid = failures.some((f) => f.code === 'KEY_INVALID');
+  const hasQuota429 = failures.some((f) => f.code === 'QUOTA_429');
+  const allNonUnsupportedWereQuota =
+    hasQuota429 && failures.every((f) => f.code === 'QUOTA_429' || f.code === 'MODEL_404');
+  const hasServerOrTimeout = failures.some((f) => f.code === 'TIMEOUT' || f.code === 'SERVER_503');
+  const hasOnlyUnsupported =
+    failures.length > 0 && failures.every((f) => f.code === 'MODEL_404' || f.code === 'BAD_REQUEST_400');
+
+  if (hasKeyInvalid) {
+    return {
+      success: false,
+      quotaExhausted: false,
+      error: `API Key Gemini Scan Kilat tidak valid atau tidak memiliki izin akses. Periksa secret GEMINI_SCAN_API_KEY di Supabase.${diagSuffix}`,
+      diagnostics,
+    };
+  }
+  if (allNonUnsupportedWereQuota) {
+    return {
+      success: false,
+      quotaExhausted: true,
+      error: isMt5History
+        ? `Kuota AI Scan Kilat penuh sementara (HTTP 429). Jika GEMINI_SCAN_API_KEY dan GEMINI_NEWS_API_KEY dibuat di 1 project Google Cloud yang sama, pisahkan ke 2 project berbeda agar kuota harian tidak terbagi.${diagSuffix}`
+        : `Batas kuota tier gratis tercapai sementara (HTTP 429); beralih otomatis ke pemindai geometri kanvas & OCR.${diagSuffix}`,
+      diagnostics,
+    };
+  }
+  if (hasOnlyUnsupported) {
+    return {
+      success: false,
+      quotaExhausted: false,
+      error: `Model AI Scan Kilat tidak didukung oleh API Key saat ini. Pastikan Gemini API aktif di Google Cloud Project key tersebut.${diagSuffix}`,
+      diagnostics,
+    };
+  }
+  if (hasServerOrTimeout) {
+    return {
+      success: false,
+      quotaExhausted: false,
+      error: isMt5History
+        ? `Server AI Gemini sedang sibuk atau lambat merespons (timeout). Silakan coba pindai lagi beberapa saat lagi.${diagSuffix}`
+        : `Server AI Gemini timeout sementara; beralih otomatis ke pemindai geometri kanvas & OCR.${diagSuffix}`,
+      diagnostics,
+    };
+  }
+  return {
+    success: false,
+    quotaExhausted: hasQuota429,
+    error: isMt5History
+      ? `Scan Kilat MT5 belum menerima respons dari AI. Silakan coba lagi.${diagSuffix}`
+      : `Pemindai AI gagal merespons; beralih otomatis ke pemindai geometri kanvas & OCR.${diagSuffix}`,
+    diagnostics,
+  };
+}
+
 const scanQuotaCooldownByKeyModel = new Map<string, number>();
 const newsQuotaCooldownByModel = new Map<string, number>();
 
@@ -339,6 +454,30 @@ function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string): 
       reject(new Error(`${label} timed out after ${timeoutMs}ms`));
     }, timeoutMs);
     promise.then(
+      (val) => {
+        clearTimeout(timer);
+        resolve(val);
+      },
+      (err) => {
+        clearTimeout(timer);
+        reject(err);
+      }
+    );
+  });
+}
+
+function withTimeoutAbort<T>(
+  fn: (signal: AbortSignal) => Promise<T>,
+  timeoutMs: number,
+  label: string
+): Promise<T> {
+  const controller = new AbortController();
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      controller.abort();
+      reject(new Error(`${label} timed out after ${timeoutMs}ms`));
+    }, timeoutMs);
+    fn(controller.signal).then(
       (val) => {
         clearTimeout(timer);
         resolve(val);
@@ -589,108 +728,97 @@ ${geometryHintBlock}
     let responseText = '';
     let usedModel = '';
     const scanCascadeStartMs = Date.now();
-    const MAX_SCAN_WALL_MS = 42_000;
+    const MAX_SCAN_WALL_MS = 45_000;
+    const scanFailures: Array<{ model: string; code: string; summary: string }> = [];
 
     for (const model of SCANNER_MODEL_CASCADE) {
-      if (Date.now() - scanCascadeStartMs >= MAX_SCAN_WALL_MS) break;
+      if (MAX_SCAN_WALL_MS - (Date.now() - scanCascadeStartMs) < 2500) break;
       for (let keyIdx = 0; keyIdx < scannerApiKeys.length; keyIdx++) {
-        if (Date.now() - scanCascadeStartMs >= MAX_SCAN_WALL_MS) break;
+        const remainingWallMs = MAX_SCAN_WALL_MS - (Date.now() - scanCascadeStartMs);
+        if (remainingWallMs < 2500) break;
         const cooldownKey = `${keyIdx}:${model}`;
         const cooldownUntil = scanQuotaCooldownByKeyModel.get(cooldownKey) || 0;
         if (Date.now() < cooldownUntil) {
+          scanFailures.push({ model, code: 'QUOTA_429', summary: 'Cooldown cache active' });
           continue;
         }
 
         const ai = new GoogleGenAI({
           apiKey: scannerApiKeys[keyIdx],
-          httpOptions: { headers: { 'User-Agent': 'aistudio-build' } },
+          httpOptions: {
+            headers: { 'User-Agent': 'aistudio-build' },
+            retryOptions: { attempts: 1 },
+          },
         });
 
-        for (let attempt = 1; attempt <= 2; attempt++) {
-          if (Date.now() - scanCascadeStartMs >= MAX_SCAN_WALL_MS) break;
-          try {
-            const response = await withTimeout(
+        try {
+          const response = await withTimeoutAbort(
+            (abortSignal) =>
               ai.models.generateContent({
                 model,
-              contents: [
-                { inlineData: { mimeType, data: base64Data } },
-                prompt,
-              ],
-              config: {
-                ...(model === 'gemini-4-hydrogen' || model === 'gemini-3-flash-preview'
-                  ? { thinkingConfig: { thinkingLevel: ThinkingLevel.LOW } }
-                  : {}),
-                responseMimeType: 'application/json',
-                responseSchema: {
-                  type: Type.OBJECT,
-                  properties: {
-                    detected: { type: Type.BOOLEAN },
-                    source: { type: Type.STRING },
-                    instrument: { type: Type.STRING },
-                    leftEdgeLabels: {
-                      type: Type.STRING,
-                      description: 'Verbatim order/line labels on left edge (e.g. "TP, BUY LIMIT 0.12, SL") or "TradingView Position Box"',
+                contents: [
+                  { inlineData: { mimeType, data: base64Data } },
+                  prompt,
+                ],
+                config: {
+                  abortSignal,
+                  ...(model === 'gemini-4-hydrogen' || model === 'gemini-3-flash-preview'
+                    ? { thinkingConfig: { thinkingLevel: ThinkingLevel.LOW } }
+                    : {}),
+                  responseMimeType: 'application/json',
+                  responseSchema: {
+                    type: Type.OBJECT,
+                    properties: {
+                      detected: { type: Type.BOOLEAN },
+                      source: { type: Type.STRING },
+                      instrument: { type: Type.STRING },
+                      leftEdgeLabels: {
+                        type: Type.STRING,
+                        description: 'Verbatim order/line labels on left edge (e.g. "TP, BUY LIMIT 0.12, SL") or "TradingView Position Box"',
+                      },
+                      rightAxisPriceTags: {
+                        type: Type.STRING,
+                        description: 'Highlighted/bordered Y-axis price badges listed top-to-bottom with colors/borders before assigning prices',
+                      },
+                      position: { type: Type.STRING },
+                      lotSize: { type: Type.NUMBER },
+                      entryPrice: { type: Type.NUMBER },
+                      stopLoss: { type: Type.NUMBER },
+                      takeProfit: { type: Type.NUMBER },
+                      exitPrice: { type: Type.NUMBER },
+                      profit: { type: Type.NUMBER },
+                      plannedRiskReward: { type: Type.NUMBER },
+                      timeframe: { type: Type.STRING },
+                      currentPrice: { type: Type.NUMBER },
+                      status: { type: Type.STRING },
+                      notes: { type: Type.STRING },
                     },
-                    rightAxisPriceTags: {
-                      type: Type.STRING,
-                      description: 'Highlighted/bordered Y-axis price badges listed top-to-bottom with colors/borders before assigning prices',
-                    },
-                    position: { type: Type.STRING },
-                    lotSize: { type: Type.NUMBER },
-                    entryPrice: { type: Type.NUMBER },
-                    stopLoss: { type: Type.NUMBER },
-                    takeProfit: { type: Type.NUMBER },
-                    exitPrice: { type: Type.NUMBER },
-                    profit: { type: Type.NUMBER },
-                    plannedRiskReward: { type: Type.NUMBER },
-                    timeframe: { type: Type.STRING },
-                    currentPrice: { type: Type.NUMBER },
-                    status: { type: Type.STRING },
-                    notes: { type: Type.STRING },
+                    required: ['detected', 'instrument', 'position'],
                   },
-                  required: ['detected', 'instrument', 'position'],
                 },
-              },
-            }),
-              20_000,
-              `Scan Kilat (${model})`
-            );
-            if (response && response.text) {
-              responseText = response.text;
-              usedModel = model;
-              break;
-            }
-          } catch (err: any) {
-            const errMsg = err?.message || String(err);
-            if (isGeminiQuotaError(err) || isGeminiModelUnavailableError(err)) {
-              scanQuotaCooldownByKeyModel.set(cooldownKey, Date.now() + 20 * 60 * 1000);
-              break;
-            }
-            const isTransient =
-              errMsg.includes('503') ||
-              errMsg.includes('500') ||
-              errMsg.includes('UNAVAILABLE') ||
-              errMsg.includes('overloaded') ||
-              errMsg.includes('high demand');
-            if (isTransient && attempt < 2) {
-              await new Promise((r) => setTimeout(r, 450));
-              continue;
-            }
+              }),
+            Math.min(12_000, remainingWallMs),
+            `Scan Kilat (${model})`
+          );
+          if (response && response.text) {
+            responseText = response.text;
+            usedModel = model;
             break;
           }
+          scanFailures.push({ model, code: 'EMPTY_RESPONSE', summary: 'Empty response text' });
+        } catch (err: any) {
+          const classified = classifyGeminiFailure(err);
+          scanFailures.push({ model, code: classified.code, summary: classified.summary });
+          if (classified.code === 'QUOTA_429' || classified.code === 'MODEL_404') {
+            scanQuotaCooldownByKeyModel.set(cooldownKey, Date.now() + 20 * 60 * 1000);
+          }
         }
-        if (responseText) break;
       }
       if (responseText) break;
     }
 
     if (!responseText) {
-      return jsonResponse({
-        success: false,
-        quotaExhausted: true,
-        error:
-          'Batas kuota tier gratis tercapai sementara; beralih otomatis ke pemindai geometri kanvas & OCR.',
-      });
+      return jsonResponse(buildScanFailureResponse(scanFailures, false));
     }
 
     const parsedData = parseAiJsonResponse(responseText);
@@ -924,6 +1052,119 @@ function inferMt5CloseType(params: {
   return 'Manual';
 }
 
+function parseAndNormalizeMt5HistoryResponse(responseText: string): {
+  parsedValidArray: boolean;
+  explicitNoTrades: boolean;
+  source: string;
+  normalizedTrades: any[];
+} {
+  let parsedData = parseAiJsonResponse(responseText);
+  if (!Array.isArray(parsedData.trades)) {
+    const tradesIdx = responseText.indexOf('"trades"');
+    if (tradesIdx !== -1) {
+      const arrStart = responseText.indexOf('[', tradesIdx);
+      if (arrStart !== -1) {
+        const recovered: any[] = [];
+        const objMatches = responseText.slice(arrStart).match(/\{[^{}]+\}/g) || [];
+        for (const rawObj of objMatches) {
+          try {
+            recovered.push(JSON.parse(rawObj));
+          } catch {}
+        }
+        if (recovered.length > 0) {
+          parsedData = { detected: true, source: 'MT5_HISTORY', trades: recovered };
+        }
+      }
+    }
+  }
+
+  const parsedValidArray = Array.isArray(parsedData.trades);
+  const rawTrades = parsedValidArray ? parsedData.trades : [];
+
+  const normalizedTrades = rawTrades
+    .map((row: any) => {
+      if (!row || typeof row !== 'object') return null;
+      const rawPos = String(row.position || '').trim().toUpperCase();
+      const isSell =
+        rawPos.includes('SELL') || rawPos.includes('JUAL') || rawPos.includes('SHORT');
+      const isBuy =
+        rawPos.includes('BUY') || rawPos.includes('BELI') || rawPos.includes('LONG');
+      if (!isBuy && !isSell) {
+        return null;
+      }
+      const position: 'BUY' | 'SELL' = isSell && !isBuy ? 'SELL' : isSell ? 'SELL' : 'BUY';
+      const instrument = normalizeInstrument(row.instrument);
+      const lotRaw = parseNumericValue(row.lotSize, 'EURUSD');
+      const entryPrice = parseNumericValue(row.entryPrice, instrument);
+      const exitPrice = parseNumericValue(row.exitPrice, instrument);
+      const stopLoss = parseNumericValue(row.stopLoss, instrument);
+      const takeProfit = parseNumericValue(row.takeProfit, instrument);
+      const rawComm = parseNumericValue(row.commission, 'EURUSD');
+      const rawSwap = parseNumericValue(row.swap, 'EURUSD');
+      const rawProfit = parseNumericValue(row.netProfit, 'EURUSD');
+
+      if (entryPrice === null && exitPrice === null && rawProfit === null) {
+        return null;
+      }
+
+      const cleanStr = (v: unknown): string => {
+        if (typeof v !== 'string') return '';
+        const t = v.trim();
+        return /^(null|undefined|none|n\/a)$/i.test(t) ? '' : t;
+      };
+
+      const openDateTime = normalizeMt5DateTimeOutput(cleanStr(row.openDateTime));
+      const closeDateTime = normalizeMt5DateTimeOutput(cleanStr(row.closeDateTime));
+      const notes = cleanStr(row.notes);
+      const closeType = inferMt5CloseType({
+        rawCloseType: row.closeType,
+        notes,
+        position,
+        exitPrice,
+        stopLoss,
+        takeProfit,
+        netProfit: rawProfit,
+        instrument,
+      });
+
+      const rawTicket =
+        typeof row.ticketId === 'string' || typeof row.ticketId === 'number'
+          ? String(row.ticketId).replace(/^#/, '').trim()
+          : '';
+      const cleanTicket =
+        rawTicket && !/^(null|undefined|none|n\/a|-)$/i.test(rawTicket) ? rawTicket : null;
+
+      return {
+        ticketId: cleanTicket,
+        instrument,
+        position,
+        lotSize: lotRaw !== null && lotRaw > 0 ? Number(lotRaw.toFixed(2)) : 0.01,
+        entryPrice: entryPrice !== null && entryPrice > 0 ? entryPrice : exitPrice || 0,
+        exitPrice: exitPrice !== null && exitPrice > 0 ? exitPrice : entryPrice || 0,
+        stopLoss: stopLoss !== null && stopLoss > 0 ? stopLoss : null,
+        takeProfit: takeProfit !== null && takeProfit > 0 ? takeProfit : null,
+        commission: rawComm !== null ? Number(Math.abs(rawComm).toFixed(2)) : 0,
+        swap: rawSwap !== null ? Number(rawSwap.toFixed(2)) : 0,
+        netProfit: rawProfit !== null ? Number(rawProfit.toFixed(2)) : 0,
+        openDateTime,
+        closeDateTime,
+        closeType,
+        notes,
+      };
+    })
+    .filter((item: any) => item !== null);
+
+  const explicitNoTrades =
+    parsedValidArray && normalizedTrades.length === 0 && parsedData.detected === false;
+
+  return {
+    parsedValidArray,
+    explicitNoTrades,
+    source: String(parsedData.source || 'MT5_HISTORY'),
+    normalizedTrades,
+  };
+}
+
 async function handleExtractMt5History(req: Request): Promise<Response> {
   try {
     const body = await req.json();
@@ -998,211 +1239,133 @@ STRICT EXTRACTION RULES:
    - Output openDateTime / closeDateTime in "YYYY-MM-DD HH:mm" if visible.
    - Never invent trades that are not visibly printed on screen.`;
 
-    let responseText = '';
+    let winningResult: ReturnType<typeof parseAndNormalizeMt5HistoryResponse> | null = null;
     let usedModel = '';
+    let confirmedEmptyModel = '';
     const mt5CascadeStartMs = Date.now();
-    const MAX_MT5_WALL_MS = 45_000;
+    const MAX_MT5_WALL_MS = 50_000;
+    const mt5Failures: Array<{ model: string; code: string; summary: string }> = [];
 
     for (const model of SCANNER_MODEL_CASCADE) {
-      if (Date.now() - mt5CascadeStartMs >= MAX_MT5_WALL_MS) break;
+      if (MAX_MT5_WALL_MS - (Date.now() - mt5CascadeStartMs) < 2500) break;
       for (let keyIdx = 0; keyIdx < scannerApiKeys.length; keyIdx++) {
-        if (Date.now() - mt5CascadeStartMs >= MAX_MT5_WALL_MS) break;
+        const remainingWallMs = MAX_MT5_WALL_MS - (Date.now() - mt5CascadeStartMs);
+        if (remainingWallMs < 2500) break;
         const cooldownKey = `${keyIdx}:${model}`;
         const cooldownUntil = scanQuotaCooldownByKeyModel.get(cooldownKey) || 0;
-        if (Date.now() < cooldownUntil) continue;
+        if (Date.now() < cooldownUntil) {
+          mt5Failures.push({ model, code: 'QUOTA_429', summary: 'Cooldown cache active' });
+          continue;
+        }
 
         const ai = new GoogleGenAI({
           apiKey: scannerApiKeys[keyIdx],
-          httpOptions: { headers: { 'User-Agent': 'aistudio-build' } },
+          httpOptions: {
+            headers: { 'User-Agent': 'aistudio-build' },
+            retryOptions: { attempts: 1 },
+          },
         });
 
-        for (let attempt = 1; attempt <= 2; attempt++) {
-          if (Date.now() - mt5CascadeStartMs >= MAX_MT5_WALL_MS) break;
-          try {
-            const response = await withTimeout(
+        try {
+          const response = await withTimeoutAbort(
+            (abortSignal) =>
               ai.models.generateContent({
                 model,
-              contents: [{ inlineData: { mimeType, data: base64Data } }, prompt],
-              config: {
-                ...(model === 'gemini-4-hydrogen' || model === 'gemini-3-flash-preview'
-                  ? { thinkingConfig: { thinkingLevel: ThinkingLevel.LOW } }
-                  : {}),
-                responseMimeType: 'application/json',
-                responseSchema: {
-                  type: Type.OBJECT,
-                  properties: {
-                    detected: { type: Type.BOOLEAN },
-                    source: { type: Type.STRING },
-                    trades: {
-                      type: Type.ARRAY,
-                      items: {
-                        type: Type.OBJECT,
-                        properties: {
-                          ticketId: { type: Type.STRING },
-                          instrument: { type: Type.STRING },
-                          position: { type: Type.STRING },
-                          lotSize: { type: Type.NUMBER },
-                          entryPrice: { type: Type.NUMBER },
-                          exitPrice: { type: Type.NUMBER },
-                          stopLoss: { type: Type.NUMBER },
-                          takeProfit: { type: Type.NUMBER },
-                          commission: { type: Type.NUMBER },
-                          swap: { type: Type.NUMBER },
-                          netProfit: { type: Type.NUMBER },
-                          openDateTime: { type: Type.STRING },
-                          closeDateTime: { type: Type.STRING },
-                          closeType: { type: Type.STRING },
-                          notes: { type: Type.STRING },
+                contents: [{ inlineData: { mimeType, data: base64Data } }, prompt],
+                config: {
+                  abortSignal,
+                  ...(model === 'gemini-4-hydrogen' || model === 'gemini-3-flash-preview'
+                    ? { thinkingConfig: { thinkingLevel: ThinkingLevel.LOW } }
+                    : {}),
+                  responseMimeType: 'application/json',
+                  responseSchema: {
+                    type: Type.OBJECT,
+                    properties: {
+                      detected: { type: Type.BOOLEAN },
+                      source: { type: Type.STRING },
+                      trades: {
+                        type: Type.ARRAY,
+                        items: {
+                          type: Type.OBJECT,
+                          properties: {
+                            ticketId: { type: Type.STRING },
+                            instrument: { type: Type.STRING },
+                            position: { type: Type.STRING },
+                            lotSize: { type: Type.NUMBER },
+                            entryPrice: { type: Type.NUMBER },
+                            exitPrice: { type: Type.NUMBER },
+                            stopLoss: { type: Type.NUMBER },
+                            takeProfit: { type: Type.NUMBER },
+                            commission: { type: Type.NUMBER },
+                            swap: { type: Type.NUMBER },
+                            netProfit: { type: Type.NUMBER },
+                            openDateTime: { type: Type.STRING },
+                            closeDateTime: { type: Type.STRING },
+                            closeType: { type: Type.STRING },
+                            notes: { type: Type.STRING },
+                          },
+                          required: ['instrument', 'position'],
                         },
-                        required: ['instrument', 'position'],
                       },
                     },
+                    required: ['detected', 'trades'],
                   },
-                  required: ['detected', 'trades'],
                 },
-              },
-            }),
-              24_000,
-              `MT5 Scan (${model})`
-            );
-            if (response && response.text) {
-              responseText = response.text;
+              }),
+            Math.min(13_000, remainingWallMs),
+            `MT5 Scan (${model})`
+          );
+          if (response && response.text) {
+            const candidate = parseAndNormalizeMt5HistoryResponse(response.text);
+            if (candidate.normalizedTrades.length > 0) {
+              winningResult = candidate;
               usedModel = model;
               break;
             }
-          } catch (err: any) {
-            const errMsg = err?.message || String(err);
-            if (isGeminiQuotaError(err) || isGeminiModelUnavailableError(err)) {
-              scanQuotaCooldownByKeyModel.set(cooldownKey, Date.now() + 20 * 60 * 1000);
-              break;
+            if (candidate.explicitNoTrades && !confirmedEmptyModel) {
+              confirmedEmptyModel = model;
             }
-            const isTransient =
-              errMsg.includes('503') ||
-              errMsg.includes('500') ||
-              errMsg.includes('UNAVAILABLE') ||
-              errMsg.includes('overloaded') ||
-              errMsg.includes('high demand');
-            if (isTransient && attempt < 2) {
-              await new Promise((r) => setTimeout(r, 450));
-              continue;
-            }
-            break;
+            mt5Failures.push({
+              model,
+              code: 'EMPTY_RESPONSE',
+              summary: candidate.parsedValidArray ? 'Model returned 0 trade rows' : 'Truncated or invalid JSON output',
+            });
+          } else {
+            mt5Failures.push({ model, code: 'EMPTY_RESPONSE', summary: 'Empty response text' });
           }
-        }
-        if (responseText) break;
-      }
-      if (responseText) break;
-    }
-
-    if (!responseText) {
-      return jsonResponse({
-        success: false,
-        quotaExhausted: true,
-        error: 'Kuota AI Scan Kilat sedang penuh sementara. Silakan coba beberapa saat lagi.',
-      });
-    }
-
-    let parsedData = parseAiJsonResponse(responseText);
-    if (!Array.isArray(parsedData.trades)) {
-      const tradesIdx = responseText.indexOf('"trades"');
-      if (tradesIdx !== -1) {
-        const arrStart = responseText.indexOf('[', tradesIdx);
-        if (arrStart !== -1) {
-          const recovered: any[] = [];
-          const objMatches = responseText.slice(arrStart).match(/\{[^{}]+\}/g) || [];
-          for (const rawObj of objMatches) {
-            try {
-              recovered.push(JSON.parse(rawObj));
-            } catch {}
-          }
-          if (recovered.length > 0) {
-            parsedData = { detected: true, source: 'MT5_HISTORY', trades: recovered };
+        } catch (err: any) {
+          const classified = classifyGeminiFailure(err);
+          mt5Failures.push({ model, code: classified.code, summary: classified.summary });
+          if (classified.code === 'QUOTA_429' || classified.code === 'MODEL_404') {
+            scanQuotaCooldownByKeyModel.set(cooldownKey, Date.now() + 20 * 60 * 1000);
           }
         }
       }
+      if (winningResult) break;
     }
 
-    const rawTrades = Array.isArray(parsedData.trades) ? parsedData.trades : [];
-
-    const normalizedTrades = rawTrades
-      .map((row: any) => {
-        if (!row || typeof row !== 'object') return null;
-        const rawPos = String(row.position || '').trim().toUpperCase();
-        const isSell =
-          rawPos.includes('SELL') || rawPos.includes('JUAL') || rawPos.includes('SHORT');
-        const isBuy =
-          rawPos.includes('BUY') || rawPos.includes('BELI') || rawPos.includes('LONG');
-        if (!isBuy && !isSell) {
-          return null;
-        }
-        const position: 'BUY' | 'SELL' = isSell && !isBuy ? 'SELL' : isSell ? 'SELL' : 'BUY';
-        const instrument = normalizeInstrument(row.instrument);
-        const lotRaw = parseNumericValue(row.lotSize, 'EURUSD');
-        const entryPrice = parseNumericValue(row.entryPrice, instrument);
-        const exitPrice = parseNumericValue(row.exitPrice, instrument);
-        const stopLoss = parseNumericValue(row.stopLoss, instrument);
-        const takeProfit = parseNumericValue(row.takeProfit, instrument);
-        const rawComm = parseNumericValue(row.commission, 'EURUSD');
-        const rawSwap = parseNumericValue(row.swap, 'EURUSD');
-        const rawProfit = parseNumericValue(row.netProfit, 'EURUSD');
-
-        if (entryPrice === null && exitPrice === null && rawProfit === null) {
-          return null;
-        }
-
-        const cleanStr = (v: unknown): string => {
-          if (typeof v !== 'string') return '';
-          const t = v.trim();
-          return /^(null|undefined|none|n\/a)$/i.test(t) ? '' : t;
-        };
-
-        const openDateTime = normalizeMt5DateTimeOutput(cleanStr(row.openDateTime));
-        const closeDateTime = normalizeMt5DateTimeOutput(cleanStr(row.closeDateTime));
-        const notes = cleanStr(row.notes);
-        const closeType = inferMt5CloseType({
-          rawCloseType: row.closeType,
-          notes,
-          position,
-          exitPrice,
-          stopLoss,
-          takeProfit,
-          netProfit: rawProfit,
-          instrument,
+    if (!winningResult) {
+      const hasRealModelFailure = mt5Failures.some((f) => f.code !== 'EMPTY_RESPONSE');
+      if (confirmedEmptyModel && !hasRealModelFailure) {
+        return jsonResponse({
+          success: true,
+          data: {
+            detected: false,
+            source: 'MT5_HISTORY',
+            trades: [],
+            modelUsed: confirmedEmptyModel,
+          },
         });
-
-        const rawTicket =
-          typeof row.ticketId === 'string' || typeof row.ticketId === 'number'
-            ? String(row.ticketId).replace(/^#/, '').trim()
-            : '';
-        const cleanTicket =
-          rawTicket && !/^(null|undefined|none|n\/a|-)$/i.test(rawTicket) ? rawTicket : null;
-
-        return {
-          ticketId: cleanTicket,
-          instrument,
-          position,
-          lotSize: lotRaw !== null && lotRaw > 0 ? Number(lotRaw.toFixed(2)) : 0.01,
-          entryPrice: entryPrice !== null && entryPrice > 0 ? entryPrice : exitPrice || 0,
-          exitPrice: exitPrice !== null && exitPrice > 0 ? exitPrice : entryPrice || 0,
-          stopLoss: stopLoss !== null && stopLoss > 0 ? stopLoss : null,
-          takeProfit: takeProfit !== null && takeProfit > 0 ? takeProfit : null,
-          commission: rawComm !== null ? Number(Math.abs(rawComm).toFixed(2)) : 0,
-          swap: rawSwap !== null ? Number(rawSwap.toFixed(2)) : 0,
-          netProfit: rawProfit !== null ? Number(rawProfit.toFixed(2)) : 0,
-          openDateTime,
-          closeDateTime,
-          closeType,
-          notes,
-        };
-      })
-      .filter((item: any) => item !== null);
+      }
+      return jsonResponse(buildScanFailureResponse(mt5Failures, true));
+    }
 
     return jsonResponse({
       success: true,
       data: {
-        detected: normalizedTrades.length > 0 && parsedData.detected !== false,
-        source: String(parsedData.source || 'MT5_HISTORY'),
-        trades: normalizedTrades,
+        detected: true,
+        source: winningResult.source,
+        trades: winningResult.normalizedTrades,
         modelUsed: usedModel || 'gemini-4-hydrogen',
       },
     });
@@ -1452,13 +1615,14 @@ async function fetchPastActualsViaGoogleSearch(
     const cooldownUntil = newsQuotaCooldownByModel.get(model) || 0;
     if (Date.now() < cooldownUntil) continue;
     try {
-      const response = await withTimeout(
-        ai.models.generateContent({
-          model,
-          contents: prompt,
-          config: { tools: [{ googleSearch: {} }] },
-        }),
-        15_000,
+      const response = await withTimeoutAbort(
+        (abortSignal) =>
+          ai.models.generateContent({
+            model,
+            contents: prompt,
+            config: { abortSignal, tools: [{ googleSearch: {} }] },
+          }),
+        12_000,
         `Past Actuals Search (${model})`
       );
       const parsed = parseAiJsonResponse(response?.text || '');
@@ -1525,13 +1689,14 @@ CRITICAL RULE: Do not invent numbers. If search results do not contain exact fig
     const cooldownUntil = newsQuotaCooldownByModel.get(model) || 0;
     if (Date.now() < cooldownUntil) continue;
     try {
-      const response = await withTimeout(
-        ai.models.generateContent({
-          model,
-          contents: fedWatchPrompt,
-          config: { tools: [{ googleSearch: {} }] },
-        }),
-        15_000,
+      const response = await withTimeoutAbort(
+        (abortSignal) =>
+          ai.models.generateContent({
+            model,
+            contents: fedWatchPrompt,
+            config: { abortSignal, tools: [{ googleSearch: {} }] },
+          }),
+        12_000,
         `CME FedWatch Grounding (${model})`
       );
       const parsed = parseAiJsonResponse(response?.text || '');
@@ -1694,7 +1859,10 @@ async function handleMacroNewsAnalyze(req: Request): Promise<Response> {
 
     const ai = new GoogleGenAI({
       apiKey: newsApiKey,
-      httpOptions: { headers: { 'User-Agent': 'aistudio-build' } },
+      httpOptions: {
+        headers: { 'User-Agent': 'aistudio-build' },
+        retryOptions: { attempts: 1 },
+      },
     });
 
     const groundedFedWatch = await fetchCmeFedWatchWithGrounding(
@@ -1809,54 +1977,56 @@ async function handleMacroNewsAnalyze(req: Request): Promise<Response> {
       const cooldownUntil = newsQuotaCooldownByModel.get(model) || 0;
       if (Date.now() < cooldownUntil) continue;
       try {
-        const response = await withTimeout(
-          ai.models.generateContent({
-            model,
-            contents: `Analyze this real-time XAU/USD macro dataset (including CME FedWatch probabilities, simultaneous USD High-Impact events, and preNewsFlow intelligence such as Leading Indicator Chain, Consensus Tightness, 2s10s Yield Curve Spread, VIX risk regime, Gold 3-day GC=F positioning, and FOMC Blackout window while strictly preserving Master Playbook rules) and return the structured JSON Scenario Matrix in both Bahasa Indonesia (Id) and English (En):\n${JSON.stringify(
-              promptPayload
-            )}`,
-            config: {
-              systemInstruction: XAUUSD_MACRO_MASTER_PLAYBOOK_SYSTEM_INSTRUCTION,
-              responseMimeType: 'application/json',
-              responseSchema: {
-                type: Type.OBJECT,
-                properties: {
-                  impactLevel: { type: Type.STRING },
-                  dominantBias: { type: Type.STRING },
-                  buyProbability: { type: Type.INTEGER },
-                  sellProbability: { type: Type.INTEGER },
-                  mixedProbability: { type: Type.INTEGER },
-                  dynamicPivotTriggered: { type: Type.BOOLEAN },
-                  topBreakingEvalId: { type: Type.STRING },
-                  topBreakingEvalEn: { type: Type.STRING },
-                  finalTakeId: { type: Type.STRING },
-                  finalTakeEn: { type: Type.STRING },
-                  actionPlanId: { type: Type.STRING },
-                  actionPlanEn: { type: Type.STRING },
-                  whipsawWarningId: { type: Type.STRING },
-                  whipsawWarningEn: { type: Type.STRING },
-                  institutionalDeskThesisId: { type: Type.STRING },
-                  institutionalDeskThesisEn: { type: Type.STRING },
-                  phase1Minute0to5Id: { type: Type.STRING },
-                  phase1Minute0to5En: { type: Type.STRING },
-                  phase2Minute15PlusId: { type: Type.STRING },
-                  phase2Minute15PlusEn: { type: Type.STRING },
+        const response = await withTimeoutAbort(
+          (abortSignal) =>
+            ai.models.generateContent({
+              model,
+              contents: `Analyze this real-time XAU/USD macro dataset (including CME FedWatch probabilities, simultaneous USD High-Impact events, and preNewsFlow intelligence such as Leading Indicator Chain, Consensus Tightness, 2s10s Yield Curve Spread, VIX risk regime, Gold 3-day GC=F positioning, and FOMC Blackout window while strictly preserving Master Playbook rules) and return the structured JSON Scenario Matrix in both Bahasa Indonesia (Id) and English (En):\n${JSON.stringify(
+                promptPayload
+              )}`,
+              config: {
+                abortSignal,
+                systemInstruction: XAUUSD_MACRO_MASTER_PLAYBOOK_SYSTEM_INSTRUCTION,
+                responseMimeType: 'application/json',
+                responseSchema: {
+                  type: Type.OBJECT,
+                  properties: {
+                    impactLevel: { type: Type.STRING },
+                    dominantBias: { type: Type.STRING },
+                    buyProbability: { type: Type.INTEGER },
+                    sellProbability: { type: Type.INTEGER },
+                    mixedProbability: { type: Type.INTEGER },
+                    dynamicPivotTriggered: { type: Type.BOOLEAN },
+                    topBreakingEvalId: { type: Type.STRING },
+                    topBreakingEvalEn: { type: Type.STRING },
+                    finalTakeId: { type: Type.STRING },
+                    finalTakeEn: { type: Type.STRING },
+                    actionPlanId: { type: Type.STRING },
+                    actionPlanEn: { type: Type.STRING },
+                    whipsawWarningId: { type: Type.STRING },
+                    whipsawWarningEn: { type: Type.STRING },
+                    institutionalDeskThesisId: { type: Type.STRING },
+                    institutionalDeskThesisEn: { type: Type.STRING },
+                    phase1Minute0to5Id: { type: Type.STRING },
+                    phase1Minute0to5En: { type: Type.STRING },
+                    phase2Minute15PlusId: { type: Type.STRING },
+                    phase2Minute15PlusEn: { type: Type.STRING },
+                  },
+                  required: [
+                    'impactLevel',
+                    'dominantBias',
+                    'buyProbability',
+                    'sellProbability',
+                    'mixedProbability',
+                    'finalTakeId',
+                    'finalTakeEn',
+                    'actionPlanId',
+                    'actionPlanEn',
+                  ],
                 },
-                required: [
-                  'impactLevel',
-                  'dominantBias',
-                  'buyProbability',
-                  'sellProbability',
-                  'mixedProbability',
-                  'finalTakeId',
-                  'finalTakeEn',
-                  'actionPlanId',
-                  'actionPlanEn',
-                ],
               },
-            },
-          }),
-          20_000,
+            }),
+          16_000,
           `Macro AI (${model})`
         );
         if (response && response.text) {
