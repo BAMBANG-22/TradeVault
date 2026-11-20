@@ -89,18 +89,12 @@ function getNewsGeminiApiKeys(): string[] {
  */
 const SCANNER_MODEL_CASCADE = [
   'gemini-4-hydrogen',
-  'gemini-3-flash-preview',
   'gemini-3.1-flash-lite',
-  'gemini-2.5-flash',
-  'gemini-2.5-flash-lite',
 ] as const;
 
 const NEWS_MODEL_CASCADE = [
   'gemini-4-hydrogen',
-  'gemini-3-flash-preview',
   'gemini-3.1-flash-lite',
-  'gemini-2.5-flash',
-  'gemini-2.5-flash-lite',
 ] as const;
 
 function isGeminiQuotaError(err: any): boolean {
@@ -643,7 +637,10 @@ function parseAiJsonResponse(text: string): Record<string, any> {
   };
 }
 
-const quotaCooldownUntilByModel = new Map<string, number>();
+const quotaCooldownUntilByModel = new Map<
+  string,
+  { code: 'QUOTA_429' | 'MODEL_404'; until: number }
+>();
 
 function buildScannerGeometryHintBlock(canvasHints?: ExtractScreenshotRequest['canvasHints']): string {
   if (!canvasHints || typeof canvasHints !== 'object') return '';
@@ -820,90 +817,109 @@ ${geometryHintBlock}
     const MAX_SCAN_WALL_MS = 45_000;
     const scanFailures: Array<{ model: string; code: string; summary: string }> = [];
 
-    for (const model of candidateModels) {
-      if (MAX_SCAN_WALL_MS - (Date.now() - scanCascadeStartMs) < 2500) break;
-      for (let keyIdx = 0; keyIdx < scannerApiKeys.length; keyIdx++) {
-        const remainingWallMs = MAX_SCAN_WALL_MS - (Date.now() - scanCascadeStartMs);
-        if (remainingWallMs < 2500) break;
-        const cooldownKey = `${keyIdx}:${model}`;
-        const cooldownUntil = quotaCooldownUntilByModel.get(cooldownKey) || 0;
-        if (Date.now() < cooldownUntil) {
-          scanFailures.push({ model, code: 'QUOTA_429', summary: 'Cooldown cache active' });
-          continue;
-        }
+    for (let pass = 0; pass < 2; pass++) {
+      if (pass > 0) {
+        const shouldRetryTransient = scanFailures.some(
+          (f) => f.code === 'SERVER_503' || f.code === 'TIMEOUT'
+        );
+        const remainingBeforePass = MAX_SCAN_WALL_MS - (Date.now() - scanCascadeStartMs);
+        if (!shouldRetryTransient || remainingBeforePass < 5000) break;
+        await new Promise((r) => setTimeout(r, 1200));
+      }
 
-        const ai = new GoogleGenAI({
-          apiKey: scannerApiKeys[keyIdx],
-          httpOptions: {
-            headers: {
-              'User-Agent': 'aistudio-build',
+      for (const model of candidateModels) {
+        if (MAX_SCAN_WALL_MS - (Date.now() - scanCascadeStartMs) < 2500) break;
+        for (let keyIdx = 0; keyIdx < scannerApiKeys.length; keyIdx++) {
+          const remainingWallMs = MAX_SCAN_WALL_MS - (Date.now() - scanCascadeStartMs);
+          if (remainingWallMs < 2500) break;
+          const cooldownKey = `${keyIdx}:${model}`;
+          const cooldownEntry = quotaCooldownUntilByModel.get(cooldownKey);
+          if (cooldownEntry && Date.now() < cooldownEntry.until) {
+            scanFailures.push({
+              model,
+              code: cooldownEntry.code,
+              summary: 'Cooldown cache active',
+            });
+            continue;
+          }
+
+          const ai = new GoogleGenAI({
+            apiKey: scannerApiKeys[keyIdx],
+            httpOptions: {
+              headers: {
+                'User-Agent': 'aistudio-build',
+              },
+              retryOptions: { attempts: 1 },
             },
-            retryOptions: { attempts: 1 },
-          },
-        });
+          });
 
-        try {
-          const response = await withTimeoutAbort(
-            (abortSignal) =>
-              ai.models.generateContent({
-                model,
-                contents: [
-                  {
-                    inlineData: {
-                      mimeType,
-                      data: base64Data,
+          try {
+            const response = await withTimeoutAbort(
+              (abortSignal) =>
+                ai.models.generateContent({
+                  model,
+                  contents: [
+                    {
+                      inlineData: {
+                        mimeType,
+                        data: base64Data,
+                      },
+                    },
+                    prompt,
+                  ],
+                  config: {
+                    abortSignal,
+                    ...(model === 'gemini-4-hydrogen'
+                      ? { thinkingConfig: { thinkingLevel: ThinkingLevel.LOW } }
+                      : {}),
+                    responseMimeType: 'application/json',
+                    responseSchema: {
+                      type: Type.OBJECT,
+                      properties: {
+                        detected: { type: Type.BOOLEAN, description: 'True if trade setup or order is detected' },
+                        source: { type: Type.STRING, description: 'MT5, TRADINGVIEW, or CHART' },
+                        instrument: { type: Type.STRING, description: 'Clean instrument symbol, e.g. XAUUSD, EURUSD, GBPUSD, USDJPY, BTCUSD, US30, NAS100' },
+                        leftEdgeLabels: { type: Type.STRING, description: 'Verbatim order/line labels on left edge (e.g. "TP, BUY LIMIT 0.12, SL") or "TradingView Position Box"' },
+                        rightAxisPriceTags: { type: Type.STRING, description: 'Highlighted/bordered Y-axis price badges listed top-to-bottom with colors/borders before assigning prices' },
+                        position: { type: Type.STRING, description: 'BUY or SELL' },
+                        lotSize: { type: Type.NUMBER, description: 'Lot size ONLY if source is MT5 (e.g. 0.01, 0.12, 0.25). Null for TradingView.' },
+                        entryPrice: { type: Type.NUMBER, description: 'Exact entry price from right Y-axis bordered box/badge or MT5 row, or null if not detected' },
+                        stopLoss: { type: Type.NUMBER, description: 'Exact Stop Loss price from right Y-axis bordered box/badge or MT5 row, or null if not detected' },
+                        takeProfit: { type: Type.NUMBER, description: 'Exact Take Profit price from right Y-axis bordered box/badge or MT5 row, or null if not detected' },
+                        exitPrice: { type: Type.NUMBER, description: 'Close/exit price if trade is closed' },
+                        profit: { type: Type.NUMBER, description: 'Floating or closed profit/loss amount' },
+                        plannedRiskReward: { type: Type.NUMBER, description: 'Risk/Reward ratio number (e.g. 2.0 for 1:2 RR)' },
+                        timeframe: { type: Type.STRING, description: 'Chart timeframe (e.g. M1, M5, M15, M30, H1, H4, D1)' },
+                        currentPrice: { type: Type.NUMBER, description: 'Current live running market price on the right price scale' },
+                        status: { type: Type.STRING, description: 'PLANNED (when LIMIT or STOP is present, or TradingView setup), ACTIVE (open market order), or CLOSED' },
+                        notes: { type: Type.STRING, description: 'Brief summary of visual readings including left-edge order labels' },
+                      },
+                      required: ['detected', 'instrument', 'position'],
                     },
                   },
-                  prompt,
-                ],
-                config: {
-                  abortSignal,
-                  ...(model === 'gemini-4-hydrogen' || model === 'gemini-3-flash-preview'
-                    ? { thinkingConfig: { thinkingLevel: ThinkingLevel.LOW } }
-                    : {}),
-                  responseMimeType: 'application/json',
-                  responseSchema: {
-                    type: Type.OBJECT,
-                    properties: {
-                      detected: { type: Type.BOOLEAN, description: 'True if trade setup or order is detected' },
-                      source: { type: Type.STRING, description: 'MT5, TRADINGVIEW, or CHART' },
-                      instrument: { type: Type.STRING, description: 'Clean instrument symbol, e.g. XAUUSD, EURUSD, GBPUSD, USDJPY, BTCUSD, US30, NAS100' },
-                      leftEdgeLabels: { type: Type.STRING, description: 'Verbatim order/line labels on left edge (e.g. "TP, BUY LIMIT 0.12, SL") or "TradingView Position Box"' },
-                      rightAxisPriceTags: { type: Type.STRING, description: 'Highlighted/bordered Y-axis price badges listed top-to-bottom with colors/borders before assigning prices' },
-                      position: { type: Type.STRING, description: 'BUY or SELL' },
-                      lotSize: { type: Type.NUMBER, description: 'Lot size ONLY if source is MT5 (e.g. 0.01, 0.12, 0.25). Null for TradingView.' },
-                      entryPrice: { type: Type.NUMBER, description: 'Exact entry price from right Y-axis bordered box/badge or MT5 row, or null if not detected' },
-                      stopLoss: { type: Type.NUMBER, description: 'Exact Stop Loss price from right Y-axis bordered box/badge or MT5 row, or null if not detected' },
-                      takeProfit: { type: Type.NUMBER, description: 'Exact Take Profit price from right Y-axis bordered box/badge or MT5 row, or null if not detected' },
-                      exitPrice: { type: Type.NUMBER, description: 'Close/exit price if trade is closed' },
-                      profit: { type: Type.NUMBER, description: 'Floating or closed profit/loss amount' },
-                      plannedRiskReward: { type: Type.NUMBER, description: 'Risk/Reward ratio number (e.g. 2.0 for 1:2 RR)' },
-                      timeframe: { type: Type.STRING, description: 'Chart timeframe (e.g. M1, M5, M15, M30, H1, H4, D1)' },
-                      currentPrice: { type: Type.NUMBER, description: 'Current live running market price on the right price scale' },
-                      status: { type: Type.STRING, description: 'PLANNED (when LIMIT or STOP is present, or TradingView setup), ACTIVE (open market order), or CLOSED' },
-                      notes: { type: Type.STRING, description: 'Brief summary of visual readings including left-edge order labels' },
-                    },
-                    required: ['detected', 'instrument', 'position'],
-                  },
-                },
-              }),
-            Math.min(12_000, remainingWallMs),
-            `Scan Kilat (${model})`
-          );
+                }),
+              Math.min(18_000, remainingWallMs),
+              `Scan Kilat (${model})`
+            );
 
-          if (response && response.text) {
-            responseText = response.text;
-            usedModel = model;
-            break;
-          }
-          scanFailures.push({ model, code: 'EMPTY_RESPONSE', summary: 'Empty response text' });
-        } catch (err: any) {
-          const classified = classifyGeminiFailure(err);
-          scanFailures.push({ model, code: classified.code, summary: classified.summary });
-          if (classified.code === 'QUOTA_429' || classified.code === 'MODEL_404') {
-            quotaCooldownUntilByModel.set(cooldownKey, Date.now() + 20 * 60 * 1000);
+            if (response && response.text) {
+              responseText = response.text;
+              usedModel = model;
+              break;
+            }
+            scanFailures.push({ model, code: 'EMPTY_RESPONSE', summary: 'Empty response text' });
+          } catch (err: any) {
+            const classified = classifyGeminiFailure(err);
+            scanFailures.push({ model, code: classified.code, summary: classified.summary });
+            if (classified.code === 'QUOTA_429' || classified.code === 'MODEL_404') {
+              quotaCooldownUntilByModel.set(cooldownKey, {
+                code: classified.code,
+                until: Date.now() + 20 * 60 * 1000,
+              });
+            }
           }
         }
+        if (responseText) break;
       }
       if (responseText) break;
     }
@@ -1354,118 +1370,137 @@ STRICT EXTRACTION RULES:
     const MAX_MT5_WALL_MS = 50_000;
     const mt5Failures: Array<{ model: string; code: string; summary: string }> = [];
 
-    for (const model of candidateModels) {
-      if (MAX_MT5_WALL_MS - (Date.now() - mt5CascadeStartMs) < 2500) break;
-      for (let keyIdx = 0; keyIdx < scannerApiKeys.length; keyIdx++) {
-        const remainingWallMs = MAX_MT5_WALL_MS - (Date.now() - mt5CascadeStartMs);
-        if (remainingWallMs < 2500) break;
-        const cooldownKey = `${keyIdx}:${model}`;
-        const cooldownUntil = quotaCooldownUntilByModel.get(cooldownKey) || 0;
-        if (Date.now() < cooldownUntil) {
-          mt5Failures.push({ model, code: 'QUOTA_429', summary: 'Cooldown cache active' });
-          continue;
-        }
+    for (let pass = 0; pass < 2; pass++) {
+      if (pass > 0) {
+        const shouldRetryTransient = mt5Failures.some(
+          (f) => f.code === 'SERVER_503' || f.code === 'TIMEOUT'
+        );
+        const remainingBeforePass = MAX_MT5_WALL_MS - (Date.now() - mt5CascadeStartMs);
+        if (!shouldRetryTransient || remainingBeforePass < 5000) break;
+        await new Promise((r) => setTimeout(r, 1200));
+      }
 
-        const ai = new GoogleGenAI({
-          apiKey: scannerApiKeys[keyIdx],
-          httpOptions: {
-            headers: {
-              'User-Agent': 'aistudio-build',
-            },
-            retryOptions: { attempts: 1 },
-          },
-        });
-
-        try {
-          const response = await withTimeoutAbort(
-            (abortSignal) =>
-              ai.models.generateContent({
-                model,
-                contents: [
-                  {
-                    inlineData: {
-                      mimeType,
-                      data: base64Data,
-                    },
-                  },
-                  prompt,
-                ],
-                config: {
-                  abortSignal,
-                  ...(model === 'gemini-4-hydrogen' || model === 'gemini-3-flash-preview'
-                    ? { thinkingConfig: { thinkingLevel: ThinkingLevel.LOW } }
-                    : {}),
-                  responseMimeType: 'application/json',
-                  responseSchema: {
-                    type: Type.OBJECT,
-                    properties: {
-                      detected: {
-                        type: Type.BOOLEAN,
-                        description: 'True if at least one closed MT5/MT4 trade row is visible',
-                      },
-                      source: {
-                        type: Type.STRING,
-                        description: 'MT5_HISTORY_MOBILE, MT5_HISTORY_DESKTOP, or MT4_HISTORY',
-                      },
-                      trades: {
-                        type: Type.ARRAY,
-                        description: 'All visible closed trade rows ordered top-to-bottom as shown in screenshot',
-                        items: {
-                          type: Type.OBJECT,
-                          properties: {
-                            ticketId: { type: Type.STRING, description: 'MT5 ticket/deal/position ID if visible, else empty string' },
-                            instrument: { type: Type.STRING, description: 'Clean symbol e.g. XAUUSD, EURUSD, BTCUSD' },
-                            position: { type: Type.STRING, description: 'BUY or SELL' },
-                            lotSize: { type: Type.NUMBER, description: 'Volume / lot size e.g. 0.10' },
-                            entryPrice: { type: Type.NUMBER, description: 'Entry / Open price before ->' },
-                            exitPrice: { type: Type.NUMBER, description: 'Exit / Close price after ->' },
-                            stopLoss: { type: Type.NUMBER, description: 'S/L price if shown, else null' },
-                            takeProfit: { type: Type.NUMBER, description: 'T/P price if shown, else null' },
-                            commission: { type: Type.NUMBER, description: 'Commission fee amount if shown, else 0' },
-                            swap: { type: Type.NUMBER, description: 'Swap amount if shown (signed), else 0' },
-                            netProfit: { type: Type.NUMBER, description: 'Realized profit/loss on the row (negative if loss)' },
-                            openDateTime: { type: Type.STRING, description: 'Open timestamp YYYY-MM-DD HH:mm if visible, else empty string' },
-                            closeDateTime: { type: Type.STRING, description: 'Close timestamp YYYY-MM-DD HH:mm if visible, else empty string' },
-                            closeType: { type: Type.STRING, description: 'TP, SL, or Manual' },
-                            notes: { type: Type.STRING, description: 'Optional visible row tag e.g. [tp], [sl], or empty string' },
-                          },
-                          required: ['instrument', 'position'],
-                        },
-                      },
-                    },
-                    required: ['detected', 'trades'],
-                  },
-                },
-              }),
-            Math.min(13_000, remainingWallMs),
-            `MT5 Scan (${model})`
-          );
-
-          if (response && response.text) {
-            const candidate = parseAndNormalizeMt5HistoryResponse(response.text);
-            if (candidate.normalizedTrades.length > 0) {
-              winningResult = candidate;
-              usedModel = model;
-              break;
-            }
-            if (candidate.explicitNoTrades && !confirmedEmptyModel) {
-              confirmedEmptyModel = model;
-            }
+      for (const model of candidateModels) {
+        if (MAX_MT5_WALL_MS - (Date.now() - mt5CascadeStartMs) < 2500) break;
+        for (let keyIdx = 0; keyIdx < scannerApiKeys.length; keyIdx++) {
+          const remainingWallMs = MAX_MT5_WALL_MS - (Date.now() - mt5CascadeStartMs);
+          if (remainingWallMs < 2500) break;
+          const cooldownKey = `${keyIdx}:${model}`;
+          const cooldownEntry = quotaCooldownUntilByModel.get(cooldownKey);
+          if (cooldownEntry && Date.now() < cooldownEntry.until) {
             mt5Failures.push({
               model,
-              code: 'EMPTY_RESPONSE',
-              summary: candidate.parsedValidArray ? 'Model returned 0 trade rows' : 'Truncated or invalid JSON output',
+              code: cooldownEntry.code,
+              summary: 'Cooldown cache active',
             });
-          } else {
-            mt5Failures.push({ model, code: 'EMPTY_RESPONSE', summary: 'Empty response text' });
+            continue;
           }
-        } catch (err: any) {
-          const classified = classifyGeminiFailure(err);
-          mt5Failures.push({ model, code: classified.code, summary: classified.summary });
-          if (classified.code === 'QUOTA_429' || classified.code === 'MODEL_404') {
-            quotaCooldownUntilByModel.set(cooldownKey, Date.now() + 20 * 60 * 1000);
+
+          const ai = new GoogleGenAI({
+            apiKey: scannerApiKeys[keyIdx],
+            httpOptions: {
+              headers: {
+                'User-Agent': 'aistudio-build',
+              },
+              retryOptions: { attempts: 1 },
+            },
+          });
+
+          try {
+            const response = await withTimeoutAbort(
+              (abortSignal) =>
+                ai.models.generateContent({
+                  model,
+                  contents: [
+                    {
+                      inlineData: {
+                        mimeType,
+                        data: base64Data,
+                      },
+                    },
+                    prompt,
+                  ],
+                  config: {
+                    abortSignal,
+                    ...(model === 'gemini-4-hydrogen'
+                      ? { thinkingConfig: { thinkingLevel: ThinkingLevel.LOW } }
+                      : {}),
+                    responseMimeType: 'application/json',
+                    responseSchema: {
+                      type: Type.OBJECT,
+                      properties: {
+                        detected: {
+                          type: Type.BOOLEAN,
+                          description: 'True if at least one closed MT5/MT4 trade row is visible',
+                        },
+                        source: {
+                          type: Type.STRING,
+                          description: 'MT5_HISTORY_MOBILE, MT5_HISTORY_DESKTOP, or MT4_HISTORY',
+                        },
+                        trades: {
+                          type: Type.ARRAY,
+                          description: 'All visible closed trade rows ordered top-to-bottom as shown in screenshot',
+                          items: {
+                            type: Type.OBJECT,
+                            properties: {
+                              ticketId: { type: Type.STRING, description: 'MT5 ticket/deal/position ID if visible, else empty string' },
+                              instrument: { type: Type.STRING, description: 'Clean symbol e.g. XAUUSD, EURUSD, BTCUSD' },
+                              position: { type: Type.STRING, description: 'BUY or SELL' },
+                              lotSize: { type: Type.NUMBER, description: 'Volume / lot size e.g. 0.10' },
+                              entryPrice: { type: Type.NUMBER, description: 'Entry / Open price before ->' },
+                              exitPrice: { type: Type.NUMBER, description: 'Exit / Close price after ->' },
+                              stopLoss: { type: Type.NUMBER, description: 'S/L price if shown, else null' },
+                              takeProfit: { type: Type.NUMBER, description: 'T/P price if shown, else null' },
+                              commission: { type: Type.NUMBER, description: 'Commission fee amount if shown, else 0' },
+                              swap: { type: Type.NUMBER, description: 'Swap amount if shown (signed), else 0' },
+                              netProfit: { type: Type.NUMBER, description: 'Realized profit/loss on the row (negative if loss)' },
+                              openDateTime: { type: Type.STRING, description: 'Open timestamp YYYY-MM-DD HH:mm if visible, else empty string' },
+                              closeDateTime: { type: Type.STRING, description: 'Close timestamp YYYY-MM-DD HH:mm if visible, else empty string' },
+                              closeType: { type: Type.STRING, description: 'TP, SL, or Manual' },
+                              notes: { type: Type.STRING, description: 'Optional visible row tag e.g. [tp], [sl], or empty string' },
+                            },
+                            required: ['instrument', 'position'],
+                          },
+                        },
+                      },
+                      required: ['detected', 'trades'],
+                    },
+                  },
+                }),
+              Math.min(18_000, remainingWallMs),
+              `MT5 Scan (${model})`
+            );
+
+            if (response && response.text) {
+              const candidate = parseAndNormalizeMt5HistoryResponse(response.text);
+              if (candidate.normalizedTrades.length > 0) {
+                winningResult = candidate;
+                usedModel = model;
+                break;
+              }
+              if (candidate.explicitNoTrades && !confirmedEmptyModel) {
+                confirmedEmptyModel = model;
+              }
+              mt5Failures.push({
+                model,
+                code: 'EMPTY_RESPONSE',
+                summary: candidate.parsedValidArray ? 'Model returned 0 trade rows' : 'Truncated or invalid JSON output',
+              });
+            } else {
+              mt5Failures.push({ model, code: 'EMPTY_RESPONSE', summary: 'Empty response text' });
+            }
+          } catch (err: any) {
+            const classified = classifyGeminiFailure(err);
+            mt5Failures.push({ model, code: classified.code, summary: classified.summary });
+            if (classified.code === 'QUOTA_429' || classified.code === 'MODEL_404') {
+              quotaCooldownUntilByModel.set(cooldownKey, {
+                code: classified.code,
+                until: Date.now() + 20 * 60 * 1000,
+              });
+            }
           }
         }
+        if (winningResult) break;
       }
       if (winningResult) break;
     }

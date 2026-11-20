@@ -285,18 +285,12 @@ function getNewsGeminiApiKeys(): string[] {
 
 const SCANNER_MODEL_CASCADE = [
   'gemini-4-hydrogen',
-  'gemini-3-flash-preview',
   'gemini-3.1-flash-lite',
-  'gemini-2.5-flash',
-  'gemini-2.5-flash-lite',
 ];
 
 const NEWS_MODEL_CASCADE = [
   'gemini-4-hydrogen',
-  'gemini-3-flash-preview',
   'gemini-3.1-flash-lite',
-  'gemini-2.5-flash',
-  'gemini-2.5-flash-lite',
 ];
 
 function isGeminiQuotaError(err: any): boolean {
@@ -441,7 +435,10 @@ function buildScanFailureResponse(
   };
 }
 
-const scanQuotaCooldownByKeyModel = new Map<string, number>();
+const scanQuotaCooldownByKeyModel = new Map<
+  string,
+  { code: 'QUOTA_429' | 'MODEL_404'; until: number }
+>();
 const newsQuotaCooldownByModel = new Map<string, number>();
 
 let cachedEdgeFedWatch: { fetchedAt: number; data: any } | null = null;
@@ -731,88 +728,107 @@ ${geometryHintBlock}
     const MAX_SCAN_WALL_MS = 45_000;
     const scanFailures: Array<{ model: string; code: string; summary: string }> = [];
 
-    for (const model of SCANNER_MODEL_CASCADE) {
-      if (MAX_SCAN_WALL_MS - (Date.now() - scanCascadeStartMs) < 2500) break;
-      for (let keyIdx = 0; keyIdx < scannerApiKeys.length; keyIdx++) {
-        const remainingWallMs = MAX_SCAN_WALL_MS - (Date.now() - scanCascadeStartMs);
-        if (remainingWallMs < 2500) break;
-        const cooldownKey = `${keyIdx}:${model}`;
-        const cooldownUntil = scanQuotaCooldownByKeyModel.get(cooldownKey) || 0;
-        if (Date.now() < cooldownUntil) {
-          scanFailures.push({ model, code: 'QUOTA_429', summary: 'Cooldown cache active' });
-          continue;
-        }
+    for (let pass = 0; pass < 2; pass++) {
+      if (pass > 0) {
+        const shouldRetryTransient = scanFailures.some(
+          (f) => f.code === 'SERVER_503' || f.code === 'TIMEOUT'
+        );
+        const remainingBeforePass = MAX_SCAN_WALL_MS - (Date.now() - scanCascadeStartMs);
+        if (!shouldRetryTransient || remainingBeforePass < 5000) break;
+        await new Promise((r) => setTimeout(r, 1200));
+      }
 
-        const ai = new GoogleGenAI({
-          apiKey: scannerApiKeys[keyIdx],
-          httpOptions: {
-            headers: { 'User-Agent': 'aistudio-build' },
-            retryOptions: { attempts: 1 },
-          },
-        });
+      for (const model of SCANNER_MODEL_CASCADE) {
+        if (MAX_SCAN_WALL_MS - (Date.now() - scanCascadeStartMs) < 2500) break;
+        for (let keyIdx = 0; keyIdx < scannerApiKeys.length; keyIdx++) {
+          const remainingWallMs = MAX_SCAN_WALL_MS - (Date.now() - scanCascadeStartMs);
+          if (remainingWallMs < 2500) break;
+          const cooldownKey = `${keyIdx}:${model}`;
+          const cooldownEntry = scanQuotaCooldownByKeyModel.get(cooldownKey);
+          if (cooldownEntry && Date.now() < cooldownEntry.until) {
+            scanFailures.push({
+              model,
+              code: cooldownEntry.code,
+              summary: 'Cooldown cache active',
+            });
+            continue;
+          }
 
-        try {
-          const response = await withTimeoutAbort(
-            (abortSignal) =>
-              ai.models.generateContent({
-                model,
-                contents: [
-                  { inlineData: { mimeType, data: base64Data } },
-                  prompt,
-                ],
-                config: {
-                  abortSignal,
-                  ...(model === 'gemini-4-hydrogen' || model === 'gemini-3-flash-preview'
-                    ? { thinkingConfig: { thinkingLevel: ThinkingLevel.LOW } }
-                    : {}),
-                  responseMimeType: 'application/json',
-                  responseSchema: {
-                    type: Type.OBJECT,
-                    properties: {
-                      detected: { type: Type.BOOLEAN },
-                      source: { type: Type.STRING },
-                      instrument: { type: Type.STRING },
-                      leftEdgeLabels: {
-                        type: Type.STRING,
-                        description: 'Verbatim order/line labels on left edge (e.g. "TP, BUY LIMIT 0.12, SL") or "TradingView Position Box"',
+          const ai = new GoogleGenAI({
+            apiKey: scannerApiKeys[keyIdx],
+            httpOptions: {
+              headers: { 'User-Agent': 'aistudio-build' },
+              retryOptions: { attempts: 1 },
+            },
+          });
+
+          try {
+            const response = await withTimeoutAbort(
+              (abortSignal) =>
+                ai.models.generateContent({
+                  model,
+                  contents: [
+                    { inlineData: { mimeType, data: base64Data } },
+                    prompt,
+                  ],
+                  config: {
+                    abortSignal,
+                    ...(model === 'gemini-4-hydrogen'
+                      ? { thinkingConfig: { thinkingLevel: ThinkingLevel.LOW } }
+                      : {}),
+                    responseMimeType: 'application/json',
+                    responseSchema: {
+                      type: Type.OBJECT,
+                      properties: {
+                        detected: { type: Type.BOOLEAN },
+                        source: { type: Type.STRING },
+                        instrument: { type: Type.STRING },
+                        leftEdgeLabels: {
+                          type: Type.STRING,
+                          description: 'Verbatim order/line labels on left edge (e.g. "TP, BUY LIMIT 0.12, SL") or "TradingView Position Box"',
+                        },
+                        rightAxisPriceTags: {
+                          type: Type.STRING,
+                          description: 'Highlighted/bordered Y-axis price badges listed top-to-bottom with colors/borders before assigning prices',
+                        },
+                        position: { type: Type.STRING },
+                        lotSize: { type: Type.NUMBER },
+                        entryPrice: { type: Type.NUMBER },
+                        stopLoss: { type: Type.NUMBER },
+                        takeProfit: { type: Type.NUMBER },
+                        exitPrice: { type: Type.NUMBER },
+                        profit: { type: Type.NUMBER },
+                        plannedRiskReward: { type: Type.NUMBER },
+                        timeframe: { type: Type.STRING },
+                        currentPrice: { type: Type.NUMBER },
+                        status: { type: Type.STRING },
+                        notes: { type: Type.STRING },
                       },
-                      rightAxisPriceTags: {
-                        type: Type.STRING,
-                        description: 'Highlighted/bordered Y-axis price badges listed top-to-bottom with colors/borders before assigning prices',
-                      },
-                      position: { type: Type.STRING },
-                      lotSize: { type: Type.NUMBER },
-                      entryPrice: { type: Type.NUMBER },
-                      stopLoss: { type: Type.NUMBER },
-                      takeProfit: { type: Type.NUMBER },
-                      exitPrice: { type: Type.NUMBER },
-                      profit: { type: Type.NUMBER },
-                      plannedRiskReward: { type: Type.NUMBER },
-                      timeframe: { type: Type.STRING },
-                      currentPrice: { type: Type.NUMBER },
-                      status: { type: Type.STRING },
-                      notes: { type: Type.STRING },
+                      required: ['detected', 'instrument', 'position'],
                     },
-                    required: ['detected', 'instrument', 'position'],
                   },
-                },
-              }),
-            Math.min(12_000, remainingWallMs),
-            `Scan Kilat (${model})`
-          );
-          if (response && response.text) {
-            responseText = response.text;
-            usedModel = model;
-            break;
-          }
-          scanFailures.push({ model, code: 'EMPTY_RESPONSE', summary: 'Empty response text' });
-        } catch (err: any) {
-          const classified = classifyGeminiFailure(err);
-          scanFailures.push({ model, code: classified.code, summary: classified.summary });
-          if (classified.code === 'QUOTA_429' || classified.code === 'MODEL_404') {
-            scanQuotaCooldownByKeyModel.set(cooldownKey, Date.now() + 20 * 60 * 1000);
+                }),
+              Math.min(18_000, remainingWallMs),
+              `Scan Kilat (${model})`
+            );
+            if (response && response.text) {
+              responseText = response.text;
+              usedModel = model;
+              break;
+            }
+            scanFailures.push({ model, code: 'EMPTY_RESPONSE', summary: 'Empty response text' });
+          } catch (err: any) {
+            const classified = classifyGeminiFailure(err);
+            scanFailures.push({ model, code: classified.code, summary: classified.summary });
+            if (classified.code === 'QUOTA_429' || classified.code === 'MODEL_404') {
+              scanQuotaCooldownByKeyModel.set(cooldownKey, {
+                code: classified.code,
+                until: Date.now() + 20 * 60 * 1000,
+              });
+            }
           }
         }
+        if (responseText) break;
       }
       if (responseText) break;
     }
@@ -1246,100 +1262,119 @@ STRICT EXTRACTION RULES:
     const MAX_MT5_WALL_MS = 50_000;
     const mt5Failures: Array<{ model: string; code: string; summary: string }> = [];
 
-    for (const model of SCANNER_MODEL_CASCADE) {
-      if (MAX_MT5_WALL_MS - (Date.now() - mt5CascadeStartMs) < 2500) break;
-      for (let keyIdx = 0; keyIdx < scannerApiKeys.length; keyIdx++) {
-        const remainingWallMs = MAX_MT5_WALL_MS - (Date.now() - mt5CascadeStartMs);
-        if (remainingWallMs < 2500) break;
-        const cooldownKey = `${keyIdx}:${model}`;
-        const cooldownUntil = scanQuotaCooldownByKeyModel.get(cooldownKey) || 0;
-        if (Date.now() < cooldownUntil) {
-          mt5Failures.push({ model, code: 'QUOTA_429', summary: 'Cooldown cache active' });
-          continue;
-        }
+    for (let pass = 0; pass < 2; pass++) {
+      if (pass > 0) {
+        const shouldRetryTransient = mt5Failures.some(
+          (f) => f.code === 'SERVER_503' || f.code === 'TIMEOUT'
+        );
+        const remainingBeforePass = MAX_MT5_WALL_MS - (Date.now() - mt5CascadeStartMs);
+        if (!shouldRetryTransient || remainingBeforePass < 5000) break;
+        await new Promise((r) => setTimeout(r, 1200));
+      }
 
-        const ai = new GoogleGenAI({
-          apiKey: scannerApiKeys[keyIdx],
-          httpOptions: {
-            headers: { 'User-Agent': 'aistudio-build' },
-            retryOptions: { attempts: 1 },
-          },
-        });
-
-        try {
-          const response = await withTimeoutAbort(
-            (abortSignal) =>
-              ai.models.generateContent({
-                model,
-                contents: [{ inlineData: { mimeType, data: base64Data } }, prompt],
-                config: {
-                  abortSignal,
-                  ...(model === 'gemini-4-hydrogen' || model === 'gemini-3-flash-preview'
-                    ? { thinkingConfig: { thinkingLevel: ThinkingLevel.LOW } }
-                    : {}),
-                  responseMimeType: 'application/json',
-                  responseSchema: {
-                    type: Type.OBJECT,
-                    properties: {
-                      detected: { type: Type.BOOLEAN },
-                      source: { type: Type.STRING },
-                      trades: {
-                        type: Type.ARRAY,
-                        items: {
-                          type: Type.OBJECT,
-                          properties: {
-                            ticketId: { type: Type.STRING },
-                            instrument: { type: Type.STRING },
-                            position: { type: Type.STRING },
-                            lotSize: { type: Type.NUMBER },
-                            entryPrice: { type: Type.NUMBER },
-                            exitPrice: { type: Type.NUMBER },
-                            stopLoss: { type: Type.NUMBER },
-                            takeProfit: { type: Type.NUMBER },
-                            commission: { type: Type.NUMBER },
-                            swap: { type: Type.NUMBER },
-                            netProfit: { type: Type.NUMBER },
-                            openDateTime: { type: Type.STRING },
-                            closeDateTime: { type: Type.STRING },
-                            closeType: { type: Type.STRING },
-                            notes: { type: Type.STRING },
-                          },
-                          required: ['instrument', 'position'],
-                        },
-                      },
-                    },
-                    required: ['detected', 'trades'],
-                  },
-                },
-              }),
-            Math.min(13_000, remainingWallMs),
-            `MT5 Scan (${model})`
-          );
-          if (response && response.text) {
-            const candidate = parseAndNormalizeMt5HistoryResponse(response.text);
-            if (candidate.normalizedTrades.length > 0) {
-              winningResult = candidate;
-              usedModel = model;
-              break;
-            }
-            if (candidate.explicitNoTrades && !confirmedEmptyModel) {
-              confirmedEmptyModel = model;
-            }
+      for (const model of SCANNER_MODEL_CASCADE) {
+        if (MAX_MT5_WALL_MS - (Date.now() - mt5CascadeStartMs) < 2500) break;
+        for (let keyIdx = 0; keyIdx < scannerApiKeys.length; keyIdx++) {
+          const remainingWallMs = MAX_MT5_WALL_MS - (Date.now() - mt5CascadeStartMs);
+          if (remainingWallMs < 2500) break;
+          const cooldownKey = `${keyIdx}:${model}`;
+          const cooldownEntry = scanQuotaCooldownByKeyModel.get(cooldownKey);
+          if (cooldownEntry && Date.now() < cooldownEntry.until) {
             mt5Failures.push({
               model,
-              code: 'EMPTY_RESPONSE',
-              summary: candidate.parsedValidArray ? 'Model returned 0 trade rows' : 'Truncated or invalid JSON output',
+              code: cooldownEntry.code,
+              summary: 'Cooldown cache active',
             });
-          } else {
-            mt5Failures.push({ model, code: 'EMPTY_RESPONSE', summary: 'Empty response text' });
+            continue;
           }
-        } catch (err: any) {
-          const classified = classifyGeminiFailure(err);
-          mt5Failures.push({ model, code: classified.code, summary: classified.summary });
-          if (classified.code === 'QUOTA_429' || classified.code === 'MODEL_404') {
-            scanQuotaCooldownByKeyModel.set(cooldownKey, Date.now() + 20 * 60 * 1000);
+
+          const ai = new GoogleGenAI({
+            apiKey: scannerApiKeys[keyIdx],
+            httpOptions: {
+              headers: { 'User-Agent': 'aistudio-build' },
+              retryOptions: { attempts: 1 },
+            },
+          });
+
+          try {
+            const response = await withTimeoutAbort(
+              (abortSignal) =>
+                ai.models.generateContent({
+                  model,
+                  contents: [{ inlineData: { mimeType, data: base64Data } }, prompt],
+                  config: {
+                    abortSignal,
+                    ...(model === 'gemini-4-hydrogen'
+                      ? { thinkingConfig: { thinkingLevel: ThinkingLevel.LOW } }
+                      : {}),
+                    responseMimeType: 'application/json',
+                    responseSchema: {
+                      type: Type.OBJECT,
+                      properties: {
+                        detected: { type: Type.BOOLEAN },
+                        source: { type: Type.STRING },
+                        trades: {
+                          type: Type.ARRAY,
+                          items: {
+                            type: Type.OBJECT,
+                            properties: {
+                              ticketId: { type: Type.STRING },
+                              instrument: { type: Type.STRING },
+                              position: { type: Type.STRING },
+                              lotSize: { type: Type.NUMBER },
+                              entryPrice: { type: Type.NUMBER },
+                              exitPrice: { type: Type.NUMBER },
+                              stopLoss: { type: Type.NUMBER },
+                              takeProfit: { type: Type.NUMBER },
+                              commission: { type: Type.NUMBER },
+                              swap: { type: Type.NUMBER },
+                              netProfit: { type: Type.NUMBER },
+                              openDateTime: { type: Type.STRING },
+                              closeDateTime: { type: Type.STRING },
+                              closeType: { type: Type.STRING },
+                              notes: { type: Type.STRING },
+                            },
+                            required: ['instrument', 'position'],
+                          },
+                        },
+                      },
+                      required: ['detected', 'trades'],
+                    },
+                  },
+                }),
+              Math.min(18_000, remainingWallMs),
+              `MT5 Scan (${model})`
+            );
+            if (response && response.text) {
+              const candidate = parseAndNormalizeMt5HistoryResponse(response.text);
+              if (candidate.normalizedTrades.length > 0) {
+                winningResult = candidate;
+                usedModel = model;
+                break;
+              }
+              if (candidate.explicitNoTrades && !confirmedEmptyModel) {
+                confirmedEmptyModel = model;
+              }
+              mt5Failures.push({
+                model,
+                code: 'EMPTY_RESPONSE',
+                summary: candidate.parsedValidArray ? 'Model returned 0 trade rows' : 'Truncated or invalid JSON output',
+              });
+            } else {
+              mt5Failures.push({ model, code: 'EMPTY_RESPONSE', summary: 'Empty response text' });
+            }
+          } catch (err: any) {
+            const classified = classifyGeminiFailure(err);
+            mt5Failures.push({ model, code: classified.code, summary: classified.summary });
+            if (classified.code === 'QUOTA_429' || classified.code === 'MODEL_404') {
+              scanQuotaCooldownByKeyModel.set(cooldownKey, {
+                code: classified.code,
+                until: Date.now() + 20 * 60 * 1000,
+              });
+            }
           }
         }
+        if (winningResult) break;
       }
       if (winningResult) break;
     }
