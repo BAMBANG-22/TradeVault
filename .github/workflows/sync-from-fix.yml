@@ -15,7 +15,12 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Pull files from TradeVault-Fix and push
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.4
+
+      - name: Pull files from TradeVault-Fix, refresh bun.lock, and push
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
@@ -23,10 +28,11 @@ jobs:
           git checkout FETCH_HEAD -- .
           git rm -rf --ignore-unmatch .github/workflows
           git checkout HEAD -- .github/workflows
+          bun install --lockfile-only
           git add -A
           if git diff --cached --quiet; then
             echo "Already up to date."
             exit 0
           fi
-          git commit -m "Sync latest update from TradeVault-Fix"
+          git commit -m "Sync latest update and lockfile from TradeVault-Fix"
           git push origin main
