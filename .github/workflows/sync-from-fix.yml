@@ -1,0 +1,32 @@
+name: Sync from TradeVault-Fix
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout TradeVault
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Pull files from TradeVault-Fix and push
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git fetch https://github.com/BAMBANG-22/TradeVault-Fix.git main
+          git checkout FETCH_HEAD -- .
+          git rm -rf --ignore-unmatch .github/workflows
+          git checkout HEAD -- .github/workflows
+          git add -A
+          if git diff --cached --quiet; then
+            echo "Already up to date."
+            exit 0
+          fi
+          git commit -m "Sync latest update from TradeVault-Fix"
+          git push origin main
