@@ -188,13 +188,13 @@ export const UserAccountModal: React.FC<UserAccountModalProps> = ({
         role="dialog"
         aria-modal="true"
         aria-label={tr('Profil Akun VLO', 'VLO Account Profile')}
-        className="w-full max-w-md max-h-[90vh] max-h-[90dvh] overflow-y-auto rounded-2xl border border-[#D9E2EC] dark:border-[#20252D] bg-white dark:bg-[#101318] p-6 shadow-[0_20px_50px_-12px_rgba(15,23,42,0.22)] dark:shadow-[0_24px_60px_-12px_rgba(0,0,0,0.8)] text-[#0F172A] dark:text-[#F2F4F7] relative"
+        className="w-full max-w-md max-h-[90vh] max-h-[90dvh] overflow-y-auto rounded-2xl border border-[#E4E4E7] dark:border-[#20252D] bg-white dark:bg-[#101318] p-6 shadow-[0_20px_50px_-12px_rgba(15,23,42,0.22)] dark:shadow-[0_24px_60px_-12px_rgba(0,0,0,0.8)] text-[#0F172A] dark:text-[#F2F4F7] relative"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
-        <div className="flex items-center justify-between pb-3.5 border-b border-[#D9E2EC] dark:border-[#20252D]">
+        <div className="flex items-center justify-between pb-3.5 border-b border-[#E4E4E7] dark:border-[#20252D]">
           <div className="flex items-center gap-2.5">
-            <div className="h-9 w-9 rounded-full bg-[#F5F7FA] dark:bg-[#161A22] text-[#526071] dark:text-[#929BA9] border border-[#D9E2EC] dark:border-[#20252D] flex items-center justify-center">
+            <div className="h-9 w-9 rounded-full bg-[#FAFAFA] dark:bg-[#161A22] text-[#526071] dark:text-[#929BA9] border border-[#E4E4E7] dark:border-[#20252D] flex items-center justify-center">
               <User className="h-5 w-5 stroke-[1.75]" />
             </div>
             <div>
@@ -209,7 +209,7 @@ export const UserAccountModal: React.FC<UserAccountModalProps> = ({
           <button
             type="button"
             onClick={onClose}
-            className="min-h-[36px] min-w-[36px] flex items-center justify-center rounded-full bg-[#F5F7FA] hover:bg-[#EEF2F6] text-[#526071] hover:text-[#0F172A] dark:bg-[#161A22] dark:hover:bg-[#1E2430] dark:text-[#929BA9] dark:hover:text-[#F2F4F7] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/35 dark:focus-visible:ring-white/35 transition-colors cursor-pointer"
+            className="min-h-[36px] min-w-[36px] flex items-center justify-center rounded-full bg-[#FAFAFA] hover:bg-[#F4F4F5] text-[#526071] hover:text-[#0F172A] dark:bg-[#161A22] dark:hover:bg-[#1E2430] dark:text-[#929BA9] dark:hover:text-[#F2F4F7] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/35 dark:focus-visible:ring-white/35 transition-colors cursor-pointer"
             aria-label={tr('Tutup', 'Close')}
           >
             <X className="h-4 w-4 stroke-[1.75]" />
@@ -227,7 +227,7 @@ export const UserAccountModal: React.FC<UserAccountModalProps> = ({
         />
 
         {/* User Summary & Profile Photo Control */}
-        <div className="py-4 border-b border-[#D9E2EC] dark:border-[#20252D] space-y-3">
+        <div className="py-4 border-b border-[#E4E4E7] dark:border-[#20252D] space-y-3">
           <div className="flex items-center justify-between gap-2 text-[11px]">
             <span className="uppercase font-semibold tracking-wider text-[#526071] dark:text-[#929BA9]">
               {tr('Status Akun', 'Account Status')}
@@ -246,7 +246,7 @@ export const UserAccountModal: React.FC<UserAccountModalProps> = ({
                 data-testid="account-modal-avatar-button"
                 aria-label={tr('Ubah Foto Profil', 'Change Profile Photo')}
                 title={tr('Klik untuk mengubah foto profil', 'Click to change profile photo')}
-                className="group relative h-14 w-14 rounded-full border border-[#D9E2EC] dark:border-[#20252D] bg-[#EEF2F6] dark:bg-[#161A22] flex items-center justify-center text-[#0F172A] dark:text-white overflow-hidden cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/35 dark:focus-visible:ring-white/35 disabled:opacity-60"
+                className="group relative h-14 w-14 rounded-full border border-[#E4E4E7] dark:border-[#20252D] bg-[#FAFAFA] dark:bg-[#161A22] flex items-center justify-center text-[#0F172A] dark:text-white overflow-hidden cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/35 dark:focus-visible:ring-white/35 disabled:opacity-60"
               >
                 {avatarUrl ? (
                   <img
@@ -337,7 +337,7 @@ export const UserAccountModal: React.FC<UserAccountModalProps> = ({
                     data-testid="account-modal-remove-photo-btn"
                     aria-label={tr('Hapus Foto Profil', 'Remove Profile Photo')}
                     title={tr('Hapus Foto Profil', 'Remove Profile Photo')}
-                    className="inline-flex h-7 w-7 items-center justify-center rounded-full bg-[#F5F7FA] hover:bg-[#EEF2F6] dark:bg-[#161A22] dark:hover:bg-[#1E2430] border border-[#D9E2EC] dark:border-[#20252D] text-[#526071] hover:text-[#E11D48] dark:text-[#929BA9] dark:hover:text-[#E05260] transition-colors cursor-pointer disabled:opacity-50"
+                    className="inline-flex h-7 w-7 items-center justify-center rounded-full bg-[#FAFAFA] hover:bg-[#F4F4F5] dark:bg-[#161A22] dark:hover:bg-[#1E2430] border border-[#E4E4E7] dark:border-[#20252D] text-[#526071] hover:text-[#E11D48] dark:text-[#929BA9] dark:hover:text-[#E05260] transition-colors cursor-pointer disabled:opacity-50"
                   >
                     <Trash2 className="h-3.5 w-3.5 stroke-[1.75]" />
                   </button>
@@ -366,7 +366,7 @@ export const UserAccountModal: React.FC<UserAccountModalProps> = ({
         </div>
 
         {/* Account Details Hairline List (Flat, zero nested mini-cards) */}
-        <div className="divide-y divide-[#D9E2EC] dark:divide-[#20252D] text-xs">
+        <div className="divide-y divide-[#E4E4E7] dark:divide-[#20252D] text-xs">
           <div className="py-3 flex items-center justify-between gap-3">
             <span className="text-[#526071] dark:text-[#929BA9] flex items-center gap-2 shrink-0">
               <Key className="h-3.5 w-3.5 text-[#526071] dark:text-[#929BA9] stroke-[1.75]" />
@@ -399,7 +399,7 @@ export const UserAccountModal: React.FC<UserAccountModalProps> = ({
         </div>
 
         {/* Data Safety Note */}
-        <div className="py-3.5 border-t border-[#D9E2EC] dark:border-[#20252D] text-[11px] text-[#526071] dark:text-[#929BA9] flex items-start gap-2.5">
+        <div className="py-3.5 border-t border-[#E4E4E7] dark:border-[#20252D] text-[11px] text-[#526071] dark:text-[#929BA9] flex items-start gap-2.5">
           <HardDrive className="h-4 w-4 text-[#526071] dark:text-[#929BA9] shrink-0 mt-0.5 stroke-[1.75]" />
           <p className="leading-relaxed">
             <strong className="text-[#0F172A] dark:text-[#F2F4F7]">{tr('Privasi & Isolasi Data:', 'Data Privacy & Isolation:')}</strong>{' '}
@@ -418,12 +418,12 @@ export const UserAccountModal: React.FC<UserAccountModalProps> = ({
         )}
 
         {/* Logout Actions */}
-        <div className="pt-2 border-t border-[#D9E2EC] dark:border-[#20252D]">
+        <div className="pt-2 border-t border-[#E4E4E7] dark:border-[#20252D]">
           {!confirmLogout ? (
             <button
               type="button"
               onClick={() => setConfirmLogout(true)}
-              className="w-full min-h-[44px] py-2.5 rounded-full bg-[#F5F7FA] dark:bg-[#161A22] hover:bg-[#EEF2F6] dark:hover:bg-[#1E2430] text-[#E11D48] dark:text-[#E05260] border border-[#D9E2EC] dark:border-[#20252D] text-xs font-bold transition-colors flex items-center justify-center gap-2 cursor-pointer"
+              className="w-full min-h-[44px] py-2.5 rounded-full bg-[#FAFAFA] dark:bg-[#161A22] hover:bg-[#F4F4F5] dark:hover:bg-[#1E2430] text-[#E11D48] dark:text-[#E05260] border border-[#E4E4E7] dark:border-[#20252D] text-xs font-bold transition-colors flex items-center justify-center gap-2 cursor-pointer"
             >
               <LogOut className="h-4 w-4 stroke-[1.75]" />
               <span>{tr('Keluar dari Akun', 'Sign Out')}</span>
@@ -445,7 +445,7 @@ export const UserAccountModal: React.FC<UserAccountModalProps> = ({
                   type="button"
                   disabled={loggingOut}
                   onClick={() => setConfirmLogout(false)}
-                  className="min-h-[40px] py-2 rounded-full bg-[#EEF2F6] hover:bg-[#D9E2EC] dark:bg-[#161A22] dark:hover:bg-[#20252D] border border-[#D9E2EC] dark:border-[#20252D] text-[#0F172A] dark:text-[#F2F4F7] text-xs font-semibold transition-colors cursor-pointer"
+                  className="min-h-[40px] py-2 rounded-full bg-[#F4F4F5] hover:bg-[#E4E4E7] dark:bg-[#161A22] dark:hover:bg-[#20252D] border border-[#E4E4E7] dark:border-[#20252D] text-[#0F172A] dark:text-[#F2F4F7] text-xs font-semibold transition-colors cursor-pointer"
                 >
                   {tr('Batal', 'Cancel')}
                 </button>

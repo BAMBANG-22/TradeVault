@@ -4,7 +4,7 @@ import {
   TradePosition,
   TradingSession,
 } from '../types/trade';
-import { AppSettings } from '../types/settings';
+import { AppSettings, DEFAULT_SETTINGS } from '../types/settings';
 import { CHART_PREFS_STORAGE_KEY } from '../components/chart/MarketChartView';
 import { getApiEndpointCandidates, nativeAwarePostJson } from './apiConfig';
 import {
@@ -25,6 +25,11 @@ import {
   getCachedUsdIdrRate,
   getCurrentUsdIdrSnapshot,
 } from './currencyRate';
+import { getInstrumentPipSpec, validateSlTpDirection } from './riskCalculator';
+import {
+  preparePrecisionOcrVariants,
+  runOfflineTesseractOcr,
+} from './offlineMt5Ocr';
 
 export interface ExtractedTradeScanData {
   detected: boolean;
@@ -1840,6 +1845,9 @@ export async function scanTradeScreenshotOrUrl(inputSource: string): Promise<Ext
         imageHeight: 0,
       };
 
+  const isNavigatorOffline =
+    typeof navigator !== 'undefined' && navigator.onLine === false;
+
   // PRIORITY 1: Server-Side Gemini Vision API (`/api/extract-trade-screenshot`)
   const payload: {
     imageBase64?: string;
@@ -1854,7 +1862,9 @@ export async function scanTradeScreenshotOrUrl(inputSource: string): Promise<Ext
     payload.imageUrl = tvResolved.directImageUrl || trimmed;
   }
 
-  const scanEndpoints = getApiEndpointCandidates('/api/extract-trade-screenshot');
+  const scanEndpoints = isNavigatorOffline
+    ? []
+    : getApiEndpointCandidates('/api/extract-trade-screenshot');
   let lastServerError = '';
   for (const endpoint of scanEndpoints) {
     const serverRes = await nativeAwarePostJson(endpoint, payload, 55000);
@@ -1884,10 +1894,23 @@ export async function scanTradeScreenshotOrUrl(inputSource: string): Promise<Ext
     }
   }
 
-  // PRIORITY 3: Real-Badge OCR + Multi-Theme Canvas Geometry (Strictly NO synthetic SL/TP fabrication)
-  const ocr = dataUrlToAnalyze
-    ? await runOcrSpaceOnDataUrl(dataUrlToAnalyze)
-    : { fullText: '', lines: [], words: [] };
+  // PRIORITY 3: Real-Badge OCR (Online OCR.space -> Local On-Device Tesseract Offline OCR) + 2D Canvas Geometry
+  let ocr: OcrExtractionResult = { fullText: '', lines: [], words: [] };
+  if (dataUrlToAnalyze && !isNavigatorOffline) {
+    ocr = await runOcrSpaceOnDataUrl(dataUrlToAnalyze);
+  }
+  if (dataUrlToAnalyze && !ocr.fullText.trim()) {
+    try {
+      const localOcr = await runOfflineTesseractOcr(dataUrlToAnalyze, { psm: '11' });
+      ocr = {
+        fullText: localOcr.fullText,
+        lines: localOcr.lines,
+        words: localOcr.words,
+      };
+    } catch {
+      // Keep empty OCR and allow canvas hints / URL metadata fallback if present
+    }
+  }
 
   const fallbackResult = synthesizeTradeScanFromSignals({
     ocr,
@@ -1945,6 +1968,274 @@ export interface Mt5HistoryTradeCandidate {
   duplicateMatchId?: string;
   selected: boolean;
   sourceImageIndex?: number;
+  ocrSignRecovered?: boolean;
+}
+
+export type Mt5AuditIssueCode =
+  | 'SIGN_MISMATCH'
+  | 'PRICE_JUMP_EXTREME'
+  | 'MAGNITUDE_MISMATCH'
+  | 'SL_TP_INVALID'
+  | 'CLOSE_TYPE_PROFIT_CONFLICT'
+  | 'AUTO_SIGN_FIXED';
+
+export interface Mt5AuditIssue {
+  code: Mt5AuditIssueCode;
+  severity: 'error' | 'warning' | 'info';
+  messageId: string;
+  messageEn: string;
+  suggestedNetProfit?: number;
+  suggestedPosition?: TradePosition;
+  canSwapEntryExit?: boolean;
+}
+
+export interface Mt5CandidateAuditResult {
+  status: 'OK' | 'WARNING' | 'ERROR';
+  issues: Mt5AuditIssue[];
+  estimatedStandardGross: number | null;
+}
+
+interface RawNormalizedMt5Row {
+  ticketId: string | null;
+  instrument: string;
+  position: TradePosition;
+  lotSize: number;
+  entryPrice: number;
+  exitPrice: number;
+  stopLoss: number | null;
+  takeProfit: number | null;
+  commission: number;
+  swap: number;
+  netProfit: number;
+  openDateTime: string | null;
+  closeDateTime: string | null;
+  closeType: TradeCloseType;
+  notes: string;
+  ocrSignRecovered?: boolean;
+}
+
+interface Mt5CacheEntry {
+  rows: RawNormalizedMt5Row[];
+  modelUsed: string;
+  source: string;
+  cachedAt: number;
+}
+
+const MT5_SCAN_CACHE_STORAGE_KEY = 'tradevault_mt5_scan_cache_v1';
+const MT5_SCAN_CACHE_MAX_ENTRIES = 24;
+const MT5_SCAN_CACHE_TTL_MS = 12 * 60 * 60 * 1000;
+const mt5MemoryScanCache = new Map<string, Mt5CacheEntry>();
+
+function readMt5SessionCache(): Record<string, Mt5CacheEntry> {
+  if (typeof window === 'undefined' || typeof window.sessionStorage === 'undefined') return {};
+  try {
+    const raw = window.sessionStorage.getItem(MT5_SCAN_CACHE_STORAGE_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === 'object' ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function writeMt5SessionCache(record: Record<string, Mt5CacheEntry>): void {
+  if (typeof window === 'undefined' || typeof window.sessionStorage === 'undefined') return;
+  try {
+    const entries = Object.entries(record)
+      .filter(([, v]) => v && Array.isArray(v.rows))
+      .sort((a, b) => (b[1].cachedAt || 0) - (a[1].cachedAt || 0))
+      .slice(0, MT5_SCAN_CACHE_MAX_ENTRIES);
+    window.sessionStorage.setItem(
+      MT5_SCAN_CACHE_STORAGE_KEY,
+      JSON.stringify(Object.fromEntries(entries))
+    );
+  } catch {
+    // ignore quota errors on sessionStorage
+  }
+}
+
+async function computeImageContentHash(dataUrl: string): Promise<string> {
+  try {
+    if (typeof crypto !== 'undefined' && crypto.subtle && typeof TextEncoder !== 'undefined') {
+      const encoded = new TextEncoder().encode(dataUrl);
+      const digest = await crypto.subtle.digest('SHA-256', encoded);
+      return Array.from(new Uint8Array(digest))
+        .map((b) => b.toString(16).padStart(2, '0'))
+        .join('');
+    }
+  } catch {
+    // fallback below
+  }
+  let h1 = 0x811c9dc5;
+  for (let i = 0; i < dataUrl.length; i++) {
+    h1 ^= dataUrl.charCodeAt(i);
+    h1 = Math.imul(h1, 0x01000193);
+  }
+  return `fnv_${(h1 >>> 0).toString(16)}_${dataUrl.length}`;
+}
+
+function getCachedMt5ScanResult(
+  hash: string,
+  options?: { allowOfflineCache?: boolean }
+): Mt5CacheEntry | null {
+  const now = Date.now();
+  const allowOfflineCache = options?.allowOfflineCache ?? false;
+  const candidateKeys = allowOfflineCache ? [`ai:${hash}`, `offline:${hash}`, hash] : [`ai:${hash}`, hash];
+
+  const disk = readMt5SessionCache();
+  for (const key of candidateKeys) {
+    const mem = mt5MemoryScanCache.get(key);
+    if (mem && now - mem.cachedAt < MT5_SCAN_CACHE_TTL_MS) {
+      return mem;
+    }
+    const entry = disk[key];
+    if (entry && now - (entry.cachedAt || 0) < MT5_SCAN_CACHE_TTL_MS) {
+      mt5MemoryScanCache.set(key, entry);
+      return entry;
+    }
+  }
+  return null;
+}
+
+function setCachedMt5ScanResult(
+  hash: string,
+  tier: 'ai' | 'offline',
+  entry: Mt5CacheEntry
+): void {
+  const key = `${tier}:${hash}`;
+  mt5MemoryScanCache.set(key, entry);
+  if (mt5MemoryScanCache.size > MT5_SCAN_CACHE_MAX_ENTRIES) {
+    const oldestKey = mt5MemoryScanCache.keys().next().value;
+    if (oldestKey) mt5MemoryScanCache.delete(oldestKey);
+  }
+  const disk = readMt5SessionCache();
+  disk[key] = entry;
+  writeMt5SessionCache(disk);
+}
+
+export function clearMt5HistoryScanCache(): void {
+  mt5MemoryScanCache.clear();
+  if (typeof window !== 'undefined' && typeof window.sessionStorage !== 'undefined') {
+    try {
+      window.sessionStorage.removeItem(MT5_SCAN_CACHE_STORAGE_KEY);
+    } catch {
+      // ignore
+    }
+  }
+}
+
+/**
+ * Prepares a crisp, text-sharp image Data URL optimized specifically for MT5 ledger/digit OCR.
+ * Prefers WebP at high quality (0.92) to eliminate JPEG ringing around thin red '-' minus signs and '.' vs ',' decimals.
+ */
+export const prepareCrispMt5Screenshot = (
+  file: File | Blob,
+  maxWidth = 1600,
+  maxHeight = 3200,
+  quality = 0.92
+): Promise<string> => {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error('Gagal membaca file gambar'));
+    reader.onload = (event) => {
+      const originalDataUrl = String(event.target?.result || '');
+      if (!originalDataUrl) {
+        reject(new Error('Data gambar kosong'));
+        return;
+      }
+      const img = new Image();
+      img.onerror = () => reject(new Error('Format gambar tidak didukung'));
+      img.onload = () => {
+        let width = img.width;
+        let height = img.height;
+        if (width > maxWidth || height > maxHeight) {
+          if (width / maxWidth > height / maxHeight) {
+            height = Math.round((height * maxWidth) / width);
+            width = maxWidth;
+          } else {
+            width = Math.round((width * maxHeight) / height);
+            height = maxHeight;
+          }
+        }
+        const canvas = document.createElement('canvas');
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext('2d');
+        if (ctx) {
+          ctx.fillStyle = '#0f172a';
+          ctx.fillRect(0, 0, width, height);
+          ctx.imageSmoothingEnabled = true;
+          ctx.imageSmoothingQuality = 'high';
+          ctx.drawImage(img, 0, 0, width, height);
+          let outUrl = canvas.toDataURL('image/webp', quality);
+          if (!outUrl.startsWith('data:image/webp')) {
+            outUrl = canvas.toDataURL('image/jpeg', quality);
+          }
+          canvas.width = 0;
+          canvas.height = 0;
+          resolve(outUrl);
+        } else {
+          resolve(originalDataUrl);
+        }
+      };
+      img.src = originalDataUrl;
+    };
+    reader.readAsDataURL(file);
+  });
+};
+
+
+
+export function parseSignedMt5Number(
+  raw: unknown,
+  isPrice = false,
+  instrument = 'XAUUSD'
+): number | null {
+  if (raw === null || raw === undefined || raw === '') return null;
+  if (typeof raw === 'number') {
+    if (!Number.isFinite(raw)) return null;
+    if (isPrice) {
+      return normalizeChartPriceNumber(raw, instrument);
+    }
+    return raw;
+  }
+
+  let s = String(raw).trim();
+  if (!s) return null;
+  // Normalize Unicode minus/dashes to ASCII '-'
+  s = s.replace(/[\u2212\u2012\u2013\u2014\uFE63\uFF0D]/g, '-');
+
+  const isParenNeg = /^\(.*\)$/.test(s) && !s.startsWith('(-');
+  s = s.replace(/[^0-9.,+\- ]/g, '').trim();
+  if (!s) return null;
+  s = s.replace(/^([+-])\s+(?=\d)/, '$1');
+
+  if (isPrice) {
+    const clean = normalizeChartPriceNumber(s, instrument);
+    return clean;
+  }
+
+  if (/^[+-]?\d{1,3}(?:[.\s]\d{3})+,\d+$/.test(s)) {
+    s = s.replace(/[.\s]/g, '').replace(',', '.');
+  } else if (/^[+-]?\d{1,3}(?:[ ,\s]\d{3})+\.\d+$/.test(s)) {
+    s = s.replace(/[ ,\s]/g, '');
+  } else if (s.includes('.') && s.includes(',')) {
+    const lastDot = s.lastIndexOf('.');
+    const lastComma = s.lastIndexOf(',');
+    s = lastComma > lastDot ? s.replace(/[.\s]/g, '').replace(',', '.') : s.replace(/[,\s]/g, '');
+  } else if (s.includes(',') && !s.includes('.')) {
+    s = s.replace(/\s+/g, '').replace(',', '.');
+  } else if ((s.match(/\./g) || []).length >= 2) {
+    const lastDot = s.lastIndexOf('.');
+    s = s.slice(0, lastDot).replace(/[.\s]/g, '') + '.' + s.slice(lastDot + 1).replace(/\s+/g, '');
+  } else {
+    s = s.replace(/\s+/g, '');
+  }
+
+  let parsed = parseFloat(s);
+  if (!Number.isFinite(parsed)) return null;
+  if (isParenNeg && parsed > 0) parsed = -parsed;
+  return parsed;
 }
 
 export function detectTradingSessionFromDateTime(dateTimeLocal: string): TradingSession {
@@ -1971,8 +2262,8 @@ function buildMt5Fingerprint(item: {
 }): string {
   const cleanInst = normalizeScanInstrument(item.instrument);
   const lot = Number(item.lotSize || 0).toFixed(2);
-  const entry = Number(item.entryPrice || 0).toFixed(2);
-  const exit = Number(item.exitPrice || 0).toFixed(2);
+  const entry = Number(item.entryPrice || 0).toFixed(4);
+  const exit = Number(item.exitPrice || 0).toFixed(4);
   const net = Number(item.netProfit || 0).toFixed(2);
   const datePart = item.closeDateTime ? item.closeDateTime.slice(0, 10) : '';
   return `${cleanInst}|${item.position}|${lot}|${entry}|${exit}|${net}|${datePart}`;
@@ -1996,6 +2287,14 @@ export function detectDuplicateMt5Trade(
   const candTicket = candidate.ticketId ? candidate.ticketId.trim() : '';
   const candInst = normalizeScanInstrument(candidate.instrument);
   const candDateDay = (candidate.closeDateTime || '').slice(0, 10);
+  const priceTolerance =
+    candInst === 'BTCUSD' || candInst === 'US30' || candInst === 'NAS100'
+      ? 0.5
+      : candInst === 'XAUUSD'
+      ? 0.15
+      : candInst.includes('JPY') || candInst === 'XAGUSD'
+      ? 0.01
+      : 0.00015;
 
   for (const t of existingTrades) {
     if (candTicket) {
@@ -2013,11 +2312,11 @@ export function detectDuplicateMt5Trade(
 
     const sameLot = Math.abs((t.lotSize || 0) - candidate.lotSize) < 0.005;
     const sameNet = Math.abs((t.netProfit || 0) - candidate.netProfit) < 0.05;
-    const sameEntry = Math.abs((t.entryPrice || 0) - candidate.entryPrice) < 0.15;
+    const sameEntry = Math.abs((t.entryPrice || 0) - candidate.entryPrice) <= priceTolerance;
     const sameExit =
       t.exitPrice !== undefined &&
       t.exitPrice !== null &&
-      Math.abs(t.exitPrice - candidate.exitPrice) < 0.15;
+      Math.abs(t.exitPrice - candidate.exitPrice) <= priceTolerance;
 
     if (sameLot && sameNet && sameEntry && sameExit) {
       const tDay = (t.dateTime || '').slice(0, 10);
@@ -2030,294 +2329,950 @@ export function detectDuplicateMt5Trade(
   return null;
 }
 
+export function recheckDuplicateMt5Candidate(
+  candidate: Mt5HistoryTradeCandidate,
+  existingTrades: Trade[]
+): Mt5HistoryTradeCandidate {
+  const dupId = detectDuplicateMt5Trade(
+    {
+      ticketId: candidate.ticketId,
+      instrument: candidate.instrument,
+      position: candidate.position,
+      lotSize: candidate.lotSize,
+      entryPrice: candidate.entryPrice,
+      exitPrice: candidate.exitPrice,
+      netProfit: candidate.netProfit,
+      closeDateTime: candidate.closeDateTime,
+    },
+    existingTrades
+  );
+  return {
+    ...candidate,
+    isDuplicate: Boolean(dupId),
+    duplicateMatchId: dupId || undefined,
+  };
+}
+
+/**
+ * Deterministic Mathematical Consistency Auditor for MT5/MT4 History Candidates.
+ * Uses TradeVault instrument specs (`getInstrumentPipSpec`) and directional SL/TP validation
+ * (`validateSlTpDirection`) to flag dropped minus signs, flipped BUY/SELL, cut digits, or lot shifts.
+ */
+export function auditMt5HistoryCandidate(
+  candidate: {
+    instrument: string;
+    position: TradePosition;
+    lotSize: number;
+    entryPrice: number;
+    exitPrice: number;
+    stopLoss?: number | null;
+    takeProfit?: number | null;
+    commission?: number;
+    swap?: number;
+    netProfit: number;
+    closeType?: TradeCloseType;
+    ocrSignRecovered?: boolean;
+  },
+  settings: Partial<AppSettings> = DEFAULT_SETTINGS
+): Mt5CandidateAuditResult {
+  const issues: Mt5AuditIssue[] = [];
+  const cleanInst = normalizeScanInstrument(candidate.instrument);
+  const spec = getInstrumentPipSpec(cleanInst, settings);
+  const lot = Number(candidate.lotSize || 0);
+  const entry = Number(candidate.entryPrice || 0);
+  const exit = Number(candidate.exitPrice || 0);
+  const netProfit = Number(candidate.netProfit || 0);
+  const comm = Math.abs(Number(candidate.commission || 0));
+  const swap = Number(candidate.swap || 0);
+  const reportedGross = computeGrossFromNet(netProfit, comm, swap);
+
+  let estimatedStandardGross: number | null = null;
+
+  if (candidate.ocrSignRecovered) {
+    issues.push({
+      code: 'AUTO_SIGN_FIXED',
+      severity: 'info',
+      messageId: 'Tanda minus (-) profit otomatis dipulihkan dari arah Entry→Exit (cek kesesuaian).',
+      messageEn: 'Negative (-) sign was auto-recovered from Entry→Exit direction (please verify).',
+    });
+  }
+
+  if (entry > 0 && exit > 0) {
+    const priceDiff = candidate.position === 'BUY' ? exit - entry : entry - exit;
+    const absDiff = Math.abs(exit - entry);
+
+    // 1. Extreme Jump Check (catches missing/extra leading digit like 2650 -> 265 or 1.085 -> 10.85)
+    const maxPlausibleMovePct =
+      cleanInst === 'BTCUSD' || cleanInst === 'ETHUSD' || cleanInst === 'SOLUSD'
+        ? 0.45
+        : cleanInst === 'XAUUSD' || cleanInst === 'XAGUSD' || cleanInst === 'US30' || cleanInst === 'NAS100'
+        ? 0.22
+        : 0.14;
+    if (absDiff / Math.max(entry, exit) > maxPlausibleMovePct) {
+      issues.push({
+        code: 'PRICE_JUMP_EXTREME',
+        severity: 'error',
+        messageId: `Selisih Entry (${entry}) dan Exit (${exit}) terlalu ekstrem — cek apakah ada digit harga yang terpotong/lebih.`,
+        messageEn: `Gap between Entry (${entry}) and Exit (${exit}) is extreme — check for missing or extra digits.`,
+      });
+    }
+
+    // 2. Directional Sign Audit: Price move direction vs Gross Profit sign
+    const minDirectionalMove =
+      cleanInst === 'XAUUSD'
+        ? 0.05
+        : cleanInst === 'BTCUSD' || cleanInst === 'US30' || cleanInst === 'NAS100'
+        ? 1.0
+        : cleanInst.includes('JPY') || cleanInst === 'XAGUSD'
+        ? 0.005
+        : 0.00005;
+
+    if (Math.abs(priceDiff) >= minDirectionalMove) {
+      if (priceDiff < 0 && reportedGross > 0.35) {
+        issues.push({
+          code: 'SIGN_MISMATCH',
+          severity: 'error',
+          messageId: `${candidate.position} dari ${entry} → ${exit} seharusnya rugi, tapi Profit terbaca positif (+${netProfit.toFixed(2)}). Tanda minus (-) mungkin terlewat.`,
+          messageEn: `${candidate.position} from ${entry} → ${exit} moved against trade, yet Profit is positive (+${netProfit.toFixed(2)}). Check missing minus sign.`,
+          suggestedNetProfit: Number((-Math.abs(netProfit)).toFixed(2)),
+          suggestedPosition: candidate.position === 'BUY' ? 'SELL' : 'BUY',
+          canSwapEntryExit: true,
+        });
+      } else if (priceDiff > 0 && reportedGross < -0.35) {
+        issues.push({
+          code: 'SIGN_MISMATCH',
+          severity: 'error',
+          messageId: `${candidate.position} dari ${entry} → ${exit} seharusnya untung, tapi Profit terbaca negatif (${netProfit.toFixed(2)}). Cek arah atau tanda (+/-).`,
+          messageEn: `${candidate.position} from ${entry} → ${exit} moved in profit, yet Profit is negative (${netProfit.toFixed(2)}). Check direction or (+/-) sign.`,
+          suggestedNetProfit: Number(Math.abs(netProfit).toFixed(2)),
+          suggestedPosition: candidate.position === 'BUY' ? 'SELL' : 'BUY',
+          canSwapEntryExit: true,
+        });
+      }
+    }
+
+    // 3. Broker-Safe Magnitude Audit (catches 10x lot or decimal shifts)
+    if (lot > 0 && Math.abs(priceDiff) >= minDirectionalMove && Math.abs(reportedGross) >= 2.0) {
+      let contractCandidates: number[] = [];
+      if (cleanInst === 'XAUUSD') {
+        contractCandidates = [100, 10, 1];
+        estimatedStandardGross = Number((priceDiff * lot * 100).toFixed(2));
+      } else if (cleanInst === 'XAGUSD') {
+        contractCandidates = [5000, 1000, 100];
+        estimatedStandardGross = Number((priceDiff * lot * 5000).toFixed(2));
+      } else if (['BTCUSD', 'ETHUSD', 'SOLUSD'].includes(cleanInst)) {
+        contractCandidates = [1, 10, 0.1];
+        estimatedStandardGross = Number((priceDiff * lot * 1).toFixed(2));
+      } else if (['US30', 'NAS100', 'SPX500', 'GER40'].includes(cleanInst)) {
+        contractCandidates = [1, 10, 20, 100];
+        estimatedStandardGross = Number((priceDiff * lot * 1).toFixed(2));
+      } else if (cleanInst.endsWith('USD')) {
+        contractCandidates = [100000, 10000, 1000];
+        estimatedStandardGross = Number((priceDiff * lot * 100000).toFixed(2));
+      } else if (cleanInst.includes('JPY')) {
+        // Approximate JPY quote USD conversion (~110..170) -> unit per 1.00 lot per 1.0 price ~ 600..900 USD
+        contractCandidates = [650, 800, 1000, 65];
+        estimatedStandardGross = Number((priceDiff * lot * 670).toFixed(2));
+      } else {
+        contractCandidates = [100000, 80000, 130000, 10000];
+        estimatedStandardGross = Number(((priceDiff / spec.pipSize) * lot * spec.pipValuePerStandardLot).toFixed(2));
+      }
+
+      const absReported = Math.abs(reportedGross);
+      let minRelativeError = Infinity;
+      for (const cs of contractCandidates) {
+        const expectedAbs = Math.abs(priceDiff * lot * cs);
+        if (expectedAbs <= 0.01) continue;
+        const ratio = absReported / expectedAbs;
+        const relErr = ratio >= 1 ? ratio : 1 / ratio;
+        if (relErr < minRelativeError) {
+          minRelativeError = relErr;
+        }
+      }
+
+      // Allow wide margin (6x) before flagging to avoid false alarms on cent/exotic broker specs
+      if (Number.isFinite(minRelativeError) && minRelativeError >= 6.0) {
+        issues.push({
+          code: 'MAGNITUDE_MISMATCH',
+          severity: 'warning',
+          messageId: `Estimasi hasil dari (${lot.toFixed(2)} lot · ${entry}→${exit}) tampak jauh berbeda dari Profit ${netProfit.toFixed(2)} — pastikan lot, harga, & angka desimal benar.`,
+          messageEn: `Estimated P/L from (${lot.toFixed(2)} lot · ${entry}→${exit}) differs strongly from Profit ${netProfit.toFixed(2)} — verify lot, prices & decimals.`,
+        });
+      }
+    }
+
+    // 4. SL / TP Directional Check
+    const slTpCheck = validateSlTpDirection(
+      candidate.position,
+      entry,
+      candidate.stopLoss,
+      candidate.takeProfit
+    );
+    if (!slTpCheck.isValid && slTpCheck.errorMessage) {
+      issues.push({
+        code: 'SL_TP_INVALID',
+        severity: 'warning',
+        messageId: slTpCheck.errorMessage,
+        messageEn: `Invalid SL/TP side for ${candidate.position} relative to Entry ${entry}.`,
+      });
+    }
+  }
+
+  // 5. Close Type vs Profit Conflict
+  if (candidate.closeType === 'TP' && reportedGross < -0.5) {
+    issues.push({
+      code: 'CLOSE_TYPE_PROFIT_CONFLICT',
+      severity: 'warning',
+      messageId: 'Tipe penutupan tercatat TP namun Gross Profit negatif — periksa apakah seharusnya SL atau Manual.',
+      messageEn: 'Close type is TP but Gross Profit is negative — verify if SL or Manual.',
+    });
+  }
+
+  const hasError = issues.some((i) => i.severity === 'error');
+  const hasWarning = issues.some((i) => i.severity === 'warning');
+  return {
+    status: hasError ? 'ERROR' : hasWarning ? 'WARNING' : 'OK',
+    issues,
+    estimatedStandardGross,
+  };
+}
+
+function mapRawRowToCandidate(
+  row: RawNormalizedMt5Row,
+  idx: number,
+  options: {
+    existingTrades: Trade[];
+    sourceImageIndex: number;
+    defaultStrategy: string;
+    fallbackNow: string;
+  }
+): Mt5HistoryTradeCandidate {
+  const closeDateTime =
+    row.closeDateTime && row.closeDateTime.trim()
+      ? normalizeTradeDateTimeLocal(row.closeDateTime)
+      : row.openDateTime && row.openDateTime.trim()
+      ? normalizeTradeDateTimeLocal(row.openDateTime)
+      : options.fallbackNow;
+  const openDateTime =
+    row.openDateTime && row.openDateTime.trim()
+      ? normalizeTradeDateTimeLocal(row.openDateTime)
+      : null;
+
+  const dupId = detectDuplicateMt5Trade(
+    {
+      ticketId: row.ticketId,
+      instrument: row.instrument,
+      position: row.position,
+      lotSize: row.lotSize,
+      entryPrice: row.entryPrice,
+      exitPrice: row.exitPrice,
+      netProfit: row.netProfit,
+      closeDateTime,
+    },
+    options.existingTrades
+  );
+
+  return {
+    tempId: `mt5_${Date.now()}_${options.sourceImageIndex}_${idx}_${Math.random()
+      .toString(36)
+      .slice(2, 6)}`,
+    ticketId: row.ticketId,
+    instrument: row.instrument,
+    position: row.position,
+    lotSize: row.lotSize,
+    entryPrice: row.entryPrice,
+    exitPrice: row.exitPrice,
+    stopLoss: row.stopLoss,
+    takeProfit: row.takeProfit,
+    commission: row.commission,
+    swap: row.swap,
+    netProfit: row.netProfit,
+    openDateTime,
+    closeDateTime,
+    closeType: row.closeType,
+    notes: row.notes,
+    strategy: options.defaultStrategy,
+    session: detectTradingSessionFromDateTime(openDateTime || closeDateTime),
+    isDuplicate: Boolean(dupId),
+    duplicateMatchId: dupId || undefined,
+    selected: !dupId,
+    sourceImageIndex: options.sourceImageIndex,
+    ocrSignRecovered: row.ocrSignRecovered,
+  };
+}
+
+function normalizeBackendMt5Row(rawRow: any): RawNormalizedMt5Row {
+  const instrument = normalizeScanInstrument(rawRow.instrument);
+  const rawPosStr = String(rawRow.position || '').trim().toUpperCase();
+  const position: TradePosition =
+    rawPosStr.includes('SELL') || rawPosStr.includes('JUAL') || rawPosStr.includes('SHORT')
+      ? 'SELL'
+      : 'BUY';
+  const lotParsed = parseSignedMt5Number(rawRow.lotSize, false, 'EURUSD');
+  const lotSize = lotParsed !== null && lotParsed > 0 ? Number(lotParsed.toFixed(2)) : 0.01;
+  const entryParsed = parseSignedMt5Number(rawRow.entryPrice, true, instrument);
+  const exitParsed = parseSignedMt5Number(rawRow.exitPrice, true, instrument);
+  const entryPrice = entryParsed !== null && entryParsed > 0 ? entryParsed : exitParsed || 0;
+  const exitPrice = exitParsed !== null && exitParsed > 0 ? exitParsed : entryPrice;
+  const slParsed = parseSignedMt5Number(rawRow.stopLoss, true, instrument);
+  const tpParsed = parseSignedMt5Number(rawRow.takeProfit, true, instrument);
+  const stopLoss = slParsed !== null && slParsed > 0 ? slParsed : null;
+  const takeProfit = tpParsed !== null && tpParsed > 0 ? tpParsed : null;
+  const commParsed = parseSignedMt5Number(rawRow.commission, false, 'EURUSD');
+  const swapParsed = parseSignedMt5Number(rawRow.swap, false, 'EURUSD');
+  const profitParsed = parseSignedMt5Number(rawRow.netProfit, false, 'EURUSD');
+  const commission = commParsed !== null ? Number(Math.abs(commParsed).toFixed(2)) : 0;
+  const swap = swapParsed !== null ? Number(swapParsed.toFixed(2)) : 0;
+  const netProfit = profitParsed !== null ? Number(profitParsed.toFixed(2)) : 0;
+  const rawCloseType = String(rawRow.closeType || '').toUpperCase();
+  const closeType: TradeCloseType =
+    rawCloseType === 'TP' ? 'TP' : rawCloseType === 'SL' ? 'SL' : 'Manual';
+  const rawTicketStr =
+    rawRow.ticketId !== null && rawRow.ticketId !== undefined
+      ? String(rawRow.ticketId).replace(/^#/, '').trim()
+      : '';
+  const ticketId =
+    rawTicketStr && !/^(null|undefined|none|n\/a|-)$/i.test(rawTicketStr) ? rawTicketStr : null;
+
+  return {
+    ticketId,
+    instrument,
+    position,
+    lotSize,
+    entryPrice,
+    exitPrice,
+    stopLoss,
+    takeProfit,
+    commission,
+    swap,
+    netProfit,
+    openDateTime:
+      typeof rawRow.openDateTime === 'string' && rawRow.openDateTime.trim()
+        ? rawRow.openDateTime.trim()
+        : null,
+    closeDateTime:
+      typeof rawRow.closeDateTime === 'string' && rawRow.closeDateTime.trim()
+        ? rawRow.closeDateTime.trim()
+        : null,
+    closeType,
+    notes: typeof rawRow.notes === 'string' ? rawRow.notes.trim() : '',
+  };
+}
+
+async function runMt5HistoryOcrFallback(imageDataUrl: string): Promise<RawNormalizedMt5Row[]> {
+  if (!imageDataUrl.startsWith('data:image/')) return [];
+
+  const variants = await preparePrecisionOcrVariants(imageDataUrl);
+  const attempts: Array<{ img: string; psm: '3' | '6' }> = [
+    { img: variants[0] || imageDataUrl, psm: '3' },
+    { img: variants[0] || imageDataUrl, psm: '6' },
+  ];
+  if (variants[1]) {
+    attempts.push({ img: variants[1], psm: '3' });
+  }
+  if (variants[0] !== imageDataUrl) {
+    attempts.push({ img: imageDataUrl, psm: '3' });
+  }
+
+  let bestRows: ReturnType<typeof parseMt5HistoryRowsFromOcrText> = [];
+  for (const attempt of attempts) {
+    try {
+      const ocr = await runOfflineTesseractOcr(attempt.img, { psm: attempt.psm });
+      const parsed = parseMt5HistoryRowsFromOcrText(ocr.fullText);
+      if (parsed.length > bestRows.length) {
+        bestRows = parsed;
+      }
+      // Once we get clean multi-row / confident extraction on primary pass, skip redundant passes for speed
+      if (bestRows.length >= 1 && ocr.confidence >= 68) {
+        break;
+      }
+    } catch {
+      // Try next variant / PSM pass
+    }
+  }
+
+  return bestRows.map((r) => ({
+    ticketId: r.ticketId,
+    instrument: r.instrument,
+    position: r.position,
+    lotSize: r.lotSize,
+    entryPrice: r.entryPrice,
+    exitPrice: r.exitPrice,
+    stopLoss: r.stopLoss,
+    takeProfit: r.takeProfit,
+    commission: r.commission,
+    swap: r.swap,
+    netProfit: r.netProfit,
+    openDateTime: null,
+    closeDateTime: r.closeDateTime,
+    closeType: r.closeType,
+    notes: r.notes,
+    ocrSignRecovered: r.ocrSignRecovered,
+  }));
+}
+
+export type Mt5ScanExecutionMode = 'auto' | 'offline';
+
+export interface Mt5BatchScreenshotInput {
+  imageDataUrl: string;
+  sourceImageIndex: number;
+}
+
+export interface Mt5BatchPerImageOutcome {
+  sourceImageIndex: number;
+  status: 'done' | 'error';
+  trades: Mt5HistoryTradeCandidate[];
+  fromCache: boolean;
+  scanEngine: 'gemini' | 'offline-ocr' | 'cache' | 'error';
+  modelUsed: string;
+  error?: string;
+}
+
+/**
+ * High-speed Hybrid Batch MT5 History Screenshot Scanner:
+ * 1. Resolves instant SHA-256 cache hits (<10ms, 0 quota) unless forceRefresh is set.
+ * 2. When `mode === 'offline'` or device has no internet connection, skips network calls and runs
+ *    100% local on-device Tesseract LSTM OCR (`public/ocr/`).
+ * 3. When online in `'auto'` mode, batches up to 4 screenshots per Gemini request and seamlessly falls
+ *    back to On-Device Offline OCR if Gemini is busy, timed out, or quota-exhausted.
+ */
+export async function scanBatchMt5HistoryScreenshots(
+  items: Mt5BatchScreenshotInput[],
+  options?: {
+    existingTrades?: Trade[];
+    defaultStrategy?: string;
+    forceRefresh?: boolean;
+    mode?: Mt5ScanExecutionMode;
+  }
+): Promise<{
+  trades: Mt5HistoryTradeCandidate[];
+  perImageOutcomes: Mt5BatchPerImageOutcome[];
+  cacheHitsCount: number;
+  modelUsed: string;
+  source: string;
+}> {
+  const existingTrades = options?.existingTrades || [];
+  const defaultStrategy = options?.defaultStrategy || 'MT5 History Scan';
+  const forceRefresh = Boolean(options?.forceRefresh);
+  const requestedMode: Mt5ScanExecutionMode = options?.mode || 'auto';
+  const isNavigatorOffline =
+    typeof navigator !== 'undefined' && navigator.onLine === false;
+  const runOfflineOnly = requestedMode === 'offline' || isNavigatorOffline;
+  const fallbackNow = normalizeTradeDateTimeLocal(new Date());
+
+  const outcomesMap = new Map<number, Mt5BatchPerImageOutcome>();
+  const uncached: Array<{ item: Mt5BatchScreenshotInput; hash: string }> = [];
+  let cacheHitsCount = 0;
+
+  for (const item of items) {
+    const trimmed = (item.imageDataUrl || '').trim();
+    if (!trimmed) {
+      outcomesMap.set(item.sourceImageIndex, {
+        sourceImageIndex: item.sourceImageIndex,
+        status: 'error',
+        trades: [],
+        fromCache: false,
+        scanEngine: 'error',
+        modelUsed: 'none',
+        error: 'Gambar screenshot MT5 kosong.',
+      });
+      continue;
+    }
+
+    const hash = await computeImageContentHash(trimmed);
+    const cached = !forceRefresh
+      ? getCachedMt5ScanResult(hash, { allowOfflineCache: runOfflineOnly })
+      : null;
+    if (cached) {
+      cacheHitsCount++;
+      const mapped = cached.rows.map((r, idx) =>
+        mapRawRowToCandidate(r, idx, {
+          existingTrades,
+          sourceImageIndex: item.sourceImageIndex,
+          defaultStrategy,
+          fallbackNow,
+        })
+      );
+      outcomesMap.set(item.sourceImageIndex, {
+        sourceImageIndex: item.sourceImageIndex,
+        status: 'done',
+        trades: mapped,
+        fromCache: true,
+        scanEngine: 'cache',
+        modelUsed: `${cached.modelUsed} (cache)`,
+      });
+    } else {
+      uncached.push({ item: { ...item, imageDataUrl: trimmed }, hash });
+    }
+  }
+
+  let lastModelUsed = '';
+  let lastSource = runOfflineOnly ? 'MT5_HISTORY_OFFLINE' : 'MT5_HISTORY';
+
+  if (runOfflineOnly) {
+    for (const entry of uncached) {
+      const ocrRows = await runMt5HistoryOcrFallback(entry.item.imageDataUrl);
+      if (ocrRows.length > 0) {
+        lastModelUsed = 'offline-ocr-tesseract';
+        lastSource = 'MT5_HISTORY_OFFLINE';
+        setCachedMt5ScanResult(entry.hash, 'offline', {
+          rows: ocrRows,
+          modelUsed: 'offline-ocr-tesseract',
+          source: 'MT5_HISTORY_OFFLINE',
+          cachedAt: Date.now(),
+        });
+        const mapped = ocrRows.map((r, rIdx) =>
+          mapRawRowToCandidate(r, rIdx, {
+            existingTrades,
+            sourceImageIndex: entry.item.sourceImageIndex,
+            defaultStrategy,
+            fallbackNow,
+          })
+        );
+        outcomesMap.set(entry.item.sourceImageIndex, {
+          sourceImageIndex: entry.item.sourceImageIndex,
+          status: 'done',
+          trades: mapped,
+          fromCache: false,
+          scanEngine: 'offline-ocr',
+          modelUsed: 'offline-ocr-tesseract',
+        });
+      } else {
+        outcomesMap.set(entry.item.sourceImageIndex, {
+          sourceImageIndex: entry.item.sourceImageIndex,
+          status: 'error',
+          trades: [],
+          fromCache: false,
+          scanEngine: 'error',
+          modelUsed: 'offline-ocr-tesseract',
+          error:
+            'Tidak ada baris transaksi MT5/MT4 yang terbaca secara offline. Pastikan teks posisi (contoh: XAUUSD, buy 0.10 dan 2640.00 -> 2650.00) terlihat tajam & penuh.',
+        });
+      }
+    }
+  } else {
+    const endpoints = getApiEndpointCandidates('/api/extract-mt5-history');
+    const CHUNK_SIZE = 4;
+
+    for (let start = 0; start < uncached.length; start += CHUNK_SIZE) {
+      const chunk = uncached.slice(start, start + CHUNK_SIZE);
+      const payload =
+        chunk.length === 1
+          ? { imageBase64: chunk[0].item.imageDataUrl }
+          : { images: chunk.map((c) => ({ imageBase64: c.item.imageDataUrl })) };
+
+      let chunkHandled = false;
+      let lastChunkError = 'Gagal menghubungi layanan AI Scan Kilat MT5.';
+      let chunkQuotaExhausted = false;
+
+      for (const endpoint of endpoints) {
+        const res = await nativeAwarePostJson(endpoint, payload, chunk.length > 1 ? 58000 : 48000);
+        if (res.ok && res.json?.success && res.json?.data) {
+          const rawTrades: any[] = Array.isArray(res.json.data.trades) ? res.json.data.trades : [];
+          lastModelUsed = String(res.json.data.modelUsed || 'gemini-3.1-flash-lite');
+          lastSource = String(res.json.data.source || 'MT5_HISTORY');
+
+          const rowsByLocalIdx = new Map<number, RawNormalizedMt5Row[]>();
+          for (let ci = 0; ci < chunk.length; ci++) {
+            rowsByLocalIdx.set(ci, []);
+          }
+
+          for (const rawRow of rawTrades) {
+            const localIdx =
+              typeof rawRow.imageIndex === 'number' && Number.isFinite(rawRow.imageIndex)
+                ? Math.max(0, Math.min(chunk.length - 1, Math.trunc(rawRow.imageIndex)))
+                : 0;
+            rowsByLocalIdx.get(localIdx)!.push(normalizeBackendMt5Row(rawRow));
+          }
+
+          for (let ci = 0; ci < chunk.length; ci++) {
+            const entry = chunk[ci];
+            const rawRows = rowsByLocalIdx.get(ci) || [];
+            if (rawRows.length > 0) {
+              setCachedMt5ScanResult(entry.hash, 'ai', {
+                rows: rawRows,
+                modelUsed: lastModelUsed,
+                source: lastSource,
+                cachedAt: Date.now(),
+              });
+            }
+            const mapped = rawRows.map((r, rIdx) =>
+              mapRawRowToCandidate(r, rIdx, {
+                existingTrades,
+                sourceImageIndex: entry.item.sourceImageIndex,
+                defaultStrategy,
+                fallbackNow,
+              })
+            );
+            outcomesMap.set(entry.item.sourceImageIndex, {
+              sourceImageIndex: entry.item.sourceImageIndex,
+              status: 'done',
+              trades: mapped,
+              fromCache: false,
+              scanEngine: 'gemini',
+              modelUsed: lastModelUsed,
+            });
+          }
+
+          chunkHandled = true;
+          break;
+        }
+
+        if (res.json?.quotaExhausted) {
+          chunkQuotaExhausted = true;
+        }
+        if (res.json?.error) {
+          lastChunkError = String(res.json.error);
+        } else if (res.errorMessage) {
+          lastChunkError = res.errorMessage;
+        } else if (res.status) {
+          lastChunkError = `HTTP ${res.status} dari backend Scan MT5.`;
+        }
+      }
+
+      // On-Device Offline OCR Fallback when backend AI failed/timed out/exhausted
+      if (!chunkHandled) {
+        for (const entry of chunk) {
+          const ocrRows = await runMt5HistoryOcrFallback(entry.item.imageDataUrl);
+          if (ocrRows.length > 0) {
+            lastModelUsed = lastModelUsed || 'offline-ocr-tesseract';
+            lastSource = 'MT5_HISTORY_OFFLINE';
+            setCachedMt5ScanResult(entry.hash, 'offline', {
+              rows: ocrRows,
+              modelUsed: 'offline-ocr-tesseract',
+              source: 'MT5_HISTORY_OFFLINE',
+              cachedAt: Date.now(),
+            });
+            const mapped = ocrRows.map((r, rIdx) =>
+              mapRawRowToCandidate(r, rIdx, {
+                existingTrades,
+                sourceImageIndex: entry.item.sourceImageIndex,
+                defaultStrategy,
+                fallbackNow,
+              })
+            );
+            outcomesMap.set(entry.item.sourceImageIndex, {
+              sourceImageIndex: entry.item.sourceImageIndex,
+              status: 'done',
+              trades: mapped,
+              fromCache: false,
+              scanEngine: 'offline-ocr',
+              modelUsed: 'offline-ocr-tesseract',
+            });
+          } else {
+            outcomesMap.set(entry.item.sourceImageIndex, {
+              sourceImageIndex: entry.item.sourceImageIndex,
+              status: 'error',
+              trades: [],
+              fromCache: false,
+              scanEngine: 'error',
+              modelUsed: chunkQuotaExhausted ? 'quota-exhausted' : 'error',
+              error: lastChunkError,
+            });
+          }
+        }
+      }
+    }
+  }
+
+  const perImageOutcomes = items.map(
+    (it) =>
+      outcomesMap.get(it.sourceImageIndex) || {
+        sourceImageIndex: it.sourceImageIndex,
+        status: 'error' as const,
+        trades: [],
+        fromCache: false,
+        scanEngine: 'error' as const,
+        modelUsed: 'unknown',
+        error: 'Status screenshot tidak diketahui.',
+      }
+  );
+  const trades = perImageOutcomes.flatMap((o) => o.trades);
+
+  return {
+    trades,
+    perImageOutcomes,
+    cacheHitsCount,
+    modelUsed: lastModelUsed || (cacheHitsCount > 0 ? 'cache' : 'gemini-3.1-flash-lite'),
+    source: lastSource,
+  };
+}
+
 export async function scanSingleMt5HistoryScreenshot(
   imageDataUrl: string,
   options?: {
     existingTrades?: Trade[];
     sourceImageIndex?: number;
     defaultStrategy?: string;
+    forceRefresh?: boolean;
+    mode?: Mt5ScanExecutionMode;
   }
 ): Promise<{
   trades: Mt5HistoryTradeCandidate[];
   modelUsed: string;
   source: string;
+  fromCache?: boolean;
+  scanEngine?: 'gemini' | 'offline-ocr' | 'cache' | 'error';
 }> {
-  const trimmed = (imageDataUrl || '').trim();
-  if (!trimmed) {
-    throw new Error('Gambar screenshot MT5 kosong.');
+  const sourceImageIndex = options?.sourceImageIndex ?? 0;
+  const batchRes = await scanBatchMt5HistoryScreenshots(
+    [{ imageDataUrl, sourceImageIndex }],
+    options
+  );
+  const outcome = batchRes.perImageOutcomes[0];
+  if (outcome && outcome.status === 'error') {
+    throw new Error(outcome.error || 'Gagal memindai screenshot MT5.');
   }
-
-  const endpoints = getApiEndpointCandidates('/api/extract-mt5-history');
-  let lastError = 'Gagal menghubungi layanan AI Scan Kilat MT5.';
-  let emptyBackendSuccess: {
-    trades: Mt5HistoryTradeCandidate[];
-    modelUsed: string;
-    source: string;
-  } | null = null;
-
-  for (const endpoint of endpoints) {
-    const res = await nativeAwarePostJson(endpoint, { imageBase64: trimmed }, 65000);
-    if (res.ok && res.json?.success && res.json?.data) {
-      const rawTrades: any[] = Array.isArray(res.json.data.trades) ? res.json.data.trades : [];
-      const existingTrades = options?.existingTrades || [];
-      const defaultStrategy = options?.defaultStrategy || 'MT5 History Scan';
-      const fallbackNow = normalizeTradeDateTimeLocal(new Date());
-
-      const mapped: Mt5HistoryTradeCandidate[] = rawTrades.map((row, idx) => {
-        const instrument = normalizeScanInstrument(row.instrument);
-        const rawPosStr = String(row.position || '').trim().toUpperCase();
-        const position: TradePosition =
-          rawPosStr.includes('SELL') || rawPosStr.includes('JUAL') || rawPosStr.includes('SHORT')
-            ? 'SELL'
-            : 'BUY';
-        const lotSize =
-          typeof row.lotSize === 'number' && Number.isFinite(row.lotSize) && row.lotSize > 0
-            ? Number(row.lotSize.toFixed(2))
-            : 0.01;
-        const entryPrice =
-          typeof row.entryPrice === 'number' && Number.isFinite(row.entryPrice)
-            ? row.entryPrice
-            : 0;
-        const exitPrice =
-          typeof row.exitPrice === 'number' && Number.isFinite(row.exitPrice)
-            ? row.exitPrice
-            : entryPrice;
-        const stopLoss =
-          typeof row.stopLoss === 'number' && Number.isFinite(row.stopLoss) && row.stopLoss > 0
-            ? row.stopLoss
-            : null;
-        const takeProfit =
-          typeof row.takeProfit === 'number' && Number.isFinite(row.takeProfit) && row.takeProfit > 0
-            ? row.takeProfit
-            : null;
-        const commission =
-          typeof row.commission === 'number' && Number.isFinite(row.commission)
-            ? Number(Math.abs(row.commission).toFixed(2))
-            : 0;
-        const swap =
-          typeof row.swap === 'number' && Number.isFinite(row.swap)
-            ? Number(row.swap.toFixed(2))
-            : 0;
-        const netProfit =
-          typeof row.netProfit === 'number' && Number.isFinite(row.netProfit)
-            ? Number(row.netProfit.toFixed(2))
-            : 0;
-        const closeDateTime =
-          typeof row.closeDateTime === 'string' && row.closeDateTime.trim()
-            ? normalizeTradeDateTimeLocal(row.closeDateTime)
-            : typeof row.openDateTime === 'string' && row.openDateTime.trim()
-            ? normalizeTradeDateTimeLocal(row.openDateTime)
-            : fallbackNow;
-        const openDateTime =
-          typeof row.openDateTime === 'string' && row.openDateTime.trim()
-            ? normalizeTradeDateTimeLocal(row.openDateTime)
-            : null;
-        const rawCloseType = String(row.closeType || '').toUpperCase();
-        const closeType: TradeCloseType =
-          rawCloseType === 'TP' ? 'TP' : rawCloseType === 'SL' ? 'SL' : 'Manual';
-        const rawTicketStr =
-          row.ticketId !== null && row.ticketId !== undefined
-            ? String(row.ticketId).replace(/^#/, '').trim()
-            : '';
-        const ticketId =
-          rawTicketStr && !/^(null|undefined|none|n\/a|-)$/i.test(rawTicketStr)
-            ? rawTicketStr
-            : null;
-
-        const dupId = detectDuplicateMt5Trade(
-          {
-            ticketId,
-            instrument,
-            position,
-            lotSize,
-            entryPrice,
-            exitPrice,
-            netProfit,
-            closeDateTime,
-          },
-          existingTrades
-        );
-
-        return {
-          tempId: `mt5_${Date.now()}_${options?.sourceImageIndex ?? 0}_${idx}_${Math.random()
-            .toString(36)
-            .slice(2, 6)}`,
-          ticketId,
-          instrument,
-          position,
-          lotSize,
-          entryPrice,
-          exitPrice,
-          stopLoss,
-          takeProfit,
-          commission,
-          swap,
-          netProfit,
-          openDateTime,
-          closeDateTime,
-          closeType,
-          notes: typeof row.notes === 'string' ? row.notes.trim() : '',
-          strategy: defaultStrategy,
-          session: detectTradingSessionFromDateTime(openDateTime || closeDateTime),
-          isDuplicate: Boolean(dupId),
-          duplicateMatchId: dupId || undefined,
-          selected: !dupId,
-          sourceImageIndex: options?.sourceImageIndex,
-        };
-      });
-
-      if (mapped.length > 0) {
-        return {
-          trades: mapped,
-          modelUsed: String(res.json.data.modelUsed || 'gemini-4-hydrogen'),
-          source: String(res.json.data.source || 'MT5_HISTORY'),
-        };
-      }
-
-      emptyBackendSuccess = {
-        trades: [],
-        modelUsed: String(res.json.data.modelUsed || 'gemini-4-hydrogen'),
-        source: String(res.json.data.source || 'MT5_HISTORY'),
-      };
-      continue;
-    }
-
-    if (res.json?.error) {
-      lastError = String(res.json.error);
-    } else if (res.errorMessage) {
-      lastError = res.errorMessage;
-    } else if (res.status) {
-      lastError = `HTTP ${res.status} dari backend Scan MT5.`;
-    }
-  }
-
-  // Tier 6 Fallback (When all 5 Gemini AI model tiers are quota-exhausted): Local OCR MT5 History Row Parser
-  if (trimmed.startsWith('data:image/')) {
-    const ocr = await runOcrSpaceOnDataUrl(trimmed);
-    const ocrRows = parseMt5HistoryRowsFromOcrText(ocr.fullText);
-    if (ocrRows.length > 0) {
-      const existingTrades = options?.existingTrades || [];
-      const defaultStrategy = options?.defaultStrategy || 'MT5 History Scan';
-      const fallbackNow = normalizeTradeDateTimeLocal(new Date());
-      const mappedOcr: Mt5HistoryTradeCandidate[] = ocrRows.map((row, idx) => {
-        const closeDateTime = row.closeDateTime || fallbackNow;
-        const dupId = detectDuplicateMt5Trade(
-          {
-            ticketId: null,
-            instrument: row.instrument,
-            position: row.position,
-            lotSize: row.lotSize,
-            entryPrice: row.entryPrice,
-            exitPrice: row.exitPrice,
-            netProfit: row.netProfit,
-            closeDateTime,
-          },
-          existingTrades
-        );
-        return {
-          tempId: `mt5_ocr_${Date.now()}_${options?.sourceImageIndex ?? 0}_${idx}`,
-          ticketId: null,
-          instrument: row.instrument,
-          position: row.position,
-          lotSize: row.lotSize,
-          entryPrice: row.entryPrice,
-          exitPrice: row.exitPrice,
-          stopLoss: null,
-          takeProfit: null,
-          commission: 0,
-          swap: 0,
-          netProfit: row.netProfit,
-          openDateTime: null,
-          closeDateTime,
-          closeType: row.netProfit > 0 ? 'TP' : row.netProfit < 0 ? 'SL' : 'Manual',
-          notes: 'OCR Fallback',
-          strategy: defaultStrategy,
-          session: detectTradingSessionFromDateTime(closeDateTime),
-          isDuplicate: Boolean(dupId),
-          duplicateMatchId: dupId || undefined,
-          selected: !dupId,
-          sourceImageIndex: options?.sourceImageIndex,
-        };
-      });
-      return {
-        trades: mappedOcr,
-        modelUsed: 'ocr-fallback-v1',
-        source: 'MT5_HISTORY_OCR',
-      };
-    }
-  }
-
-  if (emptyBackendSuccess) {
-    return emptyBackendSuccess;
-  }
-
-  throw new Error(lastError);
+  return {
+    trades: batchRes.trades,
+    modelUsed: outcome?.modelUsed || batchRes.modelUsed,
+    source: batchRes.source,
+    fromCache: outcome?.fromCache,
+    scanEngine: outcome?.scanEngine,
+  };
 }
 
-function parseMt5HistoryRowsFromOcrText(rawText: string): Array<{
+export function parseMt5HistoryRowsFromOcrText(rawText: string): Array<{
+  ticketId: string | null;
   instrument: string;
   position: TradePosition;
   lotSize: number;
   entryPrice: number;
   exitPrice: number;
+  stopLoss: number | null;
+  takeProfit: number | null;
+  commission: number;
+  swap: number;
   netProfit: number;
   closeDateTime: string | null;
+  closeType: TradeCloseType;
+  notes: string;
+  ocrSignRecovered: boolean;
 }> {
   if (!rawText || !rawText.trim()) return [];
-  const lines = rawText
+  // Normalize unicode dashes, arrow OCR variations (- >, = >, -=, »), and thin punctuation before splitting
+  const normalizedRaw = rawText
+    .replace(/[\u2212\u2012\u2013\u2014\uFE63\uFF0D]/g, '-')
+    .replace(/[→➜➔›»]/g, ' -> ')
+    .replace(/(?:[-=~]\s*>|\s-=\s)/g, ' -> ');
+
+  const lines = normalizedRaw
     .split(/\r?\n/)
     .map((l) => l.trim())
     .filter(Boolean);
+
   const results: Array<{
+    ticketId: string | null;
     instrument: string;
     position: TradePosition;
     lotSize: number;
     entryPrice: number;
     exitPrice: number;
+    stopLoss: number | null;
+    takeProfit: number | null;
+    commission: number;
+    swap: number;
     netProfit: number;
     closeDateTime: string | null;
+    closeType: TradeCloseType;
+    notes: string;
+    ocrSignRecovered: boolean;
   }> = [];
 
+  const HEADER_REGEX =
+    /(?:^|[\s|])([#A-Za-z0-9._/]{3,16})(?:\s*[,:;]\s*|\.\s+|\s+)(buy|sell|beli|jual)(?:\s+(?:in\/out|in|out))?(?:\s+(\d+(?:[.,]\d{1,2})?))?/i;
+
+  const PRICE_TOKEN_PATTERN =
+    '[0-9]{1,3}(?:\\.[0-9]{3})+,[0-9]{1,5}|[0-9]{1,3}(?:[ .][0-9]{3})+[.,][0-9]{1,5}|[0-9]{1,6}[.,][0-9]{1,5}';
+
   for (let i = 0; i < lines.length; i++) {
-    const windowText = [lines[i], lines[i + 1] || '', lines[i + 2] || ''].join(' ');
-    const headerMatch = lines[i].match(
-      /\b([A-Za-z0-9._#]{3,14})\s*[, ]\s*(buy|sell|beli|jual)(?:\s+(\d+(?:[.,]\d{1,2})?))?/i
-    );
+    const line = lines[i];
+    // Skip summary / balance ledger lines
+    if (
+      /^(?:profit|balance|deposit|credit|withdrawal|margin|equity|swap|commission)\s*:/i.test(line) ||
+      /\b(?:balance|deposit|credit|withdrawal|canceled|cancelled)\b/i.test(line)
+    ) {
+      continue;
+    }
+
+    const headerMatch = line.match(HEADER_REGEX);
     if (!headerMatch) continue;
+
     const instrument = normalizeScanInstrument(headerMatch[1]);
     const dirRaw = headerMatch[2].toUpperCase();
     const position: TradePosition = dirRaw === 'SELL' || dirRaw === 'JUAL' ? 'SELL' : 'BUY';
-    const lotSize = headerMatch[3] ? parseFloat(headerMatch[3].replace(',', '.')) || 0.01 : 0.01;
 
-    const arrowMatch =
-      windowText.match(
-        /([0-9]{1,6}(?:[.,][0-9]{1,5})+)\s*(?:->|→|-›|=>|-)\s*([0-9]{1,6}(?:[.,][0-9]{1,5})+)/
-      ) ||
-      windowText.match(
-        /([0-9]{1,6}(?:[.,][0-9]{1,5})?)\s*(?:->|→|-›|=>)\s*([0-9]{1,6}(?:[.,][0-9]{1,5})?)/
+    // Window spans up to 6 following lines until the next trade header or summary row appears
+    const windowLines: string[] = [line];
+    for (let j = i + 1; j < Math.min(lines.length, i + 7); j++) {
+      if (
+        /^(?:profit|balance|deposit|credit|withdrawal|margin|equity)\s*:/i.test(lines[j]) ||
+        HEADER_REGEX.test(lines[j])
+      ) {
+        break;
+      }
+      windowLines.push(lines[j]);
+    }
+    const windowText = windowLines.join(' ');
+
+    // Lot size (either right after buy/sell or elsewhere on row)
+    let lotSize = headerMatch[3]
+      ? parseSignedMt5Number(headerMatch[3], false, 'EURUSD') || 0.01
+      : 0.01;
+    if (!headerMatch[3]) {
+      const lotFallback = windowText.match(/\b(0\.\d{2}|[1-9]\d{0,2}[.,]\d{2})\b/);
+      if (lotFallback) {
+        const candLot = parseSignedMt5Number(lotFallback[1], false, 'EURUSD');
+        if (candLot !== null && candLot >= 0.01 && candLot <= 100) lotSize = candLot;
+      }
+    }
+
+    // Match "2615.40 -> 2602.10", "91 200.00 -> 90 800.00", "2615.40 > 2602.10", or "2615.40 - 2602.10"
+    const arrowRegex = new RegExp(
+      `(${PRICE_TOKEN_PATTERN})\\s*(?:->|>)\\s*(${PRICE_TOKEN_PATTERN})`
+    );
+    const dashArrowRegex = new RegExp(
+      `(${PRICE_TOKEN_PATTERN})\\s+-\\s+(${PRICE_TOKEN_PATTERN})`
+    );
+    const arrowMatch = windowText.match(arrowRegex) || windowText.match(dashArrowRegex);
+
+    let entryPrice: number | null = null;
+    let exitPrice: number | null = null;
+    let matchedPriceSpanToStrip = '';
+
+    if (arrowMatch) {
+      entryPrice = parseSignedMt5Number(arrowMatch[1], true, instrument);
+      exitPrice = parseSignedMt5Number(arrowMatch[2], true, instrument);
+      matchedPriceSpanToStrip = arrowMatch[0];
+    } else {
+      // Single-line Desktop MT5 table fallback: EntryPrice [SL TP] CloseDate ExitPrice [Comm Swap] NetProfit
+      const afterHeader = line.slice((headerMatch.index || 0) + headerMatch[0].length);
+      const desktopDt = afterHeader.match(
+        /(\d{4}[.\-\/]\d{1,2}[.\-\/]\d{1,2}\s+\d{1,2}:\d{2}(?::\d{2})?|\d{1,2}[.\-\/]\d{1,2}[.\-\/]\d{4}\s+\d{1,2}:\d{2}(?::\d{2})?)/
       );
-    if (!arrowMatch) continue;
-    const entryPrice = normalizeChartPriceNumber(arrowMatch[1], instrument);
-    const exitPrice = normalizeChartPriceNumber(arrowMatch[2], instrument);
-    if (entryPrice === null || exitPrice === null) continue;
+      if (desktopDt && desktopDt.index !== undefined) {
+        const beforeDtPrices = extractPriceNumbersFromLine(
+          afterHeader.slice(0, desktopDt.index),
+          instrument
+        );
+        const afterDtPrices = extractPriceNumbersFromLine(
+          afterHeader.slice(desktopDt.index + desktopDt[0].length),
+          instrument
+        );
+        if (beforeDtPrices.length >= 1 && afterDtPrices.length >= 1) {
+          entryPrice = beforeDtPrices[0].val;
+          exitPrice = afterDtPrices[0].val;
+          matchedPriceSpanToStrip = `${beforeDtPrices[0].raw} ${afterDtPrices[0].raw}`;
+        }
+      }
+    }
 
-    const dtMatch = windowText.match(/(\d{4})[.\-\/](\d{2})[.\-\/](\d{2})\s+(\d{2}:\d{2})/);
-    const closeDateTime = dtMatch
-      ? `${dtMatch[1]}-${dtMatch[2]}-${dtMatch[3]}T${dtMatch[4]}`
-      : null;
+    if (entryPrice === null || exitPrice === null || entryPrice <= 0 || exitPrice <= 0) {
+      continue;
+    }
 
-    const profitMatches = windowText.match(/[+-]?\d+(?:[.,]\d{2})\b/g) || [];
-    const lastProfitStr = profitMatches.length > 0 ? profitMatches[profitMatches.length - 1] : '0';
-    const netProfit = parseFloat(lastProfitStr.replace(',', '.')) || 0;
+    // DateTime (supports both YYYY.MM.DD and DD.MM.YYYY; prefers close time if multiple timestamps exist)
+    const allDtMatches = Array.from(
+      windowText.matchAll(
+        /(\d{4})[.\-\/](\d{1,2})[.\-\/](\d{1,2})\s+(\d{1,2}:\d{2})|(\d{1,2})[.\-\/](\d{1,2})[.\-\/](\d{4})\s+(\d{1,2}:\d{2})/g
+      )
+    );
+    let closeDateTime: string | null = null;
+    if (allDtMatches.length > 0) {
+      const m = allDtMatches[allDtMatches.length - 1];
+      if (m[1]) {
+        closeDateTime = `${m[1]}-${m[2].padStart(2, '0')}-${m[3].padStart(2, '0')}T${m[4].padStart(5, '0')}`;
+      } else if (m[5]) {
+        closeDateTime = `${m[7]}-${m[6].padStart(2, '0')}-${m[5].padStart(2, '0')}T${m[8].padStart(5, '0')}`;
+      }
+    }
+
+    // Expanded details: SL / TP / Swap / Comm / Ticket (non-greedy single number token)
+    const slMatch = windowText.match(/S\s*\/\s*L\s*[:=]?\s*((?:\d{1,3}(?:[ .]\d{3})+|\d+)(?:[.,]\d+)?)/i);
+    const tpMatch = windowText.match(/T\s*\/\s*P\s*[:=]?\s*((?:\d{1,3}(?:[ .]\d{3})+|\d+)(?:[.,]\d+)?)/i);
+    const swapMatch = windowText.match(/\bSwap\s*[:=]?\s*([+-]?\s*(?:\d{1,3}(?:[ .]\d{3})+|\d+)(?:[.,]\d+)?)/i);
+    const commMatch = windowText.match(/(?:Commission|Fee)\s*[:=]?\s*([+-]?\s*(?:\d{1,3}(?:[ .]\d{3})+|\d+)(?:[.,]\d+)?)/i);
+    const ticketMatch = windowText.match(/(?:ID\s*[:#]?|#)\s*(\d{5,14})\b/i);
+
+    const stopLoss = slMatch ? parseSignedMt5Number(slMatch[1], true, instrument) : null;
+    const takeProfit = tpMatch ? parseSignedMt5Number(tpMatch[1], true, instrument) : null;
+    const swap = swapMatch ? parseSignedMt5Number(swapMatch[1], false, 'EURUSD') || 0 : 0;
+    const commission = commMatch
+      ? Math.abs(parseSignedMt5Number(commMatch[1], false, 'EURUSD') || 0)
+      : 0;
+    const ticketId = ticketMatch ? ticketMatch[1] : null;
+
+    // Strip header (symbol + lot), arrow prices, dates, tickets, and SL/TP/Swap/Comm so profit regex stays exact
+    let strippedForProfit = windowText.replace(headerMatch[0], ' ');
+    if (matchedPriceSpanToStrip) {
+      strippedForProfit = strippedForProfit.replace(matchedPriceSpanToStrip, ' ');
+    }
+    if (!arrowMatch) {
+      // For desktop table rows, strip known entry/exit numbers too so profit isn't confused with prices
+      strippedForProfit = strippedForProfit
+        .replace(new RegExp(PRICE_TOKEN_PATTERN, 'g'), (tok) => {
+          const val = parseSignedMt5Number(tok, true, instrument);
+          if (
+            val !== null &&
+            (Math.abs(val - entryPrice!) < 1e-6 || Math.abs(val - exitPrice!) < 1e-6)
+          ) {
+            return ' ';
+          }
+          return tok;
+        });
+    }
+    strippedForProfit = strippedForProfit
+      .replace(/\d{4}[.\-\/]\d{1,2}[.\-\/]\d{1,2}\s+\d{1,2}:\d{2}(?::\d{2})?/g, ' ')
+      .replace(/\d{1,2}[.\-\/]\d{1,2}[.\-\/]\d{4}\s+\d{1,2}:\d{2}(?::\d{2})?/g, ' ')
+      .replace(/(?:ID\s*[:#]?|#)\s*\d{5,14}\b/gi, ' ')
+      .replace(/(?:S\s*\/\s*L|T\s*\/\s*P|Swap|Commission|Fee)\s*[:=]?\s*[+-]?\s*(?:\d{1,3}(?:[ .]\d{3})+|\d+)(?:[.,]\d+)?/gi, ' ')
+      .replace(/\(\s*([+-]?\s*\d[\d\s.,]*[.,]\d{2})\s*\)/g, ' -$1 ');
+
+    const profitTokens =
+      strippedForProfit.match(/(?:[+-]\s*)?(?:\d{1,3}(?:[ .]\d{3})+|\d+)[.,]\d{2}\b/g) || [];
+    let netProfit = 0;
+    if (profitTokens.length > 0) {
+      const candidateStr = profitTokens[profitTokens.length - 1];
+      const parsedPnl = parseSignedMt5Number(candidateStr, false, 'EURUSD');
+      if (parsedPnl !== null) netProfit = parsedPnl;
+    }
+
+    // OCR Sign Recovery: if Entry -> Exit clearly moved into loss but OCR dropped thin red '-' sign
+    const priceDelta = position === 'BUY' ? exitPrice - entryPrice : entryPrice - exitPrice;
+    let ocrSignRecovered = false;
+    if (priceDelta < -1e-6 && netProfit > 0.35) {
+      netProfit = -Math.abs(netProfit);
+      ocrSignRecovered = true;
+    }
+
+    // Infer closeType from tags or SL/TP proximity
+    let closeType: TradeCloseType = 'Manual';
+    if (/\[\s*tp\s*\]|\/\s*tp\b/i.test(windowText)) {
+      closeType = 'TP';
+    } else if (/\[\s*sl\s*\]|\/\s*sl\b/i.test(windowText)) {
+      closeType = 'SL';
+    } else if (takeProfit && Math.abs(exitPrice - takeProfit) <= (instrument === 'XAUUSD' ? 0.65 : 0.0005)) {
+      closeType = 'TP';
+    } else if (stopLoss && Math.abs(exitPrice - stopLoss) <= (instrument === 'XAUUSD' ? 0.65 : 0.0005)) {
+      closeType = 'SL';
+    }
 
     results.push({
+      ticketId,
       instrument,
       position,
       lotSize: Number(lotSize.toFixed(2)),
       entryPrice,
       exitPrice,
+      stopLoss: stopLoss && stopLoss > 0 ? stopLoss : null,
+      takeProfit: takeProfit && takeProfit > 0 ? takeProfit : null,
+      commission: Number(commission.toFixed(2)),
+      swap: Number(swap.toFixed(2)),
       netProfit: Number(netProfit.toFixed(2)),
       closeDateTime,
+      closeType,
+      notes: 'Offline OCR',
+      ocrSignRecovered,
     });
   }
   return results;

@@ -69,7 +69,7 @@ function runFallbackGpuVeil(targetTheme: AppTheme): void {
       'inset:0',
       'z-index:2147483646',
       'pointer-events:none',
-      `background:${targetTheme === 'dark' ? '#050607' : '#EEF2F6'}`,
+      `background:${targetTheme === 'dark' ? '#050607' : '#FFFFFF'}`,
       'opacity:0.24',
       'transform:translateZ(0)',
       'will-change:opacity',
@@ -170,7 +170,7 @@ export function applyThemeToDocument(theme: AppTheme): void {
   // Update theme-color meta tag for mobile browsers and PWA header
   const metaThemeColor = document.querySelector('meta[name="theme-color"]');
   if (metaThemeColor) {
-    metaThemeColor.setAttribute('content', theme === 'light' ? '#EEF2F6' : '#050607');
+    metaThemeColor.setAttribute('content', theme === 'light' ? '#FFFFFF' : '#050607');
   }
 
   // Synchronize native Android status bar (top) and navigation bar (bottom) colors

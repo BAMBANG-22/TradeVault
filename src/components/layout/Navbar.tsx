@@ -34,7 +34,7 @@ interface NavbarProps {
  * Persistent App Header
  *
  * - Left: Hamburger menu button, official TradeVault symbol, and TRADEVAULT brand wordmark.
- * - Right: Circular notification center toggle button & circular profile icon button.
+ * - Right: Circular notification center toggle button and circular profile icon button.
  * - Always persistent at top of viewport: remains static at top while content scrolls underneath.
  * - Respects Android / iOS safe area top.
  */
@@ -67,15 +67,17 @@ export const Navbar: React.FC<NavbarProps> = ({
     analytics: tr('Analitik', 'Analytics'),
     risk: tr('Manajemen Risiko', 'Risk Management'),
     'market-chart': tr('Chart Pasar', 'Market Chart'),
-    'macro-news': 'Trade News',
-    'cycle-confluence': 'Cycle & Confluence',
-    'smc-signal': 'SMC Signal',
+    'macro-news': tr('Berita Trading', 'Trade News'),
+    'fundamental-gold': tr('Fundamental Emas', 'Fundamental Gold'),
+    'cycle-confluence': tr('Siklus & Confluence', 'Cycle & Confluence'),
+    'smc-signal': tr('Sinyal SMC', 'SMC Signal'),
     settings: tr('Pengaturan', 'Settings'),
   };
   const desktopSectionTitle = desktopSectionLabels[activeTab] || 'VLO';
   const isSecondaryMenuTab =
     activeTab === 'market-chart' ||
     activeTab === 'macro-news' ||
+    activeTab === 'fundamental-gold' ||
     activeTab === 'cycle-confluence' ||
     activeTab === 'smc-signal' ||
     activeTab === 'settings';
@@ -83,7 +85,7 @@ export const Navbar: React.FC<NavbarProps> = ({
   return (
     <header
       data-testid="app-header"
-      className="sticky top-0 z-30 w-full isolate h-[calc(3.5rem+env(safe-area-inset-top,0px))] pt-[env(safe-area-inset-top,0px)] border-b border-[#D9E2EC] dark:border-[#20252D] bg-white dark:bg-[#050607] before:content-[''] before:absolute before:bottom-full before:left-0 before:right-0 before:h-20 before:bg-white dark:before:bg-[#050607] before:pointer-events-none"
+      className="sticky top-0 z-30 w-full isolate h-[calc(3.5rem+env(safe-area-inset-top,0px))] pt-[env(safe-area-inset-top,0px)] border-b border-[#E4E4E7] dark:border-[#20252D] bg-white dark:bg-[#050607] before:content-[''] before:absolute before:bottom-full before:left-0 before:right-0 before:h-20 before:bg-white dark:before:bg-[#050607] before:pointer-events-none"
     >
       <div className="w-full h-14 flex items-center justify-between px-4 sm:px-6 lg:px-8">
         {/* Left: Mobile/Tablet Hamburger & Brand Lockup; Desktop Contextual Section Title */}
@@ -92,7 +94,7 @@ export const Navbar: React.FC<NavbarProps> = ({
             type="button"
             onClick={onOpenMobileMenu}
             data-testid="header-hamburger-button"
-            className="relative inline-flex lg:hidden h-9 w-9 shrink-0 items-center justify-center rounded-full text-[#0F172A] dark:text-[#F2F4F7] hover:bg-[#EEF2F6] dark:hover:bg-[#101318] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/35 dark:focus-visible:ring-white/35 transition-colors cursor-pointer"
+            className="relative inline-flex lg:hidden h-9 w-9 shrink-0 items-center justify-center rounded-full text-[#0F172A] dark:text-[#F2F4F7] hover:bg-[#F4F4F5] dark:hover:bg-[#101318] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/35 dark:focus-visible:ring-white/35 transition-colors cursor-pointer"
             aria-label={
               isMobileMenuOpen
                 ? tr('Tutup Menu Navigasi', 'Close Navigation Menu')
@@ -116,6 +118,7 @@ export const Navbar: React.FC<NavbarProps> = ({
           {/* Official VLO Logo Symbol + Persistent Brand Wordmark (Mobile & Tablet) */}
           <button
             type="button"
+            data-tactile="none"
             onClick={() => onNavigate('dashboard')}
             className="group flex lg:hidden items-center gap-2.5 shrink-0 focus:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/35 dark:focus-visible:ring-white/35 rounded-xl cursor-pointer"
             aria-label={tr('VLO — Kembali ke Dasbor', 'VLO — Back to Dashboard')}
@@ -142,7 +145,7 @@ export const Navbar: React.FC<NavbarProps> = ({
           <div className="flex lg:hidden items-center gap-2 min-w-0">
             <span
               aria-hidden="true"
-              className="h-3.5 w-[1px] bg-[#D9E2EC] dark:bg-[#20252D] shrink-0"
+              className="h-3.5 w-[1px] bg-[#E4E4E7] dark:bg-[#20252D] shrink-0"
             />
             <span
               data-testid="mobile-active-section-label"
@@ -164,7 +167,7 @@ export const Navbar: React.FC<NavbarProps> = ({
           </div>
         </div>
 
-        {/* Right: Circular notification center button & circular profile button */}
+        {/* Right: Notification center button & profile button */}
         <div className="relative flex items-center gap-1.5 sm:gap-2">
           <button
             ref={bellButtonRef}
@@ -176,7 +179,7 @@ export const Navbar: React.FC<NavbarProps> = ({
             className={`relative inline-flex h-9 w-9 items-center justify-center rounded-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/35 dark:focus-visible:ring-white/35 transition-colors cursor-pointer ${
               isNotifOpen
                 ? 'bg-[#0F172A] text-white dark:bg-white dark:text-[#0F172A]'
-                : 'text-[#526071] dark:text-[#929BA9] hover:text-[#0F172A] dark:hover:text-[#F2F4F7] hover:bg-[#EEF2F6] dark:hover:bg-[#101318]'
+                : 'text-[#526071] dark:text-[#929BA9] hover:text-[#0F172A] dark:hover:text-[#F2F4F7] hover:bg-[#F4F4F5] dark:hover:bg-[#101318]'
             }`}
             aria-label={tr('Notifikasi Terbaru', 'Recent Notifications')}
             title={tr('Notifikasi Terbaru', 'Recent Notifications')}
@@ -211,7 +214,7 @@ export const Navbar: React.FC<NavbarProps> = ({
             type="button"
             onClick={currentUser ? onOpenAccount : onOpenAuth}
             data-testid="header-account-button"
-            className="inline-flex h-9 w-9 items-center justify-center rounded-full bg-[#F5F7FA] dark:bg-[#101318] border border-[#D9E2EC] dark:border-[#20252D] text-[#526071] dark:text-[#929BA9] hover:text-[#0F172A] dark:hover:text-[#F2F4F7] hover:border-[#0F172A]/40 dark:hover:border-white/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/35 dark:focus-visible:ring-white/35 transition-colors cursor-pointer overflow-hidden"
+            className="inline-flex h-9 w-9 items-center justify-center rounded-full bg-[#FAFAFA] dark:bg-[#101318] border border-[#E4E4E7] dark:border-[#20252D] text-[#526071] dark:text-[#929BA9] hover:text-[#0F172A] dark:hover:text-[#F2F4F7] hover:border-[#0F172A]/40 dark:hover:border-white/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/35 dark:focus-visible:ring-white/35 transition-colors cursor-pointer overflow-hidden"
             aria-label={currentUser ? tr('Akun Pengguna', 'User Account') : tr('Masuk ke Akun', 'Sign In to Account')}
             title={
               currentUser

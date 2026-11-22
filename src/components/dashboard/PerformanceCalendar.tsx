@@ -58,7 +58,7 @@ interface PerformanceCalendarProps {
   onViewTrade?: (trade: Trade) => void;
 }
 
-export const PerformanceCalendar: React.FC<PerformanceCalendarProps> = ({
+export const PerformanceCalendar: React.FC<PerformanceCalendarProps> = React.memo(({
   dailyPerformance,
   monthlyPerformance,
   settings,
@@ -167,7 +167,15 @@ export const PerformanceCalendar: React.FC<PerformanceCalendarProps> = ({
     setSelectedDate(null);
   };
 
-  // Build calendar matrix for activeMonth
+  const dailyPerfMap = useMemo(() => {
+    const map = new Map<string, DailyPerformance>();
+    for (let i = 0; i < dailyPerformance.length; i++) {
+      map.set(dailyPerformance[i].date, dailyPerformance[i]);
+    }
+    return map;
+  }, [dailyPerformance]);
+
+  // Build calendar matrix for activeMonth using O(1) Map lookup
   const calendarCells = useMemo(() => {
     const [yearStr, monthStr] = activeMonth.split('-');
     const year = parseInt(yearStr, 10);
@@ -193,22 +201,25 @@ export const PerformanceCalendar: React.FC<PerformanceCalendarProps> = ({
     for (let day = 1; day <= totalDaysInMonth; day++) {
       const dayStr = String(day).padStart(2, '0');
       const dateKey = `${yearStr}-${monthStr}-${dayStr}`;
-      const foundPerf = dailyPerformance.find((d) => d.date === dateKey) || null;
-      cells.push({ dayNum: day, dateStr: dateKey, perf: foundPerf });
+      cells.push({ dayNum: day, dateStr: dateKey, perf: dailyPerfMap.get(dateKey) ?? null });
     }
 
     return cells;
-  }, [activeMonth, dailyPerformance]);
+  }, [activeMonth, dailyPerfMap]);
 
-  const maxDailyProfit = Math.max(
-    ...dailyPerformance.map((d) => Math.abs(d.netProfit)),
-    100
-  );
+  const maxDailyProfit = useMemo(() => {
+    let maxVal = 100;
+    for (let i = 0; i < dailyPerformance.length; i++) {
+      const absVal = Math.abs(dailyPerformance[i].netProfit);
+      if (absVal > maxVal) maxVal = absVal;
+    }
+    return maxVal;
+  }, [dailyPerformance]);
 
   const selectedDayPerf = useMemo(() => {
     if (!selectedDate) return null;
-    return dailyPerformance.find((d) => d.date === selectedDate) || null;
-  }, [selectedDate, dailyPerformance]);
+    return dailyPerfMap.get(selectedDate) ?? null;
+  }, [selectedDate, dailyPerfMap]);
 
   const selectedDateTrades = useMemo(() => {
     if (!selectedDate) return [];
@@ -235,17 +246,17 @@ export const PerformanceCalendar: React.FC<PerformanceCalendarProps> = ({
             <span className="text-[#526071] dark:text-[#929BA9]">{tr('Hari Aktif', 'Active Days')}</span>
             <strong className="text-[#0F172A] dark:text-[#F2F4F7] font-bold">{dailySummary.totalDays}</strong>
           </div>
-          <span className="text-[#D9E2EC] dark:text-[#20252D]">·</span>
+          <span className="text-[#E4E4E7] dark:text-[#20252D]">·</span>
           <div className="flex items-center gap-1.5">
             <span className="text-[#526071] dark:text-[#929BA9]">{tr('Profit', 'Profit')}</span>
             <strong className="text-[#059669] dark:text-[#00A878] font-bold">{dailySummary.profitDays}</strong>
           </div>
-          <span className="text-[#D9E2EC] dark:text-[#20252D]">·</span>
+          <span className="text-[#E4E4E7] dark:text-[#20252D]">·</span>
           <div className="flex items-center gap-1.5">
             <span className="text-[#526071] dark:text-[#929BA9]">{tr('Rugi', 'Loss')}</span>
             <strong className="text-[#E11D48] dark:text-[#E05260] font-bold">{dailySummary.lossDays}</strong>
           </div>
-          <span className="text-[#D9E2EC] dark:text-[#20252D]">·</span>
+          <span className="text-[#E4E4E7] dark:text-[#20252D]">·</span>
           <div className="flex items-center gap-1.5">
             <span className="text-[#526071] dark:text-[#929BA9]">{tr('Rasio Menang Harian', 'Daily Win Rate')}</span>
             <strong className="text-[#0F172A] dark:text-[#F2F4F7] font-bold">{dailySummary.dayWinRate}%</strong>
@@ -257,14 +268,21 @@ export const PerformanceCalendar: React.FC<PerformanceCalendarProps> = ({
           <button
             type="button"
             onClick={() => setShowModeMenu((prev) => !prev)}
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium bg-white dark:bg-[#101318] border border-[#D9E2EC] dark:border-[#20252D] text-[#0F172A] dark:text-[#F2F4F7] hover:border-[#0F172A]/40 dark:hover:border-white/40 transition-colors cursor-pointer select-none whitespace-nowrap focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/35 dark:focus-visible:ring-white/35"
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium bg-white dark:bg-[#101318] border border-[#E4E4E7] dark:border-[#20252D] text-[#0F172A] dark:text-[#F2F4F7] hover:border-[#0F172A]/40 dark:hover:border-white/40 transition-colors cursor-pointer select-none whitespace-nowrap focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/35 dark:focus-visible:ring-white/35"
           >
             <span>{modeLabels[activeTab]}</span>
-            <ChevronDown className="h-3.5 w-3.5 text-[#526071] dark:text-[#929BA9]" />
+            <ChevronDown
+              className={`h-3.5 w-3.5 text-[#526071] dark:text-[#929BA9] transition-transform duration-150 ${
+                showModeMenu ? 'rotate-180' : ''
+              }`}
+            />
           </button>
 
           {showModeMenu && (
-            <div className="absolute left-0 sm:left-auto sm:right-0 top-9 z-30 w-44 max-w-[calc(100vw-2rem)] rounded-xl border border-[#D9E2EC] dark:border-[#20252D] bg-white dark:bg-[#101318] p-1 shadow-xl text-xs">
+            <div
+              style={{ contain: 'layout style' }}
+              className="absolute left-0 sm:left-auto sm:right-0 top-9 z-30 w-44 max-w-[calc(100vw-2rem)] rounded-xl border border-[#E4E4E7] dark:border-[#20252D] bg-white dark:bg-[#101318] p-1 shadow-[0_12px_28px_-6px_rgba(15,23,42,0.14)] dark:shadow-[0_16px_32px_-8px_rgba(0,0,0,0.75)] text-xs animate-in fade-in slide-in-from-top-1 duration-150"
+            >
               {(['calendar', 'daily', 'monthly'] as const).map((tabKey) => (
                 <button
                   key={tabKey}
@@ -275,8 +293,8 @@ export const PerformanceCalendar: React.FC<PerformanceCalendarProps> = ({
                   }}
                   className={`w-full text-left px-3 py-2 rounded-lg transition-colors cursor-pointer flex items-center justify-between ${
                     activeTab === tabKey
-                      ? 'bg-[#F5F7FA] dark:bg-[#161A22] text-[#0F172A] dark:text-white font-semibold'
-                      : 'text-[#526071] dark:text-[#929BA9] hover:text-[#0F172A] dark:hover:text-[#F2F4F7] hover:bg-[#F5F7FA] dark:hover:bg-[#161A22]'
+                      ? 'bg-[#F4F4F5] dark:bg-[#161A22] text-[#0F172A] dark:text-white font-semibold'
+                      : 'text-[#526071] dark:text-[#929BA9] hover:text-[#0F172A] dark:hover:text-[#F2F4F7] hover:bg-[#FAFAFA] dark:hover:bg-[#161A22]'
                   }`}
                 >
                   <span>{modeLabels[tabKey]}</span>
@@ -292,11 +310,11 @@ export const PerformanceCalendar: React.FC<PerformanceCalendarProps> = ({
       {activeTab === 'calendar' && (
         <div className="space-y-3">
           {/* Month Navigator Toolbar */}
-          <div className="flex items-center justify-between py-2 border-y border-[#D9E2EC] dark:border-[#20252D] text-xs">
+          <div className="flex items-center justify-between py-2 border-y border-[#E4E4E7] dark:border-[#20252D] text-xs">
             <button
               type="button"
               onClick={handlePrevMonth}
-              className="p-1.5 rounded-full text-[#526071] dark:text-[#929BA9] hover:text-[#0F172A] dark:hover:text-[#F2F4F7] hover:bg-[#F5F7FA] dark:hover:bg-[#161A22] cursor-pointer transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/35 dark:focus-visible:ring-white/35"
+              className="p-1.5 rounded-full text-[#526071] dark:text-[#929BA9] hover:text-[#0F172A] dark:hover:text-[#F2F4F7] hover:bg-[#F4F4F5] dark:hover:bg-[#161A22] cursor-pointer transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/35 dark:focus-visible:ring-white/35"
               title={tr('Bulan sebelumnya', 'Previous month')}
               aria-label={tr('Bulan sebelumnya', 'Previous month')}
             >
@@ -308,7 +326,7 @@ export const PerformanceCalendar: React.FC<PerformanceCalendarProps> = ({
             <button
               type="button"
               onClick={handleNextMonth}
-              className="p-1.5 rounded-full text-[#526071] dark:text-[#929BA9] hover:text-[#0F172A] dark:hover:text-[#F2F4F7] hover:bg-[#F5F7FA] dark:hover:bg-[#161A22] cursor-pointer transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/35 dark:focus-visible:ring-white/35"
+              className="p-1.5 rounded-full text-[#526071] dark:text-[#929BA9] hover:text-[#0F172A] dark:hover:text-[#F2F4F7] hover:bg-[#F4F4F5] dark:hover:bg-[#161A22] cursor-pointer transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/35 dark:focus-visible:ring-white/35"
               title={tr('Bulan berikutnya', 'Next month')}
               aria-label={tr('Bulan berikutnya', 'Next month')}
             >
@@ -362,12 +380,12 @@ export const PerformanceCalendar: React.FC<PerformanceCalendarProps> = ({
                           )
                         : tr(`Tanggal ${cell.dateStr}, tanpa transaksi`, `Date ${cell.dateStr}, no trades`)
                     }
-                    className={`min-h-[64px] sm:min-h-[76px] py-2 px-1 rounded-xl flex flex-col justify-between items-center text-center transition-all cursor-pointer relative focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/35 dark:focus-visible:ring-white/35 ${
+                    className={`min-h-[64px] sm:min-h-[76px] py-2 px-1 rounded-xl flex flex-col justify-between items-center text-center transition-colors duration-150 cursor-pointer relative focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/35 dark:focus-visible:ring-white/35 ${
                       isSelected
-                        ? 'bg-[#F5F7FA] dark:bg-[#161A22] ring-1 ring-[#0F172A]/60 dark:ring-white/60'
+                        ? 'bg-[#F4F4F5] dark:bg-[#161A22] ring-1 ring-[#0F172A]/60 dark:ring-white/60'
                         : hasTrade
-                        ? 'hover:bg-[#F5F7FA]/80 dark:hover:bg-[#161A22]/60'
-                        : 'opacity-55 hover:opacity-90 hover:bg-[#F5F7FA]/60 dark:hover:bg-[#161A22]/40'
+                        ? 'hover:bg-[#FAFAFA] dark:hover:bg-[#161A22]/60'
+                        : 'opacity-55 hover:opacity-90 hover:bg-[#FAFAFA] dark:hover:bg-[#161A22]/40'
                     }`}
                   >
                     {/* 1. Angka Tanggal */}
@@ -433,7 +451,7 @@ export const PerformanceCalendar: React.FC<PerformanceCalendarProps> = ({
               {tr('Belum ada catatan trade harian pada periode ini.', 'No daily trade records in this period.')}
             </p>
           ) : (
-            <div className="max-h-[360px] overflow-y-auto divide-y divide-[#D9E2EC] dark:divide-[#20252D] border-y border-[#D9E2EC] dark:border-[#20252D]">
+            <div className="max-h-[360px] overflow-y-auto divide-y divide-[#E4E4E7] dark:divide-[#20252D] border-y border-[#E4E4E7] dark:border-[#20252D]">
               {dailyPerformance.slice().reverse().map((day) => {
                 const isProfit = day.netProfit > 0;
                 const isLoss = day.netProfit < 0;
@@ -447,8 +465,8 @@ export const PerformanceCalendar: React.FC<PerformanceCalendarProps> = ({
                     onClick={() => handleDateClick(day.date)}
                     className={`w-full text-left flex items-center justify-between py-3 px-2 transition-colors gap-3 cursor-pointer ${
                       isSelected
-                        ? 'bg-[#F5F7FA] dark:bg-[#161A22]'
-                        : 'hover:bg-[#F5F7FA]/70 dark:hover:bg-[#161A22]/60'
+                        ? 'bg-[#F4F4F5] dark:bg-[#161A22]'
+                        : 'hover:bg-[#FAFAFA] dark:hover:bg-[#161A22]/60'
                     }`}
                   >
                     <div className="min-w-0">
@@ -461,7 +479,7 @@ export const PerformanceCalendar: React.FC<PerformanceCalendarProps> = ({
                     </div>
 
                     <div className="flex items-center gap-3 shrink-0">
-                      <div className="hidden sm:block w-20 h-1.5 bg-[#D9E2EC] dark:bg-[#20252D] rounded-full overflow-hidden">
+                      <div className="hidden sm:block w-20 h-1.5 bg-[#E4E4E7] dark:bg-[#20252D] rounded-full overflow-hidden">
                         <div
                           className={`h-full rounded-full ${
                             isProfit ? 'bg-[#059669] dark:bg-[#00A878]' : isLoss ? 'bg-[#E11D48] dark:bg-[#E05260]' : 'bg-[#526071] dark:bg-[#929BA9]'
@@ -501,7 +519,7 @@ export const PerformanceCalendar: React.FC<PerformanceCalendarProps> = ({
               {tr('Belum ada data bulanan pada periode ini.', 'No monthly data in this period.')}
             </p>
           ) : (
-            <div className="divide-y divide-[#D9E2EC] dark:divide-[#20252D] border-y border-[#D9E2EC] dark:border-[#20252D]">
+            <div className="divide-y divide-[#E4E4E7] dark:divide-[#20252D] border-y border-[#E4E4E7] dark:border-[#20252D]">
               {monthlyPerformance.slice().reverse().map((m) => {
                 const isProfit = m.netProfit > 0;
                 const isLoss = m.netProfit < 0;
@@ -570,12 +588,12 @@ export const PerformanceCalendar: React.FC<PerformanceCalendarProps> = ({
       {/* INLINE DAILY DETAIL PANEL (APPEARS WHEN A DATE IS CLICKED) */}
       {selectedDate !== null && (
         <div
-          className="rounded-2xl border border-[#D9E2EC] dark:border-[#20252D] bg-white dark:bg-[#101318] shadow-[0_4px_20px_rgba(15,23,42,0.06)] dark:shadow-none p-4 space-y-3.5 transition-all duration-200 animate-in fade-in slide-in-from-top-2"
+          className="rounded-2xl border border-[#E4E4E7] dark:border-[#20252D] bg-white dark:bg-[#101318] shadow-[0_4px_20px_rgba(15,23,42,0.06)] dark:shadow-none p-4 space-y-3.5 animate-in fade-in slide-in-from-top-2 duration-150"
           role="region"
           aria-label={tr(`Rincian tanggal ${selectedDate}`, `Details for ${selectedDate}`)}
         >
           {/* Detail Header */}
-          <div className="flex items-center justify-between pb-2.5 border-b border-[#D9E2EC] dark:border-[#20252D]">
+          <div className="flex items-center justify-between pb-2.5 border-b border-[#E4E4E7] dark:border-[#20252D]">
             <div>
               <h4 className="text-xs sm:text-sm font-bold text-[#0F172A] dark:text-[#F2F4F7] tabular-nums">
                 {tr('Detail Performa Harian', 'Daily Performance Detail')} — {selectedDate}
@@ -590,7 +608,7 @@ export const PerformanceCalendar: React.FC<PerformanceCalendarProps> = ({
             <button
               type="button"
               onClick={() => setSelectedDate(null)}
-              className="min-h-[36px] min-w-[36px] flex items-center justify-center rounded-full text-[#526071] dark:text-[#929BA9] hover:text-[#0F172A] dark:hover:text-[#F2F4F7] hover:bg-[#F5F7FA] dark:hover:bg-[#161A22] transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/35 dark:focus-visible:ring-white/35"
+              className="min-h-[36px] min-w-[36px] flex items-center justify-center rounded-full text-[#526071] dark:text-[#929BA9] hover:text-[#0F172A] dark:hover:text-[#F2F4F7] hover:bg-[#F4F4F5] dark:hover:bg-[#161A22] transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/35 dark:focus-visible:ring-white/35"
               aria-label={tr('Tutup rincian tanggal', 'Close date details')}
             >
               <X className="h-4 w-4 stroke-[1.75]" />
@@ -598,7 +616,7 @@ export const PerformanceCalendar: React.FC<PerformanceCalendarProps> = ({
           </div>
 
           {/* 4 Required Daily Metrics: Tanggal, Net Profit/Loss, Jumlah Transaksi, Win Rate */}
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 pb-3 border-b border-[#D9E2EC] dark:border-[#20252D] text-xs tabular-nums">
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 pb-3 border-b border-[#E4E4E7] dark:border-[#20252D] text-xs tabular-nums">
             <div>
               <span className="block text-[10px] uppercase tracking-wider text-[#526071] dark:text-[#929BA9]">
                 {tr('Tanggal', 'Date')}
@@ -654,7 +672,7 @@ export const PerformanceCalendar: React.FC<PerformanceCalendarProps> = ({
               )}
             </p>
           ) : (
-            <div className="divide-y divide-[#D9E2EC] dark:divide-[#20252D] max-h-60 overflow-y-auto">
+            <div className="divide-y divide-[#E4E4E7] dark:divide-[#20252D] max-h-60 overflow-y-auto">
               {selectedDateTrades.map((trade) => {
                 const netPl = computeTradeNetProfit(trade);
                 const outcome = resolveTradeOutcome(trade);
@@ -668,7 +686,7 @@ export const PerformanceCalendar: React.FC<PerformanceCalendarProps> = ({
                     onClick={() => onViewTrade && onViewTrade(trade)}
                     className={`py-2.5 px-1 flex items-center justify-between gap-3 text-xs tabular-nums transition-colors ${
                       onViewTrade
-                        ? 'cursor-pointer hover:bg-[#F5F7FA] dark:hover:bg-[#161A22]'
+                        ? 'cursor-pointer hover:bg-[#FAFAFA] dark:hover:bg-[#161A22]'
                         : ''
                     }`}
                   >
@@ -725,4 +743,4 @@ export const PerformanceCalendar: React.FC<PerformanceCalendarProps> = ({
       )}
     </div>
   );
-};
+});

@@ -205,6 +205,41 @@ assert.equal(grouped[1][1].length, 1);
 const availableDates = getAvailableHistoryDates(dataset, 'SCALP', TODAY);
 assert.deepEqual(availableDates, ['2026-11-18', '2026-11-15']);
 
+// 6b. Direction filter ('ALL' | 'BUY' | 'SELL') in History
+const sellClosed = makeRecord({
+  uid: 'hist-nov18-sell',
+  dateKey: '2026-11-18',
+  direction: 'SELL',
+  headerTitle: 'Sell Limit A+',
+  closedAtIso: '2026-11-18T07:00:00.000Z',
+  closedDateKey: '2026-11-18',
+  status: 'HIT_TP2',
+  resultPips: 100,
+});
+const dirDataset = [...dataset, sellClosed];
+assert.deepEqual(
+  filterSignalHistoryRecords({
+    records: dirDataset,
+    tradingMode: 'SCALP',
+    filterMode: 'ALL',
+    customDateKey: TODAY,
+    todayDateKey: TODAY,
+    directionFilter: 'SELL',
+  }).map((r) => r.uid),
+  ['hist-nov18-sell']
+);
+assert.deepEqual(
+  filterSignalHistoryRecords({
+    records: dirDataset,
+    tradingMode: 'SCALP',
+    filterMode: 'ALL',
+    customDateKey: TODAY,
+    todayDateKey: TODAY,
+    directionFilter: 'BUY',
+  }).map((r) => r.uid),
+  ['hist-nov18-tp1', 'cross-day-1', 'legacy-utc-wib', 'hist-nov15']
+);
+
 // ============================================================================
 // 7. Deleted Signal Tracking & Re-surfacing (ON_GOING & PREVIOUS, 1h / 6h later)
 // ============================================================================

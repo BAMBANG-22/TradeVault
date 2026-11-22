@@ -95,7 +95,7 @@ export const BrandLogo: React.FC<BrandLogoProps> = ({
     if (withTile) {
       return (
         <span
-          className={`vlo-tile-surface inline-flex items-center justify-center shrink-0 overflow-hidden rounded-[26%] bg-[#F8FAFC]/90 dark:bg-white/[0.045] border border-black/[0.06] dark:border-white/[0.08] shadow-[inset_0_1px_0_rgba(255,255,255,0.85),0_1px_2px_rgba(15,23,42,0.04)] dark:shadow-[inset_0_1px_0_rgba(255,255,255,0.06)] ${className}`}
+          className={`vlo-tile-surface inline-flex items-center justify-center shrink-0 overflow-hidden rounded-[26%] bg-[#FAFAFA] dark:bg-white/[0.045] border border-black/[0.06] dark:border-white/[0.08] shadow-[inset_0_1px_0_rgba(255,255,255,0.85),0_1px_2px_rgba(15,23,42,0.04)] dark:shadow-[inset_0_1px_0_rgba(255,255,255,0.06)] ${className}`}
         >
           {svg}
         </span>

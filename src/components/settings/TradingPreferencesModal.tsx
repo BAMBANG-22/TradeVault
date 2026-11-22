@@ -125,7 +125,7 @@ export const TradingPreferencesModal: React.FC<TradingPreferencesModalProps> = (
 
   const labelClass = 'block text-xs font-semibold text-[#0F172A] dark:text-[#F2F4F7] mb-1.5';
   const inputClass =
-    'w-full min-h-[40px] rounded-lg bg-[#F5F7FA] dark:bg-[#0B0E13] border border-[#D9E2EC] dark:border-[#20252D] px-3 py-2 text-xs font-mono-numbers tabular-nums text-[#0F172A] dark:text-[#F2F4F7] placeholder-[#929BA9] focus:border-[#0F172A] dark:focus:border-white focus:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/25 dark:focus-visible:ring-white/25';
+    'w-full min-h-[40px] rounded-lg bg-[#FAFAFA] dark:bg-[#0B0E13] border border-[#E4E4E7] dark:border-[#20252D] px-3 py-2 text-xs font-mono-numbers tabular-nums text-[#0F172A] dark:text-[#F2F4F7] placeholder-[#929BA9] focus:border-[#0F172A] dark:focus:border-white focus:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/25 dark:focus-visible:ring-white/25';
 
   const netAdjustment = (formData.totalDeposits ?? 0) - (formData.totalWithdrawals ?? 0);
 
@@ -138,11 +138,11 @@ export const TradingPreferencesModal: React.FC<TradingPreferencesModalProps> = (
         role="dialog"
         aria-modal="true"
         aria-label={categoryTitles[activeCategory]}
-        className="w-full max-w-lg bg-white dark:bg-[#101318] border border-[#D9E2EC] dark:border-[#20252D] rounded-2xl shadow-[0_20px_50px_-12px_rgba(15,23,42,0.22)] dark:shadow-[0_24px_60px_-12px_rgba(0,0,0,0.8)] overflow-hidden text-[#0F172A] dark:text-[#F2F4F7]"
+        className="w-full max-w-lg bg-white dark:bg-[#101318] border border-[#E4E4E7] dark:border-[#20252D] rounded-2xl shadow-[0_20px_50px_-12px_rgba(15,23,42,0.22)] dark:shadow-[0_24px_60px_-12px_rgba(0,0,0,0.8)] overflow-hidden text-[#0F172A] dark:text-[#F2F4F7]"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
-        <div className="px-5 py-4 border-b border-[#D9E2EC] dark:border-[#20252D] flex items-center justify-between gap-3">
+        <div className="px-5 py-4 border-b border-[#E4E4E7] dark:border-[#20252D] flex items-center justify-between gap-3">
           <div className="min-w-0">
             <h3 className="text-sm sm:text-base font-bold text-[#0F172A] dark:text-[#F2F4F7]">
               {categoryTitles[activeCategory]}
@@ -154,7 +154,7 @@ export const TradingPreferencesModal: React.FC<TradingPreferencesModalProps> = (
           <button
             type="button"
             onClick={onClose}
-            className="min-h-[38px] min-w-[38px] flex items-center justify-center rounded-full text-[#526071] dark:text-[#929BA9] hover:text-[#0F172A] dark:hover:text-[#F2F4F7] hover:bg-[#F5F7FA] dark:hover:bg-[#161A22] transition-colors cursor-pointer shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/35 dark:focus-visible:ring-white/35"
+            className="min-h-[38px] min-w-[38px] flex items-center justify-center rounded-full text-[#526071] dark:text-[#929BA9] hover:text-[#0F172A] dark:hover:text-[#F2F4F7] hover:bg-[#F4F4F5] dark:hover:bg-[#161A22] transition-colors cursor-pointer shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/35 dark:focus-visible:ring-white/35"
             aria-label={tr('Tutup', 'Close')}
           >
             <X className="h-4 w-4 stroke-[1.75]" />
@@ -165,7 +165,7 @@ export const TradingPreferencesModal: React.FC<TradingPreferencesModalProps> = (
         <form onSubmit={handleSubmit}>
           <div className="p-5 space-y-5">
             {/* Category Segmented Switcher */}
-            <div className="grid grid-cols-5 gap-1 p-1 rounded-full bg-[#F5F7FA] dark:bg-[#0B0E13] border border-[#D9E2EC] dark:border-[#20252D]">
+            <div className="grid grid-cols-5 gap-1 p-1 rounded-full bg-[#F4F4F5] dark:bg-[#0B0E13] border border-[#E4E4E7] dark:border-[#20252D]">
               {(['balance', 'currency', 'broker', 'risk', 'adjustments'] as PreferenceCategory[]).map((cat) => (
                 <button
                   key={cat}
@@ -241,8 +241,8 @@ export const TradingPreferencesModal: React.FC<TradingPreferencesModalProps> = (
                         onClick={() => handleCurrencySelect(c)}
                         className={`p-3.5 rounded-xl border text-left transition-colors cursor-pointer relative focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/35 dark:focus-visible:ring-white/35 ${
                           isSelected
-                            ? 'border-[#0F172A] dark:border-white bg-[#F5F7FA] dark:bg-[#161A22]'
-                            : 'border-[#D9E2EC] dark:border-[#20252D] bg-white dark:bg-[#0B0E13] hover:bg-[#F5F7FA] dark:hover:bg-[#161A22]/70'
+                            ? 'border-[#0F172A] dark:border-white bg-[#FAFAFA] dark:bg-[#161A22]'
+                            : 'border-[#E4E4E7] dark:border-[#20252D] bg-white dark:bg-[#0B0E13] hover:bg-[#FAFAFA] dark:hover:bg-[#161A22]/70'
                         }`}
                       >
                         <div className="flex items-center justify-between">
@@ -279,16 +279,16 @@ export const TradingPreferencesModal: React.FC<TradingPreferencesModalProps> = (
                     {[
                       {
                         val: 0.1,
-                        title: tr('Mode A · $0.10', 'Mode A · $0.10'),
+                        title: tr('Mode A · $0.10 (Standar App)', 'Mode A · $0.10 (App Standard)'),
                         desc: tr('4000 → 3995 = 50 pips', '4000 → 3995 = 50 pips'),
                       },
                       {
                         val: 1.0,
                         title: tr('Mode B · $1.00', 'Mode B · $1.00'),
-                        desc: tr('4000 → 3995 = 5 pips', '4000 → 3995 = 5 pips'),
+                        desc: tr('4000 → 3950 = 50 pips', '4000 → 3950 = 50 pips'),
                       },
                     ].map((opt) => {
-                      const active = (formData.xauusdPipSize === 0.1 ? 0.1 : 1.0) === opt.val;
+                      const active = (formData.xauusdPipSize === 1.0 ? 1.0 : 0.1) === opt.val;
                       return (
                         <button
                           key={opt.val}
@@ -296,8 +296,8 @@ export const TradingPreferencesModal: React.FC<TradingPreferencesModalProps> = (
                           onClick={() => setFormData({ ...formData, xauusdPipSize: opt.val })}
                           className={`p-3 rounded-xl border text-left transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/35 dark:focus-visible:ring-white/35 ${
                             active
-                              ? 'border-[#0F172A] dark:border-white bg-[#F5F7FA] dark:bg-[#161A22]'
-                              : 'border-[#D9E2EC] dark:border-[#20252D] bg-white dark:bg-[#0B0E13] hover:bg-[#F5F7FA] dark:hover:bg-[#161A22]/70'
+                              ? 'border-[#0F172A] dark:border-white bg-[#FAFAFA] dark:bg-[#161A22]'
+                              : 'border-[#E4E4E7] dark:border-[#20252D] bg-white dark:bg-[#0B0E13] hover:bg-[#FAFAFA] dark:hover:bg-[#161A22]/70'
                           }`}
                         >
                           <div className="flex items-center justify-between gap-1">
@@ -340,8 +340,8 @@ export const TradingPreferencesModal: React.FC<TradingPreferencesModalProps> = (
                           onClick={() => setFormData({ ...formData, xauusdContractSize: opt.val })}
                           className={`p-2.5 rounded-xl border text-left transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/35 dark:focus-visible:ring-white/35 ${
                             active
-                              ? 'border-[#0F172A] dark:border-white bg-[#F5F7FA] dark:bg-[#161A22]'
-                              : 'border-[#D9E2EC] dark:border-[#20252D] bg-white dark:bg-[#0B0E13] hover:bg-[#F5F7FA] dark:hover:bg-[#161A22]/70'
+                              ? 'border-[#0F172A] dark:border-white bg-[#FAFAFA] dark:bg-[#161A22]'
+                              : 'border-[#E4E4E7] dark:border-[#20252D] bg-white dark:bg-[#0B0E13] hover:bg-[#FAFAFA] dark:hover:bg-[#161A22]/70'
                           }`}
                         >
                           <span
@@ -395,7 +395,7 @@ export const TradingPreferencesModal: React.FC<TradingPreferencesModalProps> = (
                 </div>
 
                 {/* Reference Note */}
-                <div className="px-3 py-2.5 rounded-lg bg-[#F5F7FA] dark:bg-[#0B0E13] border border-[#D9E2EC] dark:border-[#20252D] text-[11px] text-[#526071] dark:text-[#929BA9] font-mono-numbers tabular-nums">
+                <div className="px-3 py-2.5 rounded-lg bg-[#FAFAFA] dark:bg-[#0B0E13] border border-[#E4E4E7] dark:border-[#20252D] text-[11px] text-[#526071] dark:text-[#929BA9] font-mono-numbers tabular-nums">
                   0.01 lot = $0.10/pip · 0.10 lot = $1.00/pip · 1.00 lot = $10.00/pip
                 </div>
               </div>
@@ -478,8 +478,8 @@ export const TradingPreferencesModal: React.FC<TradingPreferencesModalProps> = (
                           onClick={() => setFormData({ ...formData, riskCapitalBasis: opt.val })}
                           className={`p-3 rounded-xl border text-left transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/35 dark:focus-visible:ring-white/35 ${
                             active
-                              ? 'border-[#0F172A] dark:border-white bg-[#F5F7FA] dark:bg-[#161A22]'
-                              : 'border-[#D9E2EC] dark:border-[#20252D] bg-white dark:bg-[#0B0E13] hover:bg-[#F5F7FA] dark:hover:bg-[#161A22]/70'
+                              ? 'border-[#0F172A] dark:border-white bg-[#FAFAFA] dark:bg-[#161A22]'
+                              : 'border-[#E4E4E7] dark:border-[#20252D] bg-white dark:bg-[#0B0E13] hover:bg-[#FAFAFA] dark:hover:bg-[#161A22]/70'
                           }`}
                         >
                           <div className="flex items-center justify-between gap-1">
@@ -556,7 +556,7 @@ export const TradingPreferencesModal: React.FC<TradingPreferencesModalProps> = (
                   </div>
                 </div>
 
-                <div className="px-3.5 py-2.5 rounded-xl bg-[#F5F7FA] dark:bg-[#0B0E13] border border-[#D9E2EC] dark:border-[#20252D] flex items-center justify-between text-xs">
+                <div className="px-3.5 py-2.5 rounded-xl bg-[#FAFAFA] dark:bg-[#0B0E13] border border-[#E4E4E7] dark:border-[#20252D] flex items-center justify-between text-xs">
                   <span className="text-[#526071] dark:text-[#929BA9]">
                     {tr('Arus Kas Bersih', 'Net Cashflow')}
                   </span>
@@ -576,11 +576,11 @@ export const TradingPreferencesModal: React.FC<TradingPreferencesModalProps> = (
           </div>
 
           {/* Footer */}
-          <div className="px-5 py-3.5 border-t border-[#D9E2EC] dark:border-[#20252D] bg-[#F5F7FA]/70 dark:bg-[#0B0E13]/60 flex items-center justify-end gap-2">
+          <div className="px-5 py-3.5 border-t border-[#E4E4E7] dark:border-[#20252D] bg-[#FAFAFA] dark:bg-[#0B0E13]/60 flex items-center justify-end gap-2">
             <button
               type="button"
               onClick={onClose}
-              className="min-h-[38px] px-4 py-2 rounded-full border border-[#D9E2EC] dark:border-[#20252D] bg-[#F5F7FA] hover:bg-[#EEF2F6] dark:bg-[#161A22] dark:hover:bg-[#1E2430] text-xs font-semibold text-[#0F172A] dark:text-[#F2F4F7] transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/35 dark:focus-visible:ring-white/35"
+              className="min-h-[38px] px-4 py-2 rounded-full border border-[#E4E4E7] dark:border-[#20252D] bg-[#FAFAFA] hover:bg-[#F4F4F5] dark:bg-[#161A22] dark:hover:bg-[#1E2430] text-xs font-semibold text-[#0F172A] dark:text-[#F2F4F7] transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/35 dark:focus-visible:ring-white/35"
             >
               {tr('Batal', 'Cancel')}
             </button>

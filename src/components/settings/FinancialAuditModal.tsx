@@ -83,13 +83,13 @@ export const FinancialAuditModal: React.FC<FinancialAuditModalProps> = ({
         role="dialog"
         aria-modal="true"
         aria-label={tr('Audit Rumus Finansial', 'Financial Formula Audit')}
-        className="w-full max-w-3xl max-h-[90vh] flex flex-col rounded-2xl border border-[#D9E2EC] dark:border-[#20252D] bg-white dark:bg-[#101318] shadow-[0_20px_50px_-12px_rgba(15,23,42,0.22)] dark:shadow-[0_24px_60px_-12px_rgba(0,0,0,0.8)] overflow-hidden text-[#0F172A] dark:text-[#F2F4F7]"
+        className="w-full max-w-3xl max-h-[90vh] flex flex-col rounded-2xl border border-[#E4E4E7] dark:border-[#20252D] bg-white dark:bg-[#101318] shadow-[0_20px_50px_-12px_rgba(15,23,42,0.22)] dark:shadow-[0_24px_60px_-12px_rgba(0,0,0,0.8)] overflow-hidden text-[#0F172A] dark:text-[#F2F4F7]"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
-        <div className="px-5 py-4 border-b border-[#D9E2EC] dark:border-[#20252D] flex items-center justify-between gap-3 shrink-0">
+        <div className="px-5 py-4 border-b border-[#E4E4E7] dark:border-[#20252D] flex items-center justify-between gap-3 shrink-0">
           <div className="flex items-center gap-3 min-w-0">
-            <div className="h-9 w-9 rounded-lg bg-[#F5F7FA] dark:bg-[#161A22] border border-[#D9E2EC] dark:border-[#20252D] flex items-center justify-center text-[#526071] dark:text-[#929BA9] shrink-0">
+            <div className="h-9 w-9 rounded-lg bg-[#FAFAFA] dark:bg-[#161A22] border border-[#E4E4E7] dark:border-[#20252D] flex items-center justify-center text-[#526071] dark:text-[#929BA9] shrink-0">
               <Calculator className="h-4 w-4 stroke-[1.75]" />
             </div>
             <div className="min-w-0">
@@ -107,7 +107,7 @@ export const FinancialAuditModal: React.FC<FinancialAuditModalProps> = ({
           <button
             type="button"
             onClick={onClose}
-            className="min-h-[38px] min-w-[38px] flex items-center justify-center rounded-full text-[#526071] dark:text-[#929BA9] hover:text-[#0F172A] dark:hover:text-[#F2F4F7] hover:bg-[#F5F7FA] dark:hover:bg-[#161A22] transition-colors cursor-pointer shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/35 dark:focus-visible:ring-white/35"
+            className="min-h-[38px] min-w-[38px] flex items-center justify-center rounded-full text-[#526071] dark:text-[#929BA9] hover:text-[#0F172A] dark:hover:text-[#F2F4F7] hover:bg-[#F4F4F5] dark:hover:bg-[#161A22] transition-colors cursor-pointer shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/35 dark:focus-visible:ring-white/35"
             aria-label={tr('Tutup modal audit finansial', 'Close financial audit modal')}
           >
             <X className="h-4 w-4 stroke-[1.75]" />
@@ -117,7 +117,7 @@ export const FinancialAuditModal: React.FC<FinancialAuditModalProps> = ({
         {/* Body */}
         <div className="p-5 flex-1 overflow-hidden flex flex-col gap-3.5">
           {/* Segmented Mode Switcher */}
-          <div className="grid grid-cols-2 gap-1 p-1 rounded-full bg-[#F5F7FA] dark:bg-[#0B0E13] border border-[#D9E2EC] dark:border-[#20252D] shrink-0">
+          <div className="grid grid-cols-2 gap-1 p-1 rounded-full bg-[#F4F4F5] dark:bg-[#0B0E13] border border-[#E4E4E7] dark:border-[#20252D] shrink-0">
             <button
               type="button"
               onClick={() => {
@@ -150,7 +150,7 @@ export const FinancialAuditModal: React.FC<FinancialAuditModalProps> = ({
 
           {/* Status Bar: Financial */}
           {activeTab === 'FINANCIAL' && suiteResult && (
-            <div className="p-3.5 rounded-xl bg-[#F5F7FA] dark:bg-[#0B0E13] border border-[#D9E2EC] dark:border-[#20252D] flex flex-wrap items-center justify-between gap-3 text-xs shrink-0">
+            <div className="p-3.5 rounded-xl bg-[#FAFAFA] dark:bg-[#0B0E13] border border-[#E4E4E7] dark:border-[#20252D] flex flex-wrap items-center justify-between gap-3 text-xs shrink-0">
               <div className="flex flex-wrap items-center gap-4 font-mono-numbers tabular-nums">
                 <div className="flex items-center gap-1.5">
                   <CheckCircle2 className="h-4 w-4 text-[#059669] dark:text-[#00A878] stroke-[1.75]" />
@@ -187,7 +187,7 @@ export const FinancialAuditModal: React.FC<FinancialAuditModalProps> = ({
 
           {/* Status Bar: Phase 1 Storage */}
           {activeTab === 'PHASE1_STORAGE' && (
-            <div className="p-3.5 rounded-xl bg-[#F5F7FA] dark:bg-[#0B0E13] border border-[#D9E2EC] dark:border-[#20252D] space-y-2 text-xs shrink-0">
+            <div className="p-3.5 rounded-xl bg-[#FAFAFA] dark:bg-[#0B0E13] border border-[#E4E4E7] dark:border-[#20252D] space-y-2 text-xs shrink-0">
               <div className="flex flex-wrap items-center justify-between gap-3">
                 {phase1Result ? (
                   <div className="flex flex-wrap items-center gap-4 font-mono-numbers tabular-nums">
@@ -239,7 +239,7 @@ export const FinancialAuditModal: React.FC<FinancialAuditModalProps> = ({
               </div>
 
               {phase1Result && (
-                <div className="pt-2 border-t border-[#D9E2EC] dark:border-[#20252D] flex flex-wrap items-center justify-between gap-2 text-[11px] font-mono-numbers tabular-nums text-[#526071] dark:text-[#929BA9]">
+                <div className="pt-2 border-t border-[#E4E4E7] dark:border-[#20252D] flex flex-wrap items-center justify-between gap-2 text-[11px] font-mono-numbers tabular-nums text-[#526071] dark:text-[#929BA9]">
                   <span>
                     localStorage Keys: {phase1Result.localStorageKeyCountBefore} →{' '}
                     {phase1Result.localStorageKeyCountAfter} (
@@ -262,7 +262,7 @@ export const FinancialAuditModal: React.FC<FinancialAuditModalProps> = ({
                 className={`px-3 py-1 rounded-full border transition-colors shrink-0 cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/35 dark:focus-visible:ring-white/35 ${
                   filterCategory === 'ALL'
                     ? 'bg-[#0F172A] text-white border-[#0F172A] dark:bg-white dark:text-[#0F172A] dark:border-white font-semibold'
-                    : 'bg-[#F5F7FA] dark:bg-[#0B0E13] text-[#526071] dark:text-[#929BA9] border-[#D9E2EC] dark:border-[#20252D] hover:text-[#0F172A] dark:hover:text-[#F2F4F7]'
+                    : 'bg-[#FAFAFA] dark:bg-[#0B0E13] text-[#526071] dark:text-[#929BA9] border-[#E4E4E7] dark:border-[#20252D] hover:text-[#0F172A] dark:hover:text-[#F2F4F7]'
                 }`}
               >
                 {tr('Semua', 'All')} ({currentSuite.total})
@@ -275,7 +275,7 @@ export const FinancialAuditModal: React.FC<FinancialAuditModalProps> = ({
                   className={`px-3 py-1 rounded-full border transition-colors shrink-0 cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/35 dark:focus-visible:ring-white/35 ${
                     filterCategory === cat
                       ? 'bg-[#0F172A] text-white border-[#0F172A] dark:bg-white dark:text-[#0F172A] dark:border-white font-semibold'
-                      : 'bg-[#F5F7FA] dark:bg-[#0B0E13] text-[#526071] dark:text-[#929BA9] border-[#D9E2EC] dark:border-[#20252D] hover:text-[#0F172A] dark:hover:text-[#F2F4F7]'
+                      : 'bg-[#FAFAFA] dark:bg-[#0B0E13] text-[#526071] dark:text-[#929BA9] border-[#E4E4E7] dark:border-[#20252D] hover:text-[#0F172A] dark:hover:text-[#F2F4F7]'
                   }`}
                 >
                   {cat}
@@ -285,7 +285,7 @@ export const FinancialAuditModal: React.FC<FinancialAuditModalProps> = ({
           )}
 
           {/* Assertion List */}
-          <div className="flex-1 overflow-y-auto rounded-xl border border-[#D9E2EC] dark:border-[#20252D] bg-[#F5F7FA] dark:bg-[#0B0E13] divide-y divide-[#D9E2EC] dark:divide-[#20252D]">
+          <div className="flex-1 overflow-y-auto rounded-xl border border-[#E4E4E7] dark:border-[#20252D] bg-[#FAFAFA] dark:bg-[#0B0E13] divide-y divide-[#E4E4E7] dark:divide-[#20252D]">
             {filteredResults.map((item, i) => (
               <div
                 key={i}
@@ -319,7 +319,7 @@ export const FinancialAuditModal: React.FC<FinancialAuditModalProps> = ({
                     {item.passed ? 'PASS' : `FAIL (${String(item.expected)})`}
                   </span>
                   {!item.passed && item.actual !== null && typeof item.actual === 'object' && (
-                    <pre className="mt-1.5 max-h-48 overflow-auto whitespace-pre-wrap break-words rounded-md bg-white dark:bg-[#101318] border border-[#D9E2EC] dark:border-[#20252D] p-2 text-left text-[10px] font-mono-numbers">
+                    <pre className="mt-1.5 max-h-48 overflow-auto whitespace-pre-wrap break-words rounded-md bg-white dark:bg-[#101318] border border-[#E4E4E7] dark:border-[#20252D] p-2 text-left text-[10px] font-mono-numbers">
                       {JSON.stringify(item.actual, null, 2)}
                     </pre>
                   )}
@@ -335,7 +335,7 @@ export const FinancialAuditModal: React.FC<FinancialAuditModalProps> = ({
         </div>
 
         {/* Footer */}
-        <div className="px-5 py-3.5 border-t border-[#D9E2EC] dark:border-[#20252D] bg-[#F5F7FA]/70 dark:bg-[#0B0E13]/60 flex items-center justify-between gap-3 shrink-0">
+        <div className="px-5 py-3.5 border-t border-[#E4E4E7] dark:border-[#20252D] bg-[#FAFAFA] dark:bg-[#0B0E13]/60 flex items-center justify-between gap-3 shrink-0">
           <span className="text-[11px] text-[#526071] dark:text-[#929BA9]">
             {tr(
               'Uji berjalan pada data sintetis — jurnal asli tetap aman.',
@@ -345,7 +345,7 @@ export const FinancialAuditModal: React.FC<FinancialAuditModalProps> = ({
           <button
             type="button"
             onClick={onClose}
-            className="min-h-[38px] px-4 py-2 rounded-full border border-[#D9E2EC] dark:border-[#20252D] bg-[#F5F7FA] hover:bg-[#EEF2F6] dark:bg-[#161A22] dark:hover:bg-[#1E2430] text-xs font-semibold text-[#0F172A] dark:text-[#F2F4F7] transition-colors cursor-pointer shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/35 dark:focus-visible:ring-white/35"
+            className="min-h-[38px] px-4 py-2 rounded-full border border-[#E4E4E7] dark:border-[#20252D] bg-[#FAFAFA] hover:bg-[#F4F4F5] dark:bg-[#161A22] dark:hover:bg-[#1E2430] text-xs font-semibold text-[#0F172A] dark:text-[#F2F4F7] transition-colors cursor-pointer shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/35 dark:focus-visible:ring-white/35"
           >
             {tr('Tutup', 'Close')}
           </button>

@@ -11,6 +11,7 @@ import {
   ShieldAlert,
   CandlestickChart,
   Newspaper,
+  Globe,
   Compass,
   Target,
   X,
@@ -20,12 +21,16 @@ import {
   Moon,
   Sun,
   Settings,
+  Layers,
 } from 'lucide-react';
 import { AppSettings } from '../../types/settings';
 import { useTheme } from '../../utils/theme';
 import { useLanguage } from '../../utils/language';
 import { getUserAvatarUrl } from '../../utils/supabaseClient';
+import { resolveConfiguredAccounts } from '../../utils/journalExtras';
+import { APP_VERSION } from '../../config/appVersion';
 import { BrandLogo } from './BrandLogo';
+import { PWAInstallButton } from './PWAInstallButton';
 
 interface MobileNavProps {
   activeTab: string;
@@ -41,6 +46,7 @@ interface MobileNavProps {
   onOpenAuth: () => void;
   onOpenAccount: () => void;
   onAddTrade?: () => void;
+  onOpenAccountSwitcher?: () => void;
 }
 
 export const MobileNav: React.FC<MobileNavProps> = ({
@@ -48,13 +54,22 @@ export const MobileNav: React.FC<MobileNavProps> = ({
   onNavigate,
   isOpen,
   onClose,
+  settings,
   currentUser,
   onOpenAuth,
   onOpenAccount,
   onAddTrade,
+  onOpenAccountSwitcher,
 }) => {
   const { isDark, toggleTheme } = useTheme();
   const { isEn, tr } = useLanguage();
+
+  const accounts = resolveConfiguredAccounts(settings);
+  const activeAccountId = settings.activeAccountId || 'ALL';
+  const activeAccountLabel =
+    activeAccountId === 'ALL'
+      ? tr('Semua Akun', 'All Accounts')
+      : accounts.find((a) => a.id === activeAccountId)?.name || tr('Akun Utama', 'Primary Account');
 
   useEffect(() => {
     if (!isOpen) return;
@@ -83,9 +98,10 @@ export const MobileNav: React.FC<MobileNavProps> = ({
 
   const insightMenuItems = [
     { id: 'market-chart', label: tr('Chart Pasar', 'Market Chart'), icon: CandlestickChart },
-    { id: 'macro-news', label: 'Trade News', icon: Newspaper },
-    { id: 'cycle-confluence', label: 'Cycle & Confluence', icon: Compass },
-    { id: 'smc-signal', label: 'SMC Signal', icon: Target },
+    { id: 'macro-news', label: tr('Berita Trading', 'Trade News'), icon: Newspaper },
+    { id: 'fundamental-gold', label: tr('Fundamental Emas', 'Fundamental Gold'), icon: Globe },
+    { id: 'cycle-confluence', label: tr('Siklus & Confluence', 'Cycle & Confluence'), icon: Compass },
+    { id: 'smc-signal', label: tr('Sinyal SMC', 'SMC Signal'), icon: Target },
   ];
 
   return (
@@ -93,7 +109,7 @@ export const MobileNav: React.FC<MobileNavProps> = ({
       {/* Mobile Bottom Thumb Navigation Bar (5 Positions: Dashboard, Trade Log, [+], Analytics, Risk) */}
       <nav
         aria-label={tr('Navigasi Utama Bawah', 'Bottom Primary Navigation')}
-        className="fixed bottom-0 left-0 right-0 z-40 lg:hidden border-t border-[#DDE3EA] dark:border-[#20252D] bg-white/[0.98] dark:bg-[#0B0D11]/[0.98] px-2 pt-1.5 pb-[calc(0.375rem+env(safe-area-inset-bottom,0px))]"
+        className="fixed bottom-0 left-0 right-0 z-40 lg:hidden border-t border-[#E4E4E7] dark:border-[#20252D] bg-white/[0.98] dark:bg-[#0B0D11]/[0.98] px-2 pt-1.5 pb-[calc(0.375rem+env(safe-area-inset-bottom,0px))]"
       >
         <div className="grid grid-cols-5 items-center">
           {bottomTabs.slice(0, 2).map((tab) => {
@@ -121,6 +137,7 @@ export const MobileNav: React.FC<MobileNavProps> = ({
           <div className="flex items-center justify-center">
             <button
               type="button"
+              data-tactile="none"
               onClick={() => {
                 if (onAddTrade) {
                   onAddTrade();
@@ -150,7 +167,7 @@ export const MobileNav: React.FC<MobileNavProps> = ({
                 onClick={() => onNavigate(tab.id)}
                 className={`flex flex-col items-center justify-center min-h-[44px] py-1 px-1 text-[10px] rounded-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/35 dark:focus-visible:ring-white/35 transition-colors cursor-pointer ${
                   isActive
-                    ? 'text-[#0F172A] dark:text-[#F2F4F7] bg-[#EEF2F6] dark:bg-white/[0.06] font-bold'
+                    ? 'text-[#0F172A] dark:text-[#F2F4F7] bg-[#F4F4F5] dark:bg-white/[0.06] font-bold'
                     : 'text-[#526071] dark:text-[#8E98A8] hover:text-[#0F172A] dark:hover:text-[#F2F4F7] font-medium'
                 }`}
               >
@@ -186,7 +203,7 @@ export const MobileNav: React.FC<MobileNavProps> = ({
           aria-modal={isOpen}
           aria-label={tr('Menu Navigasi Utama', 'Main Navigation Menu')}
           data-testid="mobile-drawer-panel"
-          className={`fixed inset-y-0 left-0 z-10 w-72 max-w-[85vw] bg-white dark:bg-[#0E1218] border-r border-[#D9E2EC] dark:border-[#20252D] px-4 pt-[calc(0.875rem+env(safe-area-inset-top,0px))] pb-[calc(1.25rem+env(safe-area-inset-bottom,0px))] overflow-y-auto flex flex-col justify-between shadow-2xl transform transition-transform duration-250 ease-[cubic-bezier(0.22,1,0.36,1)] ${
+          className={`fixed inset-y-0 left-0 z-10 w-72 max-w-[85vw] bg-white dark:bg-[#0E1218] border-r border-[#E4E4E7] dark:border-[#20252D] px-4 pt-[calc(0.875rem+env(safe-area-inset-top,0px))] pb-[calc(1.25rem+env(safe-area-inset-bottom,0px))] overflow-y-auto flex flex-col justify-between shadow-2xl transform transition-transform duration-250 ease-[cubic-bezier(0.22,1,0.36,1)] ${
             isOpen ? 'translate-x-0' : '-translate-x-full'
           }`}
           onClick={(e) => e.stopPropagation()}
@@ -195,10 +212,11 @@ export const MobileNav: React.FC<MobileNavProps> = ({
             {/* 1. Logo VLO */}
             <div
               data-testid="mobile-menu-logo-section"
-              className="flex items-center justify-between pb-3.5 border-b border-[#D9E2EC] dark:border-[#20252D]"
+              className="flex items-center justify-between pb-3.5 border-b border-[#E4E4E7] dark:border-[#20252D]"
             >
               <button
                 type="button"
+                data-tactile="none"
                 onClick={() => {
                   onNavigate('dashboard');
                   onClose();
@@ -217,7 +235,7 @@ export const MobileNav: React.FC<MobileNavProps> = ({
               <button
                 type="button"
                 onClick={onClose}
-                className="min-h-[40px] min-w-[40px] -mr-2 flex items-center justify-center rounded-full text-[#526071] dark:text-[#929BA9] hover:text-[#0F172A] dark:hover:text-[#F2F4F7] hover:bg-[#EEF2F6] dark:hover:bg-[#161B24] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/35 dark:focus-visible:ring-white/35 transition-colors cursor-pointer"
+                className="min-h-[40px] min-w-[40px] -mr-2 flex items-center justify-center rounded-full text-[#526071] dark:text-[#929BA9] hover:text-[#0F172A] dark:hover:text-[#F2F4F7] hover:bg-[#F4F4F5] dark:hover:bg-[#161B24] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/35 dark:focus-visible:ring-white/35 transition-colors cursor-pointer"
                 aria-label={tr('Tutup Menu', 'Close Menu')}
               >
                 <X className="h-4 w-4 stroke-[1.75]" />
@@ -227,7 +245,7 @@ export const MobileNav: React.FC<MobileNavProps> = ({
             {/* 2. Informasi Akun Aktif */}
             <div
               data-testid="mobile-menu-account-section"
-              className="pb-3.5 border-b border-[#D9E2EC] dark:border-[#20252D]"
+              className="pb-3.5 border-b border-[#E4E4E7] dark:border-[#20252D]"
             >
               {currentUser ? (
                 <button
@@ -236,10 +254,10 @@ export const MobileNav: React.FC<MobileNavProps> = ({
                     onClose();
                     onOpenAccount();
                   }}
-                  className="w-full flex items-center justify-between gap-3 px-2.5 py-2 rounded-xl bg-[#F8FAFC] dark:bg-[#141922] hover:bg-[#EEF2F6] dark:hover:bg-[#1A202C] border border-[#D9E2EC] dark:border-[#20252D] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/35 dark:focus-visible:ring-white/35 transition-colors cursor-pointer text-left group"
+                  className="w-full flex items-center justify-between gap-3 px-2.5 py-2 rounded-xl bg-[#FAFAFA] dark:bg-[#141922] hover:bg-[#F4F4F5] dark:hover:bg-[#1A202C] border border-[#E4E4E7] dark:border-[#20252D] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/35 dark:focus-visible:ring-white/35 transition-colors cursor-pointer text-left group"
                 >
                   <div className="flex items-center gap-2.5 min-w-0">
-                    <div className="h-8 w-8 rounded-full bg-white dark:bg-[#0E1218] border border-[#D9E2EC] dark:border-[#20252D] flex items-center justify-center text-[#0F172A] dark:text-[#F2F4F7] shrink-0 overflow-hidden">
+                    <div className="h-8 w-8 rounded-full bg-white dark:bg-[#0E1218] border border-[#E4E4E7] dark:border-[#20252D] flex items-center justify-center text-[#0F172A] dark:text-[#F2F4F7] shrink-0 overflow-hidden">
                       {getUserAvatarUrl(currentUser) ? (
                         <img
                           src={getUserAvatarUrl(currentUser)}
@@ -276,10 +294,10 @@ export const MobileNav: React.FC<MobileNavProps> = ({
                     onClose();
                     onOpenAuth();
                   }}
-                  className="w-full flex items-center justify-between gap-3 px-2.5 py-2 rounded-xl bg-[#F8FAFC] dark:bg-[#141922] hover:bg-[#EEF2F6] dark:hover:bg-[#1A202C] border border-[#D9E2EC] dark:border-[#20252D] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/35 dark:focus-visible:ring-white/35 transition-colors cursor-pointer text-left group"
+                  className="w-full flex items-center justify-between gap-3 px-2.5 py-2 rounded-xl bg-[#FAFAFA] dark:bg-[#141922] hover:bg-[#F4F4F5] dark:hover:bg-[#1A202C] border border-[#E4E4E7] dark:border-[#20252D] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/35 dark:focus-visible:ring-white/35 transition-colors cursor-pointer text-left group"
                 >
                   <div className="flex items-center gap-2.5 min-w-0">
-                    <div className="h-8 w-8 rounded-full bg-white dark:bg-[#0E1218] border border-[#D9E2EC] dark:border-[#20252D] flex items-center justify-center text-[#526071] dark:text-[#8E98A8] shrink-0">
+                    <div className="h-8 w-8 rounded-full bg-white dark:bg-[#0E1218] border border-[#E4E4E7] dark:border-[#20252D] flex items-center justify-center text-[#526071] dark:text-[#8E98A8] shrink-0">
                       <User className="h-4 w-4 stroke-[1.75]" />
                     </div>
                     <div className="min-w-0">
@@ -294,12 +312,31 @@ export const MobileNav: React.FC<MobileNavProps> = ({
                   <ChevronRight className="h-4 w-4 text-[#526071] dark:text-[#8E98A8] group-hover:text-[#0F172A] dark:group-hover:text-[#F2F4F7] shrink-0 stroke-[1.75] transition-colors" />
                 </button>
               )}
+
+              {onOpenAccountSwitcher && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    onClose();
+                    onOpenAccountSwitcher();
+                  }}
+                  className="mt-2 w-full flex items-center justify-between gap-2 px-2.5 py-1.5 rounded-lg bg-white dark:bg-[#0B0E13] hover:bg-[#F4F4F5] dark:hover:bg-[#141922] border border-[#E4E4E7] dark:border-[#20252D] transition-colors cursor-pointer text-left"
+                >
+                  <span className="inline-flex items-center gap-2 min-w-0">
+                    <Layers className="h-3.5 w-3.5 text-[#526071] dark:text-[#8E98A8] shrink-0 stroke-[1.75]" />
+                    <span className="text-[11px] font-semibold text-[#0F172A] dark:text-[#F2F4F7] truncate">
+                      {activeAccountLabel}
+                    </span>
+                  </span>
+                  <ChevronRight className="h-3.5 w-3.5 text-[#526071] dark:text-[#8E98A8] shrink-0 stroke-[1.75]" />
+                </button>
+              )}
             </div>
 
             {/* 3. Menu Utama (4 Tampilan Utama) */}
             <div
               data-testid="mobile-menu-main-section"
-              className="pb-3.5 border-b border-[#D9E2EC] dark:border-[#20252D]"
+              className="pb-3.5 border-b border-[#E4E4E7] dark:border-[#20252D]"
             >
               <span className="text-[10px] font-semibold uppercase tracking-[0.08em] text-[#526071] dark:text-[#8E98A8] block px-2 mb-1.5">
                 {tr('MENU UTAMA', 'MAIN MENU')}
@@ -320,8 +357,8 @@ export const MobileNav: React.FC<MobileNavProps> = ({
                       }}
                       className={`w-full flex items-center gap-3 px-2.5 py-2 rounded-lg text-[13px] leading-snug focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/35 dark:focus-visible:ring-white/35 transition-colors cursor-pointer ${
                         isActive
-                          ? 'bg-[#EEF2F6] dark:bg-[#171D26] text-[#0F172A] dark:text-[#F2F4F7] font-semibold'
-                          : 'text-[#526071] dark:text-[#929BA9] hover:text-[#0F172A] dark:hover:text-[#F2F4F7] hover:bg-[#F8FAFC] dark:hover:bg-[#141922] font-medium'
+                          ? 'bg-[#F4F4F5] dark:bg-[#171D26] text-[#0F172A] dark:text-[#F2F4F7] font-semibold'
+                          : 'text-[#526071] dark:text-[#929BA9] hover:text-[#0F172A] dark:hover:text-[#F2F4F7] hover:bg-[#FAFAFA] dark:hover:bg-[#141922] font-medium'
                       }`}
                     >
                       <Icon
@@ -341,7 +378,7 @@ export const MobileNav: React.FC<MobileNavProps> = ({
             {/* 4. Insight / Wawasan */}
             <div
               data-testid="mobile-menu-insight-section"
-              className="pb-3.5 border-b border-[#D9E2EC] dark:border-[#20252D]"
+              className="pb-3.5 border-b border-[#E4E4E7] dark:border-[#20252D]"
             >
               <span className="text-[10px] font-semibold uppercase tracking-[0.08em] text-[#526071] dark:text-[#8E98A8] block px-2 mb-1.5">
                 {tr('WAWASAN', 'INSIGHT')}
@@ -361,8 +398,8 @@ export const MobileNav: React.FC<MobileNavProps> = ({
                       }}
                       className={`w-full flex items-center gap-3 px-2.5 py-2 rounded-lg text-[13px] leading-snug focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/35 dark:focus-visible:ring-white/35 transition-colors cursor-pointer ${
                         isActive
-                          ? 'bg-[#EEF2F6] dark:bg-[#171D26] text-[#0F172A] dark:text-[#F2F4F7] font-semibold'
-                          : 'text-[#526071] dark:text-[#929BA9] hover:text-[#0F172A] dark:hover:text-[#F2F4F7] hover:bg-[#F8FAFC] dark:hover:bg-[#141922] font-medium'
+                          ? 'bg-[#F4F4F5] dark:bg-[#171D26] text-[#0F172A] dark:text-[#F2F4F7] font-semibold'
+                          : 'text-[#526071] dark:text-[#929BA9] hover:text-[#0F172A] dark:hover:text-[#F2F4F7] hover:bg-[#FAFAFA] dark:hover:bg-[#141922] font-medium'
                       }`}
                     >
                       <Icon
@@ -382,7 +419,7 @@ export const MobileNav: React.FC<MobileNavProps> = ({
             {/* 4. Preferensi */}
             <div
               data-testid="mobile-menu-preferences-section"
-              className="pb-3.5 border-b border-[#D9E2EC] dark:border-[#20252D]"
+              className="pb-3.5 border-b border-[#E4E4E7] dark:border-[#20252D]"
             >
               <span className="text-[10px] font-semibold uppercase tracking-[0.08em] text-[#526071] dark:text-[#8E98A8] block px-2 mb-1.5">
                 {tr('PREFERENSI', 'PREFERENCES')}
@@ -391,7 +428,7 @@ export const MobileNav: React.FC<MobileNavProps> = ({
                 type="button"
                 onClick={toggleTheme}
                 data-testid="mobile-menu-theme-toggle"
-                className="w-full flex items-center justify-between gap-3 px-2.5 py-2 rounded-lg text-left text-[#526071] dark:text-[#929BA9] hover:text-[#0F172A] dark:hover:text-[#F2F4F7] hover:bg-[#F8FAFC] dark:hover:bg-[#141922] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/35 dark:focus-visible:ring-white/35 transition-colors cursor-pointer group"
+                className="w-full flex items-center justify-between gap-3 px-2.5 py-2 rounded-lg text-left text-[#526071] dark:text-[#929BA9] hover:text-[#0F172A] dark:hover:text-[#F2F4F7] hover:bg-[#FAFAFA] dark:hover:bg-[#141922] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/35 dark:focus-visible:ring-white/35 transition-colors cursor-pointer group"
               >
                 <div className="flex items-center gap-3 min-w-0">
                   {isDark ? (
@@ -409,6 +446,9 @@ export const MobileNav: React.FC<MobileNavProps> = ({
                   </div>
                 </div>
               </button>
+              <div className="mt-1.5 px-1">
+                <PWAInstallButton variant="compact" />
+              </div>
             </div>
 
             {/* 6. Pengaturan (Hanya Pengaturan Aplikasi) */}
@@ -428,8 +468,8 @@ export const MobileNav: React.FC<MobileNavProps> = ({
                   }}
                   className={`w-full flex items-center justify-between gap-3 px-2.5 py-2 rounded-lg text-[13px] leading-snug focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/35 dark:focus-visible:ring-white/35 transition-colors cursor-pointer group ${
                     activeTab === 'settings'
-                      ? 'bg-[#EEF2F6] dark:bg-[#171D26] text-[#0F172A] dark:text-[#F2F4F7] font-semibold'
-                      : 'text-[#526071] dark:text-[#929BA9] hover:text-[#0F172A] dark:hover:text-[#F2F4F7] hover:bg-[#F8FAFC] dark:hover:bg-[#141922] font-medium'
+                      ? 'bg-[#F4F4F5] dark:bg-[#171D26] text-[#0F172A] dark:text-[#F2F4F7] font-semibold'
+                      : 'text-[#526071] dark:text-[#929BA9] hover:text-[#0F172A] dark:hover:text-[#F2F4F7] hover:bg-[#FAFAFA] dark:hover:bg-[#141922] font-medium'
                   }`}
                 >
                   <div className="flex items-center gap-3 min-w-0">
@@ -443,12 +483,15 @@ export const MobileNav: React.FC<MobileNavProps> = ({
           </div>
 
           {/* Footer & Informasi Versi App */}
-          <div className="pt-3 mt-4 border-t border-[#D9E2EC] dark:border-[#20252D] px-2 flex items-center justify-between gap-2">
+          <div className="pt-3 mt-4 border-t border-[#E4E4E7] dark:border-[#20252D] px-2 flex items-center justify-between gap-2">
             <span className="text-[10px] font-semibold uppercase tracking-[0.1em] text-[#526071] dark:text-[#8E98A8]">
               {tr('JURNAL VLO', 'VLO JOURNAL')}
             </span>
-            <span className="text-[10px] font-mono-numbers tabular-nums font-medium text-[#526071] dark:text-[#8E98A8]">
-              v1.0.0
+            <span
+              className="text-[10px] font-mono-numbers tabular-nums font-medium text-[#526071] dark:text-[#8E98A8]"
+              title={`v${APP_VERSION}`}
+            >
+              v{APP_VERSION}
             </span>
           </div>
         </div>

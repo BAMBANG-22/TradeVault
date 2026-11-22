@@ -39,6 +39,12 @@ import {
 import { useLanguage } from '../../utils/language';
 import { resolveTradingViewSnapshotUrl } from '../../utils/tradeScreenshotScanner';
 import {
+  findNearbyMacroEventsForTrade,
+  resolveTradeBehavior,
+  getMistakeLabel,
+  getEmotionLabel,
+} from '../../utils/journalExtras';
+import {
   ArrowLeft,
   Edit2,
   Trash2,
@@ -57,6 +63,7 @@ import {
   Check,
   AlertCircle,
   Maximize2,
+  Newspaper,
 } from 'lucide-react';
 
 interface TradeDetailModalProps {
@@ -222,7 +229,7 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
   onSaveTradeUpdate,
 }) => {
   const { preferredCurrency, formatDynamic, formatTradeFinancial } = useGlobalCurrency();
-  const { tr } = useLanguage();
+  const { tr, language } = useLanguage();
 
   // Horizontal 5-Section Active Tab State
   const [activeSectionTab, setActiveSectionTab] = useState<DetailSectionTab>('plan');
@@ -547,7 +554,7 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
     return (
       <div
         data-testid="trade-detail-empty-state"
-        className="rounded-xl border border-[#D9E2EC] dark:border-[#20252D] bg-white dark:bg-[#101318] shadow-[0_1px_2px_rgba(15,23,42,0.04)] dark:shadow-none p-8 text-center space-y-3 max-w-2xl mx-auto"
+        className="rounded-xl border border-[#E4E4E7] dark:border-[#20252D] bg-white dark:bg-[#101318] shadow-[0_1px_2px_rgba(15,23,42,0.04)] dark:shadow-none p-8 text-center space-y-3 max-w-2xl mx-auto"
       >
         <h2 className="text-base font-semibold text-[#0F172A] dark:text-[#F2F4F7]">
           {tr('Belum Ada Transaksi Dipilih', 'No Trade Selected')}
@@ -1094,8 +1101,8 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
           role="status"
           className={`flex items-center justify-between gap-3 px-4 py-2.5 rounded-xl border text-xs font-medium transition-colors ${
             saveFeedback.type === 'success'
-              ? 'bg-[#F5F7FA] dark:bg-[#101318] border-[#D9E2EC] dark:border-[#20252D] text-[#059669] dark:text-[#00A878]'
-              : 'bg-[#F5F7FA] dark:bg-[#101318] border-[#E11D48]/30 dark:border-[#E05260]/30 text-[#E11D48] dark:text-[#E05260]'
+              ? 'bg-[#FAFAFA] dark:bg-[#101318] border-[#E4E4E7] dark:border-[#20252D] text-[#059669] dark:text-[#00A878]'
+              : 'bg-[#FAFAFA] dark:bg-[#101318] border-[#E11D48]/30 dark:border-[#E05260]/30 text-[#E11D48] dark:text-[#E05260]'
           }`}
         >
           <div className="flex items-center gap-2">
@@ -1117,15 +1124,15 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
       )}
 
       {/* BAGIAN 2 — HEADER DAN RINGKASAN TRADE */}
-      <div className="rounded-2xl border border-[#D9E2EC] dark:border-[#20252D] bg-white dark:bg-[#101318] shadow-[0_1px_2px_rgba(15,23,42,0.04)] dark:shadow-none transition-colors duration-150">
+      <div className="rounded-2xl border border-[#E4E4E7] dark:border-[#20252D] bg-white dark:bg-[#101318] shadow-[0_1px_2px_rgba(15,23,42,0.04)] dark:shadow-none transition-colors duration-150">
         {/* Top Action Bar: Back Button · Title · [Edit] [⋯] */}
-        <div className="flex items-center justify-between gap-3 px-4 sm:px-6 py-3.5 border-b border-[#D9E2EC] dark:border-[#20252D]">
+        <div className="flex items-center justify-between gap-3 px-4 sm:px-6 py-3.5 border-b border-[#E4E4E7] dark:border-[#20252D]">
           <div className="flex items-center gap-2.5 min-w-0">
             <button
               type="button"
               onClick={onClose}
               aria-label={tr('Kembali ke Jurnal Trade', 'Back to Trade Log')}
-              className="inline-flex items-center justify-center h-8 w-8 rounded-full border border-[#D9E2EC] dark:border-[#20252D] bg-[#F5F7FA] dark:bg-[#0B0E13] hover:bg-[#EAEEF4] dark:hover:bg-[#161A22] text-[#0F172A] dark:text-[#F2F4F7] transition-colors shrink-0 cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/40 dark:focus-visible:ring-white/40"
+              className="inline-flex items-center justify-center h-8 w-8 rounded-full border border-[#E4E4E7] dark:border-[#20252D] bg-[#FAFAFA] dark:bg-[#0B0E13] hover:bg-[#F4F4F5] dark:hover:bg-[#161A22] text-[#0F172A] dark:text-[#F2F4F7] transition-colors shrink-0 cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/40 dark:focus-visible:ring-white/40"
             >
               <ArrowLeft className="h-4 w-4 stroke-[1.75]" />
             </button>
@@ -1143,7 +1150,7 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
                   if (found) onSelectTrade(found);
                 }}
                 aria-label={tr('Pilih transaksi lain', 'Select another trade')}
-                className="hidden sm:block rounded-full bg-[#F5F7FA] dark:bg-[#0B0E13] border border-[#D9E2EC] dark:border-[#20252D] hover:border-[#526071] dark:hover:border-[#2A313C] px-3 py-1.5 text-xs text-[#0F172A] dark:text-[#F2F4F7] font-mono-numbers tabular-nums focus:border-[#0F172A] dark:focus:border-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/40 dark:focus-visible:ring-white/40 max-w-[190px] truncate"
+                className="hidden sm:block rounded-full bg-[#FAFAFA] dark:bg-[#0B0E13] border border-[#E4E4E7] dark:border-[#20252D] hover:border-[#526071] dark:hover:border-[#2A313C] px-3 py-1.5 text-xs text-[#0F172A] dark:text-[#F2F4F7] font-mono-numbers tabular-nums focus:border-[#0F172A] dark:focus:border-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/40 dark:focus-visible:ring-white/40 max-w-[190px] truncate"
               >
                 {allTrades.map((item) => (
                   <option key={item.id} value={item.id}>
@@ -1156,7 +1163,7 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
             <button
               type="button"
               onClick={() => onEdit(trade)}
-              className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full bg-[#F5F7FA] dark:bg-[#0B0E13] hover:bg-[#EAEEF4] dark:hover:bg-[#161A22] border border-[#D9E2EC] dark:border-[#20252D] text-xs font-semibold text-[#0F172A] dark:text-[#F2F4F7] transition-colors whitespace-nowrap shrink-0 cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/40 dark:focus-visible:ring-white/40"
+              className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full bg-[#FAFAFA] dark:bg-[#0B0E13] hover:bg-[#F4F4F5] dark:hover:bg-[#161A22] border border-[#E4E4E7] dark:border-[#20252D] text-xs font-semibold text-[#0F172A] dark:text-[#F2F4F7] transition-colors whitespace-nowrap shrink-0 cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/40 dark:focus-visible:ring-white/40"
               title={tr('Edit Transaksi', 'Edit Trade')}
             >
               <Edit2 className="h-3.5 w-3.5 stroke-[1.75]" />
@@ -1170,15 +1177,15 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
                 onClick={() => setIsMoreMenuOpen((prev) => !prev)}
                 aria-label={tr('Menu tambahan', 'More actions')}
                 aria-expanded={isMoreMenuOpen}
-                className="inline-flex items-center justify-center h-8 w-8 rounded-full bg-[#F5F7FA] dark:bg-[#0B0E13] hover:bg-[#EAEEF4] dark:hover:bg-[#161A22] border border-[#D9E2EC] dark:border-[#20252D] text-[#0F172A] dark:text-[#F2F4F7] transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/40 dark:focus-visible:ring-white/40"
+                className="inline-flex items-center justify-center h-8 w-8 rounded-full bg-[#FAFAFA] dark:bg-[#0B0E13] hover:bg-[#F4F4F5] dark:hover:bg-[#161A22] border border-[#E4E4E7] dark:border-[#20252D] text-[#0F172A] dark:text-[#F2F4F7] transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/40 dark:focus-visible:ring-white/40"
               >
                 <MoreHorizontal className="h-4 w-4 stroke-[1.75]" />
               </button>
 
               {isMoreMenuOpen && (
-                <div className="absolute right-0 mt-1.5 w-52 rounded-xl border border-[#D9E2EC] dark:border-[#20252D] bg-white dark:bg-[#101318] shadow-lg dark:shadow-none py-1.5 z-30 text-xs">
+                <div className="absolute right-0 mt-1.5 w-52 rounded-xl border border-[#E4E4E7] dark:border-[#20252D] bg-white dark:bg-[#101318] shadow-lg dark:shadow-none py-1.5 z-30 text-xs">
                   {allTrades.length > 1 && onSelectTrade && (
-                    <div className="px-3 py-1.5 border-b border-[#D9E2EC] dark:border-[#20252D] sm:hidden">
+                    <div className="px-3 py-1.5 border-b border-[#E4E4E7] dark:border-[#20252D] sm:hidden">
                       <label className="block text-[10px] text-[#526071] dark:text-[#929BA9] mb-1">
                         {tr('Pindah Catatan Trade', 'Switch Trade Record')}
                       </label>
@@ -1191,7 +1198,7 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
                             setIsMoreMenuOpen(false);
                           }
                         }}
-                        className="w-full rounded-md bg-[#F5F7FA] dark:bg-[#0B0E13] border border-[#D9E2EC] dark:border-[#20252D] px-2 py-1 text-xs font-mono-numbers tabular-nums text-[#0F172A] dark:text-[#F2F4F7] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/40 dark:focus-visible:ring-white/40"
+                        className="w-full rounded-md bg-[#FAFAFA] dark:bg-[#0B0E13] border border-[#E4E4E7] dark:border-[#20252D] px-2 py-1 text-xs font-mono-numbers tabular-nums text-[#0F172A] dark:text-[#F2F4F7] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/40 dark:focus-visible:ring-white/40"
                       >
                         {allTrades.map((item) => (
                           <option key={item.id} value={item.id}>
@@ -1210,7 +1217,7 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
                           setIsMoreMenuOpen(false);
                           setActiveTransitionPanel('OPEN');
                         }}
-                        className="w-full px-3.5 py-2 text-left flex items-center gap-2 hover:bg-[#F8FAFC] dark:hover:bg-[#161A22] text-[#0F172A] dark:text-[#F2F4F7] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[#0F172A]/40 dark:focus-visible:ring-white/40"
+                        className="w-full px-3.5 py-2 text-left flex items-center gap-2 hover:bg-[#F4F4F5] dark:hover:bg-[#161A22] text-[#0F172A] dark:text-[#F2F4F7] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[#0F172A]/40 dark:focus-visible:ring-white/40"
                       >
                         <CheckCircle2 className="h-3.5 w-3.5 stroke-[1.75] text-[#0F172A] dark:text-[#F2F4F7]" />
                         <span>{tr('Konfirmasi Posisi Dibuka', 'Confirm Position Opened')}</span>
@@ -1221,7 +1228,7 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
                           setIsMoreMenuOpen(false);
                           setActiveTransitionPanel('CANCEL');
                         }}
-                        className="w-full px-3.5 py-2 text-left flex items-center gap-2 hover:bg-[#F8FAFC] dark:hover:bg-[#161A22] text-[#526071] dark:text-[#929BA9] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[#0F172A]/40 dark:focus-visible:ring-white/40"
+                        className="w-full px-3.5 py-2 text-left flex items-center gap-2 hover:bg-[#F4F4F5] dark:hover:bg-[#161A22] text-[#526071] dark:text-[#929BA9] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[#0F172A]/40 dark:focus-visible:ring-white/40"
                       >
                         <XCircle className="h-3.5 w-3.5 stroke-[1.75]" />
                         <span>{tr('Batalkan Rencana Order', 'Cancel Planned Order')}</span>
@@ -1236,7 +1243,7 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
                         setIsMoreMenuOpen(false);
                         setActiveTransitionPanel('CLOSE');
                       }}
-                      className="w-full px-3.5 py-2 text-left flex items-center gap-2 hover:bg-[#F8FAFC] dark:hover:bg-[#161A22] text-[#0F172A] dark:text-[#F2F4F7] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[#0F172A]/40 dark:focus-visible:ring-white/40"
+                      className="w-full px-3.5 py-2 text-left flex items-center gap-2 hover:bg-[#F4F4F5] dark:hover:bg-[#161A22] text-[#0F172A] dark:text-[#F2F4F7] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[#0F172A]/40 dark:focus-visible:ring-white/40"
                     >
                       <Lock className="h-3.5 w-3.5 stroke-[1.75] text-[#0F172A] dark:text-[#F2F4F7]" />
                       <span>{tr('Tutup Posisi', 'Close Position')}</span>
@@ -1249,7 +1256,7 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
                       setIsMoreMenuOpen(false);
                       onDelete(trade);
                     }}
-                    className="w-full px-3.5 py-2 text-left flex items-center gap-2 hover:bg-[#F8FAFC] dark:hover:bg-[#161A22] text-[#E11D48] dark:text-[#E05260] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[#0F172A]/40 dark:focus-visible:ring-white/40"
+                    className="w-full px-3.5 py-2 text-left flex items-center gap-2 hover:bg-[#F4F4F5] dark:hover:bg-[#161A22] text-[#E11D48] dark:text-[#E05260] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[#0F172A]/40 dark:focus-visible:ring-white/40"
                   >
                     <Trash2 className="h-3.5 w-3.5 stroke-[1.75]" />
                     <span>{tr('Hapus Catatan Trade', 'Delete Trade Record')}</span>
@@ -1289,7 +1296,7 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
                 >
                   {trade.position}
                 </span>
-                <span className="text-[#D9E2EC] dark:text-[#20252D]" aria-hidden="true">
+                <span className="text-[#E4E4E7] dark:text-[#20252D]" aria-hidden="true">
                   ·
                 </span>
                 <span className="text-[#526071] dark:text-[#929BA9] font-mono-numbers tabular-nums">
@@ -1297,7 +1304,7 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
                 </span>
                 {trade.id && (
                   <>
-                    <span className="text-[#D9E2EC] dark:text-[#20252D]" aria-hidden="true">
+                    <span className="text-[#E4E4E7] dark:text-[#20252D]" aria-hidden="true">
                       ·
                     </span>
                     <span className="text-[#526071] dark:text-[#929BA9] font-mono-numbers tabular-nums truncate max-w-[140px]">
@@ -1348,7 +1355,7 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
           </div>
 
           {/* Price Strip: Entry | Stop Loss | Take Profit */}
-          <div className="pt-4 border-t border-[#D9E2EC] dark:border-[#20252D] grid grid-cols-3 gap-4 sm:gap-6">
+          <div className="pt-4 border-t border-[#E4E4E7] dark:border-[#20252D] grid grid-cols-3 gap-4 sm:gap-6">
             <div>
               <span className="block text-[11px] text-[#526071] dark:text-[#929BA9]">
                 Entry
@@ -1379,7 +1386,7 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
 
           {/* Quick Lifecycle Bar for PLANNED or OPEN trades */}
           {onSaveTradeUpdate && (isPlanned || isOpenPos) && (
-            <div className="pt-3.5 border-t border-[#D9E2EC] dark:border-[#20252D] flex flex-wrap items-center justify-between gap-2.5">
+            <div className="pt-3.5 border-t border-[#E4E4E7] dark:border-[#20252D] flex flex-wrap items-center justify-between gap-2.5">
               <span className="text-xs text-[#526071] dark:text-[#929BA9]">
                 {isPlanned
                   ? tr('Order masih berstatus rencana.', 'Order is still in planned status.')
@@ -1407,7 +1414,7 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
                           activeTransitionPanel === 'CANCEL' ? null : 'CANCEL'
                         )
                       }
-                      className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full bg-[#F5F7FA] dark:bg-[#0B0E13] hover:bg-[#EAEEF4] dark:hover:bg-[#161A22] border border-[#D9E2EC] dark:border-[#20252D] text-xs font-medium text-[#526071] dark:text-[#929BA9] transition-colors whitespace-nowrap shrink-0 cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/40 dark:focus-visible:ring-white/40"
+                      className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full bg-[#FAFAFA] dark:bg-[#0B0E13] hover:bg-[#F4F4F5] dark:hover:bg-[#161A22] border border-[#E4E4E7] dark:border-[#20252D] text-xs font-medium text-[#526071] dark:text-[#929BA9] transition-colors whitespace-nowrap shrink-0 cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/40 dark:focus-visible:ring-white/40"
                     >
                       <XCircle className="h-3.5 w-3.5 stroke-[1.75]" />
                       <span>{tr('Batalkan', 'Cancel')}</span>
@@ -1437,7 +1444,7 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
           {activeTransitionPanel && (
             <form
               onSubmit={handleExecuteTransition}
-              className="p-4 rounded-xl bg-[#F5F7FA] dark:bg-[#0B0E13] border border-[#D9E2EC] dark:border-[#20252D] space-y-3.5 text-xs"
+              className="p-4 rounded-xl bg-[#FAFAFA] dark:bg-[#0B0E13] border border-[#E4E4E7] dark:border-[#20252D] space-y-3.5 text-xs"
             >
               {transitionError && (
                 <div className="p-2.5 rounded-lg bg-white dark:bg-[#101318] border border-[#E11D48]/30 dark:border-[#E05260]/30 text-[#E11D48] dark:text-[#E05260]">
@@ -1471,7 +1478,7 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
                         step="any"
                         value={actualEntryInput}
                         onChange={(e) => setActualEntryInput(e.target.value)}
-                        className="w-full rounded-lg bg-white dark:bg-[#101318] border border-[#D9E2EC] dark:border-[#20252D] px-3 py-1.5 font-mono-numbers tabular-nums font-semibold text-[#0F172A] dark:text-[#F2F4F7] focus:border-[#0F172A] dark:focus:border-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/40 dark:focus-visible:ring-white/40"
+                        className="w-full rounded-lg bg-white dark:bg-[#101318] border border-[#E4E4E7] dark:border-[#20252D] px-3 py-1.5 font-mono-numbers tabular-nums font-semibold text-[#0F172A] dark:text-[#F2F4F7] focus:border-[#0F172A] dark:focus:border-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/40 dark:focus-visible:ring-white/40"
                         required
                       />
                     </div>
@@ -1485,7 +1492,7 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
                         min="0.01"
                         value={actualLotInput}
                         onChange={(e) => setActualLotInput(e.target.value)}
-                        className="w-full rounded-lg bg-white dark:bg-[#101318] border border-[#D9E2EC] dark:border-[#20252D] px-3 py-1.5 font-mono-numbers tabular-nums font-semibold text-[#0F172A] dark:text-[#F2F4F7] focus:border-[#0F172A] dark:focus:border-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/40 dark:focus-visible:ring-white/40"
+                        className="w-full rounded-lg bg-white dark:bg-[#101318] border border-[#E4E4E7] dark:border-[#20252D] px-3 py-1.5 font-mono-numbers tabular-nums font-semibold text-[#0F172A] dark:text-[#F2F4F7] focus:border-[#0F172A] dark:focus:border-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/40 dark:focus-visible:ring-white/40"
                         required
                       />
                     </div>
@@ -1497,7 +1504,7 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
                         type="date"
                         value={entryDateInput}
                         onChange={(e) => setEntryDateInput(e.target.value)}
-                        className="w-full rounded-lg bg-white dark:bg-[#101318] border border-[#D9E2EC] dark:border-[#20252D] px-3 py-1.5 font-mono-numbers tabular-nums text-[#0F172A] dark:text-[#F2F4F7] focus:border-[#0F172A] dark:focus:border-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/40 dark:focus-visible:ring-white/40"
+                        className="w-full rounded-lg bg-white dark:bg-[#101318] border border-[#E4E4E7] dark:border-[#20252D] px-3 py-1.5 font-mono-numbers tabular-nums text-[#0F172A] dark:text-[#F2F4F7] focus:border-[#0F172A] dark:focus:border-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/40 dark:focus-visible:ring-white/40"
                         required
                       />
                     </div>
@@ -1509,7 +1516,7 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
                         type="time"
                         value={entryTimeInput}
                         onChange={(e) => setEntryTimeInput(e.target.value)}
-                        className="w-full rounded-lg bg-white dark:bg-[#101318] border border-[#D9E2EC] dark:border-[#20252D] px-3 py-1.5 font-mono-numbers tabular-nums text-[#0F172A] dark:text-[#F2F4F7] focus:border-[#0F172A] dark:focus:border-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/40 dark:focus-visible:ring-white/40"
+                        className="w-full rounded-lg bg-white dark:bg-[#101318] border border-[#E4E4E7] dark:border-[#20252D] px-3 py-1.5 font-mono-numbers tabular-nums text-[#0F172A] dark:text-[#F2F4F7] focus:border-[#0F172A] dark:focus:border-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/40 dark:focus-visible:ring-white/40"
                         required
                       />
                     </div>
@@ -1530,7 +1537,7 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
                       'Contoh: Setup tidak valid / harga melewati zona entry...',
                       'E.g., Setup invalidated / price missed entry zone...'
                     )}
-                    className="w-full rounded-lg bg-white dark:bg-[#101318] border border-[#D9E2EC] dark:border-[#20252D] px-3 py-1.5 text-[#0F172A] dark:text-[#F2F4F7] focus:border-[#0F172A] dark:focus:border-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/40 dark:focus-visible:ring-white/40"
+                    className="w-full rounded-lg bg-white dark:bg-[#101318] border border-[#E4E4E7] dark:border-[#20252D] px-3 py-1.5 text-[#0F172A] dark:text-[#F2F4F7] focus:border-[#0F172A] dark:focus:border-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/40 dark:focus-visible:ring-white/40"
                   />
                 </div>
               )}
@@ -1549,7 +1556,7 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
                         if (ct === 'TP' && trade.takeProfit) setActualExitInput(String(trade.takeProfit));
                         if (ct === 'SL' && trade.stopLoss) setActualExitInput(String(trade.stopLoss));
                       }}
-                      className="w-full rounded-lg bg-white dark:bg-[#101318] border border-[#D9E2EC] dark:border-[#20252D] px-2.5 py-1.5 font-semibold text-[#0F172A] dark:text-[#F2F4F7] focus:border-[#0F172A] dark:focus:border-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/40 dark:focus-visible:ring-white/40"
+                      className="w-full rounded-lg bg-white dark:bg-[#101318] border border-[#E4E4E7] dark:border-[#20252D] px-2.5 py-1.5 font-semibold text-[#0F172A] dark:text-[#F2F4F7] focus:border-[#0F172A] dark:focus:border-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/40 dark:focus-visible:ring-white/40"
                     >
                       <option value="TP">TP (Take Profit)</option>
                       <option value="SL">SL (Stop Loss)</option>
@@ -1565,7 +1572,7 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
                       step="any"
                       value={actualExitInput}
                       onChange={(e) => setActualExitInput(e.target.value)}
-                      className="w-full rounded-lg bg-white dark:bg-[#101318] border border-[#D9E2EC] dark:border-[#20252D] px-3 py-1.5 font-mono-numbers tabular-nums font-semibold text-[#0F172A] dark:text-[#F2F4F7] focus:border-[#0F172A] dark:focus:border-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/40 dark:focus-visible:ring-white/40"
+                      className="w-full rounded-lg bg-white dark:bg-[#101318] border border-[#E4E4E7] dark:border-[#20252D] px-3 py-1.5 font-mono-numbers tabular-nums font-semibold text-[#0F172A] dark:text-[#F2F4F7] focus:border-[#0F172A] dark:focus:border-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/40 dark:focus-visible:ring-white/40"
                       required
                     />
                   </div>
@@ -1577,7 +1584,7 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
                       type="date"
                       value={exitDateInput}
                       onChange={(e) => setExitDateInput(e.target.value)}
-                      className="w-full rounded-lg bg-white dark:bg-[#101318] border border-[#D9E2EC] dark:border-[#20252D] px-3 py-1.5 font-mono-numbers tabular-nums text-[#0F172A] dark:text-[#F2F4F7] focus:border-[#0F172A] dark:focus:border-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/40 dark:focus-visible:ring-white/40"
+                      className="w-full rounded-lg bg-white dark:bg-[#101318] border border-[#E4E4E7] dark:border-[#20252D] px-3 py-1.5 font-mono-numbers tabular-nums text-[#0F172A] dark:text-[#F2F4F7] focus:border-[#0F172A] dark:focus:border-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/40 dark:focus-visible:ring-white/40"
                       required
                     />
                   </div>
@@ -1589,7 +1596,7 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
                       type="time"
                       value={exitTimeInput}
                       onChange={(e) => setExitTimeInput(e.target.value)}
-                      className="w-full rounded-lg bg-white dark:bg-[#101318] border border-[#D9E2EC] dark:border-[#20252D] px-3 py-1.5 font-mono-numbers tabular-nums text-[#0F172A] dark:text-[#F2F4F7] focus:border-[#0F172A] dark:focus:border-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/40 dark:focus-visible:ring-white/40"
+                      className="w-full rounded-lg bg-white dark:bg-[#101318] border border-[#E4E4E7] dark:border-[#20252D] px-3 py-1.5 font-mono-numbers tabular-nums text-[#0F172A] dark:text-[#F2F4F7] focus:border-[#0F172A] dark:focus:border-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/40 dark:focus-visible:ring-white/40"
                       required
                     />
                   </div>
@@ -1603,7 +1610,7 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
                       value={closeNetOverrideInput}
                       onChange={(e) => setCloseNetOverrideInput(e.target.value)}
                       placeholder={tr('Otomatis', 'Auto')}
-                      className="w-full rounded-lg bg-white dark:bg-[#101318] border border-[#D9E2EC] dark:border-[#20252D] px-3 py-1.5 font-mono-numbers tabular-nums text-[#0F172A] dark:text-[#F2F4F7] focus:border-[#0F172A] dark:focus:border-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/40 dark:focus-visible:ring-white/40"
+                      className="w-full rounded-lg bg-white dark:bg-[#101318] border border-[#E4E4E7] dark:border-[#20252D] px-3 py-1.5 font-mono-numbers tabular-nums text-[#0F172A] dark:text-[#F2F4F7] focus:border-[#0F172A] dark:focus:border-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/40 dark:focus-visible:ring-white/40"
                     />
                   </div>
                 </div>
@@ -1613,7 +1620,7 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
                 <button
                   type="button"
                   onClick={() => setActiveTransitionPanel(null)}
-                  className="px-3.5 py-1.5 rounded-full border border-[#D9E2EC] dark:border-[#20252D] bg-white dark:bg-[#101318] font-medium text-[#526071] dark:text-[#929BA9] hover:text-[#0F172A] dark:hover:text-[#F2F4F7] cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/40 dark:focus-visible:ring-white/40"
+                  className="px-3.5 py-1.5 rounded-full border border-[#E4E4E7] dark:border-[#20252D] bg-white dark:bg-[#101318] font-medium text-[#526071] dark:text-[#929BA9] hover:text-[#0F172A] dark:hover:text-[#F2F4F7] cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/40 dark:focus-visible:ring-white/40"
                 >
                   {tr('Batal', 'Cancel')}
                 </button>
@@ -1633,7 +1640,7 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
         <div
           role="tablist"
           aria-label={tr('Bagian Detail Trade', 'Trade Detail Sections')}
-          className="flex items-center gap-1 sm:gap-2 px-4 sm:px-6 border-t border-[#D9E2EC] dark:border-[#20252D] overflow-x-auto"
+          className="flex items-center gap-1 sm:gap-2 px-4 sm:px-6 border-t border-[#E4E4E7] dark:border-[#20252D] overflow-x-auto"
         >
           {sectionTabs.map((tab) => {
             const isActive = activeSectionTab === tab.id;
@@ -1670,7 +1677,7 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
         <div
           data-testid="accordion-trade-plan"
           role="tabpanel"
-          className="rounded-2xl border border-[#D9E2EC] dark:border-[#20252D] bg-white dark:bg-[#101318] shadow-[0_1px_2px_rgba(15,23,42,0.04)] dark:shadow-none p-5 sm:p-6 space-y-6 transition-colors duration-150"
+          className="rounded-2xl border border-[#E4E4E7] dark:border-[#20252D] bg-white dark:bg-[#101318] shadow-[0_1px_2px_rgba(15,23,42,0.04)] dark:shadow-none p-5 sm:p-6 space-y-6 transition-colors duration-150"
         >
           <div className="flex items-center justify-between gap-3">
             <div>
@@ -1688,7 +1695,7 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
               <button
                 type="button"
                 onClick={() => setIsEditingPlanNotes(true)}
-                className="px-3.5 py-1.5 rounded-full bg-[#F5F7FA] dark:bg-[#0B0E13] hover:bg-[#EAEEF4] dark:hover:bg-[#161A22] border border-[#D9E2EC] dark:border-[#20252D] text-xs font-semibold text-[#0F172A] dark:text-[#F2F4F7] whitespace-nowrap shrink-0 transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/40 dark:focus-visible:ring-white/40"
+                className="px-3.5 py-1.5 rounded-full bg-[#FAFAFA] dark:bg-[#0B0E13] hover:bg-[#F4F4F5] dark:hover:bg-[#161A22] border border-[#E4E4E7] dark:border-[#20252D] text-xs font-semibold text-[#0F172A] dark:text-[#F2F4F7] whitespace-nowrap shrink-0 transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/40 dark:focus-visible:ring-white/40"
               >
                 {tr('Ubah Rencana', 'Edit Plan')}
               </button>
@@ -1696,7 +1703,7 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
           </div>
 
           {/* 1. Market Bias & Setup / Strategi */}
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-y-4 gap-x-6 pt-4 border-t border-[#D9E2EC] dark:border-[#20252D]">
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-y-4 gap-x-6 pt-4 border-t border-[#E4E4E7] dark:border-[#20252D]">
             <div>
               <span className="block text-[11px] text-[#526071] dark:text-[#929BA9]">
                 {tr('Bias Pasar', 'Market Bias')}
@@ -1743,8 +1750,96 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
             </div>
           </div>
 
+          {/* Macro News Context & Behavioral Metadata Row (rendered only when relevant) */}
+          {(() => {
+            const nearbyNews = findNearbyMacroEventsForTrade(trade);
+            const behavior = resolveTradeBehavior(trade);
+            const hasMeta =
+              nearbyNews.length > 0 ||
+              behavior.mistakeTags.length > 0 ||
+              Boolean(behavior.emotionTag) ||
+              typeof behavior.ruleCompliant === 'boolean' ||
+              typeof behavior.checklistPassed === 'boolean';
+            if (!hasMeta) return null;
+            return (
+              <div className="pt-4 border-t border-[#E4E4E7] dark:border-[#20252D] space-y-2.5">
+                {nearbyNews.length > 0 && (
+                  <div className="flex flex-wrap items-center gap-2 text-xs">
+                    <span className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-[#D97706] dark:text-[#F59E0B]">
+                      <Newspaper className="h-3.5 w-3.5" />
+                      {tr('Konteks Berita USD:', 'USD News Context:')}
+                    </span>
+                    {nearbyNews.map((ev) => {
+                      const deltaText =
+                        ev.proximity === 'IMMEDIATE'
+                          ? ev.minutesDelta >= 0
+                            ? tr(`${ev.minutesDelta} mnt sebelum rilis`, `${ev.minutesDelta}m before release`)
+                            : tr(`${Math.abs(ev.minutesDelta)} mnt sesudah rilis`, `${Math.abs(ev.minutesDelta)}m after release`)
+                          : tr('Hari yang sama', 'Same day');
+                      return (
+                        <span
+                          key={ev.eventId}
+                          className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-[#FAFAFA] dark:bg-[#0B0E13] border border-[#D97706]/35 dark:border-[#F59E0B]/35 text-[11px] font-medium text-[#0F172A] dark:text-[#F2F4F7]"
+                        >
+                          <span className="font-bold text-[#D97706] dark:text-[#F59E0B]">{ev.impact}</span>
+                          <span>{ev.title}</span>
+                          <span className="text-[#526071] dark:text-[#929BA9] font-mono-numbers">({deltaText})</span>
+                        </span>
+                      );
+                    })}
+                  </div>
+                )}
+
+                {(behavior.mistakeTags.length > 0 ||
+                  behavior.emotionTag ||
+                  typeof behavior.ruleCompliant === 'boolean' ||
+                  typeof behavior.checklistPassed === 'boolean') && (
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    {typeof behavior.ruleCompliant === 'boolean' && (
+                      <span
+                        className={`px-2.5 py-0.5 rounded-full text-[11px] font-semibold border ${
+                          behavior.ruleCompliant
+                            ? 'bg-[#059669]/10 text-[#059669] border-[#059669]/25 dark:bg-[#00A878]/15 dark:text-[#00A878]'
+                            : 'bg-[#E11D48]/10 text-[#E11D48] border-[#E11D48]/25 dark:bg-[#E05260]/15 dark:text-[#E05260]'
+                        }`}
+                      >
+                        {behavior.ruleCompliant
+                          ? tr('Patuh Guardrail', 'Rule Compliant')
+                          : tr('Langgar Guardrail', 'Rule Breached')}
+                      </span>
+                    )}
+                    {typeof behavior.checklistPassed === 'boolean' && (
+                      <span className="px-2.5 py-0.5 rounded-full text-[11px] font-medium bg-[#FAFAFA] dark:bg-[#0B0E13] border border-[#E4E4E7] dark:border-[#20252D] text-[#526071] dark:text-[#929BA9]">
+                        {behavior.checklistPassed
+                          ? tr('Checklist SOP ✓', 'SOP Checklist ✓')
+                          : tr('Checklist SOP Parsial', 'Partial SOP Checklist')}
+                      </span>
+                    )}
+                    {behavior.emotionTag && (
+                      <span className="px-2.5 py-0.5 rounded-full text-[11px] font-medium bg-[#FAFAFA] dark:bg-[#0B0E13] border border-[#E4E4E7] dark:border-[#20252D] text-[#0F172A] dark:text-[#F2F4F7]">
+                        {tr('Emosi:', 'Emotion:')} {getEmotionLabel(behavior.emotionTag, language === 'en')}
+                      </span>
+                    )}
+                    {behavior.mistakeTags.map((tagId) => (
+                      <span
+                        key={tagId}
+                        className={`px-2.5 py-0.5 rounded-full text-[11px] font-semibold border ${
+                          tagId === 'A_PLUS_SETUP'
+                            ? 'bg-[#059669]/10 text-[#059669] border-[#059669]/25 dark:bg-[#00A878]/15 dark:text-[#00A878]'
+                            : 'bg-[#E11D48]/10 text-[#E11D48] border-[#E11D48]/25 dark:bg-[#E05260]/15 dark:text-[#E05260]'
+                        }`}
+                      >
+                        {getMistakeLabel(tagId, language === 'en')}
+                      </span>
+                    ))}
+                  </div>
+                )}
+              </div>
+            );
+          })()}
+
           {/* 2. Parameter Harga Rencana & Risk:Reward */}
-          <div className="pt-5 border-t border-[#D9E2EC] dark:border-[#20252D] grid grid-cols-2 sm:grid-cols-3 gap-y-5 gap-x-6">
+          <div className="pt-5 border-t border-[#E4E4E7] dark:border-[#20252D] grid grid-cols-2 sm:grid-cols-3 gap-y-5 gap-x-6">
             <div>
               <span className="block text-[11px] text-[#526071] dark:text-[#929BA9]">
                 {tr('Rencana Entry', 'Entry Plan')}
@@ -1825,7 +1920,7 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
           </div>
 
           {/* 3. Alasan Entry, Kondisi Market & Catatan Tambahan */}
-          <div className="pt-5 border-t border-[#D9E2EC] dark:border-[#20252D]">
+          <div className="pt-5 border-t border-[#E4E4E7] dark:border-[#20252D]">
             {isEditingPlanNotes ? (
               <form onSubmit={handleSavePlanDetails} className="space-y-4 text-xs">
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -1838,7 +1933,7 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
                       value={planStrategyInput}
                       onChange={(e) => setPlanStrategyInput(e.target.value)}
                       placeholder={tr('Contoh: Order Block + FVG', 'Example: Order Block + FVG')}
-                      className="w-full rounded-lg bg-[#F5F7FA] dark:bg-[#0B0E13] border border-[#D9E2EC] dark:border-[#20252D] px-3 py-2 text-xs text-[#0F172A] dark:text-[#F2F4F7] focus:border-[#0F172A] dark:focus:border-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/40 dark:focus-visible:ring-white/40"
+                      className="w-full rounded-lg bg-[#FAFAFA] dark:bg-[#0B0E13] border border-[#E4E4E7] dark:border-[#20252D] px-3 py-2 text-xs text-[#0F172A] dark:text-[#F2F4F7] focus:border-[#0F172A] dark:focus:border-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/40 dark:focus-visible:ring-white/40"
                     />
                   </div>
                   <div>
@@ -1848,7 +1943,7 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
                     <select
                       value={planSessionInput}
                       onChange={(e) => setPlanSessionInput(e.target.value)}
-                      className="w-full rounded-lg bg-[#F5F7FA] dark:bg-[#0B0E13] border border-[#D9E2EC] dark:border-[#20252D] px-3 py-2 text-xs text-[#0F172A] dark:text-[#F2F4F7] focus:border-[#0F172A] dark:focus:border-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/40 dark:focus-visible:ring-white/40"
+                      className="w-full rounded-lg bg-[#FAFAFA] dark:bg-[#0B0E13] border border-[#E4E4E7] dark:border-[#20252D] px-3 py-2 text-xs text-[#0F172A] dark:text-[#F2F4F7] focus:border-[#0F172A] dark:focus:border-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/40 dark:focus-visible:ring-white/40"
                     >
                       <option value="Asian">{tr('Sesi Asia', 'Asian Session')}</option>
                       <option value="London">{tr('Sesi London', 'London Session')}</option>
@@ -1871,7 +1966,7 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
                       'Jelaskan konfluensi teknikal, struktur pasar, dan alasan mengambil setup ini...',
                       'Explain technical confluences, market structure, and why you took this setup...'
                     )}
-                    className="w-full rounded-lg bg-[#F5F7FA] dark:bg-[#0B0E13] border border-[#D9E2EC] dark:border-[#20252D] p-3 text-xs text-[#0F172A] dark:text-[#F2F4F7] leading-relaxed focus:border-[#0F172A] dark:focus:border-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/40 dark:focus-visible:ring-white/40"
+                    className="w-full rounded-lg bg-[#FAFAFA] dark:bg-[#0B0E13] border border-[#E4E4E7] dark:border-[#20252D] p-3 text-xs text-[#0F172A] dark:text-[#F2F4F7] leading-relaxed focus:border-[#0F172A] dark:focus:border-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/40 dark:focus-visible:ring-white/40"
                   />
                 </div>
 
@@ -1887,7 +1982,7 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
                       'Catatan manajemen posisi atau kondisi berita makro...',
                       'Position management notes or macro news conditions...'
                     )}
-                    className="w-full rounded-lg bg-[#F5F7FA] dark:bg-[#0B0E13] border border-[#D9E2EC] dark:border-[#20252D] p-3 text-xs text-[#0F172A] dark:text-[#F2F4F7] leading-relaxed focus:border-[#0F172A] dark:focus:border-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/40 dark:focus-visible:ring-white/40"
+                    className="w-full rounded-lg bg-[#FAFAFA] dark:bg-[#0B0E13] border border-[#E4E4E7] dark:border-[#20252D] p-3 text-xs text-[#0F172A] dark:text-[#F2F4F7] leading-relaxed focus:border-[#0F172A] dark:focus:border-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/40 dark:focus-visible:ring-white/40"
                   />
                 </div>
 
@@ -1895,7 +1990,7 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
                   <button
                     type="button"
                     onClick={() => setIsEditingPlanNotes(false)}
-                    className="px-4 py-1.5 rounded-full border border-[#D9E2EC] dark:border-[#20252D] bg-[#F5F7FA] dark:bg-[#0B0E13] hover:bg-[#EAEEF4] dark:hover:bg-[#161A22] text-xs font-medium text-[#526071] dark:text-[#929BA9] cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/40 dark:focus-visible:ring-white/40"
+                    className="px-4 py-1.5 rounded-full border border-[#E4E4E7] dark:border-[#20252D] bg-[#FAFAFA] dark:bg-[#0B0E13] hover:bg-[#F4F4F5] dark:hover:bg-[#161A22] text-xs font-medium text-[#526071] dark:text-[#929BA9] cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/40 dark:focus-visible:ring-white/40"
                   >
                     {tr('Batal', 'Cancel')}
                   </button>
@@ -1920,7 +2015,7 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
                     {tr('Alasan Entry', 'Entry Reason')}
                   </span>
                   {trade.entryReason ? (
-                    <p className="text-xs sm:text-sm text-[#0F172A] dark:text-[#F2F4F7] whitespace-pre-line leading-relaxed max-w-3xl">
+                    <p className="text-xs sm:text-sm text-[#0F172A] dark:text-[#F2F4F7] whitespace-pre-line leading-relaxed max-w-3xl text-editorial-justify">
                       {trade.entryReason}
                     </p>
                   ) : (
@@ -1930,12 +2025,12 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
                   )}
                 </div>
 
-                <div className="pt-4 border-t border-[#D9E2EC] dark:border-[#20252D]">
+                <div className="pt-4 border-t border-[#E4E4E7] dark:border-[#20252D]">
                   <span className="block text-[11px] text-[#526071] dark:text-[#929BA9] mb-1">
                     {tr('Catatan Tambahan', 'Additional Notes')}
                   </span>
                   {trade.notes ? (
-                    <p className="text-xs sm:text-sm text-[#0F172A] dark:text-[#F2F4F7] whitespace-pre-line leading-relaxed max-w-3xl">
+                    <p className="text-xs sm:text-sm text-[#0F172A] dark:text-[#F2F4F7] whitespace-pre-line leading-relaxed max-w-3xl text-editorial-justify">
                       {trade.notes}
                     </p>
                   ) : (
@@ -1958,7 +2053,7 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
         <div
           data-testid="accordion-execution"
           role="tabpanel"
-          className="rounded-2xl border border-[#D9E2EC] dark:border-[#20252D] bg-white dark:bg-[#101318] shadow-[0_1px_2px_rgba(15,23,42,0.04)] dark:shadow-none p-5 sm:p-6 space-y-6 transition-colors duration-150"
+          className="rounded-2xl border border-[#E4E4E7] dark:border-[#20252D] bg-white dark:bg-[#101318] shadow-[0_1px_2px_rgba(15,23,42,0.04)] dark:shadow-none p-5 sm:p-6 space-y-6 transition-colors duration-150"
         >
           <div className="flex items-center justify-between gap-3">
             <div>
@@ -1975,21 +2070,21 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
             <button
               type="button"
               onClick={() => onEdit(trade)}
-              className="px-3.5 py-1.5 rounded-full bg-[#F5F7FA] dark:bg-[#0B0E13] hover:bg-[#EAEEF4] dark:hover:bg-[#161A22] border border-[#D9E2EC] dark:border-[#20252D] text-xs font-semibold text-[#0F172A] dark:text-[#F2F4F7] whitespace-nowrap shrink-0 transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/40 dark:focus-visible:ring-white/40"
+              className="px-3.5 py-1.5 rounded-full bg-[#FAFAFA] dark:bg-[#0B0E13] hover:bg-[#F4F4F5] dark:hover:bg-[#161A22] border border-[#E4E4E7] dark:border-[#20252D] text-xs font-semibold text-[#0F172A] dark:text-[#F2F4F7] whitespace-nowrap shrink-0 transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/40 dark:focus-visible:ring-white/40"
             >
               {tr('Edit Data Eksekusi', 'Edit Execution Data')}
             </button>
           </div>
 
           {isPlanned ? (
-            <div className="py-6 border-t border-[#D9E2EC] dark:border-[#20252D] space-y-2">
+            <div className="py-6 border-t border-[#E4E4E7] dark:border-[#20252D] space-y-2">
               <p className="text-xs font-medium text-[#0F172A] dark:text-[#F2F4F7]">
                 {tr(
                   'Posisi Belum Dieksekusi (Status: DIRENCANAKAN)',
                   'Position Not Yet Executed (Status: PLANNED)'
                 )}
               </p>
-              <p className="text-xs text-[#526071] dark:text-[#929BA9] max-w-xl leading-relaxed">
+              <p className="text-xs text-[#526071] dark:text-[#929BA9] max-w-xl leading-relaxed text-editorial-justify">
                 {tr('Catatan ini masih berupa rencana order (', 'This entry is still a planned order (')}
                 {resolved.orderType} @{' '}
                 <span className="font-mono-numbers tabular-nums font-medium text-[#0F172A] dark:text-[#F2F4F7]">
@@ -2002,11 +2097,11 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
               </p>
             </div>
           ) : isCancelled ? (
-            <div className="py-6 border-t border-[#D9E2EC] dark:border-[#20252D] space-y-2">
+            <div className="py-6 border-t border-[#E4E4E7] dark:border-[#20252D] space-y-2">
               <p className="text-xs font-medium text-[#0F172A] dark:text-[#F2F4F7]">
                 {tr('Rencana Order Dibatalkan (DIBATALKAN)', 'Planned Order Cancelled (CANCELLED)')}
               </p>
-              <p className="text-xs text-[#526071] dark:text-[#929BA9] max-w-xl leading-relaxed">
+              <p className="text-xs text-[#526071] dark:text-[#929BA9] max-w-xl leading-relaxed text-editorial-justify">
                 {tr(
                   'Order dibatalkan sebelum tereksekusi di pasar dan tidak memengaruhi perhitungan Win Rate maupun kerugian akun.',
                   'The order was cancelled before execution in the market and does not affect Win Rate or account drawdown calculations.'
@@ -2021,7 +2116,7 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
           ) : (
             <>
               {/* Primary Execution Numeric Grid (2 Columns on Mobile, 4 on Desktop) */}
-              <div className="pt-4 border-t border-[#D9E2EC] dark:border-[#20252D] grid grid-cols-2 sm:grid-cols-4 gap-y-5 gap-x-6">
+              <div className="pt-4 border-t border-[#E4E4E7] dark:border-[#20252D] grid grid-cols-2 sm:grid-cols-4 gap-y-5 gap-x-6">
                 <div>
                   <span className="block text-[11px] text-[#526071] dark:text-[#929BA9]">
                     {tr('Harga Entry Aktual', 'Actual Entry')}
@@ -2128,7 +2223,7 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
 
               {/* Financial Breakdown (Gross Profit, Commission, Swap) when Closed */}
               {isClosed && (
-                <div className="pt-4 border-t border-[#D9E2EC] dark:border-[#20252D] grid grid-cols-3 gap-4 text-xs">
+                <div className="pt-4 border-t border-[#E4E4E7] dark:border-[#20252D] grid grid-cols-3 gap-4 text-xs">
                   <div>
                     <span className="block text-[11px] text-[#526071] dark:text-[#929BA9]">
                       {tr('L/R Kotor', 'Gross P/L')}
@@ -2164,7 +2259,7 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
 
               {/* Explicit Planned vs Actual Comparison if Deviation Exists */}
               {(hasEntryDeviation || hasLotDeviation) && (
-                <div className="pt-4 border-t border-[#D9E2EC] dark:border-[#20252D] space-y-2">
+                <div className="pt-4 border-t border-[#E4E4E7] dark:border-[#20252D] space-y-2">
                   <span className="block text-[11px] font-semibold uppercase tracking-[0.06em] text-[#526071] dark:text-[#929BA9]">
                     {tr('Perbandingan Rencana vs Aktual', 'Planned vs Actual Comparison')}
                   </span>
@@ -2194,12 +2289,12 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
               )}
 
               {/* Execution Notes separated cleanly from numeric metrics */}
-              <div className="pt-4 border-t border-[#D9E2EC] dark:border-[#20252D]">
+              <div className="pt-4 border-t border-[#E4E4E7] dark:border-[#20252D]">
                 <span className="block text-[11px] text-[#526071] dark:text-[#929BA9] mb-1">
                   {tr('Catatan Eksekusi', 'Execution Notes')}
                 </span>
                 {cleanExecutionNotes ? (
-                  <p className="text-xs sm:text-sm text-[#0F172A] dark:text-[#F2F4F7] whitespace-pre-line leading-relaxed max-w-3xl">
+                  <p className="text-xs sm:text-sm text-[#0F172A] dark:text-[#F2F4F7] whitespace-pre-line leading-relaxed max-w-3xl text-editorial-justify">
                     {cleanExecutionNotes}
                   </p>
                 ) : (
@@ -2218,7 +2313,7 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
         <div
           data-testid="accordion-screenshots"
           role="tabpanel"
-          className="rounded-2xl border border-[#D9E2EC] dark:border-[#20252D] bg-white dark:bg-[#101318] shadow-[0_1px_2px_rgba(15,23,42,0.04)] dark:shadow-none p-5 sm:p-6 space-y-5 transition-colors duration-150"
+          className="rounded-2xl border border-[#E4E4E7] dark:border-[#20252D] bg-white dark:bg-[#101318] shadow-[0_1px_2px_rgba(15,23,42,0.04)] dark:shadow-none p-5 sm:p-6 space-y-5 transition-colors duration-150"
         >
           {/* Header: Title + File Count + Add Screenshot Actions */}
           <div className="flex flex-wrap items-center justify-between gap-3">
@@ -2241,7 +2336,7 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
 
             {onSaveTradeUpdate && (
               <div className="flex items-center gap-2">
-                <label className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full bg-[#F5F7FA] dark:bg-[#0B0E13] hover:bg-[#EAEEF4] dark:hover:bg-[#161A22] border border-[#D9E2EC] dark:border-[#20252D] text-xs font-semibold text-[#0F172A] dark:text-[#F2F4F7] transition-colors cursor-pointer focus-within:ring-2 focus-within:ring-[#0F172A]/40 dark:focus-within:ring-white/40">
+                <label className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full bg-[#FAFAFA] dark:bg-[#0B0E13] hover:bg-[#F4F4F5] dark:hover:bg-[#161A22] border border-[#E4E4E7] dark:border-[#20252D] text-xs font-semibold text-[#0F172A] dark:text-[#F2F4F7] transition-colors cursor-pointer focus-within:ring-2 focus-within:ring-[#0F172A]/40 dark:focus-within:ring-white/40">
                   <Plus className="h-3.5 w-3.5 stroke-[2] text-[#526071] dark:text-[#929BA9]" />
                   <span>
                     {beforeDisplayUrl
@@ -2256,7 +2351,7 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
                   />
                 </label>
 
-                <label className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full bg-[#F5F7FA] dark:bg-[#0B0E13] hover:bg-[#EAEEF4] dark:hover:bg-[#161A22] border border-[#D9E2EC] dark:border-[#20252D] text-xs font-semibold text-[#0F172A] dark:text-[#F2F4F7] transition-colors cursor-pointer focus-within:ring-2 focus-within:ring-[#0F172A]/40 dark:focus-within:ring-white/40">
+                <label className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full bg-[#FAFAFA] dark:bg-[#0B0E13] hover:bg-[#F4F4F5] dark:hover:bg-[#161A22] border border-[#E4E4E7] dark:border-[#20252D] text-xs font-semibold text-[#0F172A] dark:text-[#F2F4F7] transition-colors cursor-pointer focus-within:ring-2 focus-within:ring-[#0F172A]/40 dark:focus-within:ring-white/40">
                   <Upload className="h-3.5 w-3.5 stroke-[1.75] text-[#526071] dark:text-[#929BA9]" />
                   <span>
                     {afterDisplayUrl
@@ -2275,13 +2370,13 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
           </div>
 
           {isBeforeLoading || isAfterLoading || isUploadingImage ? (
-            <div className="py-16 border-t border-[#D9E2EC] dark:border-[#20252D] flex flex-col items-center justify-center gap-2 text-xs text-[#526071] dark:text-[#929BA9]">
+            <div className="py-16 border-t border-[#E4E4E7] dark:border-[#20252D] flex flex-col items-center justify-center gap-2 text-xs text-[#526071] dark:text-[#929BA9]">
               <Loader2 className="h-5 w-5 animate-spin text-[#0F172A] dark:text-[#F2F4F7]" />
               <span>{tr('Memproses gambar chart...', 'Processing chart image...')}</span>
             </div>
           ) : screenshotCount === 0 ? (
             /* Minimalist Empty State when no screenshot is attached */
-            <div className="py-12 px-4 border-t border-[#D9E2EC] dark:border-[#20252D] text-center space-y-3">
+            <div className="py-12 px-4 border-t border-[#E4E4E7] dark:border-[#20252D] text-center space-y-3">
               <ImageIcon className="h-6 w-6 mx-auto stroke-[1.5] text-[#526071] dark:text-[#929BA9]" />
               <div className="space-y-1 max-w-sm mx-auto">
                 <p className="text-xs font-medium text-[#0F172A] dark:text-[#F2F4F7]">
@@ -2313,7 +2408,7 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
               )}
             </div>
           ) : (
-            <div className="pt-4 border-t border-[#D9E2EC] dark:border-[#20252D] space-y-4">
+            <div className="pt-4 border-t border-[#E4E4E7] dark:border-[#20252D] space-y-4">
               {/* Primary Proportional Chart Stage (object-contain so no price levels or axes are cut off) */}
               {(() => {
                 const activeUrl =
@@ -2343,7 +2438,7 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
                         <button
                           type="button"
                           onClick={() => onViewScreenshot(activeRawRef, activeTitle)}
-                          className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-[#F5F7FA] dark:bg-[#0B0E13] hover:bg-[#EAEEF4] dark:hover:bg-[#161A22] border border-[#D9E2EC] dark:border-[#20252D] text-xs font-medium text-[#0F172A] dark:text-[#F2F4F7] cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/40 dark:focus-visible:ring-white/40"
+                          className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-[#FAFAFA] dark:bg-[#0B0E13] hover:bg-[#F4F4F5] dark:hover:bg-[#161A22] border border-[#E4E4E7] dark:border-[#20252D] text-xs font-medium text-[#0F172A] dark:text-[#F2F4F7] cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/40 dark:focus-visible:ring-white/40"
                         >
                           <Maximize2 className="h-3.5 w-3.5 stroke-[1.75]" />
                           <span>{tr('Layar Penuh', 'Fullscreen')}</span>
@@ -2353,7 +2448,7 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
 
                     <div
                       onClick={() => onViewScreenshot(activeRawRef, activeTitle)}
-                      className="relative rounded-xl overflow-hidden border border-[#D9E2EC] dark:border-[#20252D] bg-[#F5F7FA] dark:bg-[#0B0E13] aspect-[16/10] sm:aspect-[16/9] flex items-center justify-center cursor-pointer group"
+                      className="relative rounded-xl overflow-hidden border border-[#E4E4E7] dark:border-[#20252D] bg-[#FAFAFA] dark:bg-[#0B0E13] aspect-[16/10] sm:aspect-[16/9] flex items-center justify-center cursor-pointer group"
                     >
                       <img
                         src={activeUrl}
@@ -2378,8 +2473,8 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
                 <div
                   className={`p-3.5 rounded-xl border transition-colors ${
                     activePrimarySlot === 'BEFORE' && beforeDisplayUrl
-                      ? 'border-[#0F172A] dark:border-white bg-[#F5F7FA] dark:bg-[#0B0E13]'
-                      : 'border-[#D9E2EC] dark:border-[#20252D] bg-[#F5F7FA]/60 dark:bg-[#0B0E13]/60'
+                      ? 'border-[#0F172A] dark:border-white bg-[#FAFAFA] dark:bg-[#0B0E13]'
+                      : 'border-[#E4E4E7] dark:border-[#20252D] bg-[#FAFAFA]/60 dark:bg-[#0B0E13]/60'
                   }`}
                 >
                   <div className="flex items-center justify-between gap-2 mb-2.5">
@@ -2422,7 +2517,7 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
                   {beforeDisplayUrl ? (
                     <div
                       onClick={() => setActivePrimarySlot('BEFORE')}
-                      className="rounded-lg overflow-hidden border border-[#D9E2EC] dark:border-[#20252D] bg-white dark:bg-[#101318] aspect-[16/9] cursor-pointer"
+                      className="rounded-lg overflow-hidden border border-[#E4E4E7] dark:border-[#20252D] bg-white dark:bg-[#101318] aspect-[16/9] cursor-pointer"
                     >
                       <img
                         src={beforeDisplayUrl}
@@ -2432,7 +2527,7 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
                       />
                     </div>
                   ) : (
-                    <div className="rounded-lg border border-dashed border-[#D9E2EC] dark:border-[#20252D] aspect-[16/9] flex flex-col items-center justify-center gap-1.5 text-xs text-[#526071] dark:text-[#929BA9]">
+                    <div className="rounded-lg border border-dashed border-[#E4E4E7] dark:border-[#20252D] aspect-[16/9] flex flex-col items-center justify-center gap-1.5 text-xs text-[#526071] dark:text-[#929BA9]">
                       <span>{tr('Belum ada gambar Sebelum Trade', 'No Before Trade image yet')}</span>
                       {onSaveTradeUpdate && (
                         <label className="text-[#0F172A] dark:text-[#F2F4F7] font-semibold hover:underline cursor-pointer rounded-full focus-within:ring-2 focus-within:ring-[#0F172A]/40 dark:focus-within:ring-white/40">
@@ -2453,8 +2548,8 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
                 <div
                   className={`p-3.5 rounded-xl border transition-colors ${
                     activePrimarySlot === 'AFTER' && afterDisplayUrl
-                      ? 'border-[#0F172A] dark:border-white bg-[#F5F7FA] dark:bg-[#0B0E13]'
-                      : 'border-[#D9E2EC] dark:border-[#20252D] bg-[#F5F7FA]/60 dark:bg-[#0B0E13]/60'
+                      ? 'border-[#0F172A] dark:border-white bg-[#FAFAFA] dark:bg-[#0B0E13]'
+                      : 'border-[#E4E4E7] dark:border-[#20252D] bg-[#FAFAFA]/60 dark:bg-[#0B0E13]/60'
                   }`}
                 >
                   <div className="flex items-center justify-between gap-2 mb-2.5">
@@ -2497,7 +2592,7 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
                   {afterDisplayUrl ? (
                     <div
                       onClick={() => setActivePrimarySlot('AFTER')}
-                      className="rounded-lg overflow-hidden border border-[#D9E2EC] dark:border-[#20252D] bg-white dark:bg-[#101318] aspect-[16/9] cursor-pointer"
+                      className="rounded-lg overflow-hidden border border-[#E4E4E7] dark:border-[#20252D] bg-white dark:bg-[#101318] aspect-[16/9] cursor-pointer"
                     >
                       <img
                         src={afterDisplayUrl}
@@ -2507,7 +2602,7 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
                       />
                     </div>
                   ) : (
-                    <div className="rounded-lg border border-dashed border-[#D9E2EC] dark:border-[#20252D] aspect-[16/9] flex flex-col items-center justify-center gap-1.5 text-xs text-[#526071] dark:text-[#929BA9]">
+                    <div className="rounded-lg border border-dashed border-[#E4E4E7] dark:border-[#20252D] aspect-[16/9] flex flex-col items-center justify-center gap-1.5 text-xs text-[#526071] dark:text-[#929BA9]">
                       <span>{tr('Belum ada gambar Sesudah Trade', 'No After Trade image yet')}</span>
                       {onSaveTradeUpdate && (
                         <label className="text-[#0F172A] dark:text-[#F2F4F7] font-semibold hover:underline cursor-pointer rounded-full focus-within:ring-2 focus-within:ring-[#0F172A]/40 dark:focus-within:ring-white/40">
@@ -2534,7 +2629,7 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
         <div
           data-testid="accordion-evaluation"
           role="tabpanel"
-          className="rounded-2xl border border-[#D9E2EC] dark:border-[#20252D] bg-white dark:bg-[#101318] shadow-[0_1px_2px_rgba(15,23,42,0.04)] dark:shadow-none p-5 sm:p-6 space-y-6 transition-colors duration-150"
+          className="rounded-2xl border border-[#E4E4E7] dark:border-[#20252D] bg-white dark:bg-[#101318] shadow-[0_1px_2px_rgba(15,23,42,0.04)] dark:shadow-none p-5 sm:p-6 space-y-6 transition-colors duration-150"
         >
           <div className="flex items-center justify-between gap-3">
             <div>
@@ -2552,7 +2647,7 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
               <button
                 type="button"
                 onClick={() => setIsEditingEval(true)}
-                className="px-3.5 py-1.5 rounded-full bg-[#F5F7FA] dark:bg-[#0B0E13] hover:bg-[#EAEEF4] dark:hover:bg-[#161A22] border border-[#D9E2EC] dark:border-[#20252D] text-xs font-semibold text-[#0F172A] dark:text-[#F2F4F7] whitespace-nowrap shrink-0 transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/40 dark:focus-visible:ring-white/40"
+                className="px-3.5 py-1.5 rounded-full bg-[#FAFAFA] dark:bg-[#0B0E13] hover:bg-[#F4F4F5] dark:hover:bg-[#161A22] border border-[#E4E4E7] dark:border-[#20252D] text-xs font-semibold text-[#0F172A] dark:text-[#F2F4F7] whitespace-nowrap shrink-0 transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/40 dark:focus-visible:ring-white/40"
               >
                 {trade.postTradeEvaluation || trade.notes
                   ? tr('Ubah Evaluasi', 'Edit Evaluation')
@@ -2562,7 +2657,7 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
           </div>
 
           {/* 1. Hasil Trade & 2. Disiplin terhadap Rencana */}
-          <div className="pt-4 border-t border-[#D9E2EC] dark:border-[#20252D] grid grid-cols-1 sm:grid-cols-2 gap-6">
+          <div className="pt-4 border-t border-[#E4E4E7] dark:border-[#20252D] grid grid-cols-1 sm:grid-cols-2 gap-6">
             {/* Group 1: Hasil Trade */}
             <div className="space-y-3">
               <span className="block text-[11px] font-semibold uppercase tracking-[0.06em] text-[#526071] dark:text-[#929BA9]">
@@ -2633,7 +2728,7 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
             </div>
 
             {/* Group 2: Disiplin terhadap Rencana */}
-            <div className="space-y-2.5 sm:border-l sm:border-[#D9E2EC] sm:dark:border-[#20252D] sm:pl-6">
+            <div className="space-y-2.5 sm:border-l sm:border-[#E4E4E7] sm:dark:border-[#20252D] sm:pl-6">
               <div className="flex items-center justify-between gap-2">
                 <span className="block text-[11px] font-semibold uppercase tracking-[0.06em] text-[#526071] dark:text-[#929BA9]">
                   {tr('2. Disiplin terhadap Rencana', '2. Plan Discipline')}
@@ -2656,7 +2751,7 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
           </div>
 
           {/* Qualitative Reflection Sections (3..7) or Inline Editor */}
-          <div className="pt-5 border-t border-[#D9E2EC] dark:border-[#20252D]">
+          <div className="pt-5 border-t border-[#E4E4E7] dark:border-[#20252D]">
             {isEditingEval ? (
               <form onSubmit={handleSaveEvaluation} className="space-y-4 text-xs">
                 <div>
@@ -2677,7 +2772,7 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
                         className={`px-3.5 py-1.5 rounded-full border font-mono-numbers tabular-nums font-semibold transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/40 dark:focus-visible:ring-white/40 ${
                           evalDisciplineRatingInput === score
                             ? 'border-[#0F172A] dark:border-white bg-[#0F172A] text-white dark:bg-white dark:text-[#050607]'
-                            : 'border-[#D9E2EC] dark:border-[#20252D] bg-[#F5F7FA] dark:bg-[#0B0E13] text-[#0F172A] dark:text-[#F2F4F7] hover:bg-[#EAEEF4] dark:hover:bg-[#161A22]'
+                            : 'border-[#E4E4E7] dark:border-[#20252D] bg-[#FAFAFA] dark:bg-[#0B0E13] text-[#0F172A] dark:text-[#F2F4F7] hover:bg-[#F4F4F5] dark:hover:bg-[#161A22]'
                         }`}
                       >
                         {score} / 5
@@ -2699,7 +2794,7 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
                         'Apakah timing dan level harga entry sesuai konfirmasi setup?',
                         'Did entry timing and price level match your setup confirmation?'
                       )}
-                      className="w-full rounded-lg bg-[#F5F7FA] dark:bg-[#0B0E13] border border-[#D9E2EC] dark:border-[#20252D] p-2.5 text-xs text-[#0F172A] dark:text-[#F2F4F7] leading-relaxed focus:border-[#0F172A] dark:focus:border-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/40 dark:focus-visible:ring-white/40"
+                      className="w-full rounded-lg bg-[#FAFAFA] dark:bg-[#0B0E13] border border-[#E4E4E7] dark:border-[#20252D] p-2.5 text-xs text-[#0F172A] dark:text-[#F2F4F7] leading-relaxed focus:border-[#0F172A] dark:focus:border-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/40 dark:focus-visible:ring-white/40"
                     />
                   </div>
 
@@ -2715,7 +2810,7 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
                         'Bagaimana kondisi psikologis saat floating profit/loss?',
                         'How was your psychological state during floating profit/loss?'
                       )}
-                      className="w-full rounded-lg bg-[#F5F7FA] dark:bg-[#0B0E13] border border-[#D9E2EC] dark:border-[#20252D] p-2.5 text-xs text-[#0F172A] dark:text-[#F2F4F7] leading-relaxed focus:border-[#0F172A] dark:focus:border-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/40 dark:focus-visible:ring-white/40"
+                      className="w-full rounded-lg bg-[#FAFAFA] dark:bg-[#0B0E13] border border-[#E4E4E7] dark:border-[#20252D] p-2.5 text-xs text-[#0F172A] dark:text-[#F2F4F7] leading-relaxed focus:border-[#0F172A] dark:focus:border-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/40 dark:focus-visible:ring-white/40"
                     />
                   </div>
 
@@ -2731,7 +2826,7 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
                         'Apa langkah disiplin yang sudah tepat pada transaksi ini?',
                         'What disciplined actions went well in this trade?'
                       )}
-                      className="w-full rounded-lg bg-[#F5F7FA] dark:bg-[#0B0E13] border border-[#D9E2EC] dark:border-[#20252D] p-2.5 text-xs text-[#0F172A] dark:text-[#F2F4F7] leading-relaxed focus:border-[#0F172A] dark:focus:border-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/40 dark:focus-visible:ring-white/40"
+                      className="w-full rounded-lg bg-[#FAFAFA] dark:bg-[#0B0E13] border border-[#E4E4E7] dark:border-[#20252D] p-2.5 text-xs text-[#0F172A] dark:text-[#F2F4F7] leading-relaxed focus:border-[#0F172A] dark:focus:border-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/40 dark:focus-visible:ring-white/40"
                     />
                   </div>
 
@@ -2747,7 +2842,7 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
                         'Apa kesalahan atau celah eksekusi yang perlu dihindari ke depan?',
                         'What mistakes or execution gaps should be avoided next time?'
                       )}
-                      className="w-full rounded-lg bg-[#F5F7FA] dark:bg-[#0B0E13] border border-[#D9E2EC] dark:border-[#20252D] p-2.5 text-xs text-[#0F172A] dark:text-[#F2F4F7] leading-relaxed focus:border-[#0F172A] dark:focus:border-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/40 dark:focus-visible:ring-white/40"
+                      className="w-full rounded-lg bg-[#FAFAFA] dark:bg-[#0B0E13] border border-[#E4E4E7] dark:border-[#20252D] p-2.5 text-xs text-[#0F172A] dark:text-[#F2F4F7] leading-relaxed focus:border-[#0F172A] dark:focus:border-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/40 dark:focus-visible:ring-white/40"
                     />
                   </div>
                 </div>
@@ -2764,7 +2859,7 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
                       'Tuliskan kesimpulan utama dan pelajaran dari transaksi ini...',
                       'Write the main conclusion and key lessons from this trade...'
                     )}
-                    className="w-full rounded-lg bg-[#F5F7FA] dark:bg-[#0B0E13] border border-[#D9E2EC] dark:border-[#20252D] p-3 text-xs text-[#0F172A] dark:text-[#F2F4F7] leading-relaxed focus:border-[#0F172A] dark:focus:border-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/40 dark:focus-visible:ring-white/40"
+                    className="w-full rounded-lg bg-[#FAFAFA] dark:bg-[#0B0E13] border border-[#E4E4E7] dark:border-[#20252D] p-3 text-xs text-[#0F172A] dark:text-[#F2F4F7] leading-relaxed focus:border-[#0F172A] dark:focus:border-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/40 dark:focus-visible:ring-white/40"
                   />
                 </div>
 
@@ -2777,7 +2872,7 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
                     value={evalNotesInput}
                     onChange={(e) => setEvalNotesInput(e.target.value)}
                     placeholder={tr('Catatan tambahan...', 'Additional notes...')}
-                    className="w-full rounded-lg bg-[#F5F7FA] dark:bg-[#0B0E13] border border-[#D9E2EC] dark:border-[#20252D] p-3 text-xs text-[#0F172A] dark:text-[#F2F4F7] leading-relaxed focus:border-[#0F172A] dark:focus:border-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/40 dark:focus-visible:ring-white/40"
+                    className="w-full rounded-lg bg-[#FAFAFA] dark:bg-[#0B0E13] border border-[#E4E4E7] dark:border-[#20252D] p-3 text-xs text-[#0F172A] dark:text-[#F2F4F7] leading-relaxed focus:border-[#0F172A] dark:focus:border-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/40 dark:focus-visible:ring-white/40"
                   />
                 </div>
 
@@ -2785,7 +2880,7 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
                   <button
                     type="button"
                     onClick={() => setIsEditingEval(false)}
-                    className="px-4 py-1.5 rounded-full border border-[#D9E2EC] dark:border-[#20252D] bg-[#F5F7FA] dark:bg-[#0B0E13] hover:bg-[#EAEEF4] dark:hover:bg-[#161A22] font-medium text-[#526071] dark:text-[#929BA9] cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/40 dark:focus-visible:ring-white/40"
+                    className="px-4 py-1.5 rounded-full border border-[#E4E4E7] dark:border-[#20252D] bg-[#FAFAFA] dark:bg-[#0B0E13] hover:bg-[#F4F4F5] dark:hover:bg-[#161A22] font-medium text-[#526071] dark:text-[#929BA9] cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/40 dark:focus-visible:ring-white/40"
                   >
                     {tr('Batal', 'Cancel')}
                   </button>
@@ -2810,7 +2905,7 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
                     <span className="block text-[11px] font-semibold uppercase tracking-[0.06em] text-[#526071] dark:text-[#929BA9] mb-1">
                       {tr('3. Kualitas Entry', '3. Entry Quality')}
                     </span>
-                    <p className="text-xs sm:text-sm text-[#0F172A] dark:text-[#F2F4F7] whitespace-pre-line leading-relaxed">
+                    <p className="text-xs sm:text-sm text-[#0F172A] dark:text-[#F2F4F7] whitespace-pre-line leading-relaxed text-editorial-justify">
                       {parsedEvalView.entryQuality ||
                         (hasEntryDeviation
                           ? tr(
@@ -2840,7 +2935,7 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
                     <span className="block text-[11px] font-semibold uppercase tracking-[0.06em] text-[#526071] dark:text-[#929BA9] mb-1">
                       {tr('4. Kontrol Emosi', '4. Emotional Control')}
                     </span>
-                    <p className="text-xs sm:text-sm text-[#0F172A] dark:text-[#F2F4F7] whitespace-pre-line leading-relaxed">
+                    <p className="text-xs sm:text-sm text-[#0F172A] dark:text-[#F2F4F7] whitespace-pre-line leading-relaxed text-editorial-justify">
                       {parsedEvalView.emotionalControl ||
                         tr(
                           'Belum ada catatan evaluasi kontrol emosi.',
@@ -2853,7 +2948,7 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
                     <span className="block text-[11px] font-semibold uppercase tracking-[0.06em] text-[#526071] dark:text-[#929BA9] mb-1">
                       {tr('5. Hal yang Berjalan Baik', '5. What Went Well')}
                     </span>
-                    <p className="text-xs sm:text-sm text-[#0F172A] dark:text-[#F2F4F7] whitespace-pre-line leading-relaxed">
+                    <p className="text-xs sm:text-sm text-[#0F172A] dark:text-[#F2F4F7] whitespace-pre-line leading-relaxed text-editorial-justify">
                       {parsedEvalView.wentWell || tr('Belum diisi.', 'Not filled yet.')}
                     </p>
                   </div>
@@ -2862,18 +2957,18 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
                     <span className="block text-[11px] font-semibold uppercase tracking-[0.06em] text-[#526071] dark:text-[#929BA9] mb-1">
                       {tr('6. Hal yang Perlu Diperbaiki', '6. Needs Improvement')}
                     </span>
-                    <p className="text-xs sm:text-sm text-[#0F172A] dark:text-[#F2F4F7] whitespace-pre-line leading-relaxed">
+                    <p className="text-xs sm:text-sm text-[#0F172A] dark:text-[#F2F4F7] whitespace-pre-line leading-relaxed text-editorial-justify">
                       {parsedEvalView.needsImprovement || tr('Belum diisi.', 'Not filled yet.')}
                     </p>
                   </div>
                 </div>
 
-                <div className="pt-4 border-t border-[#D9E2EC] dark:border-[#20252D]">
+                <div className="pt-4 border-t border-[#E4E4E7] dark:border-[#20252D]">
                   <span className="block text-[11px] font-semibold uppercase tracking-[0.06em] text-[#526071] dark:text-[#929BA9] mb-1.5">
                     {tr('7. Pelajaran dari Trade', '7. Lessons Learned')}
                   </span>
                   {parsedEvalView.lessonsLearned ? (
-                    <p className="text-xs sm:text-sm text-[#0F172A] dark:text-[#F2F4F7] whitespace-pre-line leading-relaxed max-w-3xl">
+                    <p className="text-xs sm:text-sm text-[#0F172A] dark:text-[#F2F4F7] whitespace-pre-line leading-relaxed max-w-3xl text-editorial-justify">
                       {parsedEvalView.lessonsLearned}
                     </p>
                   ) : (
@@ -2887,11 +2982,11 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
                 </div>
 
                 {(trade.notes || trade.entryReason) && (
-                  <div className="pt-4 border-t border-[#D9E2EC] dark:border-[#20252D]">
+                  <div className="pt-4 border-t border-[#E4E4E7] dark:border-[#20252D]">
                     <span className="block text-[11px] font-semibold uppercase tracking-[0.06em] text-[#526071] dark:text-[#929BA9] mb-1.5">
                       {tr('Catatan Konfluensi & Jurnal', 'Confluence & Journal Notes')}
                     </span>
-                    <p className="text-xs sm:text-sm text-[#0F172A] dark:text-[#F2F4F7] whitespace-pre-line leading-relaxed max-w-3xl">
+                    <p className="text-xs sm:text-sm text-[#0F172A] dark:text-[#F2F4F7] whitespace-pre-line leading-relaxed max-w-3xl text-editorial-justify">
                       {trade.notes || trade.entryReason}
                     </p>
                   </div>
@@ -2907,7 +3002,7 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
         <div
           data-testid="accordion-activity-history"
           role="tabpanel"
-          className="rounded-2xl border border-[#D9E2EC] dark:border-[#20252D] bg-white dark:bg-[#101318] shadow-[0_1px_2px_rgba(15,23,42,0.04)] dark:shadow-none p-5 sm:p-6 space-y-5 transition-colors duration-150"
+          className="rounded-2xl border border-[#E4E4E7] dark:border-[#20252D] bg-white dark:bg-[#101318] shadow-[0_1px_2px_rgba(15,23,42,0.04)] dark:shadow-none p-5 sm:p-6 space-y-5 transition-colors duration-150"
         >
           <div className="flex items-center justify-between gap-3">
             <div>
@@ -2928,15 +3023,15 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
           </div>
 
           {timelineEvents.length === 0 ? (
-            <div className="py-10 border-t border-[#D9E2EC] dark:border-[#20252D] text-center space-y-1.5">
+            <div className="py-10 border-t border-[#E4E4E7] dark:border-[#20252D] text-center space-y-1.5">
               <Activity className="h-5 w-5 mx-auto stroke-[1.5] text-[#526071] dark:text-[#929BA9]" />
               <p className="text-xs font-medium text-[#0F172A] dark:text-[#F2F4F7]">
                 {tr('Belum ada riwayat aktivitas tercatat', 'No activity history recorded yet')}
               </p>
             </div>
           ) : (
-            <div className="pt-4 border-t border-[#D9E2EC] dark:border-[#20252D]">
-              <div className="relative pl-6 space-y-6 before:content-[''] before:absolute before:left-[7px] before:top-2 before:bottom-2 before:w-px before:bg-[#D9E2EC] dark:before:bg-[#20252D]">
+            <div className="pt-4 border-t border-[#E4E4E7] dark:border-[#20252D]">
+              <div className="relative pl-6 space-y-6 before:content-[''] before:absolute before:left-[7px] before:top-2 before:bottom-2 before:w-px before:bg-[#E4E4E7] dark:before:bg-[#20252D]">
                 {timelineEvents.map((ev) => (
                   <div key={ev.id} className="relative text-xs">
                     {/* Minimalist timeline node */}
@@ -2963,7 +3058,7 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
                         </div>
                       )}
                       {ev.note && (
-                        <p className="text-xs text-[#526071] dark:text-[#929BA9] leading-relaxed">
+                        <p className="text-xs text-[#526071] dark:text-[#929BA9] leading-relaxed text-editorial-justify">
                           {ev.note}
                         </p>
                       )}

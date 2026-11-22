@@ -102,11 +102,11 @@ export const IntermarketDetailSheet: React.FC<IntermarketDetailSheetProps> = ({
     >
       <div
         onClick={(e) => e.stopPropagation()}
-        className="w-full sm:max-w-lg rounded-t-[20px] sm:rounded-2xl bg-white dark:bg-[#101318] border-t sm:border border-[#D9E2EC] dark:border-[#20252D] shadow-[0_20px_50px_-12px_rgba(15,23,42,0.22)] dark:shadow-[0_24px_60px_-12px_rgba(0,0,0,0.8)] max-h-[85vh] overflow-y-auto px-5 pt-3 pb-[calc(1.5rem+env(safe-area-inset-bottom,0px))] sm:p-6 space-y-5"
+        className="w-full sm:max-w-lg rounded-t-[20px] sm:rounded-2xl bg-white dark:bg-[#101318] border-t sm:border border-[#E4E4E7] dark:border-[#20252D] shadow-[0_20px_50px_-12px_rgba(15,23,42,0.22)] dark:shadow-[0_24px_60px_-12px_rgba(0,0,0,0.8)] max-h-[85vh] overflow-y-auto px-5 pt-3 pb-[calc(1.5rem+env(safe-area-inset-bottom,0px))] sm:p-6 space-y-5"
       >
-        <div className="w-10 h-1 rounded-full bg-[#D9E2EC] dark:bg-[#20252D] mx-auto sm:hidden" />
+        <div className="w-10 h-1 rounded-full bg-[#E4E4E7] dark:bg-[#20252D] mx-auto sm:hidden" />
 
-        <div className="flex items-start justify-between gap-4 pb-3 border-b border-[#D9E2EC] dark:border-[#20252D]">
+        <div className="flex items-start justify-between gap-4 pb-3 border-b border-[#E4E4E7] dark:border-[#20252D]">
           <div className="min-w-0">
             <span className="text-[11px] font-semibold uppercase tracking-[0.08em] text-[#526071] dark:text-[#929BA9] block">
               {asset.symbol} · {asset.yahooTicker}
@@ -119,7 +119,7 @@ export const IntermarketDetailSheet: React.FC<IntermarketDetailSheetProps> = ({
             type="button"
             onClick={onClose}
             aria-label={tr('Tutup Detail Indikator', 'Close Indicator Detail')}
-            className="min-h-[44px] min-w-[44px] -mr-2 -mt-2 flex items-center justify-center rounded-full text-[#526071] dark:text-[#929BA9] hover:text-[#0F172A] dark:hover:text-[#F2F4F7] hover:bg-[#F5F7FA] dark:hover:bg-[#161A22] transition-colors cursor-pointer shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/35 dark:focus-visible:ring-white/35"
+            className="min-h-[44px] min-w-[44px] -mr-2 -mt-2 flex items-center justify-center rounded-full text-[#526071] dark:text-[#929BA9] hover:text-[#0F172A] dark:hover:text-[#F2F4F7] hover:bg-[#F4F4F5] dark:hover:bg-[#161A22] transition-colors cursor-pointer shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/35 dark:focus-visible:ring-white/35"
           >
             <X className="w-4 h-4 stroke-[2]" />
           </button>
@@ -159,7 +159,7 @@ export const IntermarketDetailSheet: React.FC<IntermarketDetailSheetProps> = ({
           </div>
         </div>
 
-        <div className="grid grid-cols-3 gap-3 py-3 border-y border-[#D9E2EC] dark:border-[#20252D] font-mono-numbers tabular-nums">
+        <div className="grid grid-cols-3 gap-3 py-3 border-y border-[#E4E4E7] dark:border-[#20252D] font-mono-numbers tabular-nums">
           <div>
             <span className="text-[11px] font-sans text-[#526071] dark:text-[#929BA9] block">
               {tr('Penutupan Lalu', 'Prev Close')}
@@ -200,13 +200,13 @@ export const IntermarketDetailSheet: React.FC<IntermarketDetailSheetProps> = ({
             <span className="text-[11px] font-semibold uppercase tracking-[0.06em] text-[#526071] dark:text-[#929BA9] block">
               {tr('Ringkasan Kondisi', 'Condition Summary')}
             </span>
-            <p className="text-sm text-[#0F172A] dark:text-[#F2F4F7] leading-relaxed mt-0.5">
+            <p className="text-sm text-[#0F172A] dark:text-[#F2F4F7] leading-relaxed mt-0.5 text-editorial-justify">
               {isEn ? asset.summaryEn : asset.summaryId}
             </p>
           </div>
         </div>
 
-        <div className="pt-2 border-t border-[#D9E2EC] dark:border-[#20252D] flex items-center justify-between text-xs text-[#526071] dark:text-[#929BA9]">
+        <div className="pt-2 border-t border-[#E4E4E7] dark:border-[#20252D] flex items-center justify-between text-xs text-[#526071] dark:text-[#929BA9]">
           <span>
             {isAvailable
               ? tr('Status: Feed Live Aktif', 'Status: Live Feed Active')
@@ -279,11 +279,11 @@ export const ArgumentDetailSheet: React.FC<ArgumentDetailSheetProps> = ({
     >
       <div
         onClick={(e) => e.stopPropagation()}
-        className="w-full sm:max-w-lg rounded-t-[20px] sm:rounded-2xl bg-white dark:bg-[#101318] border-t sm:border border-[#D9E2EC] dark:border-[#20252D] shadow-[0_20px_50px_-12px_rgba(15,23,42,0.22)] dark:shadow-[0_24px_60px_-12px_rgba(0,0,0,0.8)] max-h-[85vh] overflow-y-auto px-5 pt-3 pb-[calc(1.5rem+env(safe-area-inset-bottom,0px))] sm:p-6 space-y-4"
+        className="w-full sm:max-w-lg rounded-t-[20px] sm:rounded-2xl bg-white dark:bg-[#101318] border-t sm:border border-[#E4E4E7] dark:border-[#20252D] shadow-[0_20px_50px_-12px_rgba(15,23,42,0.22)] dark:shadow-[0_24px_60px_-12px_rgba(0,0,0,0.8)] max-h-[85vh] overflow-y-auto px-5 pt-3 pb-[calc(1.5rem+env(safe-area-inset-bottom,0px))] sm:p-6 space-y-4"
       >
-        <div className="w-10 h-1 rounded-full bg-[#D9E2EC] dark:bg-[#20252D] mx-auto sm:hidden" />
+        <div className="w-10 h-1 rounded-full bg-[#E4E4E7] dark:bg-[#20252D] mx-auto sm:hidden" />
 
-        <div className="flex items-start justify-between gap-4 pb-3 border-b border-[#D9E2EC] dark:border-[#20252D]">
+        <div className="flex items-start justify-between gap-4 pb-3 border-b border-[#E4E4E7] dark:border-[#20252D]">
           <div className="min-w-0 space-y-1">
             <div className="flex items-center gap-2 text-xs font-semibold">
               <span
@@ -311,7 +311,7 @@ export const ArgumentDetailSheet: React.FC<ArgumentDetailSheetProps> = ({
             type="button"
             onClick={onClose}
             aria-label={tr('Tutup Detail Argumen', 'Close Argument Detail')}
-            className="min-h-[44px] min-w-[44px] -mr-2 -mt-2 flex items-center justify-center rounded-full text-[#526071] dark:text-[#929BA9] hover:text-[#0F172A] dark:hover:text-[#F2F4F7] hover:bg-[#F5F7FA] dark:hover:bg-[#161A22] transition-colors cursor-pointer shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/35 dark:focus-visible:ring-white/35"
+            className="min-h-[44px] min-w-[44px] -mr-2 -mt-2 flex items-center justify-center rounded-full text-[#526071] dark:text-[#929BA9] hover:text-[#0F172A] dark:hover:text-[#F2F4F7] hover:bg-[#F4F4F5] dark:hover:bg-[#161A22] transition-colors cursor-pointer shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/35 dark:focus-visible:ring-white/35"
           >
             <X className="w-4 h-4 stroke-[2]" />
           </button>
@@ -321,28 +321,28 @@ export const ArgumentDetailSheet: React.FC<ArgumentDetailSheetProps> = ({
           <span className="text-[11px] font-semibold uppercase tracking-[0.06em] text-[#526071] dark:text-[#929BA9] block">
             {tr('Penjelasan Fundamental', 'Fundamental Explanation')}
           </span>
-          <p className="text-sm text-[#0F172A] dark:text-[#F2F4F7] leading-relaxed">
+          <p className="text-sm text-[#0F172A] dark:text-[#F2F4F7] leading-relaxed text-editorial-justify">
             {isEn ? item.textEn : item.textId}
           </p>
         </div>
 
         {recapText && (
-          <div className="pt-3 border-t border-[#D9E2EC] dark:border-[#20252D] space-y-1">
+          <div className="pt-3 border-t border-[#E4E4E7] dark:border-[#20252D] space-y-1">
             <span className="text-[11px] font-semibold uppercase tracking-[0.06em] text-[#0F172A] dark:text-[#F2F4F7] block">
               {tr('Konteks Pilar Terkait', 'Related Pillar Context')}
             </span>
-            <p className="text-xs sm:text-[13px] text-[#526071] dark:text-[#929BA9] leading-relaxed">
+            <p className="text-xs sm:text-[13px] text-[#526071] dark:text-[#929BA9] leading-relaxed text-editorial-justify">
               {recapText}
             </p>
           </div>
         )}
 
         {relatedEvents.length > 0 && (
-          <div className="pt-3 border-t border-[#D9E2EC] dark:border-[#20252D] space-y-2">
+          <div className="pt-3 border-t border-[#E4E4E7] dark:border-[#20252D] space-y-2">
             <span className="text-[11px] font-semibold uppercase tracking-[0.06em] text-[#526071] dark:text-[#929BA9] block">
               {tr('Indikator Pendukung pada Pilar Ini', 'Supporting Calendar Indicators')}
             </span>
-            <div className="divide-y divide-[#D9E2EC] dark:divide-[#20252D]">
+            <div className="divide-y divide-[#E4E4E7] dark:divide-[#20252D]">
               {relatedEvents.map((ev) => (
                 <div key={ev.id} className="py-2 flex items-center justify-between gap-3 text-xs">
                   <div className="min-w-0">
@@ -381,11 +381,11 @@ export const ArgumentDetailSheet: React.FC<ArgumentDetailSheetProps> = ({
         )}
 
         {relatedNews.length > 0 && (
-          <div className="pt-3 border-t border-[#D9E2EC] dark:border-[#20252D] space-y-2">
+          <div className="pt-3 border-t border-[#E4E4E7] dark:border-[#20252D] space-y-2">
             <span className="text-[11px] font-semibold uppercase tracking-[0.06em] text-[#526071] dark:text-[#929BA9] block">
               {tr('Headline Pendukung Terkini', 'Related Supporting Headlines')}
             </span>
-            <div className="divide-y divide-[#D9E2EC] dark:divide-[#20252D]">
+            <div className="divide-y divide-[#E4E4E7] dark:divide-[#20252D]">
               {relatedNews.map((hl) => (
                 <div key={hl.id} className="py-2 space-y-0.5">
                   <span className="text-[11px] text-[#526071] dark:text-[#929BA9]">
@@ -443,10 +443,10 @@ export const TargetReleaseSheet: React.FC<TargetReleaseSheetProps> = ({
     >
       <div
         onClick={(e) => e.stopPropagation()}
-        className="w-full sm:max-w-2xl rounded-t-[20px] sm:rounded-2xl bg-white dark:bg-[#101318] border-t sm:border border-[#D9E2EC] dark:border-[#20252D] shadow-[0_20px_50px_-12px_rgba(15,23,42,0.22)] dark:shadow-[0_24px_60px_-12px_rgba(0,0,0,0.8)] max-h-[85vh] flex flex-col"
+        className="w-full sm:max-w-2xl rounded-t-[20px] sm:rounded-2xl bg-white dark:bg-[#101318] border-t sm:border border-[#E4E4E7] dark:border-[#20252D] shadow-[0_20px_50px_-12px_rgba(15,23,42,0.22)] dark:shadow-[0_24px_60px_-12px_rgba(0,0,0,0.8)] max-h-[85vh] flex flex-col"
       >
-        <div className="px-5 pt-3 pb-3 border-b border-[#D9E2EC] dark:border-[#20252D] space-y-3 shrink-0">
-          <div className="w-10 h-1 rounded-full bg-[#D9E2EC] dark:bg-[#20252D] mx-auto sm:hidden" />
+        <div className="px-5 pt-3 pb-3 border-b border-[#E4E4E7] dark:border-[#20252D] space-y-3 shrink-0">
+          <div className="w-10 h-1 rounded-full bg-[#E4E4E7] dark:bg-[#20252D] mx-auto sm:hidden" />
 
           <div className="flex items-center justify-between gap-3">
             <div>
@@ -461,14 +461,14 @@ export const TargetReleaseSheet: React.FC<TargetReleaseSheetProps> = ({
               type="button"
               onClick={onClose}
               aria-label={tr('Tutup Pemilih Target', 'Close Target Selector')}
-              className="min-h-[44px] min-w-[44px] -mr-2 flex items-center justify-center rounded-full text-[#526071] dark:text-[#929BA9] hover:text-[#0F172A] dark:hover:text-[#F2F4F7] hover:bg-[#F5F7FA] dark:hover:bg-[#161A22] transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/35 dark:focus-visible:ring-white/35"
+              className="min-h-[44px] min-w-[44px] -mr-2 flex items-center justify-center rounded-full text-[#526071] dark:text-[#929BA9] hover:text-[#0F172A] dark:hover:text-[#F2F4F7] hover:bg-[#F4F4F5] dark:hover:bg-[#161A22] transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/35 dark:focus-visible:ring-white/35"
             >
               <X className="w-4 h-4 stroke-[2]" />
             </button>
           </div>
 
           <div className="flex flex-wrap items-center justify-between gap-2">
-            <div className="inline-flex items-center p-1 rounded-full bg-[#F5F7FA] dark:bg-[#0B0E13] border border-[#D9E2EC] dark:border-[#20252D]">
+            <div className="inline-flex items-center p-1 rounded-full bg-[#F4F4F5] dark:bg-[#0B0E13] border border-[#E4E4E7] dark:border-[#20252D]">
               {(
                 [
                   { key: 'ALL', labelId: 'Semua', labelEn: 'All' },
@@ -500,7 +500,7 @@ export const TargetReleaseSheet: React.FC<TargetReleaseSheetProps> = ({
               value={searchQuery}
               onChange={(e) => onSearchChange(e.target.value)}
               placeholder={tr('Cari rilis USD (PPI, CPI, NFP, FOMC)...', 'Search USD release (PPI, CPI, NFP, FOMC)...')}
-              className="w-full min-h-[42px] pl-10 pr-4 py-2 rounded-full bg-[#F5F7FA] dark:bg-[#0B0E13] border border-[#D9E2EC] dark:border-[#20252D] text-sm text-[#0F172A] dark:text-[#F2F4F7] placeholder-[#526071] dark:placeholder-[#929BA9] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/35 dark:focus-visible:ring-white/35 focus:border-[#0F172A] dark:focus:border-white"
+              className="w-full min-h-[42px] pl-10 pr-4 py-2 rounded-full bg-[#FAFAFA] dark:bg-[#0B0E13] border border-[#E4E4E7] dark:border-[#20252D] text-sm text-[#0F172A] dark:text-[#F2F4F7] placeholder-[#526071] dark:placeholder-[#929BA9] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/35 dark:focus-visible:ring-white/35 focus:border-[#0F172A] dark:focus:border-white"
             />
           </div>
 
@@ -515,7 +515,7 @@ export const TargetReleaseSheet: React.FC<TargetReleaseSheetProps> = ({
                   className={`min-h-[32px] px-3.5 py-1 rounded-full text-xs font-semibold whitespace-nowrap shrink-0 transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/35 dark:focus-visible:ring-white/35 ${
                     isSelected
                       ? 'bg-[#0F172A] text-white dark:bg-white dark:text-[#050607]'
-                      : 'bg-[#F5F7FA] dark:bg-[#0B0E13] text-[#526071] dark:text-[#929BA9] border border-[#D9E2EC] dark:border-[#20252D] hover:text-[#0F172A] dark:hover:text-[#F2F4F7]'
+                      : 'bg-[#FAFAFA] dark:bg-[#0B0E13] text-[#526071] dark:text-[#929BA9] border border-[#E4E4E7] dark:border-[#20252D] hover:text-[#0F172A] dark:hover:text-[#F2F4F7]'
                   }`}
                 >
                   {tag === 'ALL' ? tr('Semua', 'All') : tag}
@@ -527,7 +527,7 @@ export const TargetReleaseSheet: React.FC<TargetReleaseSheetProps> = ({
 
         <div
           data-testid="macro-upcoming-event-groups"
-          className="overflow-y-auto px-5 py-2 divide-y divide-[#D9E2EC] dark:divide-[#20252D] pb-[calc(1.5rem+env(safe-area-inset-bottom,0px))]"
+          className="overflow-y-auto px-5 py-2 divide-y divide-[#E4E4E7] dark:divide-[#20252D] pb-[calc(1.5rem+env(safe-area-inset-bottom,0px))]"
         >
           {explorerEventGroups.length === 0 ? (
             <div data-testid="macro-empty-search-info-card" className="py-10 text-center space-y-2">
@@ -540,7 +540,7 @@ export const TargetReleaseSheet: React.FC<TargetReleaseSheetProps> = ({
                   onSearchChange('');
                   onWindowFilterChange('ALL');
                 }}
-                className="min-h-[36px] px-4 py-1.5 rounded-full bg-[#F5F7FA] dark:bg-[#0B0E13] border border-[#D9E2EC] dark:border-[#20252D] hover:bg-[#EAEEF4] dark:hover:bg-[#161A22] text-xs font-semibold text-[#0F172A] dark:text-[#F2F4F7] transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/35 dark:focus-visible:ring-white/35"
+                className="min-h-[36px] px-4 py-1.5 rounded-full bg-[#FAFAFA] dark:bg-[#0B0E13] border border-[#E4E4E7] dark:border-[#20252D] hover:bg-[#F4F4F5] dark:hover:bg-[#161A22] text-xs font-semibold text-[#0F172A] dark:text-[#F2F4F7] transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/35 dark:focus-visible:ring-white/35"
               >
                 {tr('Reset Filter', 'Reset Filter')}
               </button>
@@ -564,8 +564,8 @@ export const TargetReleaseSheet: React.FC<TargetReleaseSheetProps> = ({
                   }}
                   className={`w-full py-3.5 px-2.5 text-left flex items-center justify-between gap-3 transition-colors cursor-pointer rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/35 dark:focus-visible:ring-white/35 ${
                     isActive
-                      ? 'bg-[#F5F7FA] dark:bg-[#0B0E13]'
-                      : 'hover:bg-[#F5F7FA]/80 dark:hover:bg-[#161A22]'
+                      ? 'bg-[#F4F4F5] dark:bg-[#0B0E13]'
+                      : 'hover:bg-[#FAFAFA] dark:hover:bg-[#161A22]'
                   }`}
                 >
                   <div className="min-w-0 space-y-0.5">
@@ -685,11 +685,11 @@ export const PlaybookSheet: React.FC<PlaybookSheetProps> = ({ isOpen, onClose })
     >
       <div
         onClick={(e) => e.stopPropagation()}
-        className="w-full sm:max-w-lg rounded-t-[20px] sm:rounded-2xl bg-white dark:bg-[#101318] border-t sm:border border-[#D9E2EC] dark:border-[#20252D] shadow-[0_20px_50px_-12px_rgba(15,23,42,0.22)] dark:shadow-[0_24px_60px_-12px_rgba(0,0,0,0.8)] max-h-[85vh] overflow-y-auto px-5 pt-3 pb-[calc(1.5rem+env(safe-area-inset-bottom,0px))] sm:p-6 space-y-4"
+        className="w-full sm:max-w-lg rounded-t-[20px] sm:rounded-2xl bg-white dark:bg-[#101318] border-t sm:border border-[#E4E4E7] dark:border-[#20252D] shadow-[0_20px_50px_-12px_rgba(15,23,42,0.22)] dark:shadow-[0_24px_60px_-12px_rgba(0,0,0,0.8)] max-h-[85vh] overflow-y-auto px-5 pt-3 pb-[calc(1.5rem+env(safe-area-inset-bottom,0px))] sm:p-6 space-y-4"
       >
-        <div className="w-10 h-1 rounded-full bg-[#D9E2EC] dark:bg-[#20252D] mx-auto sm:hidden" />
+        <div className="w-10 h-1 rounded-full bg-[#E4E4E7] dark:bg-[#20252D] mx-auto sm:hidden" />
 
-        <div className="flex items-start justify-between gap-4 pb-3 border-b border-[#D9E2EC] dark:border-[#20252D]">
+        <div className="flex items-start justify-between gap-4 pb-3 border-b border-[#E4E4E7] dark:border-[#20252D]">
           <div className="min-w-0">
             <span className="text-[11px] font-semibold uppercase tracking-[0.08em] text-[#526071] dark:text-[#929BA9] block">
               {tr('PLAYBOOK EKSEKUSI MAKRO · XAU/USD', 'MACRO EXECUTION PLAYBOOK · XAU/USD')}
@@ -702,13 +702,13 @@ export const PlaybookSheet: React.FC<PlaybookSheetProps> = ({ isOpen, onClose })
             type="button"
             onClick={onClose}
             aria-label={tr('Tutup Playbook', 'Close Playbook')}
-            className="min-h-[44px] min-w-[44px] -mr-2 -mt-2 flex items-center justify-center rounded-full text-[#526071] dark:text-[#929BA9] hover:text-[#0F172A] dark:hover:text-[#F2F4F7] hover:bg-[#F5F7FA] dark:hover:bg-[#161A22] transition-colors cursor-pointer shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/35 dark:focus-visible:ring-white/35"
+            className="min-h-[44px] min-w-[44px] -mr-2 -mt-2 flex items-center justify-center rounded-full text-[#526071] dark:text-[#929BA9] hover:text-[#0F172A] dark:hover:text-[#F2F4F7] hover:bg-[#F4F4F5] dark:hover:bg-[#161A22] transition-colors cursor-pointer shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/35 dark:focus-visible:ring-white/35"
           >
             <X className="w-4 h-4 stroke-[2]" />
           </button>
         </div>
 
-        <div className="divide-y divide-[#D9E2EC] dark:divide-[#20252D]">
+        <div className="divide-y divide-[#E4E4E7] dark:divide-[#20252D]">
           {sections.map((sec) => (
             <div key={sec.badge} className="py-3 first:pt-0 last:pb-0 space-y-1">
               <span className="text-[10px] font-bold uppercase tracking-[0.08em] font-mono-numbers text-[#526071] dark:text-[#929BA9] block">
@@ -717,14 +717,14 @@ export const PlaybookSheet: React.FC<PlaybookSheetProps> = ({ isOpen, onClose })
               <h4 className="text-xs sm:text-sm font-bold text-[#0F172A] dark:text-[#F2F4F7]">
                 {sec.title}
               </h4>
-              <p className="text-xs text-[#526071] dark:text-[#929BA9] leading-relaxed">
+              <p className="text-xs text-[#526071] dark:text-[#929BA9] leading-relaxed text-editorial-justify">
                 {sec.body}
               </p>
             </div>
           ))}
         </div>
 
-        <div className="pt-3 border-t border-[#D9E2EC] dark:border-[#20252D] flex items-center justify-between gap-2">
+        <div className="pt-3 border-t border-[#E4E4E7] dark:border-[#20252D] flex items-center justify-between gap-2">
           <span className="text-[11px] text-[#526071] dark:text-[#929BA9]">
             {tr(
               'Standar Risiko: Maksimal 0.5%–1.0% ekuitas saat rilis High-Impact.',

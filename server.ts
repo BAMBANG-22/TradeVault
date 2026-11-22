@@ -27,10 +27,18 @@ import {
   createUnavailableFedWatchState,
   evaluateCmeFedWatchScoring,
   computeImpliedFedWatchFromMarketQuotes,
+  getUpcomingFomcMeetingInfo,
   computeDeterministicMacroSnapshot,
   computeDualHorizonAnalysis,
   isSnapshotFresh,
   mapRawTradingViewEventsToCalendarEvents,
+  ExtendedMarketAssetPulse,
+  CftcCotGoldState,
+  ExternalG10ChinaEvent,
+  FundamentalExtendedFeeds,
+  FundamentalGoldSnapshot,
+  extractExternalG10AndChinaCalendarEvents,
+  computeFundamentalGoldSnapshot,
 } from './src/utils/macroNewsEngine';
 import { isMarketDay } from './src/utils/date';
 
@@ -90,6 +98,11 @@ function getNewsGeminiApiKeys(): string[] {
 const SCANNER_MODEL_CASCADE = [
   'gemini-4-hydrogen',
   'gemini-3.1-flash-lite',
+] as const;
+
+const MT5_HISTORY_MODEL_CASCADE = [
+  'gemini-3.1-flash-lite',
+  'gemini-4-hydrogen',
 ] as const;
 
 const NEWS_MODEL_CASCADE = [
@@ -467,11 +480,16 @@ async function fetchImageBufferFromUrl(url: string): Promise<{ buffer: Buffer; m
  * Prevents SyntaxError when LLM outputs unescaped quotes, trailing characters, or partial tokens.
  */
 
-function parseNumericValue(val: any, instrument = 'XAUUSD'): number | null {
+function parseNumericValue(
+  val: any,
+  instrument = 'XAUUSD',
+  options?: { isPrice?: boolean }
+): number | null {
+  const isPrice = options?.isPrice ?? true;
   if (val === null || val === undefined || val === '') return null;
   if (typeof val === 'number') {
     if (isNaN(val) || !Number.isFinite(val)) return null;
-    if (instrument === 'XAUUSD' && val >= 1.5 && val <= 6.5) {
+    if (isPrice && instrument === 'XAUUSD' && val >= 1.5 && val <= 6.5) {
       return Number((val * 1000).toFixed(3));
     }
     return val;
@@ -480,6 +498,9 @@ function parseNumericValue(val: any, instrument = 'XAUUSD'): number | null {
     let s = val.trim();
     if (!s) return null;
 
+    // Normalize Unicode minus / dashes (e.g. "−45.20", "–45.20") to ASCII '-' before filtering
+    s = s.replace(/[\u2212\u2012\u2013\u2014\uFE63\uFF0D]/g, '-');
+
     const contextualMatch = s.match(
       /(?:at|@|entry[:\s]|open[:\s]|price[:\s]|level[:\s])\s*([+-]?[0-9][0-9., ]+)/i
     );
@@ -487,34 +508,42 @@ function parseNumericValue(val: any, instrument = 'XAUUSD'): number | null {
       s = contextualMatch[1].trim();
     }
 
+    const isParenNeg = /^\(.*\)$/.test(s) && !s.startsWith('(-');
     s = s.replace(/[^0-9.,+\- ]/g, '').trim();
     if (!s) return null;
 
-    // Format X.XXX,XXX (dot thousands, comma decimal e.g. "4.054,405" -> "4054.405")
-    if (/^[+-]?\d{1,3}(?:\.\d{3})+,\d+$/.test(s)) {
-      s = s.replace(/\./g, '').replace(',', '.');
-    } else if (/^[+-]?\d{1,3}(?:[ ,]\d{3})+\.\d+$/.test(s)) {
-      s = s.replace(/[ ,]/g, '');
+    // Collapse space directly after sign (e.g. "- 45.20" -> "-45.20")
+    s = s.replace(/^([+-])\s+(?=\d)/, '$1');
+
+    // Format X.XXX,XXX or X XXX,XXX (Dot/Space thousands, Comma decimal e.g. "4.054,405", "-1 234,50")
+    if (/^[+-]?\d{1,3}(?:[.\s]\d{3})+,\d+$/.test(s)) {
+      s = s.replace(/[.\s]/g, '').replace(',', '.');
+    } else if (/^[+-]?\d{1,3}(?:[ ,\s]\d{3})+\.\d+$/.test(s)) {
+      // Format X,XXX.XX or X XXX.XX (Comma/Space thousands, Dot decimal)
+      s = s.replace(/[ ,\s]/g, '');
     } else if (s.includes('.') && s.includes(',')) {
       const lastDot = s.lastIndexOf('.');
       const lastComma = s.lastIndexOf(',');
       if (lastComma > lastDot) {
-        s = s.replace(/\./g, '').replace(',', '.');
+        s = s.replace(/[.\s]/g, '').replace(',', '.');
       } else {
-        s = s.replace(/,/g, '');
+        s = s.replace(/[,\s]/g, '');
       }
     } else if (s.includes(',') && !s.includes('.')) {
-      s = s.replace(',', '.');
+      s = s.replace(/\s+/g, '').replace(',', '.');
     } else if ((s.match(/\./g) || []).length >= 2) {
       const lastDot = s.lastIndexOf('.');
-      s = s.slice(0, lastDot).replace(/\./g, '') + '.' + s.slice(lastDot + 1);
+      s = s.slice(0, lastDot).replace(/[.\s]/g, '') + '.' + s.slice(lastDot + 1).replace(/\s+/g, '');
     } else {
-      s = s.replace(/ /g, '');
+      s = s.replace(/\s+/g, '');
     }
 
-    const num = parseFloat(s);
+    let num = parseFloat(s);
     if (isNaN(num) || !Number.isFinite(num)) return null;
-    if (instrument === 'XAUUSD' && num >= 1.5 && num <= 6.5) {
+    if (isParenNeg && num > 0) {
+      num = -num;
+    }
+    if (isPrice && instrument === 'XAUUSD' && num >= 1.5 && num <= 6.5) {
       return Number((num * 1000).toFixed(3));
     }
     return num;
@@ -1107,6 +1136,16 @@ function normalizeMt5DateTimeOutput(raw: unknown): string | null {
     const min = m[5].padStart(2, '0');
     return `${yyyy}-${mm}-${dd}T${hh}:${min}`;
   }
+  // Match EU/ID DD.MM.YYYY HH:mm or DD/MM/YYYY HH:mm
+  const eu = s.match(/\b(\d{1,2})[.\-\/](\d{1,2})[.\-\/](\d{4})[T\s]+(\d{1,2}):(\d{2})/);
+  if (eu) {
+    const dd = eu[1].padStart(2, '0');
+    const mm = eu[2].padStart(2, '0');
+    const yyyy = eu[3];
+    const hh = eu[4].padStart(2, '0');
+    const min = eu[5].padStart(2, '0');
+    return `${yyyy}-${mm}-${dd}T${hh}:${min}`;
+  }
   const parsed = new Date(s);
   if (!isNaN(parsed.getTime())) {
     const yyyy = parsed.getFullYear();
@@ -1168,7 +1207,10 @@ function inferMt5CloseType(params: {
   return 'Manual';
 }
 
-function parseAndNormalizeMt5HistoryResponse(responseText: string): {
+function parseAndNormalizeMt5HistoryResponse(
+  responseText: string,
+  maxImageIndex = 0
+): {
   parsedValidArray: boolean;
   explicitNoTrades: boolean;
   source: string;
@@ -1210,14 +1252,14 @@ function parseAndNormalizeMt5HistoryResponse(responseText: string): {
       }
       const position: 'BUY' | 'SELL' = isSell && !isBuy ? 'SELL' : isSell ? 'SELL' : 'BUY';
       const instrument = normalizeInstrument(row.instrument);
-      const lotRaw = parseNumericValue(row.lotSize, 'EURUSD');
-      const entryPrice = parseNumericValue(row.entryPrice, instrument);
-      const exitPrice = parseNumericValue(row.exitPrice, instrument);
-      const stopLoss = parseNumericValue(row.stopLoss, instrument);
-      const takeProfit = parseNumericValue(row.takeProfit, instrument);
-      const rawComm = parseNumericValue(row.commission, 'EURUSD');
-      const rawSwap = parseNumericValue(row.swap, 'EURUSD');
-      const rawProfit = parseNumericValue(row.netProfit, 'EURUSD');
+      const lotRaw = parseNumericValue(row.lotSize, 'EURUSD', { isPrice: false });
+      const entryPrice = parseNumericValue(row.entryPrice, instrument, { isPrice: true });
+      const exitPrice = parseNumericValue(row.exitPrice, instrument, { isPrice: true });
+      const stopLoss = parseNumericValue(row.stopLoss, instrument, { isPrice: true });
+      const takeProfit = parseNumericValue(row.takeProfit, instrument, { isPrice: true });
+      const rawComm = parseNumericValue(row.commission, 'EURUSD', { isPrice: false });
+      const rawSwap = parseNumericValue(row.swap, 'EURUSD', { isPrice: false });
+      const rawProfit = parseNumericValue(row.netProfit, 'EURUSD', { isPrice: false });
 
       if (entryPrice === null && exitPrice === null && rawProfit === null) {
         return null;
@@ -1250,7 +1292,14 @@ function parseAndNormalizeMt5HistoryResponse(responseText: string): {
       const cleanTicket =
         rawTicket && !/^(null|undefined|none|n\/a|-)$/i.test(rawTicket) ? rawTicket : null;
 
+      const rawImgIdx =
+        typeof row.imageIndex === 'number' && Number.isFinite(row.imageIndex)
+          ? Math.trunc(row.imageIndex)
+          : 0;
+      const imageIndex = Math.max(0, Math.min(Math.max(0, maxImageIndex), rawImgIdx));
+
       return {
+        imageIndex,
         ticketId: cleanTicket,
         instrument,
         position,
@@ -1281,15 +1330,23 @@ function parseAndNormalizeMt5HistoryResponse(responseText: string): {
   };
 }
 
-// AI Vision Endpoint: Batch extract closed MT5/MT4 trade history rows from a screenshot
+// AI Vision Endpoint: Batch extract closed MT5/MT4 trade history rows from 1..5 screenshots
 app.post('/api/extract-mt5-history', async (req, res) => {
   try {
-    const { imageBase64, imageUrl } = req.body as ExtractScreenshotRequest;
+    const body = (req.body || {}) as ExtractScreenshotRequest & {
+      images?: Array<{ imageBase64?: string; imageUrl?: string }>;
+    };
 
-    if (!imageBase64 && !imageUrl) {
+    const rawInputs: Array<{ imageBase64?: string; imageUrl?: string }> = Array.isArray(body.images)
+      ? body.images.slice(0, 5)
+      : body.imageBase64 || body.imageUrl
+      ? [{ imageBase64: body.imageBase64, imageUrl: body.imageUrl }]
+      : [];
+
+    if (rawInputs.length === 0) {
       res.status(400).json({
         success: false,
-        error: 'Harap sertakan imageBase64 atau imageUrl.',
+        error: 'Harap sertakan imageBase64, imageUrl, atau array images.',
       });
       return;
     }
@@ -1304,38 +1361,59 @@ app.post('/api/extract-mt5-history', async (req, res) => {
       return;
     }
 
-    let mimeType = 'image/jpeg';
-    let base64Data = '';
+    const resolvedImages: Array<{ index: number; mimeType: string; base64Data: string }> = [];
+    for (let idx = 0; idx < rawInputs.length; idx++) {
+      const inp = rawInputs[idx];
+      let mimeType = 'image/jpeg';
+      let base64Data = '';
 
-    if (imageBase64) {
-      const trimmedInput = imageBase64.trim();
-      const match = trimmedInput.match(/^data:([a-zA-Z0-9]+\/[a-zA-Z0-9-.+]+);base64,([\s\S]+)$/i);
-      if (match) {
-        const rawMime = match[1].toLowerCase();
+      if (inp?.imageBase64) {
+        const trimmedInput = String(inp.imageBase64).trim();
+        const match = trimmedInput.match(/^data:([a-zA-Z0-9]+\/[a-zA-Z0-9-.+]+);base64,([\s\S]+)$/i);
+        if (match) {
+          const rawMime = match[1].toLowerCase();
+          mimeType =
+            rawMime === 'image/png'
+              ? 'image/png'
+              : rawMime === 'image/webp'
+              ? 'image/webp'
+              : 'image/jpeg';
+          base64Data = match[2].replace(/\s+/g, '');
+        } else {
+          base64Data = trimmedInput.replace(/^data:[^,]+,/, '').replace(/\s+/g, '');
+        }
+      } else if (inp?.imageUrl) {
+        const fetched = await fetchImageBufferFromUrl(String(inp.imageUrl));
+        const rawMime = (fetched.mimeType || 'image/jpeg').toLowerCase();
         mimeType =
           rawMime === 'image/png'
             ? 'image/png'
             : rawMime === 'image/webp'
             ? 'image/webp'
             : 'image/jpeg';
-        base64Data = match[2].replace(/\s+/g, '');
-      } else {
-        base64Data = trimmedInput.replace(/^data:[^,]+,/, '').replace(/\s+/g, '');
+        base64Data = fetched.buffer.toString('base64');
       }
-    } else if (imageUrl) {
-      const fetched = await fetchImageBufferFromUrl(imageUrl);
-      const rawMime = (fetched.mimeType || 'image/jpeg').toLowerCase();
-      mimeType =
-        rawMime === 'image/png'
-          ? 'image/png'
-          : rawMime === 'image/webp'
-          ? 'image/webp'
-          : 'image/jpeg';
-      base64Data = fetched.buffer.toString('base64');
+
+      if (base64Data) {
+        resolvedImages.push({ index: idx, mimeType, base64Data });
+      }
     }
 
+    if (resolvedImages.length === 0) {
+      res.status(400).json({
+        success: false,
+        error: 'Tidak ada gambar valid yang dikirim.',
+      });
+      return;
+    }
+
+    const isBatch = resolvedImages.length > 1;
     const prompt = `You are an elite MetaTrader 5 (MT5) & MetaTrader 4 (MT4) Account History OCR & trade-ledger extraction specialist.
-Inspect the FULL screenshot carefully from top to bottom and extract EVERY closed trade row visible (even if the screenshot is cropped and has no header).
+Inspect ${
+      isBatch
+        ? `ALL ${resolvedImages.length} labeled screenshots (imageIndex 0 to ${resolvedImages.length - 1})`
+        : 'the FULL screenshot'
+    } carefully from top to bottom and extract EVERY closed trade row visible (even if cropped and missing a header).
 
 STRICT EXTRACTION RULES:
 1. SUPPORTED SCREENSHOT VIEWS:
@@ -1343,31 +1421,52 @@ STRICT EXTRACTION RULES:
    - MT5 Mobile "History -> Deals" (rows showing symbol, buy/sell, "out" / "in/out", volume, price, profit — extract closing/profit deals as closed trades)
    - Indonesian MT5 locale ("beli" = BUY, "jual" = SELL) as well as English ("buy"/"long" = BUY, "sell"/"short" = SELL)
    - MT5 / MT4 Desktop Account History table
-   - Broker trade history lists showing closed positions with entry/exit or realized profit/loss
    - IGNORE summary header lines ("Profit:", "Deposit:", "Balance:", "Credit:", "Withdrawal:") and non-trade ledger rows ("balance", "deposit", "credit", "withdrawal") and unfilled "canceled" pending orders.
-2. READING MOBILE MT5 HISTORY ROWS:
+2. EXACT NUMERIC & SIGN FIDELITY (ZERO SILENT ERRORS):
    - Left: symbol + direction + lot, e.g. "XAUUSD, sell 0.10", "XAUUSDm, buy 0.05", "GOLD, beli 0.10"
-   - Below left: "2615.40 -> 2602.10" (entryPrice BEFORE "->", exitPrice AFTER "->")
+   - Prices: "2615.40 -> 2602.10" -> entryPrice BEFORE "->", exitPrice AFTER "->". Copy EVERY digit and decimal accurately (never drop a digit or decimal!).
+   - Profit Sign: Inspect BOTH the "-" / "−" prefix AND font color (red = negative loss, blue/green = positive profit). If a BUY exited lower than entry (or SELL exited higher than entry) and text is red/loss, netProfit MUST be negative (e.g. -45.20)!
    - Top-right of row: timestamp like "2026.11.14 14:22:10" (closeDateTime)
-   - Bottom-right of row: realized profit/loss like "133.00" or "-45.20" (preserve minus sign strictly for red/negative values!)
-   - Expanded row details (if expanded): "S / L:" -> stopLoss, "T / P:" -> takeProfit, "Open:" -> openDateTime, "Swap:" -> swap, "Commission:"/"Fee:" -> commission, "ID:"/"#12345" -> ticketId.
+   - Expanded row details (if visible): "S / L:" -> stopLoss, "T / P:" -> takeProfit, "Open:" -> openDateTime, "Swap:" -> swap, "Commission:"/"Fee:" -> commission, "ID:"/"#12345" -> ticketId.
 3. READING DESKTOP MT5 ACCOUNT HISTORY TABLE:
    - Map columns: Time (open), Position/Order/Ticket (ticketId), Symbol (instrument), Type (buy->BUY, sell->SELL), Volume (lotSize), Open Price (entryPrice), S/L (stopLoss), T/P (takeProfit), Close Time (closeDateTime), Close Price (exitPrice), Commission, Swap, Profit (netProfit).
 4. CLOSE TYPE DETECTION (TP / SL / Manual):
    - "TP": comment/tag shows "[tp]", OR T/P badge is green/highlighted, OR exitPrice closely matches takeProfit.
    - "SL": comment/tag shows "[sl]", OR S/L badge is red/highlighted, OR exitPrice closely matches stopLoss.
    - "Manual": otherwise (closed manually by trader).
-5. FORMATTING:
+5. FORMATTING${isBatch ? ' & IMAGE ATTRIBUTION' : ''}:
+   - ${isBatch ? `Set "imageIndex" strictly to the integer 0..${resolvedImages.length - 1} matching the screenshot containing that trade row.` : 'Set "imageIndex" to 0.'}
    - Return empty string "" (NEVER literal "null") when ticketId, openDateTime, closeDateTime, or notes are not visible.
    - Output openDateTime / closeDateTime in "YYYY-MM-DD HH:mm" if visible.
    - Never invent trades that are not visibly printed on screen.`;
 
-    const candidateModels = SCANNER_MODEL_CASCADE;
+    const contentParts: any[] = [];
+    if (isBatch) {
+      for (const img of resolvedImages) {
+        contentParts.push(`Screenshot [imageIndex=${img.index}]:`);
+        contentParts.push({
+          inlineData: {
+            mimeType: img.mimeType,
+            data: img.base64Data,
+          },
+        });
+      }
+    } else {
+      contentParts.push({
+        inlineData: {
+          mimeType: resolvedImages[0].mimeType,
+          data: resolvedImages[0].base64Data,
+        },
+      });
+    }
+    contentParts.push(prompt);
+
+    const candidateModels = MT5_HISTORY_MODEL_CASCADE;
     let winningResult: ReturnType<typeof parseAndNormalizeMt5HistoryResponse> | null = null;
     let usedModel = '';
     let confirmedEmptyModel = '';
     const mt5CascadeStartMs = Date.now();
-    const MAX_MT5_WALL_MS = 50_000;
+    const MAX_MT5_WALL_MS = 45_000;
     const mt5Failures: Array<{ model: string; code: string; summary: string }> = [];
 
     for (let pass = 0; pass < 2; pass++) {
@@ -1377,7 +1476,7 @@ STRICT EXTRACTION RULES:
         );
         const remainingBeforePass = MAX_MT5_WALL_MS - (Date.now() - mt5CascadeStartMs);
         if (!shouldRetryTransient || remainingBeforePass < 5000) break;
-        await new Promise((r) => setTimeout(r, 1200));
+        await new Promise((r) => setTimeout(r, 900));
       }
 
       for (const model of candidateModels) {
@@ -1411,15 +1510,7 @@ STRICT EXTRACTION RULES:
               (abortSignal) =>
                 ai.models.generateContent({
                   model,
-                  contents: [
-                    {
-                      inlineData: {
-                        mimeType,
-                        data: base64Data,
-                      },
-                    },
-                    prompt,
-                  ],
+                  contents: contentParts,
                   config: {
                     abortSignal,
                     ...(model === 'gemini-4-hydrogen'
@@ -1439,10 +1530,14 @@ STRICT EXTRACTION RULES:
                         },
                         trades: {
                           type: Type.ARRAY,
-                          description: 'All visible closed trade rows ordered top-to-bottom as shown in screenshot',
+                          description: 'All visible closed trade rows ordered top-to-bottom as shown in screenshots',
                           items: {
                             type: Type.OBJECT,
                             properties: {
+                              imageIndex: {
+                                type: Type.INTEGER,
+                                description: '0-based index of the screenshot containing this row (0 for single screenshot)',
+                              },
                               ticketId: { type: Type.STRING, description: 'MT5 ticket/deal/position ID if visible, else empty string' },
                               instrument: { type: Type.STRING, description: 'Clean symbol e.g. XAUUSD, EURUSD, BTCUSD' },
                               position: { type: Type.STRING, description: 'BUY or SELL' },
@@ -1453,13 +1548,13 @@ STRICT EXTRACTION RULES:
                               takeProfit: { type: Type.NUMBER, description: 'T/P price if shown, else null' },
                               commission: { type: Type.NUMBER, description: 'Commission fee amount if shown, else 0' },
                               swap: { type: Type.NUMBER, description: 'Swap amount if shown (signed), else 0' },
-                              netProfit: { type: Type.NUMBER, description: 'Realized profit/loss on the row (negative if loss)' },
+                              netProfit: { type: Type.NUMBER, description: 'Realized profit/loss on the row (negative if loss / red)' },
                               openDateTime: { type: Type.STRING, description: 'Open timestamp YYYY-MM-DD HH:mm if visible, else empty string' },
                               closeDateTime: { type: Type.STRING, description: 'Close timestamp YYYY-MM-DD HH:mm if visible, else empty string' },
                               closeType: { type: Type.STRING, description: 'TP, SL, or Manual' },
                               notes: { type: Type.STRING, description: 'Optional visible row tag e.g. [tp], [sl], or empty string' },
                             },
-                            required: ['instrument', 'position'],
+                            required: ['imageIndex', 'instrument', 'position'],
                           },
                         },
                       },
@@ -1467,12 +1562,15 @@ STRICT EXTRACTION RULES:
                     },
                   },
                 }),
-              Math.min(18_000, remainingWallMs),
+              Math.min(isBatch ? 22_000 : 15_000, remainingWallMs),
               `MT5 Scan (${model})`
             );
 
             if (response && response.text) {
-              const candidate = parseAndNormalizeMt5HistoryResponse(response.text);
+              const candidate = parseAndNormalizeMt5HistoryResponse(
+                response.text,
+                resolvedImages.length - 1
+              );
               if (candidate.normalizedTrades.length > 0) {
                 winningResult = candidate;
                 usedModel = model;
@@ -1524,7 +1622,7 @@ STRICT EXTRACTION RULES:
     }
 
     console.log(
-      `[MT5HistoryExtract] model=${usedModel}, normalized=${winningResult.normalizedTrades.length}`
+      `[MT5HistoryExtract] model=${usedModel}, images=${resolvedImages.length}, normalized=${winningResult.normalizedTrades.length}`
     );
 
     res.json({
@@ -1533,7 +1631,7 @@ STRICT EXTRACTION RULES:
         detected: true,
         source: winningResult.source,
         trades: winningResult.normalizedTrades,
-        modelUsed: usedModel || 'gemini-4-hydrogen',
+        modelUsed: usedModel || 'gemini-3.1-flash-lite',
       },
     });
   } catch (error: any) {
@@ -1883,18 +1981,19 @@ async function fetchLiveCmeFedWatchWithGrounding(
     },
   });
 
+  const upcomingFomc = getUpcomingFomcMeetingInfo();
   const todayIso = new Date().toISOString().slice(0, 10);
-  const fedWatchPrompt = `Today is ${todayIso}. Search for the latest CME FedWatch Tool target rate probabilities for the December 2026 FOMC meeting (FOMC Desember 2026).
+  const fedWatchPrompt = `Today is ${todayIso}. Search for the latest CME FedWatch Tool target rate probabilities for the next upcoming FOMC meeting (${upcomingFomc.searchPhraseEn} / ${upcomingFomc.labelId}).
 Extract the exact percentages (with 1 decimal place, e.g. XX.X) for:
 - Rate Hike (+25 bps or more): hikeProbability
 - Hold (Unchanged): holdProbability
 - Rate Cut (-25 bps or more): cutProbability
-- Target Rapat: "FOMC Desember 2026"
+- Target Meeting: "${upcomingFomc.labelId}" (or the exact upcoming FOMC meeting month found in CME FedWatch Tool)
 
 Return ONLY a valid JSON object (no markdown fences) with these exact fields:
 {
   "isAvailable": boolean,
-  "fomcMeetingDate": "FOMC Desember 2026",
+  "fomcMeetingDate": "string (e.g. '${upcomingFomc.labelId}')",
   "targetRateRange": "string (current or target federal funds rate range e.g. '450-475 bps' or '')",
   "hikeProbability": number or null (0 to 100, probability of Rate Hike +25 bps or more, e.g. 90.0),
   "holdProbability": number or null (0 to 100, probability of Hold / Unchanged, e.g. 10.0),
@@ -1947,9 +2046,13 @@ CRITICAL RULE: Do not invent numbers. If search results do not contain the exact
           cutVal + holdVal + (Number.isFinite(hikeVal) ? hikeVal : 0) > 0
         ) {
           const futuresData = await futuresBackupPromise;
+          const resolvedMeetingLabel =
+            typeof parsed.fomcMeetingDate === 'string' && parsed.fomcMeetingDate.trim()
+              ? parsed.fomcMeetingDate.trim()
+              : upcomingFomc.labelId;
           const evaluated = evaluateCmeFedWatchScoring({
             isAvailable: true,
-            fomcMeetingDate: 'FOMC Desember 2026',
+            fomcMeetingDate: resolvedMeetingLabel,
             targetRateRange: String(
               parsed.targetRateRange || parsed.targetRateBps || futuresData.targetRateRange || ''
             ),
@@ -1957,7 +2060,7 @@ CRITICAL RULE: Do not invent numbers. If search results do not contain the exact
             holdProbability: holdVal,
             hikeProbability: Number.isFinite(hikeVal) ? hikeVal : 0,
             hawkishShiftDetected: Boolean(parsed.hawkishShiftDetected || (hikeVal ?? 0) >= 50),
-            sourceLabel: 'Sumber: CME FedWatch Grounding (Des 2026)',
+            sourceLabel: `Sumber: CME FedWatch Grounding (${upcomingFomc.shortId})`,
             impliedFedFundsRate: futuresData.impliedFedFundsRate ?? null,
             zqFuturesPrice: futuresData.zqFuturesPrice ?? null,
             irxTbillYield: futuresData.irxTbillYield ?? null,
@@ -3974,6 +4077,620 @@ app.post('/api/macro-news/analyze', async (req, res) => {
   }
 });
 
+// ==========================================
+// FUNDAMENTAL GOLD STRUCTURAL ENGINE ENDPOINTS
+// ==========================================
+
+let cachedFundamentalFeeds: { fetchedAt: number; feeds: FundamentalExtendedFeeds } | null = null;
+let lastServerFundamentalGoldSnapshot: FundamentalGoldSnapshot | null = null;
+
+function sanitizeNoBuySellServer(text: string): string {
+  if (!text) return '';
+  return text
+    .replace(/\bSTRONG\s+BUY\b/gi, 'Strong Bullish')
+    .replace(/\bSTRONG\s+SELL\b/gi, 'Strong Bearish')
+    .replace(/\bBUY\b/g, 'Bullish')
+    .replace(/\bbuy\b/g, 'bullish')
+    .replace(/\bSELL\b/g, 'Bearish')
+    .replace(/\bsell\b/g, 'bearish');
+}
+
+async function fetchServerExtendedYahooAsset(params: {
+  symbol: string;
+  yahooTicker: string;
+  name: string;
+  category: ExtendedMarketAssetPulse['category'];
+  bullishWhenUp?: boolean;
+}): Promise<ExtendedMarketAssetPulse> {
+  const { symbol, yahooTicker, name, category, bullishWhenUp = false } = params;
+  const unavailable = (): ExtendedMarketAssetPulse => ({
+    symbol,
+    yahooTicker,
+    name,
+    category,
+    price: 0,
+    previousClose: 0,
+    changePercent: 0,
+    change5dPercent: 0,
+    change20dPercent: 0,
+    direction: 'FLAT',
+    effectOnGold: 'NEUTRAL',
+    noteId: `${name} sementara tidak tersedia`,
+    noteEn: `${name} temporarily unavailable`,
+    isAvailable: false,
+    updatedAt: new Date().toISOString(),
+  });
+
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 5000);
+    const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(yahooTicker)}?interval=1d&range=1mo&_t=${Date.now()}`;
+    const res = await fetch(url, {
+      cache: 'no-store',
+      headers: {
+        'User-Agent':
+          'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+        Accept: 'application/json',
+        'Cache-Control': 'no-cache, no-store, must-revalidate',
+      },
+      signal: controller.signal,
+    });
+    clearTimeout(timeout);
+    if (!res.ok) return unavailable();
+
+    const json = await res.json();
+    const result = json?.chart?.result?.[0];
+    const meta = result?.meta;
+    const rawCloses: any[] = result?.indicators?.quote?.[0]?.close || [];
+    const closes = rawCloses.map(Number).filter((n) => Number.isFinite(n) && n > 0);
+    const regPrice = Number(meta?.regularMarketPrice ?? closes[closes.length - 1]);
+    if (!Number.isFinite(regPrice) || regPrice <= 0) return unavailable();
+
+    const prevDaily = Number(
+      meta?.previousClose ??
+        meta?.regularMarketPreviousClose ??
+        (closes.length >= 2 ? closes[closes.length - 2] : regPrice)
+    );
+    const previousClose = Number.isFinite(prevDaily) && prevDaily > 0 ? prevDaily : regPrice;
+    const changePercent = Number((((regPrice - previousClose) / previousClose) * 100).toFixed(2));
+    const idx5d = closes.length >= 6 ? closes[closes.length - 6] : closes[0] ?? previousClose;
+    const change5dPercent =
+      Number.isFinite(idx5d) && idx5d > 0
+        ? Number((((regPrice - idx5d) / idx5d) * 100).toFixed(2))
+        : 0;
+    const idx20d = closes.length >= 1 ? closes[0] : previousClose;
+    const change20dPercent =
+      Number.isFinite(idx20d) && idx20d > 0
+        ? Number((((regPrice - idx20d) / idx20d) * 100).toFixed(2))
+        : 0;
+
+    const direction: ExtendedMarketAssetPulse['direction'] =
+      changePercent > 0.12 ? 'UP' : changePercent < -0.12 ? 'DOWN' : 'FLAT';
+
+    const effectOnGold: ExtendedMarketAssetPulse['effectOnGold'] =
+      direction === 'FLAT'
+        ? 'NEUTRAL'
+        : bullishWhenUp
+        ? direction === 'UP'
+          ? 'BULLISH'
+          : 'BEARISH'
+        : direction === 'UP'
+        ? 'BEARISH'
+        : 'BULLISH';
+
+    return {
+      symbol,
+      yahooTicker,
+      name,
+      category,
+      price: Number(regPrice.toFixed(regPrice >= 100 ? 2 : 3)),
+      previousClose: Number(previousClose.toFixed(previousClose >= 100 ? 2 : 3)),
+      changePercent,
+      change5dPercent,
+      change20dPercent,
+      direction,
+      effectOnGold,
+      noteId: `${name}: ${changePercent >= 0 ? '+' : ''}${changePercent}% (1D), ${change5dPercent >= 0 ? '+' : ''}${change5dPercent}% (5D)`,
+      noteEn: `${name}: ${changePercent >= 0 ? '+' : ''}${changePercent}% (1D), ${change5dPercent >= 0 ? '+' : ''}${change5dPercent}% (5D)`,
+      isAvailable: true,
+      updatedAt: new Date().toISOString(),
+    };
+  } catch {
+    return unavailable();
+  }
+}
+
+async function fetchServerCftcCotGold(): Promise<CftcCotGoldState> {
+  const unavailable: CftcCotGoldState = {
+    isAvailable: false,
+    reportDate: '—',
+    managedMoneyLong: 0,
+    managedMoneyShort: 0,
+    netSpeculativeContracts: 0,
+    netPercentile1y: 50,
+    crowdingState: 'NEUTRAL',
+    noteId: 'Data CFTC COT mingguan sementara tidak tersedia',
+    noteEn: 'Weekly CFTC COT positioning temporarily unavailable',
+  };
+
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 5500);
+    const url =
+      'https://publicreporting.cftc.gov/resource/6dca-aqww.json?$where=commodity_name=%27GOLD%27&$order=report_date_as_yyyy_mm_dd%20DESC&$limit=52';
+    const res = await fetch(url, {
+      cache: 'no-store',
+      headers: { Accept: 'application/json' },
+      signal: controller.signal,
+    });
+    clearTimeout(timeout);
+    if (!res.ok) return unavailable;
+
+    const rows = await res.json();
+    if (!Array.isArray(rows) || rows.length === 0) return unavailable;
+
+    const nets = rows.map(
+      (r: any) =>
+        (Number(r.noncomm_positions_long_all ?? r.m_money_positions_long_all ?? 0) || 0) -
+        (Number(r.noncomm_positions_short_all ?? r.m_money_positions_short_all ?? 0) || 0)
+    );
+    const latest = rows[0];
+    const latestLong = Math.round(
+      Number(latest.noncomm_positions_long_all ?? latest.m_money_positions_long_all ?? 0) || 0
+    );
+    const latestShort = Math.round(
+      Number(latest.noncomm_positions_short_all ?? latest.m_money_positions_short_all ?? 0) || 0
+    );
+    const latestNet = latestLong - latestShort;
+    const minNet = Math.min(...nets);
+    const maxNet = Math.max(...nets);
+    const netPercentile1y =
+      maxNet > minNet ? Math.round(((latestNet - minNet) / (maxNet - minNet)) * 100) : 50;
+    const crowdingState: CftcCotGoldState['crowdingState'] =
+      netPercentile1y >= 85
+        ? 'EXTREME_LONG'
+        : netPercentile1y >= 65
+        ? 'ELEVATED_LONG'
+        : netPercentile1y <= 25
+        ? 'WASHED_OUT_SHORT'
+        : 'NEUTRAL';
+    const latestDate = String(latest.report_date_as_yyyy_mm_dd || '').slice(0, 10) || '—';
+
+    return {
+      isAvailable: true,
+      reportDate: latestDate,
+      managedMoneyLong: latestLong,
+      managedMoneyShort: latestShort,
+      netSpeculativeContracts: latestNet,
+      netPercentile1y,
+      crowdingState,
+      noteId: `CFTC COT (${latestDate}): Posisi bersih institusi ${latestNet.toLocaleString()} kontrak (persentil ${netPercentile1y}/100 dalam 1 tahun).`,
+      noteEn: `CFTC COT (${latestDate}): Institutional net position at ${latestNet.toLocaleString()} contracts (${netPercentile1y}th percentile over 1Y).`,
+    };
+  } catch {
+    return unavailable;
+  }
+}
+
+async function fetchServerExternalG10ChinaEvents(): Promise<ExternalG10ChinaEvent[]> {
+  try {
+    const raw = await fetchSingleForexFactoryFeed(
+      'https://nfs.faireconomy.media/ff_calendar_thisweek.json',
+      'https://nfs.faireconomy.media/ff_calendar_thisweek.xml'
+    );
+    return extractExternalG10AndChinaCalendarEvents(raw);
+  } catch {
+    return [];
+  }
+}
+
+async function gatherServerFundamentalExtendedFeeds(
+  forceRefresh = false
+): Promise<FundamentalExtendedFeeds> {
+  if (
+    !forceRefresh &&
+    cachedFundamentalFeeds &&
+    Date.now() - cachedFundamentalFeeds.fetchedAt < 10 * 60 * 1000
+  ) {
+    return cachedFundamentalFeeds.feeds;
+  }
+
+  const [
+    tipEtf,
+    iefEtf,
+    esFutures,
+    nqFutures,
+    moveIndex,
+    gvzIndex,
+    hygEtf,
+    gldEtf,
+    silverFutures,
+    copperFutures,
+    usdCnh,
+    usdJpy,
+    btcUsd,
+    cotGold,
+    externalEvents,
+  ] = await Promise.all([
+    fetchServerExtendedYahooAsset({ symbol: 'TIP', yahooTicker: 'TIP', name: 'TIPS Inflation-Protected Bond', category: 'REAL_YIELD', bullishWhenUp: true }),
+    fetchServerExtendedYahooAsset({ symbol: 'IEF', yahooTicker: 'IEF', name: '7-10Y US Treasury ETF', category: 'REAL_YIELD', bullishWhenUp: true }),
+    fetchServerExtendedYahooAsset({ symbol: 'ES', yahooTicker: 'ES=F', name: 'S&P 500 E-Mini Futures', category: 'EQUITY', bullishWhenUp: false }),
+    fetchServerExtendedYahooAsset({ symbol: 'NQ', yahooTicker: 'NQ=F', name: 'Nasdaq-100 Futures', category: 'EQUITY', bullishWhenUp: false }),
+    fetchServerExtendedYahooAsset({ symbol: 'MOVE', yahooTicker: '^MOVE', name: 'Treasury Bond Volatility (MOVE)', category: 'VOLATILITY', bullishWhenUp: true }),
+    fetchServerExtendedYahooAsset({ symbol: 'GVZ', yahooTicker: '^GVZ', name: 'Gold ETF Volatility (GVZ)', category: 'VOLATILITY', bullishWhenUp: false }),
+    fetchServerExtendedYahooAsset({ symbol: 'HYG', yahooTicker: 'HYG', name: 'High-Yield Corporate Credit ETF', category: 'CREDIT_STRESS', bullishWhenUp: false }),
+    fetchServerExtendedYahooAsset({ symbol: 'GLD', yahooTicker: 'GLD', name: 'SPDR Gold Trust ETF', category: 'METALS_FLOW', bullishWhenUp: true }),
+    fetchServerExtendedYahooAsset({ symbol: 'SILVER', yahooTicker: 'SI=F', name: 'Silver Futures', category: 'METALS_FLOW', bullishWhenUp: true }),
+    fetchServerExtendedYahooAsset({ symbol: 'COPPER', yahooTicker: 'HG=F', name: 'Copper Futures', category: 'METALS_FLOW', bullishWhenUp: false }),
+    fetchServerExtendedYahooAsset({ symbol: 'USDCNH', yahooTicker: 'USDCNH=X', name: 'USD/CNH Offshore Yuan', category: 'FX_G10', bullishWhenUp: false }),
+    fetchServerExtendedYahooAsset({ symbol: 'USDJPY', yahooTicker: 'JPY=X', name: 'USD/JPY', category: 'FX_G10', bullishWhenUp: false }),
+    fetchServerExtendedYahooAsset({ symbol: 'BTCUSD', yahooTicker: 'BTC-USD', name: 'Bitcoin USD', category: 'LIQUIDITY', bullishWhenUp: false }),
+    fetchServerCftcCotGold(),
+    fetchServerExternalG10ChinaEvents(),
+  ]);
+
+  const feeds: FundamentalExtendedFeeds = {
+    tipEtf,
+    iefEtf,
+    esFutures,
+    nqFutures,
+    moveIndex,
+    gvzIndex,
+    hygEtf,
+    gldEtf,
+    silverFutures,
+    copperFutures,
+    usdCnh,
+    usdJpy,
+    btcUsd,
+    cotGold,
+    externalEvents,
+    fetchedAt: new Date().toISOString(),
+  };
+
+  cachedFundamentalFeeds = { fetchedAt: Date.now(), feeds };
+  return feeds;
+}
+
+// Extended Cross-Asset Fundamental Feeds endpoint (0 Gemini tokens)
+app.get('/api/macro-news/fundamental-feeds', async (req, res) => {
+  try {
+    const force = req.query.force === '1' || req.query.force === 'true';
+    const feeds = await gatherServerFundamentalExtendedFeeds(force);
+    res.json({
+      success: true,
+      feeds,
+    });
+  } catch (err: any) {
+    res.status(500).json({
+      success: false,
+      error: err?.message || 'Gagal mengambil data lintas-aset Fundamental Gold.',
+    });
+  }
+});
+
+// Fundamental Gold (XAU/USD) Structural AI Narrative Synthesis endpoint
+app.post('/api/macro-news/fundamental', async (req, res) => {
+  try {
+    const {
+      forceRefresh = false,
+      baselineSnapshot: clientBaseline,
+      cmeFedWatch: clientFedWatch,
+      previousSnapshot,
+      contextSummary,
+    } = req.body || {};
+
+    let baselineSnapshot: FundamentalGoldSnapshot | null = clientBaseline || null;
+    let resolvedFedWatch: CmeFedWatchState | undefined = clientFedWatch;
+
+    if (!baselineSnapshot || !baselineSnapshot.horizons) {
+      const [macroFeeds, extendedFeeds] = await Promise.all([
+        gatherMacroPublicFeeds(Boolean(forceRefresh)),
+        gatherServerFundamentalExtendedFeeds(Boolean(forceRefresh)),
+      ]);
+      resolvedFedWatch = macroFeeds.cmeFedWatch;
+      baselineSnapshot = computeFundamentalGoldSnapshot({
+        calendarEvents: macroFeeds.calendarEvents,
+        intermarketPulse: macroFeeds.intermarketPulse,
+        breakingNews: macroFeeds.breakingNews,
+        cmeFedWatch: macroFeeds.cmeFedWatch,
+        extendedFeeds,
+        previousSnapshot: previousSnapshot || lastServerFundamentalGoldSnapshot,
+      });
+    } else {
+      try {
+        const grounded = await fetchLiveCmeFedWatchWithGrounding(Boolean(forceRefresh));
+        if (grounded?.isAvailable) {
+          resolvedFedWatch = {
+            ...grounded,
+            impliedFedFundsRate:
+              grounded.impliedFedFundsRate ?? clientFedWatch?.impliedFedFundsRate ?? null,
+            zqFuturesPrice: grounded.zqFuturesPrice ?? clientFedWatch?.zqFuturesPrice ?? null,
+            irxTbillYield: grounded.irxTbillYield ?? clientFedWatch?.irxTbillYield ?? null,
+          };
+          baselineSnapshot = {
+            ...baselineSnapshot,
+            evidenceSummary: {
+              ...baselineSnapshot.evidenceSummary,
+              fedWatchDominant: resolvedFedWatch.dominantOutcome,
+              fedWatchCutPct: resolvedFedWatch.cutProbability,
+              fedWatchHoldPct: resolvedFedWatch.holdProbability,
+              fedWatchHikePct: resolvedFedWatch.hikeProbability,
+              fedWatchMeeting: resolvedFedWatch.fomcMeetingDate,
+              fedWatchSourceLabel: resolvedFedWatch.sourceLabel,
+              fedWatchImpliedRate: resolvedFedWatch.impliedFedFundsRate,
+            },
+          };
+        }
+      } catch {
+        // Non-blocking: keep client FedWatch baseline
+      }
+    }
+
+    if (
+      !forceRefresh &&
+      lastServerFundamentalGoldSnapshot &&
+      lastServerFundamentalGoldSnapshot.sourceMode === 'GEMINI_AI' &&
+      lastServerFundamentalGoldSnapshot.fundamentalFingerprint ===
+        baselineSnapshot.fundamentalFingerprint
+    ) {
+      res.json({
+        success: true,
+        cached: true,
+        cmeFedWatch: resolvedFedWatch,
+        snapshot: {
+          ...baselineSnapshot,
+          sourceMode: 'GEMINI_AI',
+          modelUsed: lastServerFundamentalGoldSnapshot.modelUsed,
+          narrative: lastServerFundamentalGoldSnapshot.narrative,
+        },
+      });
+      return;
+    }
+
+    const newsApiKey = getNewsGeminiApiKeys()[0] || '';
+    if (!newsApiKey) {
+      lastServerFundamentalGoldSnapshot = baselineSnapshot;
+      res.json({
+        success: true,
+        fallbackUsed: true,
+        cmeFedWatch: resolvedFedWatch,
+        snapshot: baselineSnapshot,
+      });
+      return;
+    }
+
+    const ai = new GoogleGenAI({
+      apiKey: newsApiKey,
+      httpOptions: {
+        headers: { 'User-Agent': 'aistudio-build' },
+        retryOptions: { attempts: 1 },
+      },
+    });
+
+    const isUnchanged = Boolean(
+      previousSnapshot &&
+        previousSnapshot.fundamentalFingerprint === baselineSnapshot.fundamentalFingerprint
+    );
+
+    const promptData = {
+      overallBias: baselineSnapshot.overallBias,
+      bullishProbability: baselineSnapshot.bullishProbability,
+      bearishProbability: baselineSnapshot.bearishProbability,
+      horizons: {
+        daily1D: baselineSnapshot.horizons.daily1D,
+        weekly1W: baselineSnapshot.horizons.weekly1W,
+        monthly1M: baselineSnapshot.horizons.monthly1M,
+      },
+      marketRegime: baselineSnapshot.marketRegime,
+      regimeLabelEn: baselineSnapshot.regimeLabelEn,
+      isDataUnchangedFromLastCheck: isUnchanged,
+      changeDetection: baselineSnapshot.changeDetection,
+      topDrivers: baselineSnapshot.drivers.slice(0, 7),
+      evidenceSummary: baselineSnapshot.evidenceSummary,
+      topHeadlines: Array.isArray(contextSummary?.topHeadlines)
+        ? contextSummary.topHeadlines.slice(0, 8)
+        : [],
+      externalEvents: Array.isArray(contextSummary?.externalEvents)
+        ? contextSummary.externalEvents.slice(0, 6)
+        : [],
+    };
+
+    const fundamentalSystemInstruction = `You are a sharp, trusted Senior Global Macro Desk Strategist writing a crisp, high-conviction daily Macro Desk Brief on XAU/USD (Gold) for serious active traders.
+CRITICAL RULES:
+1. NEVER use trading signal action words like "BUY" or "SELL" anywhere in your output! Strictly describe market direction as "BULLISH" (naik/menguat), "BEARISH" (turun/melemah), or "NEUTRAL" (seimbang/konsolidasi).
+2. Write in clean, authoritative, flowing editorial Indonesian (Id) and English (En) — like a Bloomberg / institutional morning desk note that stays effortless to grasp. Avoid stiff textbook phrasing, robotic translationese, or forced filler (e.g. do not force IPO mentions unless an actual major market event is present). Cite concrete numbers from evidenceSummary/topDrivers and immediately connect each indicator (DXY, US10Y, Real Yield, VIX, GLD, CFTC COT) to its direct impact on Gold.
+3. Preserve the mathematical probabilities computed in baselineSnapshot — explain WHY those probabilities lean Bullish, Bearish, or Neutral with causal clarity.
+4. HONESTY RULE: If isDataUnchangedFromLastCheck is true, explicitly open headline/dataStatusNote/sectionA stating honestly that core fundamental drivers have not shifted since the last check (zero manufactured drama).
+5. Connect the full A-to-Z macro picture seamlessly: (A) Macro Regime & what shifted, (B) Fed rates, Real Yields, US10Y & DXY opportunity-cost engine, (C) Cross-market capital flows (Wall Street risk appetite, VIX / Dash-for-Cash risk, GLD ETF, CFTC COT, Asia/China FX & oil), and (D) Clear 1-Day vs 1-Week vs 1-Month roadmap plus concrete invalidation triggers that would flip the thesis.`;
+
+    let aiResponseText = '';
+    let usedModel = '';
+
+    for (const model of NEWS_MODEL_CASCADE) {
+      const cooldownUntil = newsQuotaCooldownUntilByModel.get(model) || 0;
+      if (Date.now() < cooldownUntil) continue;
+
+      try {
+        const response = await withTimeoutAbort(
+          (abortSignal) =>
+            ai.models.generateContent({
+              model,
+              contents: `Synthesize this verified XAU/USD multi-horizon dataset into a crisp, authoritative A-Z Macro Desk Brief in Bahasa Indonesia (Id) and English (En):\n${JSON.stringify(
+                promptData
+              )}`,
+              config: {
+                abortSignal,
+                systemInstruction: fundamentalSystemInstruction,
+                responseMimeType: 'application/json',
+                responseSchema: {
+                  type: Type.OBJECT,
+                  properties: {
+                    headlineSummaryId: {
+                      type: Type.STRING,
+                      description: '1 crisp, high-conviction Macro Desk Brief sentence in Bahasa Indonesia summarizing Gold Bullish/Bearish/Neutral direction',
+                    },
+                    headlineSummaryEn: {
+                      type: Type.STRING,
+                      description: '1 crisp, high-conviction Macro Desk Brief sentence in English summarizing Gold Bullish/Bearish/Neutral direction',
+                    },
+                    dataStatusNoteId: {
+                      type: Type.STRING,
+                      description: '1 direct sentence in Bahasa Indonesia stating whether fundamental drivers shifted or remained intact',
+                    },
+                    dataStatusNoteEn: {
+                      type: Type.STRING,
+                      description: '1 direct sentence in English stating whether fundamental drivers shifted or remained intact',
+                    },
+                    sectionA_Id: {
+                      type: Type.STRING,
+                      description: 'Section A (Bahasa Indonesia): Current macro regime, dominant driver, and what shifted or stayed intact',
+                    },
+                    sectionA_En: {
+                      type: Type.STRING,
+                      description: 'Section A (English): Current macro regime, dominant driver, and what shifted or stayed intact',
+                    },
+                    sectionB_Id: {
+                      type: Type.STRING,
+                      description: 'Section B (Bahasa Indonesia): Fed rate pricing, Real Yields, US10Y & DXY opportunity-cost impact on Gold with live figures',
+                    },
+                    sectionB_En: {
+                      type: Type.STRING,
+                      description: 'Section B (English): Fed rate pricing, Real Yields, US10Y & DXY opportunity-cost impact on Gold with live figures',
+                    },
+                    sectionC_Id: {
+                      type: Type.STRING,
+                      description: 'Section C (Bahasa Indonesia): Wall Street risk appetite, VIX, GLD/CFTC institutional positioning, Asia FX, oil & geopolitical flows',
+                    },
+                    sectionC_En: {
+                      type: Type.STRING,
+                      description: 'Section C (English): Wall Street risk appetite, VIX, GLD/CFTC institutional positioning, Asia FX, oil & geopolitical flows',
+                    },
+                    sectionD_Id: {
+                      type: Type.STRING,
+                      description: 'Section D (Bahasa Indonesia): Structured 1-Day, 1-Week, 1-Month roadmap plus concrete invalidation triggers',
+                    },
+                    sectionD_En: {
+                      type: Type.STRING,
+                      description: 'Section D (English): Structured 1-Day, 1-Week, 1-Month roadmap plus concrete invalidation triggers',
+                    },
+                  },
+                  required: [
+                    'headlineSummaryId',
+                    'headlineSummaryEn',
+                    'dataStatusNoteId',
+                    'dataStatusNoteEn',
+                    'sectionA_Id',
+                    'sectionA_En',
+                    'sectionB_Id',
+                    'sectionB_En',
+                    'sectionC_Id',
+                    'sectionC_En',
+                    'sectionD_Id',
+                    'sectionD_En',
+                  ],
+                },
+              },
+            }),
+          20_000,
+          `Fundamental Gold AI (${model})`
+        );
+
+        if (response && response.text) {
+          aiResponseText = response.text;
+          usedModel = model;
+          break;
+        }
+      } catch (err: any) {
+        if (isGeminiQuotaError(err) || isGeminiModelUnavailableError(err)) {
+          newsQuotaCooldownUntilByModel.set(model, Date.now() + 30 * 60 * 1000);
+        }
+        continue;
+      }
+    }
+
+    if (!aiResponseText) {
+      lastServerFundamentalGoldSnapshot = baselineSnapshot;
+      res.json({
+        success: true,
+        fallbackUsed: true,
+        cmeFedWatch: resolvedFedWatch,
+        snapshot: baselineSnapshot,
+      });
+      return;
+    }
+
+    const aiParsed = parseAiJsonResponse(aiResponseText);
+    const enrichedSnapshot: FundamentalGoldSnapshot = {
+      ...baselineSnapshot,
+      analyzedAt: new Date().toISOString(),
+      sourceMode: 'GEMINI_AI',
+      modelUsed: usedModel || 'gemini-4-hydrogen',
+      narrative: {
+        id: {
+          headlineSummary: sanitizeNoBuySellServer(
+            aiParsed.headlineSummaryId || baselineSnapshot.narrative.id.headlineSummary
+          ),
+          dataStatusNote: sanitizeNoBuySellServer(
+            aiParsed.dataStatusNoteId || baselineSnapshot.narrative.id.dataStatusNote
+          ),
+          sectionA_StatusAndChange: sanitizeNoBuySellServer(
+            aiParsed.sectionA_Id || baselineSnapshot.narrative.id.sectionA_StatusAndChange
+          ),
+          sectionB_RatesInflationAndGrowth: sanitizeNoBuySellServer(
+            aiParsed.sectionB_Id ||
+              baselineSnapshot.narrative.id.sectionB_RatesInflationAndGrowth
+          ),
+          sectionC_CrossMarketEquitiesCentralBanks: sanitizeNoBuySellServer(
+            aiParsed.sectionC_Id ||
+              baselineSnapshot.narrative.id.sectionC_CrossMarketEquitiesCentralBanks
+          ),
+          sectionD_HorizonOutlookAndRisks: sanitizeNoBuySellServer(
+            aiParsed.sectionD_Id ||
+              baselineSnapshot.narrative.id.sectionD_HorizonOutlookAndRisks
+          ),
+        },
+        en: {
+          headlineSummary: sanitizeNoBuySellServer(
+            aiParsed.headlineSummaryEn || baselineSnapshot.narrative.en.headlineSummary
+          ),
+          dataStatusNote: sanitizeNoBuySellServer(
+            aiParsed.dataStatusNoteEn || baselineSnapshot.narrative.en.dataStatusNote
+          ),
+          sectionA_StatusAndChange: sanitizeNoBuySellServer(
+            aiParsed.sectionA_En || baselineSnapshot.narrative.en.sectionA_StatusAndChange
+          ),
+          sectionB_RatesInflationAndGrowth: sanitizeNoBuySellServer(
+            aiParsed.sectionB_En ||
+              baselineSnapshot.narrative.en.sectionB_RatesInflationAndGrowth
+          ),
+          sectionC_CrossMarketEquitiesCentralBanks: sanitizeNoBuySellServer(
+            aiParsed.sectionC_En ||
+              baselineSnapshot.narrative.en.sectionC_CrossMarketEquitiesCentralBanks
+          ),
+          sectionD_HorizonOutlookAndRisks: sanitizeNoBuySellServer(
+            aiParsed.sectionD_En ||
+              baselineSnapshot.narrative.en.sectionD_HorizonOutlookAndRisks
+          ),
+        },
+      },
+    };
+
+    lastServerFundamentalGoldSnapshot = enrichedSnapshot;
+    res.json({
+      success: true,
+      fallbackUsed: false,
+      cmeFedWatch: resolvedFedWatch,
+      snapshot: enrichedSnapshot,
+    });
+  } catch {
+    res.status(500).json({
+      success: false,
+      error: 'Gagal menyusun analisis Fundamental Gold.',
+    });
+  }
+});
+
 const httpServer = http.createServer(app);
 let viteServer: { close: () => Promise<void> } | null = null;
 
@@ -3986,16 +4703,104 @@ if (isProd) {
   });
 } else {
   const { createServer } = await import('vite');
+  const disableHmr =
+    process.env.DISABLE_HMR === 'true' ||
+    Boolean(process.env.K_SERVICE || process.env.CLOUD_RUN_TIMEOUT_SECONDS);
   const vite = await createServer({
     server: {
       middlewareMode: true,
       allowedHosts: true,
-      ws: process.env.DISABLE_HMR === 'true' ? false : { server: httpServer },
-      hmr: process.env.DISABLE_HMR === 'true' ? false : { server: httpServer },
+      ws: disableHmr ? (false as const) : undefined,
+      hmr: disableHmr ? false : { server: httpServer },
+      watch: disableHmr ? null : undefined,
     },
     appType: 'spa',
   });
   viteServer = vite;
+  if (disableHmr) {
+    const NOOP_VITE_CLIENT_ESM = `
+const sheetsMap = new Map();
+const linkSheetsMap = new Map();
+if (typeof document !== "undefined") {
+  document.querySelectorAll("style[data-vite-dev-id]").forEach((el) => {
+    sheetsMap.set(el.getAttribute("data-vite-dev-id"), el);
+  });
+  document.querySelectorAll('link[rel="stylesheet"][data-vite-dev-id]').forEach((el) => {
+    linkSheetsMap.set(el.getAttribute("data-vite-dev-id"), el);
+  });
+}
+const cspNonce = typeof document !== "undefined"
+  ? document.querySelector("meta[property=csp-nonce]")?.getAttribute("nonce") || undefined
+  : undefined;
+let lastInsertedStyle;
+function updateStyle(id, content) {
+  if (typeof document === "undefined" || linkSheetsMap.has(id)) return;
+  let style = sheetsMap.get(id);
+  if (!style) {
+    style = document.createElement("style");
+    style.setAttribute("type", "text/css");
+    style.setAttribute("data-vite-dev-id", id);
+    style.textContent = content;
+    if (cspNonce) style.setAttribute("nonce", cspNonce);
+    if (!lastInsertedStyle) {
+      document.head.appendChild(style);
+      setTimeout(() => {
+        lastInsertedStyle = void 0;
+      }, 0);
+    } else {
+      lastInsertedStyle.insertAdjacentElement("afterend", style);
+    }
+    lastInsertedStyle = style;
+  } else if (style.textContent !== content) {
+    style.textContent = content;
+  }
+  sheetsMap.set(id, style);
+}
+function removeStyle(id) {
+  if (typeof document === "undefined") return;
+  if (linkSheetsMap.has(id)) {
+    document
+      .querySelectorAll(\`link[rel="stylesheet"][data-vite-dev-id="\${CSS.escape(id)}"]\`)
+      .forEach((el) => el.remove());
+    linkSheetsMap.delete(id);
+  }
+  const style = sheetsMap.get(id);
+  if (style) {
+    document.head.removeChild(style);
+    sheetsMap.delete(id);
+  }
+}
+function createHotContext() {
+  return {
+    data: {},
+    accept() {},
+    acceptExports() {},
+    dispose() {},
+    prune() {},
+    decline() {},
+    invalidate() {},
+    on() {},
+    off() {},
+    send() {},
+  };
+}
+function injectQuery(url, queryToInject) {
+  if (url[0] !== "." && url[0] !== "/") return url;
+  const pathname = url.replace(/[?#].*$/, "");
+  const { search, hash } = new URL(url, "http://vite.dev");
+  return \`\${pathname}?\${queryToInject}\${search ? "&" + search.slice(1) : ""}\${hash || ""}\`;
+}
+const BaseElement = typeof HTMLElement !== "undefined" ? HTMLElement : class {};
+class ErrorOverlay extends BaseElement {}
+export { ErrorOverlay, createHotContext, injectQuery, removeStyle, updateStyle };
+`.trimStart();
+
+    app.get('/@vite/client', (_req, res) => {
+      res.setHeader('Content-Type', 'application/javascript; charset=utf-8');
+      res.setHeader('Cache-Control', 'no-store');
+      res.send(NOOP_VITE_CLIENT_ESM);
+    });
+  }
   app.use(vite.middlewares);
 }
 

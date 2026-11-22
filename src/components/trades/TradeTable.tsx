@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useRef, useEffect } from 'react';
 import {
   Trade,
   TradeFilter,
@@ -47,6 +47,7 @@ import {
   Lock,
   X,
   ScanLine,
+  BookOpen,
 } from 'lucide-react';
 import { Mt5HistoryScanModal } from './Mt5HistoryScanModal';
 
@@ -116,10 +117,10 @@ const DateGroupCard: React.FC<DateGroupCardProps> = ({
   return (
     <div
       data-testid={`trade-log-date-group-${section.dateKey}`}
-      className="tv-smoked-glass-card rounded-[16px] border border-[#DDE3EA] dark:border-white/[0.09] overflow-hidden transition-all duration-200"
+      className="tv-smoked-glass-card rounded-[16px] border border-[#E4E4E7] dark:border-white/[0.09] overflow-hidden transition-all duration-200"
     >
       {/* Date Group Header */}
-      <div className="px-4 py-2.5 bg-[#F5F7FA]/80 dark:bg-white/[0.03] border-b border-[#DDE3EA] dark:border-white/[0.08] flex items-center justify-between select-none">
+      <div className="px-4 py-2.5 bg-[#FAFAFA] dark:bg-white/[0.03] border-b border-[#E4E4E7] dark:border-white/[0.08] flex items-center justify-between select-none">
         <span className="text-[11px] font-bold uppercase tracking-wider text-[#697586] dark:text-[#929BA9] font-mono-numbers tabular-nums">
           {localizedHeaderLabel}
         </span>
@@ -253,7 +254,7 @@ const DateGroupCard: React.FC<DateGroupCardProps> = ({
                             e.stopPropagation();
                             openPlannedTransitionModal(t, 'OPEN');
                           }}
-                          className="text-[10px] font-semibold px-2.5 py-0.5 rounded-full border border-[#DDE3EA] dark:border-white/[0.09] bg-[#F5F7FA] dark:bg-white/[0.04] text-[#151D2A] dark:text-[#F2F5F9] hover:border-black/30 dark:hover:border-white/30 transition-colors cursor-pointer"
+                          className="text-[10px] font-semibold px-2.5 py-0.5 rounded-full border border-[#E4E4E7] dark:border-white/[0.09] bg-[#FAFAFA] dark:bg-white/[0.04] text-[#151D2A] dark:text-[#F2F5F9] hover:border-black/30 dark:hover:border-white/30 transition-colors cursor-pointer"
                         >
                           {tr('Eksekusi / Batal', 'Execute / Cancel')}
                         </button>
@@ -273,7 +274,7 @@ const DateGroupCard: React.FC<DateGroupCardProps> = ({
                             e.stopPropagation();
                             openClosePositionModal(t);
                           }}
-                          className="text-[10px] font-semibold px-2.5 py-0.5 rounded-full border border-[#DDE3EA] dark:border-white/[0.09] bg-[#F5F7FA] dark:bg-white/[0.04] text-[#151D2A] dark:text-[#F2F5F9] hover:border-black/30 dark:hover:border-white/30 transition-colors cursor-pointer"
+                          className="text-[10px] font-semibold px-2.5 py-0.5 rounded-full border border-[#E4E4E7] dark:border-white/[0.09] bg-[#FAFAFA] dark:bg-white/[0.04] text-[#151D2A] dark:text-[#F2F5F9] hover:border-black/30 dark:hover:border-white/30 transition-colors cursor-pointer"
                         >
                           {tr('Tutup Posisi', 'Close Position')}
                         </button>
@@ -413,6 +414,7 @@ interface TradeTableProps {
   onImportBatchTrades?: (
     newTrades: Trade[]
   ) => Promise<{ success: boolean; error?: string; importedCount?: number }>;
+  onOpenPlaybook?: () => void;
 }
 
 export const TradeTable: React.FC<TradeTableProps> = ({
@@ -431,8 +433,19 @@ export const TradeTable: React.FC<TradeTableProps> = ({
   isCloudSyncing = false,
   onReloadFromCloud,
   onImportBatchTrades,
+  onOpenPlaybook,
 }) => {
   const { tr } = useLanguage();
+  const searchInputRef = useRef<HTMLInputElement | null>(null);
+
+  useEffect(() => {
+    const handleFocusSearch = () => {
+      searchInputRef.current?.focus();
+      searchInputRef.current?.select();
+    };
+    window.addEventListener('vlo:focus-trade-search', handleFocusSearch);
+    return () => window.removeEventListener('vlo:focus-trade-search', handleFocusSearch);
+  }, []);
   const [filters, setFilters] = useState<TradeFilter>({
     search: '',
     lifecycleStatus: 'ALL',
@@ -940,9 +953,9 @@ export const TradeTable: React.FC<TradeTableProps> = ({
 
       {/* Demo Data Notice Banner */}
       {hasDemoTrades && (
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between p-3 rounded-xl bg-white dark:bg-[#11151B] border border-[#DDE3EA] dark:border-[#252B34] text-xs text-[#151D2A] dark:text-[#F2F5F9] gap-2.5">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between p-3 rounded-xl bg-white dark:bg-[#11151B] border border-[#E4E4E7] dark:border-[#252B34] text-xs text-[#151D2A] dark:text-[#F2F5F9] gap-2.5">
           <div className="flex items-center gap-2">
-            <span className="px-2 py-0.5 rounded font-bold bg-[#EEF2F6] dark:bg-[#171D26] text-amber-600 dark:text-amber-400 border border-[#DDE3EA] dark:border-[#252B34] text-[10px]">
+            <span className="px-2 py-0.5 rounded font-bold bg-[#FAFAFA] dark:bg-[#171D26] text-amber-600 dark:text-amber-400 border border-[#E4E4E7] dark:border-[#252B34] text-[10px]">
               {tr('DATA DEMO AKTIF', 'DEMO DATA ACTIVE')}
             </span>
             <span className="text-[#697586] dark:text-[#929BA9]">
@@ -955,7 +968,7 @@ export const TradeTable: React.FC<TradeTableProps> = ({
           <button
             type="button"
             onClick={onClearDemoTrades}
-            className="self-start sm:self-auto px-3.5 py-1.5 rounded-full bg-[#EEF2F6] dark:bg-[#171D26] hover:border-black/30 dark:hover:border-white/30 border border-[#DDE3EA] dark:border-[#252B34] text-[#151D2A] dark:text-[#F2F5F9] font-semibold text-xs transition-colors shrink-0 cursor-pointer"
+            className="self-start sm:self-auto px-3.5 py-1.5 rounded-full bg-[#FAFAFA] dark:bg-[#171D26] hover:border-black/30 dark:hover:border-white/30 border border-[#E4E4E7] dark:border-[#252B34] text-[#151D2A] dark:text-[#F2F5F9] font-semibold text-xs transition-colors shrink-0 cursor-pointer"
           >
             {tr('Hapus Data Demo', 'Clear Demo Data')}
           </button>
@@ -989,12 +1002,12 @@ export const TradeTable: React.FC<TradeTableProps> = ({
         </div>
 
         {/* Thin Divider */}
-        <div className="border-t border-[#DDE3EA] dark:border-white/[0.08]" />
+        <div className="border-t border-[#E4E4E7] dark:border-white/[0.08]" />
 
         {/* Bottom: 4 Statuses with smooth animated sliding indicator */}
         <div
           data-testid="trade-log-summary-grid"
-          className="relative grid grid-cols-4 divide-x divide-[#DDE3EA] dark:divide-white/[0.08] text-center p-0.5 rounded-full select-none"
+          className="relative grid grid-cols-4 divide-x divide-[#E4E4E7] dark:divide-white/[0.08] text-center p-0.5 rounded-full select-none"
         >
           <div
             aria-hidden="true"
@@ -1065,13 +1078,27 @@ export const TradeTable: React.FC<TradeTableProps> = ({
           <div className="relative flex-1">
             <Search className="absolute left-3.5 top-2.5 h-4 w-4 stroke-[1.75] text-[#697586] dark:text-[#929BA9]" />
             <input
+              ref={searchInputRef}
               type="text"
-              placeholder={tr('Cari transaksi...', 'Search trades...')}
+              placeholder={tr('Cari transaksi... (/)', 'Search trades... (/)')}
               value={filters.search}
               onChange={(e) => setFilters({ ...filters, search: e.target.value })}
-              className="w-full rounded-full bg-white dark:bg-[#101318] border border-[#D9E2EC] dark:border-white/[0.08] shadow-[0_1px_2px_rgba(15,23,42,0.04)] dark:shadow-none pl-9 pr-3.5 py-2 text-xs text-[#0F172A] dark:text-[#F2F5F9] placeholder-[#526071] dark:placeholder-[#929BA9] focus:border-[#0F172A]/35 dark:focus:border-white/30 focus:outline-none transition-colors"
+              className="w-full rounded-full bg-white dark:bg-[#101318] border border-[#E4E4E7] dark:border-white/[0.08] shadow-[0_1px_2px_rgba(15,23,42,0.04)] dark:shadow-none pl-9 pr-3.5 py-2 text-xs text-[#0F172A] dark:text-[#F2F5F9] placeholder-[#526071] dark:placeholder-[#929BA9] focus:border-[#0F172A]/35 dark:focus:border-white/30 focus:outline-none transition-colors"
             />
           </div>
+
+          {/* A+ Setup Playbook Library Button */}
+          {onOpenPlaybook && (
+            <button
+              type="button"
+              onClick={onOpenPlaybook}
+              title={tr('Playbook Setup A+', 'A+ Setup Playbook')}
+              aria-label={tr('Playbook Setup A+', 'A+ Setup Playbook')}
+              className="flex items-center justify-center h-9 w-9 rounded-full bg-white dark:bg-[#101318] text-[#526071] dark:text-[#929BA9] border border-[#E4E4E7] dark:border-white/[0.08] shadow-[0_1px_2px_rgba(15,23,42,0.04)] dark:shadow-none hover:border-[#0F172A]/25 dark:hover:border-white/20 hover:text-[#0F172A] dark:hover:text-[#F2F5F9] transition-colors cursor-pointer shrink-0"
+            >
+              <BookOpen className="h-4 w-4 stroke-[1.75]" />
+            </button>
+          )}
 
           {/* Scan Kilat Riwayat MT5 Button (Icon-Only Circle — Jurnal Trade Toolbar) */}
           {onImportBatchTrades && (
@@ -1106,7 +1133,7 @@ export const TradeTable: React.FC<TradeTableProps> = ({
               filters.strategy !== 'ALL' ||
               Boolean(filters.startDate || filters.endDate)
                 ? 'bg-white dark:bg-white/[0.12] text-[#0F172A] dark:text-[#F2F5F9] border-[#0F172A]/40 dark:border-white/30 shadow-[0_1px_2px_rgba(15,23,42,0.06)] dark:shadow-none'
-                : 'bg-white dark:bg-[#101318] text-[#526071] dark:text-[#929BA9] border-[#D9E2EC] dark:border-white/[0.08] shadow-[0_1px_2px_rgba(15,23,42,0.04)] dark:shadow-none hover:border-[#0F172A]/25 dark:hover:border-white/20 hover:text-[#0F172A] dark:hover:text-[#F2F5F9]'
+                : 'bg-white dark:bg-[#101318] text-[#526071] dark:text-[#929BA9] border-[#E4E4E7] dark:border-white/[0.08] shadow-[0_1px_2px_rgba(15,23,42,0.04)] dark:shadow-none hover:border-[#0F172A]/25 dark:hover:border-white/20 hover:text-[#0F172A] dark:hover:text-[#F2F5F9]'
             }`}
           >
             <Filter className="h-4 w-4 stroke-[1.75]" />
@@ -1115,7 +1142,7 @@ export const TradeTable: React.FC<TradeTableProps> = ({
 
         {/* Collapsible Filter & Sort Panel */}
         {showAdvancedFilters && (
-          <div className="p-3.5 rounded-xl border border-[#D9E2EC] dark:border-[#20252D] bg-white dark:bg-[#101318] shadow-[0_4px_20px_rgba(15,23,42,0.06)] dark:shadow-none space-y-3 animate-in fade-in duration-150 text-xs">
+          <div className="p-3.5 rounded-xl border border-[#E4E4E7] dark:border-[#20252D] bg-white dark:bg-[#101318] shadow-[0_4px_20px_rgba(15,23,42,0.06)] dark:shadow-none space-y-3 animate-in fade-in duration-150 text-xs">
             {/* Quick Date Chips */}
             <div className="flex flex-wrap items-center gap-1.5 text-[11px]">
               <span className="text-[#526071] dark:text-[#929BA9] font-medium mr-1">
@@ -1127,7 +1154,7 @@ export const TradeTable: React.FC<TradeTableProps> = ({
                 className={`px-3 py-1 rounded-full border transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/40 dark:focus-visible:ring-white/40 ${
                   !filters.startDate && !filters.endDate
                     ? 'bg-[#0F172A] dark:bg-white text-white dark:text-[#080A0E] border-[#0F172A] dark:border-white font-semibold'
-                    : 'bg-[#F5F7FA] dark:bg-[#0B0E13] text-[#526071] dark:text-[#929BA9] border-[#D9E2EC] dark:border-[#20252D]'
+                    : 'bg-[#FAFAFA] dark:bg-[#0B0E13] text-[#526071] dark:text-[#929BA9] border-[#E4E4E7] dark:border-[#20252D]'
                 }`}
               >
                 {tr('Semua', 'All')}
@@ -1135,21 +1162,21 @@ export const TradeTable: React.FC<TradeTableProps> = ({
               <button
                 type="button"
                 onClick={() => applyQuickDate('TODAY')}
-                className="px-3 py-1 rounded-full bg-[#F5F7FA] dark:bg-[#0B0E13] text-[#526071] dark:text-[#929BA9] border border-[#D9E2EC] dark:border-[#20252D] hover:text-[#0F172A] dark:hover:text-[#F2F4F7] transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/40 dark:focus-visible:ring-white/40"
+                className="px-3 py-1 rounded-full bg-[#FAFAFA] dark:bg-[#0B0E13] text-[#526071] dark:text-[#929BA9] border border-[#E4E4E7] dark:border-[#20252D] hover:text-[#0F172A] dark:hover:text-[#F2F4F7] transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/40 dark:focus-visible:ring-white/40"
               >
                 {tr('Hari Ini', 'Today')}
               </button>
               <button
                 type="button"
                 onClick={() => applyQuickDate('7D')}
-                className="px-3 py-1 rounded-full bg-[#F5F7FA] dark:bg-[#0B0E13] text-[#526071] dark:text-[#929BA9] border border-[#D9E2EC] dark:border-[#20252D] hover:text-[#0F172A] dark:hover:text-[#F2F4F7] transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/40 dark:focus-visible:ring-white/40"
+                className="px-3 py-1 rounded-full bg-[#FAFAFA] dark:bg-[#0B0E13] text-[#526071] dark:text-[#929BA9] border border-[#E4E4E7] dark:border-[#20252D] hover:text-[#0F172A] dark:hover:text-[#F2F4F7] transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/40 dark:focus-visible:ring-white/40"
               >
                 {tr('7 Hari', '7 Days')}
               </button>
               <button
                 type="button"
                 onClick={() => applyQuickDate('MONTH')}
-                className="px-3 py-1 rounded-full bg-[#F5F7FA] dark:bg-[#0B0E13] text-[#526071] dark:text-[#929BA9] border border-[#D9E2EC] dark:border-[#20252D] hover:text-[#0F172A] dark:hover:text-[#F2F4F7] transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/40 dark:focus-visible:ring-white/40"
+                className="px-3 py-1 rounded-full bg-[#FAFAFA] dark:bg-[#0B0E13] text-[#526071] dark:text-[#929BA9] border border-[#E4E4E7] dark:border-[#20252D] hover:text-[#0F172A] dark:hover:text-[#F2F4F7] transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/40 dark:focus-visible:ring-white/40"
               >
                 {tr('Bulan Ini', 'This Month')}
               </button>
@@ -1166,7 +1193,7 @@ export const TradeTable: React.FC<TradeTableProps> = ({
                   onChange={(e) =>
                     setFilters({ ...filters, lifecycleStatus: e.target.value as any })
                   }
-                  className="w-full rounded-lg bg-[#F5F7FA] dark:bg-[#080A0E] border border-[#DDE3EA] dark:border-[#252B34] px-2.5 py-1.5 text-[#151D2A] dark:text-[#F2F5F9] focus:border-black/30 dark:focus:border-white/30 focus:outline-none"
+                  className="w-full rounded-lg bg-[#FAFAFA] dark:bg-[#080A0E] border border-[#E4E4E7] dark:border-[#252B34] px-2.5 py-1.5 text-[#151D2A] dark:text-[#F2F5F9] focus:border-black/30 dark:focus:border-white/30 focus:outline-none"
                 >
                   <option value="ALL">{tr('Semua Status', 'All Statuses')}</option>
                   <option value="PLANNED">{tr('RENCANA (LIMIT)', 'LIMIT')}</option>
@@ -1184,7 +1211,7 @@ export const TradeTable: React.FC<TradeTableProps> = ({
                 <select
                   value={filters.outcome}
                   onChange={(e) => setFilters({ ...filters, outcome: e.target.value as any })}
-                  className="w-full rounded-lg bg-[#F5F7FA] dark:bg-[#080A0E] border border-[#DDE3EA] dark:border-[#252B34] px-2.5 py-1.5 text-[#151D2A] dark:text-[#F2F5F9] focus:border-black/30 dark:focus:border-white/30 focus:outline-none"
+                  className="w-full rounded-lg bg-[#FAFAFA] dark:bg-[#080A0E] border border-[#E4E4E7] dark:border-[#252B34] px-2.5 py-1.5 text-[#151D2A] dark:text-[#F2F5F9] focus:border-black/30 dark:focus:border-white/30 focus:outline-none"
                 >
                   <option value="ALL">{tr('Semua Hasil', 'All Outcomes')}</option>
                   <option value="WIN">{tr('MENANG (Profit)', 'WIN (Profit)')}</option>
@@ -1201,7 +1228,7 @@ export const TradeTable: React.FC<TradeTableProps> = ({
                 <select
                   value={filters.position}
                   onChange={(e) => setFilters({ ...filters, position: e.target.value as any })}
-                  className="w-full rounded-lg bg-[#F5F7FA] dark:bg-[#080A0E] border border-[#DDE3EA] dark:border-[#252B34] px-2.5 py-1.5 text-[#151D2A] dark:text-[#F2F5F9] focus:border-black/30 dark:focus:border-white/30 focus:outline-none"
+                  className="w-full rounded-lg bg-[#FAFAFA] dark:bg-[#080A0E] border border-[#E4E4E7] dark:border-[#252B34] px-2.5 py-1.5 text-[#151D2A] dark:text-[#F2F5F9] focus:border-black/30 dark:focus:border-white/30 focus:outline-none"
                 >
                   <option value="ALL">{tr('Semua Arah', 'All Directions')}</option>
                   <option value="BUY">BUY</option>
@@ -1217,7 +1244,7 @@ export const TradeTable: React.FC<TradeTableProps> = ({
                 <select
                   value={filters.instrument}
                   onChange={(e) => setFilters({ ...filters, instrument: e.target.value })}
-                  className="w-full rounded-lg bg-[#F5F7FA] dark:bg-[#080A0E] border border-[#DDE3EA] dark:border-[#252B34] px-2.5 py-1.5 text-[#151D2A] dark:text-[#F2F5F9] focus:border-black/30 dark:focus:border-white/30 focus:outline-none"
+                  className="w-full rounded-lg bg-[#FAFAFA] dark:bg-[#080A0E] border border-[#E4E4E7] dark:border-[#252B34] px-2.5 py-1.5 text-[#151D2A] dark:text-[#F2F5F9] focus:border-black/30 dark:focus:border-white/30 focus:outline-none"
                 >
                   <option value="ALL">{tr('Semua Simbol', 'All Symbols')}</option>
                   {uniqueInstruments.map((inst) => (
@@ -1236,7 +1263,7 @@ export const TradeTable: React.FC<TradeTableProps> = ({
                 <select
                   value={filters.session}
                   onChange={(e) => setFilters({ ...filters, session: e.target.value })}
-                  className="w-full rounded-lg bg-[#F5F7FA] dark:bg-[#080A0E] border border-[#DDE3EA] dark:border-[#252B34] px-2.5 py-1.5 text-[#151D2A] dark:text-[#F2F5F9] focus:border-black/30 dark:focus:border-white/30 focus:outline-none"
+                  className="w-full rounded-lg bg-[#FAFAFA] dark:bg-[#080A0E] border border-[#E4E4E7] dark:border-[#252B34] px-2.5 py-1.5 text-[#151D2A] dark:text-[#F2F5F9] focus:border-black/30 dark:focus:border-white/30 focus:outline-none"
                 >
                   <option value="ALL">{tr('Semua Sesi', 'All Sessions')}</option>
                   {uniqueSessions.map((sess) => (
@@ -1255,7 +1282,7 @@ export const TradeTable: React.FC<TradeTableProps> = ({
                 <select
                   value={filters.strategy}
                   onChange={(e) => setFilters({ ...filters, strategy: e.target.value })}
-                  className="w-full rounded-lg bg-[#F5F7FA] dark:bg-[#080A0E] border border-[#DDE3EA] dark:border-[#252B34] px-2.5 py-1.5 text-[#151D2A] dark:text-[#F2F5F9] focus:border-black/30 dark:focus:border-white/30 focus:outline-none"
+                  className="w-full rounded-lg bg-[#FAFAFA] dark:bg-[#080A0E] border border-[#E4E4E7] dark:border-[#252B34] px-2.5 py-1.5 text-[#151D2A] dark:text-[#F2F5F9] focus:border-black/30 dark:focus:border-white/30 focus:outline-none"
                 >
                   <option value="ALL">{tr('Semua Setup', 'All Setups')}</option>
                   {uniqueStrategies.map((s) => (
@@ -1275,7 +1302,7 @@ export const TradeTable: React.FC<TradeTableProps> = ({
                   <select
                     value={filters.sortBy}
                     onChange={(e) => setFilters({ ...filters, sortBy: e.target.value as any })}
-                    className="flex-1 rounded-lg bg-[#F5F7FA] dark:bg-[#080A0E] border border-[#DDE3EA] dark:border-[#252B34] px-2.5 py-1.5 text-[#151D2A] dark:text-[#F2F5F9] focus:border-black/30 dark:focus:border-white/30 focus:outline-none text-[11px]"
+                    className="flex-1 rounded-lg bg-[#FAFAFA] dark:bg-[#080A0E] border border-[#E4E4E7] dark:border-[#252B34] px-2.5 py-1.5 text-[#151D2A] dark:text-[#F2F5F9] focus:border-black/30 dark:focus:border-white/30 focus:outline-none text-[11px]"
                   >
                     <option value="date-desc">{tr('Terbaru', 'Newest')}</option>
                     <option value="date-asc">{tr('Terlama', 'Oldest')}</option>
@@ -1286,7 +1313,7 @@ export const TradeTable: React.FC<TradeTableProps> = ({
                   <button
                     type="button"
                     onClick={resetFilters}
-                    className="p-1.5 rounded-full bg-[#EEF2F6] dark:bg-[#171D26] hover:border-black/30 dark:hover:border-white/30 border border-[#DDE3EA] dark:border-[#252B34] text-[#151D2A] dark:text-[#F2F5F9] transition-colors cursor-pointer"
+                    className="p-1.5 rounded-full bg-[#FAFAFA] dark:bg-[#171D26] hover:border-black/30 dark:hover:border-white/30 border border-[#E4E4E7] dark:border-[#252B34] text-[#151D2A] dark:text-[#F2F5F9] transition-colors cursor-pointer"
                     title={tr('Reset Filter', 'Reset Filters')}
                     aria-label={tr('Reset semua filter', 'Reset all filters')}
                   >
@@ -1301,7 +1328,7 @@ export const TradeTable: React.FC<TradeTableProps> = ({
 
       {/* 4. DAFTAR TRANSAKSI BERKELOMPOK TANGGAL */}
       {paginatedTrades.length === 0 ? (
-        <div className="rounded-xl border border-[#DDE3EA] dark:border-[#252B34] bg-white dark:bg-[#11151B] p-8 text-center text-xs text-[#697586] dark:text-[#929BA9] space-y-3">
+        <div className="rounded-xl border border-[#E4E4E7] dark:border-[#252B34] bg-white dark:bg-[#11151B] p-8 text-center text-xs text-[#697586] dark:text-[#929BA9] space-y-3">
           <p className="text-sm font-semibold text-[#151D2A] dark:text-[#F2F5F9]">
             {trades.length === 0
               ? tr('Belum Ada Transaksi Tercatat', 'No Trades Recorded Yet')
@@ -1323,7 +1350,7 @@ export const TradeTable: React.FC<TradeTableProps> = ({
               <button
                 type="button"
                 onClick={resetFilters}
-                className="px-4 py-1.5 rounded-full bg-[#EEF2F6] dark:bg-[#171D26] border border-[#DDE3EA] dark:border-[#252B34] text-[#151D2A] dark:text-[#F2F5F9] font-semibold text-xs cursor-pointer"
+                className="px-4 py-1.5 rounded-full bg-[#FAFAFA] dark:bg-[#171D26] border border-[#E4E4E7] dark:border-[#252B34] text-[#151D2A] dark:text-[#F2F5F9] font-semibold text-xs cursor-pointer"
               >
                 {tr('Reset Filter', 'Reset Filters')}
               </button>
@@ -1365,7 +1392,7 @@ export const TradeTable: React.FC<TradeTableProps> = ({
           <select
             value={pageSize}
             onChange={(e) => setPageSize(Number(e.target.value))}
-            className="rounded-lg bg-white dark:bg-[#11151B] border border-[#DDE3EA] dark:border-[#252B34] px-2 py-1 text-xs text-[#151D2A] dark:text-[#F2F5F9] focus:border-black/30 dark:focus:border-white/30 focus:outline-none"
+            className="rounded-lg bg-white dark:bg-[#11151B] border border-[#E4E4E7] dark:border-[#252B34] px-2 py-1 text-xs text-[#151D2A] dark:text-[#F2F5F9] focus:border-black/30 dark:focus:border-white/30 focus:outline-none"
           >
             <option value={15}>{tr('15 / hal', '15 / page')}</option>
             <option value={25}>{tr('25 / hal', '25 / page')}</option>
@@ -1380,7 +1407,7 @@ export const TradeTable: React.FC<TradeTableProps> = ({
               type="button"
               disabled={safePage <= 1}
               onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
-              className="p-1.5 rounded-full border border-[#DDE3EA] dark:border-[#252B34] bg-white dark:bg-[#11151B] text-[#151D2A] dark:text-[#F2F5F9] disabled:opacity-40 cursor-pointer"
+              className="p-1.5 rounded-full border border-[#E4E4E7] dark:border-[#252B34] bg-white dark:bg-[#11151B] text-[#151D2A] dark:text-[#F2F5F9] disabled:opacity-40 cursor-pointer"
               aria-label={tr('Halaman Sebelumnya', 'Previous Page')}
             >
               <ChevronLeft className="h-4 w-4 stroke-[1.75]" />
@@ -1392,7 +1419,7 @@ export const TradeTable: React.FC<TradeTableProps> = ({
               type="button"
               disabled={safePage >= totalPages}
               onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
-              className="p-1.5 rounded-full border border-[#DDE3EA] dark:border-[#252B34] bg-white dark:bg-[#11151B] text-[#151D2A] dark:text-[#F2F5F9] disabled:opacity-40 cursor-pointer"
+              className="p-1.5 rounded-full border border-[#E4E4E7] dark:border-[#252B34] bg-white dark:bg-[#11151B] text-[#151D2A] dark:text-[#F2F5F9] disabled:opacity-40 cursor-pointer"
               aria-label={tr('Halaman Berikutnya', 'Next Page')}
             >
               <ChevronRight className="h-4 w-4 stroke-[1.75]" />
@@ -1411,10 +1438,10 @@ export const TradeTable: React.FC<TradeTableProps> = ({
             role="dialog"
             aria-modal="true"
             aria-label={tr('Status Rencana Transaksi', 'Planned Trade Status')}
-            className="w-full max-w-md rounded-2xl border border-[#D9E2EC] dark:border-[#20252D] bg-white dark:bg-[#101318] p-5 shadow-[0_20px_50px_-12px_rgba(15,23,42,0.22)] dark:shadow-[0_24px_60px_-12px_rgba(0,0,0,0.8)] text-[#0F172A] dark:text-[#F2F4F7]"
+            className="w-full max-w-md rounded-2xl border border-[#E4E4E7] dark:border-[#20252D] bg-white dark:bg-[#101318] p-5 shadow-[0_20px_50px_-12px_rgba(15,23,42,0.22)] dark:shadow-[0_24px_60px_-12px_rgba(0,0,0,0.8)] text-[#0F172A] dark:text-[#F2F4F7]"
             onClick={(e) => e.stopPropagation()}
           >
-            <div className="flex items-center justify-between pb-3 border-b border-[#D9E2EC] dark:border-[#20252D]">
+            <div className="flex items-center justify-between pb-3 border-b border-[#E4E4E7] dark:border-[#20252D]">
               <div>
                 <h3 className="text-sm font-bold">
                   {tr('Status Rencana:', 'Planned Status:')} {plannedModalTrade.instrument} (
@@ -1428,7 +1455,7 @@ export const TradeTable: React.FC<TradeTableProps> = ({
                 type="button"
                 onClick={() => setPlannedModalTrade(null)}
                 aria-label={tr('Tutup modal', 'Close modal')}
-                className="p-1.5 rounded-full text-[#526071] dark:text-[#929BA9] hover:text-[#0F172A] dark:hover:text-[#F2F4F7] hover:bg-[#F5F7FA] dark:hover:bg-[#161A22] transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/40 dark:focus-visible:ring-white/40"
+                className="p-1.5 rounded-full text-[#526071] dark:text-[#929BA9] hover:text-[#0F172A] dark:hover:text-[#F2F4F7] hover:bg-[#F4F4F5] dark:hover:bg-[#161A22] transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/40 dark:focus-visible:ring-white/40"
               >
                 <X className="h-4 w-4 stroke-[1.75]" />
               </button>
@@ -1444,7 +1471,7 @@ export const TradeTable: React.FC<TradeTableProps> = ({
                 className={`py-2 px-3 rounded-full text-xs font-bold border transition-colors cursor-pointer flex items-center justify-center gap-1.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/40 dark:focus-visible:ring-white/40 ${
                   plannedActionMode === 'OPEN'
                     ? 'bg-[#0F172A] dark:bg-white text-white dark:text-[#080A0E] border-[#0F172A] dark:border-white'
-                    : 'bg-[#F5F7FA] dark:bg-[#0B0E13] text-[#526071] dark:text-[#929BA9] border-[#D9E2EC] dark:border-[#20252D]'
+                    : 'bg-[#FAFAFA] dark:bg-[#0B0E13] text-[#526071] dark:text-[#929BA9] border-[#E4E4E7] dark:border-[#20252D]'
                 }`}
               >
                 <CheckCircle2 className="h-3.5 w-3.5 stroke-[1.75]" />
@@ -1459,7 +1486,7 @@ export const TradeTable: React.FC<TradeTableProps> = ({
                 className={`py-2 px-3 rounded-full text-xs font-bold border transition-colors cursor-pointer flex items-center justify-center gap-1.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/40 dark:focus-visible:ring-white/40 ${
                   plannedActionMode === 'CANCEL'
                     ? 'bg-[#0F172A] dark:bg-white text-white dark:text-[#080A0E] border-[#0F172A] dark:border-white'
-                    : 'bg-[#F5F7FA] dark:bg-[#0B0E13] text-[#526071] dark:text-[#929BA9] border-[#D9E2EC] dark:border-[#20252D]'
+                    : 'bg-[#FAFAFA] dark:bg-[#0B0E13] text-[#526071] dark:text-[#929BA9] border-[#E4E4E7] dark:border-[#20252D]'
                 }`}
               >
                 <XCircle className="h-3.5 w-3.5 stroke-[1.75]" />
@@ -1476,12 +1503,12 @@ export const TradeTable: React.FC<TradeTableProps> = ({
             <form onSubmit={handleConfirmPlannedTransition} className="mt-4 space-y-3 text-xs">
               {plannedActionMode === 'OPEN' ? (
                 <>
-                  <label className="flex items-start gap-2 p-2.5 rounded-lg bg-[#F5F7FA] dark:bg-[#161A22] border border-[#D9E2EC] dark:border-[#20252D] cursor-pointer">
+                  <label className="flex items-start gap-2 p-2.5 rounded-lg bg-[#FAFAFA] dark:bg-[#161A22] border border-[#E4E4E7] dark:border-[#20252D] cursor-pointer">
                     <input
                       type="checkbox"
                       checked={mt5Confirmed}
                       onChange={(e) => setMt5Confirmed(e.target.checked)}
-                      className="mt-0.5 rounded border-[#D9E2EC] dark:border-[#20252D]"
+                      className="mt-0.5 rounded border-[#E4E4E7] dark:border-[#20252D]"
                     />
                     <span className="text-[11px] leading-relaxed">
                       {tr(
@@ -1502,7 +1529,7 @@ export const TradeTable: React.FC<TradeTableProps> = ({
                         inputMode="decimal"
                         value={actualEntryInput}
                         onChange={(e) => setActualEntryInput(e.target.value)}
-                        className="w-full rounded-lg bg-[#F5F7FA] dark:bg-[#0B0E13] border border-[#D9E2EC] dark:border-[#20252D] px-3 py-2 font-mono-numbers tabular-nums font-semibold focus:border-[#0F172A] dark:focus:border-white focus:outline-none"
+                        className="w-full rounded-lg bg-[#FAFAFA] dark:bg-[#0B0E13] border border-[#E4E4E7] dark:border-[#20252D] px-3 py-2 font-mono-numbers tabular-nums font-semibold focus:border-[#0F172A] dark:focus:border-white focus:outline-none"
                         required
                       />
                     </div>
@@ -1517,7 +1544,7 @@ export const TradeTable: React.FC<TradeTableProps> = ({
                         inputMode="decimal"
                         value={actualLotInput}
                         onChange={(e) => setActualLotInput(e.target.value)}
-                        className="w-full rounded-lg bg-[#F5F7FA] dark:bg-[#0B0E13] border border-[#D9E2EC] dark:border-[#20252D] px-3 py-2 font-mono-numbers tabular-nums font-semibold focus:border-[#0F172A] dark:focus:border-white focus:outline-none"
+                        className="w-full rounded-lg bg-[#FAFAFA] dark:bg-[#0B0E13] border border-[#E4E4E7] dark:border-[#20252D] px-3 py-2 font-mono-numbers tabular-nums font-semibold focus:border-[#0F172A] dark:focus:border-white focus:outline-none"
                         required
                       />
                     </div>
@@ -1532,7 +1559,7 @@ export const TradeTable: React.FC<TradeTableProps> = ({
                         type="date"
                         value={openDateInput}
                         onChange={(e) => setOpenDateInput(e.target.value)}
-                        className="w-full rounded-lg bg-[#F5F7FA] dark:bg-[#0B0E13] border border-[#D9E2EC] dark:border-[#20252D] px-3 py-2 font-mono-numbers tabular-nums focus:border-[#0F172A] dark:focus:border-white focus:outline-none dark:[color-scheme:dark]"
+                        className="w-full rounded-lg bg-[#FAFAFA] dark:bg-[#0B0E13] border border-[#E4E4E7] dark:border-[#20252D] px-3 py-2 font-mono-numbers tabular-nums focus:border-[#0F172A] dark:focus:border-white focus:outline-none dark:[color-scheme:dark]"
                         required
                       />
                     </div>
@@ -1544,7 +1571,7 @@ export const TradeTable: React.FC<TradeTableProps> = ({
                         type="time"
                         value={openTimeInput}
                         onChange={(e) => setOpenTimeInput(e.target.value)}
-                        className="w-full rounded-lg bg-[#F5F7FA] dark:bg-[#0B0E13] border border-[#D9E2EC] dark:border-[#20252D] px-3 py-2 font-mono-numbers tabular-nums focus:border-[#0F172A] dark:focus:border-white focus:outline-none dark:[color-scheme:dark]"
+                        className="w-full rounded-lg bg-[#FAFAFA] dark:bg-[#0B0E13] border border-[#E4E4E7] dark:border-[#20252D] px-3 py-2 font-mono-numbers tabular-nums focus:border-[#0F172A] dark:focus:border-white focus:outline-none dark:[color-scheme:dark]"
                         required
                       />
                     </div>
@@ -1563,7 +1590,7 @@ export const TradeTable: React.FC<TradeTableProps> = ({
                       'Contoh: Harga sudah menyentuh target sebelum mengenai limit order...',
                       'Example: Price already hit the target before reaching the limit order...'
                     )}
-                    className="w-full rounded-lg bg-[#F5F7FA] dark:bg-[#0B0E13] border border-[#D9E2EC] dark:border-[#20252D] p-2.5 text-xs focus:border-[#0F172A] dark:focus:border-white focus:outline-none"
+                    className="w-full rounded-lg bg-[#FAFAFA] dark:bg-[#0B0E13] border border-[#E4E4E7] dark:border-[#20252D] p-2.5 text-xs focus:border-[#0F172A] dark:focus:border-white focus:outline-none"
                   />
                   <p className="mt-1.5 text-[11px] text-[#526071] dark:text-[#929BA9]">
                     {tr(
@@ -1574,12 +1601,12 @@ export const TradeTable: React.FC<TradeTableProps> = ({
                 </div>
               )}
 
-              <div className="flex items-center justify-end gap-2 pt-3 border-t border-[#D9E2EC] dark:border-[#20252D]">
+              <div className="flex items-center justify-end gap-2 pt-3 border-t border-[#E4E4E7] dark:border-[#20252D]">
                 <button
                   type="button"
                   onClick={() => setPlannedModalTrade(null)}
                   disabled={isTransitionSubmitting}
-                  className="px-4 py-2 rounded-full border border-[#D9E2EC] dark:border-[#20252D] bg-[#F5F7FA] hover:bg-[#EEF2F6] dark:bg-[#161A22] dark:hover:bg-[#1E2430] font-semibold cursor-pointer transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/40 dark:focus-visible:ring-white/40"
+                  className="px-4 py-2 rounded-full border border-[#E4E4E7] dark:border-[#20252D] bg-[#FAFAFA] hover:bg-[#F4F4F5] dark:bg-[#161A22] dark:hover:bg-[#1E2430] font-semibold cursor-pointer transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/40 dark:focus-visible:ring-white/40"
                 >
                   {tr('Batal', 'Cancel')}
                 </button>
@@ -1608,10 +1635,10 @@ export const TradeTable: React.FC<TradeTableProps> = ({
             role="dialog"
             aria-modal="true"
             aria-label={tr('Tutup Posisi Transaksi', 'Close Trade Position')}
-            className="w-full max-w-md rounded-2xl border border-[#D9E2EC] dark:border-[#20252D] bg-white dark:bg-[#101318] p-5 shadow-[0_20px_50px_-12px_rgba(15,23,42,0.22)] dark:shadow-[0_24px_60px_-12px_rgba(0,0,0,0.8)] text-[#0F172A] dark:text-[#F2F4F7]"
+            className="w-full max-w-md rounded-2xl border border-[#E4E4E7] dark:border-[#20252D] bg-white dark:bg-[#101318] p-5 shadow-[0_20px_50px_-12px_rgba(15,23,42,0.22)] dark:shadow-[0_24px_60px_-12px_rgba(0,0,0,0.8)] text-[#0F172A] dark:text-[#F2F4F7]"
             onClick={(e) => e.stopPropagation()}
           >
-            <div className="flex items-center justify-between pb-3 border-b border-[#D9E2EC] dark:border-[#20252D]">
+            <div className="flex items-center justify-between pb-3 border-b border-[#E4E4E7] dark:border-[#20252D]">
               <div>
                 <h3 className="text-sm font-bold">
                   {tr('Tutup Posisi:', 'Close Position:')} {closeModalTrade.instrument} (
@@ -1625,7 +1652,7 @@ export const TradeTable: React.FC<TradeTableProps> = ({
                 type="button"
                 onClick={() => setCloseModalTrade(null)}
                 aria-label={tr('Tutup modal', 'Close modal')}
-                className="p-1.5 rounded-full text-[#526071] dark:text-[#929BA9] hover:text-[#0F172A] dark:hover:text-[#F2F4F7] hover:bg-[#F5F7FA] dark:hover:bg-[#161A22] transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/40 dark:focus-visible:ring-white/40"
+                className="p-1.5 rounded-full text-[#526071] dark:text-[#929BA9] hover:text-[#0F172A] dark:hover:text-[#F2F4F7] hover:bg-[#F4F4F5] dark:hover:bg-[#161A22] transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/40 dark:focus-visible:ring-white/40"
               >
                 <X className="h-4 w-4 stroke-[1.75]" />
               </button>
@@ -1651,7 +1678,7 @@ export const TradeTable: React.FC<TradeTableProps> = ({
                       className={`py-2 rounded-full font-bold border transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/40 dark:focus-visible:ring-white/40 ${
                         closeTypeInput === ct
                           ? 'bg-[#0F172A] dark:bg-white text-white dark:text-[#080A0E] border-[#0F172A] dark:border-white'
-                          : 'bg-[#F5F7FA] dark:bg-[#0B0E13] text-[#526071] dark:text-[#929BA9] border-[#D9E2EC] dark:border-[#20252D]'
+                          : 'bg-[#FAFAFA] dark:bg-[#0B0E13] text-[#526071] dark:text-[#929BA9] border-[#E4E4E7] dark:border-[#20252D]'
                       }`}
                     >
                       {ct === 'TP' ? 'Take Profit' : ct === 'SL' ? 'Stop Loss' : 'Manual'}
@@ -1671,7 +1698,7 @@ export const TradeTable: React.FC<TradeTableProps> = ({
                     inputMode="decimal"
                     value={actualExitInput}
                     onChange={(e) => setActualExitInput(e.target.value)}
-                    className="w-full rounded-lg bg-[#F5F7FA] dark:bg-[#0B0E13] border border-[#D9E2EC] dark:border-[#20252D] px-3 py-2 font-mono-numbers tabular-nums font-semibold focus:border-[#0F172A] dark:focus:border-white focus:outline-none"
+                    className="w-full rounded-lg bg-[#FAFAFA] dark:bg-[#0B0E13] border border-[#E4E4E7] dark:border-[#20252D] px-3 py-2 font-mono-numbers tabular-nums font-semibold focus:border-[#0F172A] dark:focus:border-white focus:outline-none"
                     required
                   />
                 </div>
@@ -1692,7 +1719,7 @@ export const TradeTable: React.FC<TradeTableProps> = ({
                     }
                     onChange={(e) => setCloseNetOverrideInput(e.target.value)}
                     placeholder={tr('Otomatis dari Exit', 'Auto from Exit')}
-                    className="w-full rounded-lg bg-[#F5F7FA] dark:bg-[#0B0E13] border border-[#D9E2EC] dark:border-[#20252D] px-3 py-2 font-mono-numbers tabular-nums font-bold focus:border-[#0F172A] dark:focus:border-white focus:outline-none"
+                    className="w-full rounded-lg bg-[#FAFAFA] dark:bg-[#0B0E13] border border-[#E4E4E7] dark:border-[#20252D] px-3 py-2 font-mono-numbers tabular-nums font-bold focus:border-[#0F172A] dark:focus:border-white focus:outline-none"
                   />
                 </div>
               </div>
@@ -1706,7 +1733,7 @@ export const TradeTable: React.FC<TradeTableProps> = ({
                     type="date"
                     value={closeDateInput}
                     onChange={(e) => setCloseDateInput(e.target.value)}
-                    className="w-full rounded-lg bg-[#F5F7FA] dark:bg-[#0B0E13] border border-[#D9E2EC] dark:border-[#20252D] px-3 py-2 font-mono-numbers tabular-nums focus:border-[#0F172A] dark:focus:border-white focus:outline-none dark:[color-scheme:dark]"
+                    className="w-full rounded-lg bg-[#FAFAFA] dark:bg-[#0B0E13] border border-[#E4E4E7] dark:border-[#20252D] px-3 py-2 font-mono-numbers tabular-nums focus:border-[#0F172A] dark:focus:border-white focus:outline-none dark:[color-scheme:dark]"
                     required
                   />
                 </div>
@@ -1718,18 +1745,18 @@ export const TradeTable: React.FC<TradeTableProps> = ({
                     type="time"
                     value={closeTimeInput}
                     onChange={(e) => setCloseTimeInput(e.target.value)}
-                    className="w-full rounded-lg bg-[#F5F7FA] dark:bg-[#0B0E13] border border-[#D9E2EC] dark:border-[#20252D] px-3 py-2 font-mono-numbers tabular-nums focus:border-[#0F172A] dark:focus:border-white focus:outline-none dark:[color-scheme:dark]"
+                    className="w-full rounded-lg bg-[#FAFAFA] dark:bg-[#0B0E13] border border-[#E4E4E7] dark:border-[#20252D] px-3 py-2 font-mono-numbers tabular-nums focus:border-[#0F172A] dark:focus:border-white focus:outline-none dark:[color-scheme:dark]"
                     required
                   />
                 </div>
               </div>
 
-              <div className="flex items-center justify-end gap-2 pt-3 border-t border-[#D9E2EC] dark:border-[#20252D]">
+              <div className="flex items-center justify-end gap-2 pt-3 border-t border-[#E4E4E7] dark:border-[#20252D]">
                 <button
                   type="button"
                   onClick={() => setCloseModalTrade(null)}
                   disabled={isTransitionSubmitting}
-                  className="px-4 py-2 rounded-full border border-[#D9E2EC] dark:border-[#20252D] bg-[#F5F7FA] hover:bg-[#EEF2F6] dark:bg-[#161A22] dark:hover:bg-[#1E2430] font-semibold cursor-pointer transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/40 dark:focus-visible:ring-white/40"
+                  className="px-4 py-2 rounded-full border border-[#E4E4E7] dark:border-[#20252D] bg-[#FAFAFA] hover:bg-[#F4F4F5] dark:bg-[#161A22] dark:hover:bg-[#1E2430] font-semibold cursor-pointer transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/40 dark:focus-visible:ring-white/40"
                 >
                   {tr('Batal', 'Cancel')}
                 </button>

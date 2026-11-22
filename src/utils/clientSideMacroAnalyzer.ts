@@ -21,6 +21,13 @@ import {
   recordBreakingNewsToMonthlyArchive,
   ensureHistoricalActualsArchiveSeeded,
   loadOfflineActualsArchive,
+  FundamentalGoldSnapshot,
+  computeFundamentalGoldSnapshot,
+  loadLocalCachedFundamentalGoldSnapshotSync,
+  loadLocalCachedCmeFedWatchSync,
+  saveFundamentalGoldSnapshotToLocal,
+  saveCmeFedWatchToLocal,
+  computeFundamentalGoldCadenceSlot,
 } from './macroNewsEngine';
 import {
   fetchClientForexFactoryCalendar,
@@ -30,6 +37,7 @@ import {
   fetchClientFedFundsFuturesBackup,
   fetchClientVixPulse,
   fetchClientGoldPositioning,
+  fetchClientExtendedFundamentalFeeds,
 } from './macroFeedFetcher';
 import {
   getApiEndpointCandidates,
@@ -385,6 +393,10 @@ export async function executeClientSideMacroAnalysis(
   });
   analyzedSnapshot.dominantBias = analyzedSnapshot.threeSystemState.effectiveFundamentalBias;
 
+  if (analyzedSnapshot.cmeFedWatch?.isAvailable) {
+    saveCmeFedWatchToLocal(analyzedSnapshot.cmeFedWatch);
+  }
+
   // Step 3: Insert directly into Supabase `macro_news_snapshots` (only if live calendar is verified)
   const supabaseResult = await saveMacroSnapshotToCache(analyzedSnapshot);
 
@@ -393,5 +405,289 @@ export async function executeClientSideMacroAnalysis(
     supabaseResult,
   };
 }
+
+/**
+ * Resolves the cleanest, most up-to-date CME FedWatch state by combining:
+ * 1) Fresh Gemini Google Search Grounding data (cached via Trade News or dedicated FedWatch cache),
+ * 2) Live 30-Day Fed Funds Futures (`ZQ=F`) & `^IRX` T-Bill backup calculation.
+ */
+function resolveSyncedCmeFedWatchState(params: {
+  futuresBackup: CmeFedWatchState;
+  forceRefresh: boolean;
+}): CmeFedWatchState {
+  const { futuresBackup, forceRefresh } = params;
+  const cachedFedWatch = loadLocalCachedCmeFedWatchSync(4 * 60 * 60 * 1000);
+  const cachedMacroFedWatch = loadLocalCachedMacroSnapshotSync()?.cmeFedWatch;
+
+  const groundedCandidate = [cachedFedWatch, cachedMacroFedWatch].find(
+    (item): item is CmeFedWatchState =>
+      Boolean(
+        item &&
+          item.isAvailable &&
+          typeof item.sourceLabel === 'string' &&
+          item.sourceLabel.includes('Grounding')
+      )
+  );
+
+  if (!forceRefresh && groundedCandidate) {
+    const merged: CmeFedWatchState = {
+      ...groundedCandidate,
+      impliedFedFundsRate:
+        futuresBackup.isAvailable && futuresBackup.impliedFedFundsRate != null
+          ? futuresBackup.impliedFedFundsRate
+          : groundedCandidate.impliedFedFundsRate,
+      zqFuturesPrice:
+        futuresBackup.isAvailable && futuresBackup.zqFuturesPrice != null
+          ? futuresBackup.zqFuturesPrice
+          : groundedCandidate.zqFuturesPrice,
+      irxTbillYield:
+        futuresBackup.isAvailable && futuresBackup.irxTbillYield != null
+          ? futuresBackup.irxTbillYield
+          : groundedCandidate.irxTbillYield,
+      targetRateRange:
+        groundedCandidate.targetRateRange || futuresBackup.targetRateRange,
+    };
+    return merged;
+  }
+
+  if (futuresBackup.isAvailable) {
+    saveCmeFedWatchToLocal(futuresBackup);
+    return futuresBackup;
+  }
+
+  if (cachedFedWatch?.isAvailable) return cachedFedWatch;
+  if (cachedMacroFedWatch?.isAvailable) return cachedMacroFedWatch;
+  return createUnavailableFedWatchState();
+}
+
+/**
+ * Executes comprehensive Structural Fundamental Gold (XAU/USD) analysis across
+ * 1-Day, 1-Week, and 1-Month horizons using all macro pillars, US equities, real yields,
+ * CFTC COT, China/G10 FX, bond stress, and geopolitical news wires.
+ * Uses a smart fingerprint check so unchanged fundamental conditions preserve existing
+ * AI narratives cleanly with an honest "Data masih sama" notice at 0 extra tokens.
+ */
+export async function executeClientSideFundamentalGoldAnalysis(options?: {
+  forceRefresh?: boolean;
+  forceRewriteAi?: boolean;
+}): Promise<FundamentalGoldSnapshot> {
+  const { forceRefresh = false, forceRewriteAi = false } = options || {};
+  ensureHistoricalActualsArchiveSeeded();
+  const previousSnapshot = loadLocalCachedFundamentalGoldSnapshotSync();
+
+  const createUnavailableAsset = (
+    symbol: 'DXY' | 'USOIL' | 'US10Y' | 'US02Y',
+    yahooTicker: string,
+    name: string
+  ) => ({
+    symbol,
+    yahooTicker,
+    name,
+    price: 0,
+    previousClose: 0,
+    change: 0,
+    changePercent: 0,
+    direction: 'FLAT' as const,
+    goldCorrelationEffect: 'NEUTRAL' as const,
+    summaryId: `${name} belum tersedia`,
+    summaryEn: `${name} unavailable`,
+    updatedAt: new Date().toISOString(),
+    isAvailable: false,
+  });
+
+  const isManualOffline = isNewsCycleOfflineMode();
+  const isDeviceOffline = typeof navigator !== 'undefined' && navigator.onLine === false;
+
+  if (isManualOffline || isDeviceOffline) {
+    if (previousSnapshot) {
+      const updatedOffline: FundamentalGoldSnapshot = {
+        ...previousSnapshot,
+        analyzedAt: new Date().toISOString(),
+        cadenceSchedule: computeFundamentalGoldCadenceSlot(),
+        changeDetection: {
+          ...previousSnapshot.changeDetection,
+          hasChanged: false,
+          statusTitleId: isManualOffline
+            ? 'Mode Offline · Data Tersimpan'
+            : 'Koneksi Terputus · Data Tersimpan',
+          statusTitleEn: isManualOffline
+            ? 'Offline Mode · Saved Readout'
+            : 'No Connection · Saved Readout',
+          statusDetailId: isManualOffline
+            ? 'Mode Offline aktif. Menampilkan pembacaan fundamental terakhir yang tersimpan di perangkat.'
+            : 'Perangkat sedang offline. Menampilkan pembacaan fundamental terakhir yang tersimpan tanpa menunggu timeout jaringan.',
+          statusDetailEn: isManualOffline
+            ? 'Offline Mode is active. Displaying the latest fundamental readout stored on device.'
+            : 'Device is offline. Displaying the latest stored fundamental readout instantly.',
+        },
+      };
+      return updatedOffline;
+    }
+
+    const offlineCalendar = hydrateEventsWithOfflineArchive([]);
+    const offlineSnap = computeFundamentalGoldSnapshot({
+      calendarEvents: offlineCalendar,
+      intermarketPulse: {
+        dxy: createUnavailableAsset('DXY', 'DX-Y.NYB', 'US Dollar Index (DXY)'),
+        us02y: createUnavailableAsset('US02Y', '2YY=F', 'US 2Y Treasury Yield'),
+        usoil: createUnavailableAsset('USOIL', 'CL=F', 'US Oil WTI Crude'),
+        us10y: createUnavailableAsset('US10Y', '^TNX', 'US 10Y Treasury Yield'),
+      },
+      breakingNews: [],
+      cmeFedWatch: createUnavailableFedWatchState(),
+      previousSnapshot: null,
+    });
+    saveFundamentalGoldSnapshotToLocal(offlineSnap);
+    return offlineSnap;
+  }
+
+  // Pull core macro feeds + extended cross-asset feeds in parallel with strict per-feed isolation (APK-safe)
+  const [
+    rawCalendarEvents,
+    _backfillRes,
+    dxy,
+    us02y,
+    usoil,
+    us10y,
+    vix,
+    goldPositioning,
+    rssResult,
+    extendedFeeds,
+  ] = await Promise.all([
+    fetchClientForexFactoryCalendar().catch(() => []),
+    syncHistoricalActualsArchive(forceRefresh).catch(() => null),
+    fetchClientYahooAsset('DXY', 'DX-Y.NYB', 'US Dollar Index (DXY)', 104.85, 104.42).catch(() =>
+      createUnavailableAsset('DXY', 'DX-Y.NYB', 'US Dollar Index (DXY)')
+    ),
+    fetchClientYahooAsset('US02Y', '2YY=F', 'US 2Y Treasury Yield', 4.25, 4.22).catch(() =>
+      createUnavailableAsset('US02Y', '2YY=F', 'US 2Y Treasury Yield')
+    ),
+    fetchClientYahooAsset('USOIL', 'CL=F', 'US Oil WTI Crude', 73.4, 71.95).catch(() =>
+      createUnavailableAsset('USOIL', 'CL=F', 'US Oil WTI Crude')
+    ),
+    fetchClientYahooAsset('US10Y', '^TNX', 'US 10Y Treasury Yield', 4.38, 4.31).catch(() =>
+      createUnavailableAsset('US10Y', '^TNX', 'US 10Y Treasury Yield')
+    ),
+    fetchClientVixPulse().catch(() => undefined),
+    fetchClientGoldPositioning().catch(() => undefined),
+    fetchClientBreakingHeadlinesWithHealth().catch(() => ({
+      headlines: [],
+      health: [],
+    })),
+    fetchClientExtendedFundamentalFeeds().catch(() => ({
+      externalEvents: [],
+    })),
+  ]);
+
+  if (rawCalendarEvents.length > 0) {
+    recordReleasedActualsToOfflineArchive(rawCalendarEvents, 'LIVE_FEED');
+  }
+  const calendarEvents = hydrateEventsWithOfflineArchive(rawCalendarEvents);
+  const breakingNews = Array.isArray(rssResult?.headlines) ? rssResult.headlines : [];
+  if (breakingNews.length > 0) {
+    recordBreakingNewsToMonthlyArchive(breakingNews);
+  }
+  const intermarketPulse = { dxy, us02y, usoil, us10y, vix, goldPositioning };
+  const futuresBackupFedWatch = await fetchClientFedFundsFuturesBackup(us10y).catch(() =>
+    createUnavailableFedWatchState()
+  );
+  const cmeFedWatch = resolveSyncedCmeFedWatchState({
+    futuresBackup: futuresBackupFedWatch,
+    forceRefresh,
+  });
+
+  const deterministicSnapshot = computeFundamentalGoldSnapshot({
+    calendarEvents,
+    intermarketPulse,
+    breakingNews,
+    cmeFedWatch,
+    extendedFeeds,
+    previousSnapshot,
+  });
+
+  // Smart Unchanged Data Detection: If fundamental drivers haven't shifted and previous AI narrative exists, skip Gemini (0 tokens!)
+  const isUnchangedWithPriorAi =
+    !forceRewriteAi &&
+    previousSnapshot &&
+    previousSnapshot.sourceMode === 'GEMINI_AI' &&
+    previousSnapshot.fundamentalFingerprint === deterministicSnapshot.fundamentalFingerprint;
+
+  if (isUnchangedWithPriorAi && previousSnapshot) {
+    const preservedUnchanged: FundamentalGoldSnapshot = {
+      ...deterministicSnapshot,
+      sourceMode: 'GEMINI_AI',
+      modelUsed: previousSnapshot.modelUsed,
+      narrative: {
+        id: {
+          ...previousSnapshot.narrative.id,
+          dataStatusNote: deterministicSnapshot.changeDetection.statusDetailId,
+          sectionA_StatusAndChange: `Belum ada pergeseran fundamental besar sejak pengecekan terakhir — struktur makro tetap konsisten. ${previousSnapshot.narrative.id.sectionA_StatusAndChange.replace(/^(Data fundamental masih sama seperti pengecekan sebelumnya|Belum ada pergeseran fundamental besar sejak pengecekan terakhir)[^.]*\.\s*/i, '')}`,
+        },
+        en: {
+          ...previousSnapshot.narrative.en,
+          dataStatusNote: deterministicSnapshot.changeDetection.statusDetailEn,
+          sectionA_StatusAndChange: `No major fundamental shift since the last check — the macro regime remains intact. ${previousSnapshot.narrative.en.sectionA_StatusAndChange.replace(/^(Fundamental data remains consistent with the previous check|No major fundamental shift since the last check)[^.]*\.\s*/i, '')}`,
+        },
+      },
+    };
+    saveFundamentalGoldSnapshotToLocal(preservedUnchanged);
+    return preservedUnchanged;
+  }
+
+  // Request AI Macro Desk Brief synthesis + grounded CME FedWatch sync from /api/macro-news/fundamental
+  const endpoints = getApiEndpointCandidates('/api/macro-news/fundamental');
+  const payload = {
+    forceRefresh: forceRefresh || forceRewriteAi,
+    baselineSnapshot: deterministicSnapshot,
+    cmeFedWatch,
+    previousSnapshot: previousSnapshot
+      ? {
+          fundamentalFingerprint: previousSnapshot.fundamentalFingerprint,
+          analyzedAt: previousSnapshot.analyzedAt,
+          overallBias: previousSnapshot.overallBias,
+          bullishProbability: previousSnapshot.bullishProbability,
+          marketRegime: previousSnapshot.marketRegime,
+        }
+      : null,
+    contextSummary: {
+      topHeadlines: breakingNews.slice(0, 8).map((h) => ({
+        title: h.title,
+        sentiment: h.sentimentForGold,
+        channel: h.channelType,
+        source: h.source,
+      })),
+      externalEvents: (extendedFeeds?.externalEvents || []).slice(0, 6),
+    },
+  };
+
+  for (const endpoint of endpoints) {
+    try {
+      const res = await nativeAwarePostJson(endpoint, payload, 40000);
+      const candidate = res.json?.snapshot as FundamentalGoldSnapshot | undefined;
+      if (res.json?.cmeFedWatch?.isAvailable) {
+        saveCmeFedWatchToLocal(res.json.cmeFedWatch as CmeFedWatchState);
+      }
+      if (
+        res.ok &&
+        res.json?.success &&
+        candidate &&
+        candidate.instrument === 'XAUUSD' &&
+        candidate.horizons &&
+        candidate.narrative?.id &&
+        candidate.narrative?.en
+      ) {
+        saveFundamentalGoldSnapshotToLocal(candidate);
+        return candidate;
+      }
+    } catch {
+      // Fallback cleanly to next candidate or local deterministic engine
+    }
+  }
+
+  // Resilient deterministic fallback if backend or quota is unavailable
+  saveFundamentalGoldSnapshotToLocal(deterministicSnapshot);
+  return deterministicSnapshot;
+}
+
 
 

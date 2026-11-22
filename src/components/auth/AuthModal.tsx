@@ -29,7 +29,8 @@ import {
   HardDrive,
 } from 'lucide-react';
 import { useLanguage } from '../../utils/language';
-import { VloDotRevealLogo } from '../layout/VloDotRevealLogo';
+import { useTheme } from '../../utils/theme';
+import { VloMech } from '../layout/VloMechanicalOrbit';
 
 interface AuthModalProps {
   isOpen: boolean;
@@ -72,6 +73,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
   isDeveloperMode = false,
 }) => {
   const { tr } = useLanguage();
+  const { theme } = useTheme();
   const [mode, setMode] = useState<AuthMode>('signin');
   const [fullName, setFullName] = useState('');
   const [email, setEmail] = useState('');
@@ -381,18 +383,13 @@ export const AuthModal: React.FC<AuthModalProps> = ({
         role="dialog"
         aria-modal="true"
         aria-label={tr('Autentikasi Vlo Journal', 'Vlo Journal Authentication')}
-        className="w-full max-w-md max-h-[92vh] max-h-[92dvh] overflow-y-auto rounded-2xl border border-[#D9E2EC] dark:border-[#20252D] bg-white dark:bg-[#101318] p-6 shadow-[0_20px_50px_-12px_rgba(15,23,42,0.22)] dark:shadow-[0_24px_60px_-12px_rgba(0,0,0,0.8)] text-[#0F172A] dark:text-[#F2F4F7] relative transform-gpu"
+        className="w-full max-w-md max-h-[92vh] max-h-[92dvh] overflow-y-auto rounded-2xl border border-[#E4E4E7] dark:border-[#20252D] bg-white dark:bg-[#101318] p-6 shadow-[0_20px_50px_-12px_rgba(15,23,42,0.22)] dark:shadow-[0_24px_60px_-12px_rgba(0,0,0,0.8)] text-[#0F172A] dark:text-[#F2F4F7] relative transform-gpu"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
-        <div className="flex items-center justify-between pb-4 border-b border-[#D9E2EC] dark:border-[#20252D]">
+        <div className="flex items-center justify-between pb-4 border-b border-[#E4E4E7] dark:border-[#20252D]">
           <div className="flex items-center gap-3 min-w-0">
-            <VloDotRevealLogo
-              size={44}
-              speed="fast"
-              roundedClassName="rounded-[12px]"
-              title="VLO"
-            />
+            <VloMech theme={theme} size={44} slowMo={0.8} className="shrink-0" />
             <div className="min-w-0">
               <h3 className="text-base font-bold text-[#0F172A] dark:text-[#F2F4F7] truncate">
                 {mode === 'signin' && tr('Masuk ke Vlo Journal', 'Sign In to Vlo Journal')}
@@ -412,7 +409,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
             type="button"
             disabled={isBusy}
             onClick={onClose}
-            className="min-h-[38px] min-w-[38px] flex items-center justify-center rounded-full bg-[#F5F7FA] hover:bg-[#EEF2F6] dark:bg-[#161A22] dark:hover:bg-[#1E2430] text-[#526071] dark:text-[#929BA9] hover:text-[#0F172A] dark:hover:text-[#F2F4F7] transition-colors cursor-pointer shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/35 dark:focus-visible:ring-white/35"
+            className="min-h-[38px] min-w-[38px] flex items-center justify-center rounded-full bg-[#FAFAFA] hover:bg-[#F4F4F5] dark:bg-[#161A22] dark:hover:bg-[#1E2430] text-[#526071] dark:text-[#929BA9] hover:text-[#0F172A] dark:hover:text-[#F2F4F7] transition-colors cursor-pointer shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/35 dark:focus-visible:ring-white/35"
             aria-label={tr('Tutup', 'Close')}
           >
             <X className="h-4 w-4 stroke-[1.75]" />
@@ -421,7 +418,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
 
         {!isConfigured ? (
           <div className="my-5 space-y-4">
-            <div className="p-4 rounded-xl bg-[#F5F7FA] dark:bg-[#0B0E13] border border-[#D9E2EC] dark:border-[#20252D] text-xs space-y-2">
+            <div className="p-4 rounded-xl bg-[#FAFAFA] dark:bg-[#0B0E13] border border-[#E4E4E7] dark:border-[#20252D] text-xs space-y-2">
               <div className="flex items-center gap-2 font-bold text-[#0F172A] dark:text-[#F2F4F7]">
                 <HardDrive className="h-4 w-4 shrink-0 text-[#0F172A] dark:text-white stroke-[1.75]" />
                 <span>{tr('Mode Penyimpanan Lokal Aktif', 'Local Storage Mode Active')}</span>
@@ -449,7 +446,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                   onClose();
                   onOpenConfig();
                 }}
-                className="w-full min-h-[40px] flex items-center justify-center gap-2 py-2 px-4 rounded-full border border-[#D9E2EC] dark:border-[#20252D] text-[#526071] dark:text-[#929BA9] hover:text-[#0F172A] dark:hover:text-[#F2F4F7] font-medium text-xs transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/35 dark:focus-visible:ring-white/35"
+                className="w-full min-h-[40px] flex items-center justify-center gap-2 py-2 px-4 rounded-full border border-[#E4E4E7] dark:border-[#20252D] text-[#526071] dark:text-[#929BA9] hover:text-[#0F172A] dark:hover:text-[#F2F4F7] font-medium text-xs transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/35 dark:focus-visible:ring-white/35"
               >
                 <Database className="h-3.5 w-3.5 stroke-[1.75]" />
                 <span>{tr('Konfigurasi Cloud (Developer)', 'Cloud Config (Developer)')}</span>
@@ -460,7 +457,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
           <div className="pt-4 space-y-4">
             {/* Navigation Tabs (only for signin & signup) */}
             {(mode === 'signin' || mode === 'signup') && (
-              <div className="grid grid-cols-2 p-1 rounded-full bg-[#F5F7FA] dark:bg-[#0B0E13] border border-[#D9E2EC] dark:border-[#20252D] text-xs">
+              <div className="grid grid-cols-2 p-1 rounded-full bg-[#F4F4F5] dark:bg-[#0B0E13] border border-[#E4E4E7] dark:border-[#20252D] text-xs">
                 <button
                   type="button"
                   disabled={isBusy}
@@ -498,7 +495,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
             {errorMessage && (
               <div
                 role="alert"
-                className="p-3 rounded-xl bg-[#F5F7FA] dark:bg-[#0B0E13] border border-[#E11D48]/30 dark:border-[#E05260]/30 text-xs text-[#E11D48] dark:text-[#E05260] flex items-start gap-2.5 animate-in fade-in"
+                className="p-3 rounded-xl bg-[#FAFAFA] dark:bg-[#0B0E13] border border-[#E11D48]/30 dark:border-[#E05260]/30 text-xs text-[#E11D48] dark:text-[#E05260] flex items-start gap-2.5 animate-in fade-in"
               >
                 <AlertCircle className="h-4 w-4 shrink-0 mt-0.5 stroke-[1.75]" />
                 <span className="leading-relaxed">{errorMessage}</span>
@@ -509,7 +506,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
             {successMessage && (
               <div
                 role="status"
-                className="p-3 rounded-xl bg-[#F5F7FA] dark:bg-[#0B0E13] border border-[#059669]/30 dark:border-[#00A878]/30 text-xs text-[#059669] dark:text-[#00A878] flex items-start gap-2.5 animate-in fade-in"
+                className="p-3 rounded-xl bg-[#FAFAFA] dark:bg-[#0B0E13] border border-[#059669]/30 dark:border-[#00A878]/30 text-xs text-[#059669] dark:text-[#00A878] flex items-start gap-2.5 animate-in fade-in"
               >
                 <CheckCircle className="h-4 w-4 shrink-0 mt-0.5 stroke-[1.75]" />
                 <span className="leading-relaxed">{successMessage}</span>
@@ -524,7 +521,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                   disabled={isBusy}
                   data-testid="auth-google-button"
                   onClick={() => handleOAuthLogin('google')}
-                  className="w-full min-h-[44px] px-4 py-2.5 rounded-full border border-[#D9E2EC] dark:border-[#20252D] bg-[#F5F7FA] hover:bg-[#EEF2F6] dark:bg-[#161A22] dark:hover:bg-[#1E2430] text-[#0F172A] dark:text-[#F2F4F7] text-xs font-semibold transition-colors flex items-center justify-center gap-2.5 disabled:opacity-50 cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/35 dark:focus-visible:ring-white/35"
+                  className="w-full min-h-[44px] px-4 py-2.5 rounded-full border border-[#E4E4E7] dark:border-[#20252D] bg-[#FAFAFA] hover:bg-[#F4F4F5] dark:bg-[#161A22] dark:hover:bg-[#1E2430] text-[#0F172A] dark:text-[#F2F4F7] text-xs font-semibold transition-colors flex items-center justify-center gap-2.5 disabled:opacity-50 cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/35 dark:focus-visible:ring-white/35"
                 >
                   {oauthProviderLoading === 'google' ? (
                     <RefreshCw className="h-4 w-4 animate-spin stroke-[1.75]" />
@@ -540,13 +537,13 @@ export const AuthModal: React.FC<AuthModalProps> = ({
 
                 {/* Divider */}
                 <div className="relative flex items-center py-1.5">
-                  <div className="flex-grow border-t border-[#D9E2EC] dark:border-[#20252D]" />
+                  <div className="flex-grow border-t border-[#E4E4E7] dark:border-[#20252D]" />
                   <span className="shrink-0 mx-3 text-[11px] text-[#526071] dark:text-[#929BA9]">
                     {mode === 'signup'
                       ? tr('atau daftar dengan Akun VLO', 'or sign up with VLO Account')
                       : tr('atau masuk dengan Akun VLO', 'or sign in with VLO Account')}
                   </span>
-                  <div className="flex-grow border-t border-[#D9E2EC] dark:border-[#20252D]" />
+                  <div className="flex-grow border-t border-[#E4E4E7] dark:border-[#20252D]" />
                 </div>
               </div>
             )}
@@ -566,7 +563,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                       placeholder="trader@domain.com"
                       value={email}
                       onChange={(e) => setEmail(e.target.value)}
-                      className="w-full min-h-[42px] rounded-xl bg-[#F5F7FA] dark:bg-[#0B0E13] border border-[#D9E2EC] dark:border-[#20252D] pl-9 pr-3 py-2 text-[#0F172A] dark:text-[#F2F4F7] placeholder-[#526071] dark:placeholder-[#929BA9] focus:border-[#0F172A] dark:focus:border-white focus:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/25 dark:focus-visible:ring-white/25"
+                      className="w-full min-h-[42px] rounded-xl bg-[#FAFAFA] dark:bg-[#0B0E13] border border-[#E4E4E7] dark:border-[#20252D] pl-9 pr-3 py-2 text-[#0F172A] dark:text-[#F2F4F7] placeholder-[#526071] dark:placeholder-[#929BA9] focus:border-[#0F172A] dark:focus:border-white focus:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/25 dark:focus-visible:ring-white/25"
                     />
                   </div>
                 </div>
@@ -595,7 +592,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                       placeholder={tr('Masukkan kata sandi', 'Enter password')}
                       value={password}
                       onChange={(e) => setPassword(e.target.value)}
-                      className="w-full min-h-[42px] rounded-xl bg-[#F5F7FA] dark:bg-[#0B0E13] border border-[#D9E2EC] dark:border-[#20252D] pl-9 pr-10 py-2 text-[#0F172A] dark:text-[#F2F4F7] placeholder-[#526071] dark:placeholder-[#929BA9] focus:border-[#0F172A] dark:focus:border-white focus:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/25 dark:focus-visible:ring-white/25"
+                      className="w-full min-h-[42px] rounded-xl bg-[#FAFAFA] dark:bg-[#0B0E13] border border-[#E4E4E7] dark:border-[#20252D] pl-9 pr-10 py-2 text-[#0F172A] dark:text-[#F2F4F7] placeholder-[#526071] dark:placeholder-[#929BA9] focus:border-[#0F172A] dark:focus:border-white focus:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/25 dark:focus-visible:ring-white/25"
                     />
                     <button
                       type="button"
@@ -646,7 +643,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                       placeholder={tr('Contoh: Bambang A.', 'e.g., Alex Morgan')}
                       value={fullName}
                       onChange={(e) => setFullName(e.target.value)}
-                      className="w-full min-h-[42px] rounded-xl bg-[#F5F7FA] dark:bg-[#0B0E13] border border-[#D9E2EC] dark:border-[#20252D] pl-9 pr-3 py-2 text-[#0F172A] dark:text-[#F2F4F7] placeholder-[#526071] dark:placeholder-[#929BA9] focus:border-[#0F172A] dark:focus:border-white focus:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/25 dark:focus-visible:ring-white/25"
+                      className="w-full min-h-[42px] rounded-xl bg-[#FAFAFA] dark:bg-[#0B0E13] border border-[#E4E4E7] dark:border-[#20252D] pl-9 pr-3 py-2 text-[#0F172A] dark:text-[#F2F4F7] placeholder-[#526071] dark:placeholder-[#929BA9] focus:border-[#0F172A] dark:focus:border-white focus:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/25 dark:focus-visible:ring-white/25"
                     />
                   </div>
                 </div>
@@ -663,7 +660,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                       placeholder="trader@domain.com"
                       value={email}
                       onChange={(e) => setEmail(e.target.value)}
-                      className="w-full min-h-[42px] rounded-xl bg-[#F5F7FA] dark:bg-[#0B0E13] border border-[#D9E2EC] dark:border-[#20252D] pl-9 pr-3 py-2 text-[#0F172A] dark:text-[#F2F4F7] placeholder-[#526071] dark:placeholder-[#929BA9] focus:border-[#0F172A] dark:focus:border-white focus:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/25 dark:focus-visible:ring-white/25"
+                      className="w-full min-h-[42px] rounded-xl bg-[#FAFAFA] dark:bg-[#0B0E13] border border-[#E4E4E7] dark:border-[#20252D] pl-9 pr-3 py-2 text-[#0F172A] dark:text-[#F2F4F7] placeholder-[#526071] dark:placeholder-[#929BA9] focus:border-[#0F172A] dark:focus:border-white focus:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/25 dark:focus-visible:ring-white/25"
                     />
                   </div>
                 </div>
@@ -680,7 +677,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                       placeholder={tr('Minimal 6 karakter', 'Minimum 6 characters')}
                       value={password}
                       onChange={(e) => setPassword(e.target.value)}
-                      className="w-full min-h-[42px] rounded-xl bg-[#F5F7FA] dark:bg-[#0B0E13] border border-[#D9E2EC] dark:border-[#20252D] pl-9 pr-10 py-2 text-[#0F172A] dark:text-[#F2F4F7] placeholder-[#526071] dark:placeholder-[#929BA9] focus:border-[#0F172A] dark:focus:border-white focus:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/25 dark:focus-visible:ring-white/25"
+                      className="w-full min-h-[42px] rounded-xl bg-[#FAFAFA] dark:bg-[#0B0E13] border border-[#E4E4E7] dark:border-[#20252D] pl-9 pr-10 py-2 text-[#0F172A] dark:text-[#F2F4F7] placeholder-[#526071] dark:placeholder-[#929BA9] focus:border-[#0F172A] dark:focus:border-white focus:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/25 dark:focus-visible:ring-white/25"
                     />
                     <button
                       type="button"
@@ -733,7 +730,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                       placeholder="trader@domain.com"
                       value={email}
                       onChange={(e) => setEmail(e.target.value)}
-                      className="w-full min-h-[42px] rounded-xl bg-[#F5F7FA] dark:bg-[#0B0E13] border border-[#D9E2EC] dark:border-[#20252D] pl-9 pr-3 py-2 text-[#0F172A] dark:text-[#F2F4F7] placeholder-[#526071] dark:placeholder-[#929BA9] focus:border-[#0F172A] dark:focus:border-white focus:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/25 dark:focus-visible:ring-white/25"
+                      className="w-full min-h-[42px] rounded-xl bg-[#FAFAFA] dark:bg-[#0B0E13] border border-[#E4E4E7] dark:border-[#20252D] pl-9 pr-3 py-2 text-[#0F172A] dark:text-[#F2F4F7] placeholder-[#526071] dark:placeholder-[#929BA9] focus:border-[#0F172A] dark:focus:border-white focus:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/25 dark:focus-visible:ring-white/25"
                     />
                   </div>
                   <p className="text-[11px] text-[#526071] dark:text-[#929BA9] mt-1.5">
@@ -780,7 +777,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
             {/* VIEW 4: VERIFY NOTICE */}
             {mode === 'verify_notice' && (
               <div className="space-y-4 text-xs py-1">
-                <div className="p-4 rounded-xl bg-[#F5F7FA] dark:bg-[#0B0E13] border border-[#D9E2EC] dark:border-[#20252D] space-y-2.5">
+                <div className="p-4 rounded-xl bg-[#FAFAFA] dark:bg-[#0B0E13] border border-[#E4E4E7] dark:border-[#20252D] space-y-2.5">
                   <div className="flex items-center gap-2 text-[#0F172A] dark:text-white font-bold text-sm">
                     <Mail className="h-5 w-5 shrink-0 stroke-[1.75]" />
                     <span>{tr('Tautan Konfirmasi Terkirim!', 'Confirmation Link Sent!')}</span>
@@ -791,7 +788,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                       'Please confirm your VLO Account registration via the link sent to:'
                     )}
                   </p>
-                  <div className="pt-2 border-t border-[#D9E2EC] dark:border-[#20252D] font-mono-numbers text-[#0F172A] dark:text-white text-xs font-bold break-all">
+                  <div className="pt-2 border-t border-[#E4E4E7] dark:border-[#20252D] font-mono-numbers text-[#0F172A] dark:text-white text-xs font-bold break-all">
                     {registeredEmail || email}
                   </div>
                 </div>
@@ -815,7 +812,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                     type="button"
                     disabled={resendingEmail}
                     onClick={handleResendVerification}
-                    className="w-full min-h-[40px] py-2 px-4 rounded-full bg-[#F5F7FA] hover:bg-[#EEF2F6] dark:bg-[#161A22] dark:hover:bg-[#1E2430] border border-[#D9E2EC] dark:border-[#20252D] text-[#0F172A] dark:text-[#F2F4F7] font-medium text-xs transition-colors flex items-center justify-center gap-2 disabled:opacity-50 cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/35 dark:focus-visible:ring-white/35"
+                    className="w-full min-h-[40px] py-2 px-4 rounded-full bg-[#FAFAFA] hover:bg-[#F4F4F5] dark:bg-[#161A22] dark:hover:bg-[#1E2430] border border-[#E4E4E7] dark:border-[#20252D] text-[#0F172A] dark:text-[#F2F4F7] font-medium text-xs transition-colors flex items-center justify-center gap-2 disabled:opacity-50 cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/35 dark:focus-visible:ring-white/35"
                   >
                     {resendingEmail ? (
                       <>
@@ -835,13 +832,13 @@ export const AuthModal: React.FC<AuthModalProps> = ({
 
             {/* Local Offline Option */}
             {(mode === 'signin' || mode === 'signup') && (
-              <div className="pt-2 border-t border-[#D9E2EC] dark:border-[#20252D]">
+              <div className="pt-2 border-t border-[#E4E4E7] dark:border-[#20252D]">
                 <button
                   type="button"
                   disabled={isBusy}
                   data-testid="auth-continue-local-button"
                   onClick={handleContinueLocalClick}
-                  className="w-full min-h-[40px] py-2 px-4 rounded-full text-[11px] font-medium text-[#526071] dark:text-[#929BA9] hover:text-[#0F172A] dark:hover:text-[#F2F4F7] hover:bg-[#F5F7FA] dark:hover:bg-[#161A22] transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/35 dark:focus-visible:ring-white/35"
+                  className="w-full min-h-[40px] py-2 px-4 rounded-full text-[11px] font-medium text-[#526071] dark:text-[#929BA9] hover:text-[#0F172A] dark:hover:text-[#F2F4F7] hover:bg-[#F4F4F5] dark:hover:bg-[#161A22] transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/35 dark:focus-visible:ring-white/35"
                 >
                   {tr('Gunakan Mode Lokal Tanpa Akun', 'Use Local Mode Without Account')}
                 </button>

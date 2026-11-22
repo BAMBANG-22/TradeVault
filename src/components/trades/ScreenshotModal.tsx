@@ -117,10 +117,10 @@ export const ScreenshotModal: React.FC<ScreenshotModalProps> = ({
         role="dialog"
         aria-modal="true"
         aria-label={tradeTitle || tr('Screenshot Chart', 'Chart Screenshot')}
-        className="relative max-w-4xl w-full rounded-2xl border border-[#D9E2EC] dark:border-[#20252D] bg-white dark:bg-[#101318] p-4 shadow-[0_20px_50px_-12px_rgba(15,23,42,0.22)] dark:shadow-[0_24px_60px_-12px_rgba(0,0,0,0.8)] overflow-hidden"
+        className="relative max-w-4xl w-full rounded-2xl border border-[#E4E4E7] dark:border-[#20252D] bg-white dark:bg-[#101318] p-4 shadow-[0_20px_50px_-12px_rgba(15,23,42,0.22)] dark:shadow-[0_24px_60px_-12px_rgba(0,0,0,0.8)] overflow-hidden"
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="flex items-center justify-between pb-3 border-b border-[#D9E2EC] dark:border-[#20252D] mb-3">
+        <div className="flex items-center justify-between pb-3 border-b border-[#E4E4E7] dark:border-[#20252D] mb-3">
           <div className="text-sm font-semibold text-[#0F172A] dark:text-[#F2F4F7] truncate pr-4">
             {tradeTitle || tr('Screenshot Chart', 'Chart Screenshot')}
           </div>
@@ -131,7 +131,7 @@ export const ScreenshotModal: React.FC<ScreenshotModalProps> = ({
                 download="Trade_Screenshot.jpg"
                 target="_blank"
                 rel="noreferrer"
-                className="p-2 rounded-full bg-[#F5F7FA] dark:bg-[#161A22] border border-[#D9E2EC] dark:border-[#20252D] text-[#526071] dark:text-[#929BA9] hover:text-[#0F172A] dark:hover:text-[#F2F4F7] hover:border-[#0F172A]/40 dark:hover:border-white/40 text-xs flex items-center gap-1 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/35 dark:focus-visible:ring-white/35 transition-colors"
+                className="p-2 rounded-full bg-[#FAFAFA] dark:bg-[#161A22] border border-[#E4E4E7] dark:border-[#20252D] text-[#526071] dark:text-[#929BA9] hover:text-[#0F172A] dark:hover:text-[#F2F4F7] hover:border-[#0F172A]/40 dark:hover:border-white/40 text-xs flex items-center gap-1 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/35 dark:focus-visible:ring-white/35 transition-colors"
                 title={tr('Unduh Gambar', 'Download Image')}
                 aria-label={tr('Unduh screenshot', 'Download screenshot')}
               >
@@ -141,7 +141,7 @@ export const ScreenshotModal: React.FC<ScreenshotModalProps> = ({
             <button
               type="button"
               onClick={onClose}
-              className="p-2 rounded-full bg-[#F5F7FA] dark:bg-[#161A22] border border-[#D9E2EC] dark:border-[#20252D] text-[#526071] dark:text-[#929BA9] hover:text-[#0F172A] dark:hover:text-[#F2F4F7] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/35 dark:focus-visible:ring-white/35 transition-colors cursor-pointer"
+              className="p-2 rounded-full bg-[#FAFAFA] dark:bg-[#161A22] border border-[#E4E4E7] dark:border-[#20252D] text-[#526071] dark:text-[#929BA9] hover:text-[#0F172A] dark:hover:text-[#F2F4F7] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/35 dark:focus-visible:ring-white/35 transition-colors cursor-pointer"
               aria-label={tr('Tutup pratinjau screenshot', 'Close screenshot preview')}
             >
               <X className="h-4 w-4 stroke-[1.75]" />
@@ -149,7 +149,7 @@ export const ScreenshotModal: React.FC<ScreenshotModalProps> = ({
           </div>
         </div>
 
-        <div className="max-h-[75vh] min-h-[200px] overflow-auto rounded-xl bg-[#F5F7FA] dark:bg-[#0B0E13] border border-[#D9E2EC] dark:border-[#20252D] flex items-center justify-center p-2">
+        <div className="max-h-[75vh] min-h-[200px] overflow-auto rounded-xl bg-[#FAFAFA] dark:bg-[#0B0E13] border border-[#E4E4E7] dark:border-[#20252D] flex items-center justify-center p-2">
           {isLoading && (
             <div className="flex flex-col items-center justify-center gap-2 text-[#0F172A] dark:text-[#F2F4F7] py-12">
               <Loader2 className="h-6 w-6 animate-spin" />

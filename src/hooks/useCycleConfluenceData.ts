@@ -746,7 +746,9 @@ function buildRawMacroConfluenceContext(
       ? 24
       : 50;
 
-  const rawMacroScore = Math.round(fundScore * 0.5 + interScore * 0.5);
+  const stagflationBonus =
+    localMacro?.scenarioMatrix?.preNewsFlow?.marketSentiment?.stagflationDetected ? 4 : 0;
+  const rawMacroScore = Math.min(100, Math.round(fundScore * 0.5 + interScore * 0.5) + stagflationBonus);
   const rawMacroBias: MacroBiasDirection =
     rawMacroScore >= 58 ? 'BUY' : rawMacroScore <= 42 ? 'SELL' : 'MIXED';
 

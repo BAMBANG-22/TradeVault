@@ -30,9 +30,22 @@ import {
   Check,
   AlertCircle,
   Camera,
+  Volume2,
+  VolumeX,
+  BellRing,
+  Smartphone,
+  BookOpen,
+  ClipboardCheck,
+  Plus,
 } from 'lucide-react';
 import { AppSettings } from '../../types/settings';
 import { Trade } from '../../types/trade';
+import {
+  resolveConfiguredAccounts,
+  getActivePlaybooks,
+  getActiveChecklist,
+} from '../../utils/journalExtras';
+import { PWAInstallButton } from '../layout/PWAInstallButton';
 import { formatCurrency } from '../../utils/calculations';
 import { isDemoTrade, DEMO_TRADES } from '../../utils/demoData';
 import { mergeTradesDatasets } from '../../utils/supabaseSync';
@@ -43,6 +56,14 @@ import {
 } from '../../utils/supabaseClient';
 import { useTheme } from '../../utils/theme';
 import { useLanguage } from '../../utils/language';
+import {
+  useSoundPreferences,
+  playNotificationPing,
+  playUiClick,
+  playSuccessChime,
+  playErrorTone,
+  triggerHaptic,
+} from '../../utils/soundEngine';
 import { CsvImportModal } from './CsvImportModal';
 import { FinancialAuditModal } from './FinancialAuditModal';
 import { TradingPreferencesModal, PreferenceCategory } from './TradingPreferencesModal';
@@ -58,6 +79,11 @@ import {
   NEWS_CYCLE_OFFLINE_MODE_CHANGE_EVENT,
   NEWS_CYCLE_OFFLINE_MODE_STORAGE_KEY,
 } from '../../utils/apiConfig';
+import {
+  APP_VERSION,
+  APP_RELEASE_DATE,
+  APP_VERSION_HISTORY,
+} from '../../config/appVersion';
 
 interface SettingsViewProps {
   settings: AppSettings;
@@ -80,6 +106,8 @@ interface SettingsViewProps {
   isDeveloperMode?: boolean;
   onUnlockDeveloperMode?: () => void;
   onUserUpdated?: (user: any) => void;
+  onOpenPlaybook?: () => void;
+  onOpenAccountSwitcher?: () => void;
 }
 
 export const SettingsView: React.FC<SettingsViewProps> = ({
@@ -103,9 +131,17 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   isDeveloperMode = false,
   onUnlockDeveloperMode,
   onUserUpdated,
+  onOpenPlaybook,
+  onOpenAccountSwitcher,
 }) => {
   const { theme, setTheme } = useTheme();
   const { language, setLanguage, tr } = useLanguage();
+  const {
+    uiClickEnabled,
+    notificationSoundEnabled,
+    hapticEnabled,
+    updateSoundPreferences,
+  } = useSoundPreferences();
 
   // Modals state
   const [activePrefModal, setActivePrefModal] = useState<PreferenceCategory | null>(null);
@@ -124,6 +160,37 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   const [backendHealth, setBackendHealth] = useState<StandaloneBackendHealthResult | null>(null);
   const [isNewsCycleOffline, setIsNewsCycleOffline] = useState(() => isNewsCycleOfflineMode());
   const [devTapCount, setDevTapCount] = useState(0);
+  const [showVersionHistory, setShowVersionHistory] = useState(false);
+  const [isChecklistEditorOpen, setIsChecklistEditorOpen] = useState(false);
+  const [newChecklistLabel, setNewChecklistLabel] = useState('');
+
+  const effectiveAccounts = resolveConfiguredAccounts(settings);
+  const effectivePlaybooks = getActivePlaybooks(settings);
+  const effectiveChecklist = getActiveChecklist(settings);
+
+  const handleToggleChecklistEnabled = (itemId: string) => {
+    const next = effectiveChecklist.map((item) =>
+      item.id === itemId ? { ...item, enabled: !item.enabled } : item
+    );
+    onSaveSettings({ ...settings, preTradeChecklist: next });
+  };
+
+  const handleAddChecklistItem = () => {
+    const trimmed = newChecklistLabel.trim();
+    if (!trimmed) return;
+    const next = [
+      ...effectiveChecklist,
+      { id: `chk-${Date.now()}`, labelId: trimmed, labelEn: trimmed, enabled: true },
+    ];
+    onSaveSettings({ ...settings, preTradeChecklist: next });
+    setNewChecklistLabel('');
+    showFeedback(tr('Item checklist SOP ditambahkan.', 'SOP checklist item added.'));
+  };
+
+  const handleDeleteChecklistItem = (itemId: string) => {
+    const next = effectiveChecklist.filter((item) => item.id !== itemId);
+    onSaveSettings({ ...settings, preTradeChecklist: next });
+  };
 
   useEffect(() => {
     const syncOffline = () => setIsNewsCycleOffline(isNewsCycleOfflineMode());
@@ -142,6 +209,11 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
 
   const showFeedback = (text: string, type: 'success' | 'error' = 'success') => {
     setFeedbackMsg({ text, type });
+    if (type === 'error') {
+      playErrorTone();
+    } else {
+      playSuccessChime();
+    }
     window.setTimeout(() => setFeedbackMsg(null), 3500);
   };
 
@@ -305,9 +377,9 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   const sectionLabelClass =
     'text-[11px] font-semibold uppercase tracking-[0.08em] text-[#526071] dark:text-[#929BA9] px-1 block';
   const cardClass =
-    'bg-white dark:bg-[#101318] border border-[#D9E2EC] dark:border-[#20252D] shadow-[0_1px_2px_rgba(15,23,42,0.04)] dark:shadow-none rounded-xl divide-y divide-[#D9E2EC] dark:divide-[#20252D] overflow-hidden';
+    'bg-white dark:bg-[#101318] border border-[#E4E4E7] dark:border-[#20252D] shadow-[0_1px_2px_rgba(15,23,42,0.04)] dark:shadow-none rounded-xl divide-y divide-[#E4E4E7] dark:divide-[#20252D] overflow-hidden';
   const rowInteractiveClass =
-    'w-full px-4 py-3.5 flex items-center justify-between gap-4 text-left hover:bg-[#F8FAFC] dark:hover:bg-[#161A22]/75 transition-colors duration-150 cursor-pointer group focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[#0F172A]/35 dark:focus-visible:ring-white/35';
+    'w-full px-4 py-3.5 flex items-center justify-between gap-4 text-left hover:bg-[#FAFAFA] dark:hover:bg-[#161A22]/75 transition-colors duration-150 cursor-pointer group focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[#0F172A]/35 dark:focus-visible:ring-white/35';
   const iconClass = 'h-4 w-4 shrink-0 text-[#526071] dark:text-[#929BA9] stroke-[1.75]';
   const chevronClass =
     'h-4 w-4 shrink-0 text-[#526071] dark:text-[#929BA9] group-hover:text-[#0F172A] dark:group-hover:text-[#F2F4F7] transition-colors stroke-[1.75]';
@@ -315,7 +387,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   return (
     <div className="space-y-6 max-w-3xl mx-auto pb-12">
       {/* Page Header */}
-      <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-2 pb-4 border-b border-[#D9E2EC] dark:border-[#20252D]">
+      <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-2 pb-4 border-b border-[#E4E4E7] dark:border-[#20252D]">
         <div>
           <h1 className="text-lg sm:text-xl font-bold tracking-tight text-[#0F172A] dark:text-[#F2F4F7]">
             {tr('Pengaturan Aplikasi', 'App Settings')}
@@ -336,7 +408,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
       {feedbackMsg && (
         <div
           role="status"
-          className="px-4 py-3 rounded-xl bg-white dark:bg-[#101318] border border-[#D9E2EC] dark:border-[#20252D] shadow-[0_1px_2px_rgba(15,23,42,0.04)] dark:shadow-none flex items-center gap-2.5 text-xs font-semibold animate-in fade-in duration-150"
+          className="px-4 py-3 rounded-xl bg-white dark:bg-[#101318] border border-[#E4E4E7] dark:border-[#20252D] shadow-[0_1px_2px_rgba(15,23,42,0.04)] dark:shadow-none flex items-center gap-2.5 text-xs font-semibold animate-in fade-in duration-150"
         >
           {feedbackMsg.type === 'success' ? (
             <Check className="h-4 w-4 shrink-0 text-[#059669] dark:text-[#00A878] stroke-[2]" />
@@ -358,7 +430,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
       {/* ===================================================================== */}
       {/* TOP ACCOUNT & SYNC SUMMARY CARD                                       */}
       {/* ===================================================================== */}
-      <div className="bg-white dark:bg-[#101318] border border-[#D9E2EC] dark:border-[#20252D] shadow-[0_1px_2px_rgba(15,23,42,0.04)] dark:shadow-none rounded-xl p-4 sm:p-5 space-y-4">
+      <div className="bg-white dark:bg-[#101318] border border-[#E4E4E7] dark:border-[#20252D] shadow-[0_1px_2px_rgba(15,23,42,0.04)] dark:shadow-none rounded-xl p-4 sm:p-5 space-y-4">
         <input
           ref={avatarFileInputRef}
           type="file"
@@ -379,7 +451,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                   data-testid="settings-avatar-upload-trigger"
                   aria-label={tr('Ubah Foto Profil', 'Change Profile Photo')}
                   title={tr('Klik untuk mengubah foto profil', 'Click to change profile photo')}
-                  className="group relative h-12 w-12 rounded-full bg-[#F5F7FA] dark:bg-[#161A22] border border-[#D9E2EC] dark:border-[#20252D] flex items-center justify-center text-[#0F172A] dark:text-[#F2F4F7] overflow-hidden cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/35 dark:focus-visible:ring-white/35 disabled:opacity-60"
+                  className="group relative h-12 w-12 rounded-full bg-[#FAFAFA] dark:bg-[#161A22] border border-[#E4E4E7] dark:border-[#20252D] flex items-center justify-center text-[#0F172A] dark:text-[#F2F4F7] overflow-hidden cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/35 dark:focus-visible:ring-white/35 disabled:opacity-60"
                 >
                   {activeAvatarUrl ? (
                     <img
@@ -427,7 +499,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                 </button>
               </div>
             ) : (
-              <div className="h-11 w-11 rounded-full bg-[#F5F7FA] dark:bg-[#161A22] border border-[#D9E2EC] dark:border-[#20252D] flex items-center justify-center shrink-0">
+              <div className="h-11 w-11 rounded-full bg-[#FAFAFA] dark:bg-[#161A22] border border-[#E4E4E7] dark:border-[#20252D] flex items-center justify-center shrink-0">
                 <User className="h-4 w-4 text-[#0F172A] dark:text-[#F2F4F7] stroke-[1.75]" />
               </div>
             )}
@@ -465,7 +537,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                   disabled={isUpdatingAvatar}
                   onClick={() => avatarFileInputRef.current?.click()}
                   data-testid="settings-upload-photo-btn"
-                  className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full border border-[#D9E2EC] dark:border-[#20252D] bg-[#F5F7FA] dark:bg-[#161A22] hover:bg-[#EEF2F6] dark:hover:bg-[#1F2530] text-xs font-semibold text-[#0F172A] dark:text-[#F2F4F7] transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/35 dark:focus-visible:ring-white/35 disabled:opacity-50"
+                  className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full border border-[#E4E4E7] dark:border-[#20252D] bg-[#FAFAFA] dark:bg-[#161A22] hover:bg-[#F4F4F5] dark:hover:bg-[#1F2530] text-xs font-semibold text-[#0F172A] dark:text-[#F2F4F7] transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/35 dark:focus-visible:ring-white/35 disabled:opacity-50"
                 >
                   {isUpdatingAvatar ? (
                     <RefreshCw className="h-3.5 w-3.5 animate-spin stroke-[1.75]" />
@@ -486,7 +558,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                     data-testid="settings-remove-photo-btn"
                     aria-label={tr('Hapus Foto Profil', 'Remove Profile Photo')}
                     title={tr('Hapus Foto Profil', 'Remove Profile Photo')}
-                    className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-[#D9E2EC] dark:border-[#20252D] bg-[#F5F7FA] dark:bg-[#161A22] hover:bg-[#EEF2F6] dark:hover:bg-[#1F2530] text-[#526071] hover:text-[#E11D48] dark:text-[#929BA9] dark:hover:text-[#E05260] transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/35 dark:focus-visible:ring-white/35 disabled:opacity-50"
+                    className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-[#E4E4E7] dark:border-[#20252D] bg-[#FAFAFA] dark:bg-[#161A22] hover:bg-[#F4F4F5] dark:hover:bg-[#1F2530] text-[#526071] hover:text-[#E11D48] dark:text-[#929BA9] dark:hover:text-[#E05260] transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/35 dark:focus-visible:ring-white/35 disabled:opacity-50"
                   >
                     <Trash2 className="h-3.5 w-3.5 stroke-[1.75]" />
                   </button>
@@ -512,7 +584,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
         </div>
 
         {currentUser && (onSyncLocalToCloud || onReloadFromCloud) && (
-          <div className="pt-3 border-t border-[#D9E2EC] dark:border-[#20252D] flex flex-wrap items-center justify-between gap-2">
+          <div className="pt-3 border-t border-[#E4E4E7] dark:border-[#20252D] flex flex-wrap items-center justify-between gap-2">
             <span className="text-[11px] text-[#526071] dark:text-[#929BA9]">
               {tr('Sinkronisasi manual data jurnal & pengaturan', 'Manual sync for journal trades & settings')}
             </span>
@@ -537,7 +609,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                   type="button"
                   disabled={isCloudSyncing}
                   onClick={onReloadFromCloud}
-                  className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full border border-[#D9E2EC] dark:border-[#20252D] text-[#0F172A] dark:text-[#F2F4F7] hover:bg-[#F5F7FA] dark:hover:bg-[#161A22] text-[11px] font-medium transition-colors disabled:opacity-50 cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/35 dark:focus-visible:ring-white/35"
+                  className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full border border-[#E4E4E7] dark:border-[#20252D] text-[#0F172A] dark:text-[#F2F4F7] hover:bg-[#FAFAFA] dark:hover:bg-[#161A22] text-[11px] font-medium transition-colors disabled:opacity-50 cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/35 dark:focus-visible:ring-white/35"
                 >
                   <RefreshCw className={`h-3.5 w-3.5 stroke-[1.75] ${isCloudSyncing ? 'animate-spin' : ''}`} />
                   <span>{tr('Muat Ulang dari Cloud', 'Reload from Cloud')}</span>
@@ -577,7 +649,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
               </div>
             </div>
 
-            <div className="inline-flex items-center rounded-full bg-[#F5F7FA] dark:bg-[#0B0E13] p-1 border border-[#D9E2EC] dark:border-[#20252D] shrink-0 self-start sm:self-auto">
+            <div className="inline-flex items-center rounded-full bg-[#F4F4F5] dark:bg-[#0B0E13] p-1 border border-[#E4E4E7] dark:border-[#20252D] shrink-0 self-start sm:self-auto">
               <button
                 type="button"
                 onClick={() => setTheme('light')}
@@ -625,7 +697,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
 
             <div
               data-testid="settings-language-selector"
-              className="inline-flex items-center rounded-full bg-[#F5F7FA] dark:bg-[#0B0E13] p-1 border border-[#D9E2EC] dark:border-[#20252D] shrink-0 self-start sm:self-auto"
+              className="inline-flex items-center rounded-full bg-[#F4F4F5] dark:bg-[#0B0E13] p-1 border border-[#E4E4E7] dark:border-[#20252D] shrink-0 self-start sm:self-auto"
             >
               <button
                 type="button"
@@ -656,6 +728,174 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                 }`}
               >
                 English
+              </button>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {/* ===================================================================== */}
+      {/* 1B. SUARA & UMPAN BALIK SENTUHAN                                      */}
+      {/* ===================================================================== */}
+      <section id="settings-sound" className="space-y-2">
+        <span className={sectionLabelClass}>
+          {tr('Suara & Umpan Balik Sentuhan', 'Sound & Touch Feedback')}
+        </span>
+        <div className={cardClass}>
+          {/* Suara Klik & Sentuhan UI */}
+          <div className="px-4 py-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div className="flex items-start gap-3 min-w-0">
+              {uiClickEnabled ? (
+                <Volume2 className={`${iconClass} mt-0.5`} />
+              ) : (
+                <VolumeX className={`${iconClass} mt-0.5`} />
+              )}
+              <div className="min-w-0">
+                <span className="text-xs font-semibold text-[#0F172A] dark:text-[#F2F4F7] block">
+                  {tr('Suara Klik & Sentuhan UI', 'UI Click & Touch Sounds')}
+                </span>
+                <span className="text-[11px] text-[#526071] dark:text-[#929BA9] block mt-0.5">
+                  {tr(
+                    'Efek suara taktil halus saat mengetuk tombol, tab, dan menu',
+                    'Subtle tactile sound feedback when tapping buttons, tabs, and menus'
+                  )}
+                </span>
+              </div>
+            </div>
+
+            <div className="inline-flex items-center rounded-full bg-[#F4F4F5] dark:bg-[#0B0E13] p-1 border border-[#E4E4E7] dark:border-[#20252D] shrink-0 self-start sm:self-auto">
+              <button
+                type="button"
+                data-sound="none"
+                onClick={() => {
+                  updateSoundPreferences({ uiClickEnabled: true });
+                  playUiClick(false);
+                }}
+                className={`px-3.5 py-1 text-xs rounded-full transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/35 dark:focus-visible:ring-white/35 ${
+                  uiClickEnabled
+                    ? 'bg-[#0F172A] text-white dark:bg-white dark:text-[#050607] font-semibold'
+                    : 'text-[#526071] dark:text-[#929BA9] hover:text-[#0F172A] dark:hover:text-[#F2F4F7] font-medium'
+                }`}
+              >
+                {tr('Aktif', 'On')}
+              </button>
+              <button
+                type="button"
+                data-sound="none"
+                onClick={() => updateSoundPreferences({ uiClickEnabled: false })}
+                className={`px-3.5 py-1 text-xs rounded-full transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/35 dark:focus-visible:ring-white/35 ${
+                  !uiClickEnabled
+                    ? 'bg-[#0F172A] text-white dark:bg-white dark:text-[#050607] font-semibold'
+                    : 'text-[#526071] dark:text-[#929BA9] hover:text-[#0F172A] dark:hover:text-[#F2F4F7] font-medium'
+                }`}
+              >
+                {tr('Mati', 'Off')}
+              </button>
+            </div>
+          </div>
+
+          {/* Suara Notifikasi & Alert */}
+          <div className="px-4 py-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div className="flex items-start gap-3 min-w-0">
+              <BellRing className={`${iconClass} mt-0.5`} />
+              <div className="min-w-0">
+                <span className="text-xs font-semibold text-[#0F172A] dark:text-[#F2F4F7] block">
+                  {tr('Suara Notifikasi & Alert', 'Notification & Alert Chimes')}
+                </span>
+                <span className="text-[11px] text-[#526071] dark:text-[#929BA9] block mt-0.5">
+                  {tr(
+                    'Chime saat simpan transaksi, error validasi, dan berita high-impact',
+                    'Chime on trade saved, validation alerts, and high-impact news'
+                  )}
+                </span>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2 shrink-0 self-start sm:self-auto">
+              <button
+                type="button"
+                data-sound="none"
+                onClick={() => playNotificationPing(true)}
+                className="px-3 py-1 rounded-full border border-[#E4E4E7] dark:border-[#20252D] text-[11px] font-semibold text-[#0F172A] dark:text-[#F2F4F7] hover:bg-[#FAFAFA] dark:hover:bg-[#161A22] transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/35 dark:focus-visible:ring-white/35"
+              >
+                {tr('Tes', 'Test')}
+              </button>
+              <div className="inline-flex items-center rounded-full bg-[#F4F4F5] dark:bg-[#0B0E13] p-1 border border-[#E4E4E7] dark:border-[#20252D]">
+                <button
+                  type="button"
+                  data-sound="none"
+                  onClick={() => {
+                    updateSoundPreferences({ notificationSoundEnabled: true });
+                    playNotificationPing(true);
+                  }}
+                  className={`px-3.5 py-1 text-xs rounded-full transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/35 dark:focus-visible:ring-white/35 ${
+                    notificationSoundEnabled
+                      ? 'bg-[#0F172A] text-white dark:bg-white dark:text-[#050607] font-semibold'
+                      : 'text-[#526071] dark:text-[#929BA9] hover:text-[#0F172A] dark:hover:text-[#F2F4F7] font-medium'
+                  }`}
+                >
+                  {tr('Aktif', 'On')}
+                </button>
+                <button
+                  type="button"
+                  data-sound="none"
+                  onClick={() => updateSoundPreferences({ notificationSoundEnabled: false })}
+                  className={`px-3.5 py-1 text-xs rounded-full transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/35 dark:focus-visible:ring-white/35 ${
+                    !notificationSoundEnabled
+                      ? 'bg-[#0F172A] text-white dark:bg-white dark:text-[#050607] font-semibold'
+                      : 'text-[#526071] dark:text-[#929BA9] hover:text-[#0F172A] dark:hover:text-[#F2F4F7] font-medium'
+                  }`}
+                >
+                  {tr('Mati', 'Off')}
+                </button>
+              </div>
+            </div>
+          </div>
+
+          {/* Umpan Balik Getar (Haptic) */}
+          <div className="px-4 py-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div className="flex items-start gap-3 min-w-0">
+              <Smartphone className={`${iconClass} mt-0.5`} />
+              <div className="min-w-0">
+                <span className="text-xs font-semibold text-[#0F172A] dark:text-[#F2F4F7] block">
+                  {tr('Getar Sentuhan (Haptic)', 'Haptic Touch Feedback')}
+                </span>
+                <span className="text-[11px] text-[#526071] dark:text-[#929BA9] block mt-0.5">
+                  {tr(
+                    'Getaran mikro saat sentuhan dan notifikasi pada perangkat seluler',
+                    'Micro vibration on touch interactions and alerts on mobile devices'
+                  )}
+                </span>
+              </div>
+            </div>
+
+            <div className="inline-flex items-center rounded-full bg-[#F4F4F5] dark:bg-[#0B0E13] p-1 border border-[#E4E4E7] dark:border-[#20252D] shrink-0 self-start sm:self-auto">
+              <button
+                type="button"
+                data-sound="none"
+                onClick={() => {
+                  updateSoundPreferences({ hapticEnabled: true });
+                  triggerHaptic(12);
+                }}
+                className={`px-3.5 py-1 text-xs rounded-full transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/35 dark:focus-visible:ring-white/35 ${
+                  hapticEnabled
+                    ? 'bg-[#0F172A] text-white dark:bg-white dark:text-[#050607] font-semibold'
+                    : 'text-[#526071] dark:text-[#929BA9] hover:text-[#0F172A] dark:hover:text-[#F2F4F7] font-medium'
+                }`}
+              >
+                {tr('Aktif', 'On')}
+              </button>
+              <button
+                type="button"
+                data-sound="none"
+                onClick={() => updateSoundPreferences({ hapticEnabled: false })}
+                className={`px-3.5 py-1 text-xs rounded-full transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/35 dark:focus-visible:ring-white/35 ${
+                  !hapticEnabled
+                    ? 'bg-[#0F172A] text-white dark:bg-white dark:text-[#050607] font-semibold'
+                    : 'text-[#526071] dark:text-[#929BA9] hover:text-[#0F172A] dark:hover:text-[#F2F4F7] font-medium'
+                }`}
+              >
+                {tr('Mati', 'Off')}
               </button>
             </div>
           </div>
@@ -733,9 +973,9 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                   {tr('Spesifikasi Broker (XAUUSD)', 'Broker Specification (XAUUSD)')}
                 </span>
                 <span className="text-[11px] text-[#526071] dark:text-[#929BA9] block mt-0.5 break-words">
-                  {settings.xauusdPipSize === 0.1
-                    ? tr('Mode A (1 Pip = $0.10)', 'Mode A (1 Pip = $0.10)')
-                    : tr('Mode B (1 Pip = $1.00)', 'Mode B (1 Pip = $1.00)')}{' '}
+                  {settings.xauusdPipSize === 1.0
+                    ? tr('Mode B (1 Pip = $1.00)', 'Mode B (1 Pip = $1.00)')
+                    : tr('Mode A (1 Pip = $0.10)', 'Mode A (1 Pip = $0.10)')}{' '}
                   · {settings.xauusdContractSize} oz · {tr('Komisi', 'Comm.')} ${settings.brokerCommissionPerLot}/lot
                 </span>
               </div>
@@ -797,6 +1037,171 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
             </div>
             <ChevronRight className={chevronClass} />
           </button>
+
+          {/* Multi-Akun & Sub-Portofolio */}
+          {onOpenAccountSwitcher && (
+            <button
+              type="button"
+              onClick={onOpenAccountSwitcher}
+              className={rowInteractiveClass}
+            >
+              <div className="flex items-start gap-3 min-w-0">
+                <Layers className={`${iconClass} mt-0.5`} />
+                <div className="min-w-0">
+                  <span className="text-xs font-semibold text-[#0F172A] dark:text-[#F2F4F7] block">
+                    {tr('Multi-Akun & Sub-Portofolio', 'Multi-Account & Sub-Portfolios')}
+                  </span>
+                  <span className="text-[11px] text-[#526071] dark:text-[#929BA9] block mt-0.5">
+                    {tr(
+                      'Pisahkan akun Live, Prop Firm, Demo, atau Cent dalam satu jurnal',
+                      'Separate Live, Prop Firm, Demo, or Cent accounts in one journal'
+                    )}
+                  </span>
+                </div>
+              </div>
+              <div className="flex items-center gap-2 shrink-0">
+                <span className="text-xs font-semibold font-mono-numbers tabular-nums text-[#0F172A] dark:text-[#F2F4F7]">
+                  {effectiveAccounts.length}
+                </span>
+                <ChevronRight className={chevronClass} />
+              </div>
+            </button>
+          )}
+
+          {/* Playbook Setup A+ */}
+          {onOpenPlaybook && (
+            <button
+              type="button"
+              onClick={onOpenPlaybook}
+              className={rowInteractiveClass}
+            >
+              <div className="flex items-start gap-3 min-w-0">
+                <BookOpen className={`${iconClass} mt-0.5`} />
+                <div className="min-w-0">
+                  <span className="text-xs font-semibold text-[#0F172A] dark:text-[#F2F4F7] block">
+                    {tr('Playbook Setup A+', 'A+ Setup Playbook Library')}
+                  </span>
+                  <span className="text-[11px] text-[#526071] dark:text-[#929BA9] block mt-0.5">
+                    {tr(
+                      'Kelola kriteria entry & invalidasi setup unggulan Anda',
+                      'Manage entry criteria and invalidation rules for your best setups'
+                    )}
+                  </span>
+                </div>
+              </div>
+              <div className="flex items-center gap-2 shrink-0">
+                <span className="text-xs font-semibold font-mono-numbers tabular-nums text-[#0F172A] dark:text-[#F2F4F7]">
+                  {effectivePlaybooks.length}
+                </span>
+                <ChevronRight className={chevronClass} />
+              </div>
+            </button>
+          )}
+
+          {/* Checklist SOP Pra-Eksekusi */}
+          <div className="px-4 py-3.5 space-y-2.5">
+            <button
+              type="button"
+              onClick={() => setIsChecklistEditorOpen((prev) => !prev)}
+              className="w-full flex items-center justify-between gap-4 text-left cursor-pointer group"
+            >
+              <div className="flex items-start gap-3 min-w-0">
+                <ClipboardCheck className={`${iconClass} mt-0.5`} />
+                <div className="min-w-0">
+                  <span className="text-xs font-semibold text-[#0F172A] dark:text-[#F2F4F7] block">
+                    {tr('Checklist SOP Pra-Eksekusi', 'Pre-Trade SOP Checklist')}
+                  </span>
+                  <span className="text-[11px] text-[#526071] dark:text-[#929BA9] block mt-0.5">
+                    {tr(
+                      'Daftar verifikasi disiplin yang tampil di formulir tambah transaksi',
+                      'Discipline checklist displayed inside the Add Trade form'
+                    )}
+                  </span>
+                </div>
+              </div>
+              <div className="flex items-center gap-2 shrink-0">
+                <span className="text-xs font-semibold font-mono-numbers tabular-nums text-[#0F172A] dark:text-[#F2F4F7]">
+                  {effectiveChecklist.filter((i) => i.enabled).length}/{effectiveChecklist.length}
+                </span>
+                <ChevronRight
+                  className={`${chevronClass} transition-transform duration-150 ${
+                    isChecklistEditorOpen ? 'rotate-90' : ''
+                  }`}
+                />
+              </div>
+            </button>
+
+            {isChecklistEditorOpen && (
+              <div className="ml-7 pt-2 border-t border-[#E4E4E7] dark:border-[#20252D] space-y-2">
+                {effectiveChecklist.map((item) => (
+                  <div
+                    key={item.id}
+                    className="flex items-center justify-between gap-2 py-1 text-xs"
+                  >
+                    <button
+                      type="button"
+                      onClick={() => handleToggleChecklistEnabled(item.id)}
+                      className="flex items-center gap-2 text-left min-w-0 flex-1 cursor-pointer"
+                    >
+                      <span
+                        className={`h-4 w-4 rounded-md border flex items-center justify-center shrink-0 transition-colors ${
+                          item.enabled
+                            ? 'bg-[#0F172A] border-[#0F172A] text-white dark:bg-white dark:border-white dark:text-[#050607]'
+                            : 'border-[#CBD5E1] dark:border-[#323A46]'
+                        }`}
+                      >
+                        {item.enabled && <Check className="h-2.5 w-2.5 stroke-[3]" />}
+                      </span>
+                      <span
+                        className={`truncate ${
+                          item.enabled
+                            ? 'text-[#0F172A] dark:text-[#F2F4F7] font-medium'
+                            : 'text-[#94A3B8] dark:text-[#64748B] line-through'
+                        }`}
+                      >
+                        {tr(item.labelId, item.labelEn)}
+                      </span>
+                    </button>
+                    {effectiveChecklist.length > 1 && (
+                      <button
+                        type="button"
+                        onClick={() => handleDeleteChecklistItem(item.id)}
+                        className="p-1 text-[#94A3B8] hover:text-[#E11D48] dark:hover:text-[#E05260] cursor-pointer"
+                        aria-label={tr('Hapus item', 'Delete item')}
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </button>
+                    )}
+                  </div>
+                ))}
+
+                <div className="flex items-center gap-2 pt-1">
+                  <input
+                    type="text"
+                    value={newChecklistLabel}
+                    onChange={(e) => setNewChecklistLabel(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault();
+                        handleAddChecklistItem();
+                      }
+                    }}
+                    placeholder={tr('Tambah aturan SOP baru...', 'Add new SOP rule...')}
+                    className="flex-1 px-3 py-1.5 rounded-lg bg-[#FAFAFA] dark:bg-[#0B0E13] border border-[#E4E4E7] dark:border-[#20252D] text-xs text-[#0F172A] dark:text-[#F2F4F7] placeholder-[#929BA9] focus:outline-none focus:border-[#0F172A] dark:focus:border-white"
+                  />
+                  <button
+                    type="button"
+                    onClick={handleAddChecklistItem}
+                    disabled={!newChecklistLabel.trim()}
+                    className="inline-flex items-center gap-1 px-3 py-1.5 rounded-full bg-[#0F172A] text-white dark:bg-white dark:text-[#050607] text-[11px] font-semibold disabled:opacity-40 cursor-pointer"
+                  >
+                    <Plus className="h-3 w-3" />
+                    <span>{tr('Tambah', 'Add')}</span>
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
         </div>
       </section>
 
@@ -861,7 +1266,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                       type="button"
                       disabled={isTestingBackend}
                       onClick={() => handleTestBackend(isEditingBackend ? backendUrlInput : backendInfo.url)}
-                      className="px-3 py-1 rounded-full border border-[#D9E2EC] dark:border-[#20252D] text-[11px] font-medium text-[#526071] dark:text-[#929BA9] hover:text-[#0F172A] dark:hover:text-[#F2F4F7] hover:bg-[#F5F7FA] dark:hover:bg-[#161A22] transition-colors disabled:opacity-50 cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/35 dark:focus-visible:ring-white/35"
+                      className="px-3 py-1 rounded-full border border-[#E4E4E7] dark:border-[#20252D] text-[11px] font-medium text-[#526071] dark:text-[#929BA9] hover:text-[#0F172A] dark:hover:text-[#F2F4F7] hover:bg-[#FAFAFA] dark:hover:bg-[#161A22] transition-colors disabled:opacity-50 cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/35 dark:focus-visible:ring-white/35"
                     >
                       {isTestingBackend ? tr('Menguji...', 'Testing...') : tr('Tes', 'Test')}
                     </button>
@@ -873,7 +1278,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                         setIsEditingBackend((prev) => !prev);
                         setBackendUrlInput(fresh.url);
                       }}
-                      className="px-3 py-1 rounded-full border border-[#D9E2EC] dark:border-[#20252D] bg-[#F5F7FA] dark:bg-[#161A22] text-[11px] font-semibold text-[#0F172A] dark:text-[#F2F4F7] hover:bg-[#EEF2F6] dark:hover:bg-[#1F2530] transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/35 dark:focus-visible:ring-white/35"
+                      className="px-3 py-1 rounded-full border border-[#E4E4E7] dark:border-[#20252D] bg-[#FAFAFA] dark:bg-[#161A22] text-[11px] font-semibold text-[#0F172A] dark:text-[#F2F4F7] hover:bg-[#F4F4F5] dark:hover:bg-[#1F2530] transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/35 dark:focus-visible:ring-white/35"
                     >
                       {isEditingBackend ? tr('Tutup', 'Close') : tr('Atur', 'Configure')}
                     </button>
@@ -881,7 +1286,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                 </div>
 
                 {backendHealth && (
-                  <div className="ml-7 px-3 py-2 rounded-lg bg-[#F5F7FA] dark:bg-[#0B0E13] border border-[#D9E2EC] dark:border-[#20252D] text-[11px] leading-relaxed">
+                  <div className="ml-7 px-3 py-2 rounded-lg bg-[#FAFAFA] dark:bg-[#0B0E13] border border-[#E4E4E7] dark:border-[#20252D] text-[11px] leading-relaxed text-editorial-justify">
                     <span
                       className={
                         backendHealth.reachable && backendHealth.geminiConfigured
@@ -903,7 +1308,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                       value={backendUrlInput}
                       onChange={(e) => setBackendUrlInput(e.target.value)}
                       placeholder="https://xxxx.supabase.co/functions/v1/tradevault-api"
-                      className="w-full px-3 py-2 rounded-lg bg-[#F5F7FA] dark:bg-[#0B0E13] border border-[#D9E2EC] dark:border-[#20252D] text-xs text-[#0F172A] dark:text-[#F2F4F7] placeholder-[#929BA9] focus:outline-none focus:border-[#0F172A] dark:focus:border-white"
+                      className="w-full px-3 py-2 rounded-lg bg-[#FAFAFA] dark:bg-[#0B0E13] border border-[#E4E4E7] dark:border-[#20252D] text-xs text-[#0F172A] dark:text-[#F2F4F7] placeholder-[#929BA9] focus:outline-none focus:border-[#0F172A] dark:focus:border-white"
                     />
                     <div className="flex flex-wrap items-center gap-2">
                       <button
@@ -917,7 +1322,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                       <button
                         type="button"
                         onClick={() => handleSaveBackendUrl(false)}
-                        className="px-3.5 py-1.5 rounded-full border border-[#D9E2EC] dark:border-[#20252D] text-[#0F172A] dark:text-[#F2F4F7] hover:bg-[#F5F7FA] dark:hover:bg-[#161A22] text-[11px] font-medium transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/35 dark:focus-visible:ring-white/35"
+                        className="px-3.5 py-1.5 rounded-full border border-[#E4E4E7] dark:border-[#20252D] text-[#0F172A] dark:text-[#F2F4F7] hover:bg-[#FAFAFA] dark:hover:bg-[#161A22] text-[11px] font-medium transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/35 dark:focus-visible:ring-white/35"
                       >
                         {tr('Simpan', 'Save')}
                       </button>
@@ -925,7 +1330,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                         <button
                           type="button"
                           onClick={handleResetBackendUrl}
-                          className="px-3.5 py-1.5 rounded-full border border-[#D9E2EC] dark:border-[#20252D] text-[#526071] dark:text-[#929BA9] hover:text-[#E11D48] dark:hover:text-[#E05260] text-[11px] font-medium transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/35 dark:focus-visible:ring-white/35"
+                          className="px-3.5 py-1.5 rounded-full border border-[#E4E4E7] dark:border-[#20252D] text-[#526071] dark:text-[#929BA9] hover:text-[#E11D48] dark:hover:text-[#E05260] text-[11px] font-medium transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/35 dark:focus-visible:ring-white/35"
                         >
                           {tr('Reset Otomatis', 'Reset to Auto')}
                         </button>
@@ -949,7 +1354,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                 <span className="text-xs font-semibold text-[#0F172A] dark:text-[#F2F4F7] block">
                   {tr('Mode Offline (News & Cycle)', 'Offline Mode (News & Cycle)')}
                 </span>
-                <span className="text-[11px] text-[#526071] dark:text-[#929BA9] block mt-0.5 leading-relaxed">
+                <span className="text-[11px] text-[#526071] dark:text-[#929BA9] block mt-0.5 leading-relaxed text-editorial-justify">
                   {tr(
                     'Hemat kuota API dengan menjeda pembaruan otomatis berita & cycle. Scan Kilat AI tetap aktif.',
                     'Save API quota by pausing live news & cycle updates. Instant AI Scan stays active.'
@@ -962,7 +1367,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                 type="button"
                 data-testid="settings-offline-mode-toggle"
                 onClick={handleToggleNewsCycleOffline}
-                className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full border border-[#D9E2EC] dark:border-[#20252D] bg-[#F5F7FA] dark:bg-[#0B0E13] hover:bg-[#EEF2F6] dark:hover:bg-[#161A22] text-xs font-semibold transition-colors cursor-pointer whitespace-nowrap focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/35 dark:focus-visible:ring-white/35"
+                className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full border border-[#E4E4E7] dark:border-[#20252D] bg-[#FAFAFA] dark:bg-[#0B0E13] hover:bg-[#F4F4F5] dark:hover:bg-[#161A22] text-xs font-semibold transition-colors cursor-pointer whitespace-nowrap focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/35 dark:focus-visible:ring-white/35"
               >
                 <span
                   className={
@@ -976,6 +1381,9 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
               </button>
             </div>
           </div>
+
+          {/* Instal Aplikasi PWA (Offline-First) */}
+          <PWAInstallButton variant="settings-row" />
         </div>
       </section>
 
@@ -1081,7 +1489,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
               <button
                 type="button"
                 onClick={handleLoadDemo}
-                className="px-3.5 py-1.5 rounded-full border border-[#D9E2EC] dark:border-[#20252D] hover:bg-[#F5F7FA] dark:hover:bg-[#161A22] text-[#0F172A] dark:text-[#F2F4F7] text-xs font-medium transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/35 dark:focus-visible:ring-white/35"
+                className="px-3.5 py-1.5 rounded-full border border-[#E4E4E7] dark:border-[#20252D] hover:bg-[#FAFAFA] dark:hover:bg-[#161A22] text-[#0F172A] dark:text-[#F2F4F7] text-xs font-medium transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/35 dark:focus-visible:ring-white/35"
               >
                 {tr('Muat Demo', 'Load Demo')}
               </button>
@@ -1089,7 +1497,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                 <button
                   type="button"
                   onClick={onRequestClearDemo}
-                  className="px-3.5 py-1.5 rounded-full border border-[#D9E2EC] dark:border-[#20252D] text-[#D97706] dark:text-[#F59E0B] hover:bg-[#F5F7FA] dark:hover:bg-[#161A22] text-xs font-semibold transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/35 dark:focus-visible:ring-white/35"
+                  className="px-3.5 py-1.5 rounded-full border border-[#E4E4E7] dark:border-[#20252D] text-[#D97706] dark:text-[#F59E0B] hover:bg-[#FAFAFA] dark:hover:bg-[#161A22] text-xs font-semibold transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/35 dark:focus-visible:ring-white/35"
                 >
                   {tr(`Hapus Demo (${demoCount})`, `Clear Demo (${demoCount})`)}
                 </button>
@@ -1129,7 +1537,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
         <span className={sectionLabelClass}>
           {tr('Zona Sensitif', 'Danger Zone')}
         </span>
-        <div className="bg-white dark:bg-[#101318] border border-[#D9E2EC] dark:border-[#20252D] shadow-[0_1px_2px_rgba(15,23,42,0.04)] dark:shadow-none rounded-xl px-4 py-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+        <div className="bg-white dark:bg-[#101318] border border-[#E4E4E7] dark:border-[#20252D] shadow-[0_1px_2px_rgba(15,23,42,0.04)] dark:shadow-none rounded-xl px-4 py-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
           <div className="flex items-start gap-3 min-w-0">
             <Trash2 className="h-4 w-4 shrink-0 text-[#E11D48] dark:text-[#E05260] stroke-[1.75] mt-0.5" />
             <div className="min-w-0">
@@ -1151,7 +1559,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                 type="button"
                 disabled={isCloudSyncing || trades.length === 0}
                 onClick={() => setIsConfirmingClearAll(true)}
-                className="px-4 py-1.5 rounded-full border border-[#D9E2EC] dark:border-[#20252D] text-[#526071] dark:text-[#929BA9] hover:text-[#E11D48] dark:hover:text-[#E05260] hover:bg-[#F5F7FA] dark:hover:bg-[#161A22] text-xs font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/35 dark:focus-visible:ring-white/35"
+                className="px-4 py-1.5 rounded-full border border-[#E4E4E7] dark:border-[#20252D] text-[#526071] dark:text-[#929BA9] hover:text-[#E11D48] dark:hover:text-[#E05260] hover:bg-[#FAFAFA] dark:hover:bg-[#161A22] text-xs font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/35 dark:focus-visible:ring-white/35"
               >
                 {tr('Reset Semua', 'Reset All')}
               </button>
@@ -1161,7 +1569,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                   type="button"
                   disabled={isCloudSyncing}
                   onClick={() => setIsConfirmingClearAll(false)}
-                  className="px-3.5 py-1.5 rounded-full border border-[#D9E2EC] dark:border-[#20252D] text-[#0F172A] dark:text-[#F2F4F7] text-xs font-medium hover:bg-[#F5F7FA] dark:hover:bg-[#161A22] transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/35 dark:focus-visible:ring-white/35"
+                  className="px-3.5 py-1.5 rounded-full border border-[#E4E4E7] dark:border-[#20252D] text-[#0F172A] dark:text-[#F2F4F7] text-xs font-medium hover:bg-[#FAFAFA] dark:hover:bg-[#161A22] transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/35 dark:focus-visible:ring-white/35"
                 >
                   {tr('Batal', 'Cancel')}
                 </button>
@@ -1179,26 +1587,79 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
         </div>
       </section>
 
-      {/* Minimalist App Version Footer (5-tap unlocks Developer Mode) */}
-      <div className="pt-2 flex items-center justify-between px-1 text-[11px] text-[#526071] dark:text-[#929BA9]">
-        <span>{tr('Vlo Journal', 'Vlo Journal')}</span>
-        <button
-          type="button"
-          onClick={() => {
-            if (isDeveloperMode) return;
-            const next = devTapCount + 1;
-            if (next >= 5) {
-              setDevTapCount(0);
-              onUnlockDeveloperMode?.();
-              showFeedback(tr('Mode Developer diaktifkan.', 'Developer Mode enabled.'));
-            } else {
-              setDevTapCount(next);
-            }
-          }}
-          className="font-mono-numbers tabular-nums hover:text-[#0F172A] dark:hover:text-[#F2F4F7] transition-colors cursor-default"
-        >
-          v1.0.0
-        </button>
+      {/* Minimalist App Version & Change Code Footer (5-tap unlocks Developer Mode) */}
+      <div className="pt-2 space-y-2.5">
+        <div className="flex flex-wrap items-center justify-between gap-2 px-1 text-[11px] text-[#526071] dark:text-[#929BA9]">
+          <button
+            type="button"
+            onClick={() => setShowVersionHistory((v) => !v)}
+            className="inline-flex items-center gap-1.5 hover:text-[#0F172A] dark:hover:text-[#F2F4F7] transition-colors cursor-pointer"
+          >
+            <span>{tr('Vlo Journal', 'Vlo Journal')}</span>
+            <span className="text-[#929BA9] dark:text-[#64748B]">·</span>
+            <span className="underline underline-offset-2 decoration-[#E4E4E7] dark:decoration-[#20252D]">
+              {showVersionHistory
+                ? tr('Tutup Riwayat Versi', 'Hide Version Log')
+                : tr('Riwayat Perubahan', 'Changelog')}
+            </span>
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              if (isDeveloperMode) return;
+              const next = devTapCount + 1;
+              if (next >= 5) {
+                setDevTapCount(0);
+                onUnlockDeveloperMode?.();
+                showFeedback(tr('Mode Developer diaktifkan.', 'Developer Mode enabled.'));
+              } else {
+                setDevTapCount(next);
+              }
+            }}
+            className="font-mono-numbers tabular-nums hover:text-[#0F172A] dark:hover:text-[#F2F4F7] transition-colors cursor-default"
+            title={`${tr('Versi', 'Version')} v${APP_VERSION} (${APP_RELEASE_DATE})`}
+          >
+            v{APP_VERSION}
+          </button>
+        </div>
+
+        {showVersionHistory && (
+          <div className="rounded-2xl bg-white dark:bg-[#101318] border border-[#E4E4E7] dark:border-[#20252D] p-4 space-y-3">
+            <div className="flex items-center justify-between pb-2.5 border-b border-[#E4E4E7] dark:border-[#20252D]">
+              <span className="text-xs font-semibold uppercase tracking-wider text-[#0F172A] dark:text-[#F2F4F7]">
+                {tr('Riwayat Versi', 'Version History')}
+              </span>
+              <span className="text-[11px] font-mono-numbers tabular-nums text-[#526071] dark:text-[#929BA9]">
+                v{APP_VERSION}
+              </span>
+            </div>
+            <div className="space-y-2.5">
+              {APP_VERSION_HISTORY.map((entry) => (
+                <div
+                  key={`${entry.version}-${entry.changeCode}`}
+                  className="p-3 rounded-xl bg-[#FAFAFA] dark:bg-[#0B0E13] border border-[#E4E4E7] dark:border-[#20252D] space-y-1"
+                >
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div className="flex items-center gap-2 font-mono-numbers tabular-nums">
+                      <span className="text-xs font-bold text-[#0F172A] dark:text-[#F2F4F7]">
+                        v{entry.version}
+                      </span>
+                    </div>
+                    <span className="text-[10px] font-mono-numbers tabular-nums text-[#526071] dark:text-[#929BA9]">
+                      {entry.date}
+                    </span>
+                  </div>
+                  <p className="text-xs font-semibold text-[#0F172A] dark:text-[#F2F4F7]">
+                    {tr(entry.titleId, entry.titleEn)}
+                  </p>
+                  <p className="text-[11px] text-[#526071] dark:text-[#929BA9] leading-relaxed text-editorial-justify">
+                    {tr(entry.summaryId, entry.summaryEn)}
+                  </p>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Trading Preferences Modal */}

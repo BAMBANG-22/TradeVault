@@ -637,13 +637,13 @@ export const JsonBackupModal: React.FC<JsonBackupModalProps> = ({
         role="dialog"
         aria-modal="true"
         aria-label={tr('Cadangan & Pemulihan Data', 'Backup & Restore Data')}
-        className="w-full max-w-xl max-h-[90vh] flex flex-col rounded-2xl border border-[#D9E2EC] dark:border-[#20252D] bg-white dark:bg-[#101318] shadow-[0_20px_50px_-12px_rgba(15,23,42,0.22)] dark:shadow-[0_24px_60px_-12px_rgba(0,0,0,0.8)] overflow-hidden text-[#0F172A] dark:text-[#F2F4F7]"
+        className="w-full max-w-xl max-h-[90vh] flex flex-col rounded-2xl border border-[#E4E4E7] dark:border-[#20252D] bg-white dark:bg-[#101318] shadow-[0_20px_50px_-12px_rgba(15,23,42,0.22)] dark:shadow-[0_24px_60px_-12px_rgba(0,0,0,0.8)] overflow-hidden text-[#0F172A] dark:text-[#F2F4F7]"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
-        <div className="px-5 py-4 border-b border-[#D9E2EC] dark:border-[#20252D] flex items-center justify-between gap-3 shrink-0">
+        <div className="px-5 py-4 border-b border-[#E4E4E7] dark:border-[#20252D] flex items-center justify-between gap-3 shrink-0">
           <div className="flex items-center gap-3 min-w-0">
-            <div className="h-9 w-9 rounded-lg bg-[#F5F7FA] dark:bg-[#161A22] border border-[#D9E2EC] dark:border-[#20252D] flex items-center justify-center text-[#526071] dark:text-[#929BA9] shrink-0">
+            <div className="h-9 w-9 rounded-lg bg-[#FAFAFA] dark:bg-[#161A22] border border-[#E4E4E7] dark:border-[#20252D] flex items-center justify-center text-[#526071] dark:text-[#929BA9] shrink-0">
               <Database className="h-4 w-4 stroke-[1.75]" />
             </div>
             <div className="min-w-0">
@@ -661,7 +661,7 @@ export const JsonBackupModal: React.FC<JsonBackupModalProps> = ({
               if (!isBackupOrRestoreBusy) onClose();
             }}
             disabled={isBackupOrRestoreBusy}
-            className="min-h-[38px] min-w-[38px] flex items-center justify-center rounded-full text-[#526071] dark:text-[#929BA9] hover:text-[#0F172A] dark:hover:text-[#F2F4F7] hover:bg-[#F5F7FA] dark:hover:bg-[#161A22] transition-colors disabled:opacity-50 cursor-pointer shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/35 dark:focus-visible:ring-white/35"
+            className="min-h-[38px] min-w-[38px] flex items-center justify-center rounded-full text-[#526071] dark:text-[#929BA9] hover:text-[#0F172A] dark:hover:text-[#F2F4F7] hover:bg-[#F4F4F5] dark:hover:bg-[#161A22] transition-colors disabled:opacity-50 cursor-pointer shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/35 dark:focus-visible:ring-white/35"
             aria-label={tr('Tutup menu cadangan data', 'Close data backup menu')}
           >
             <X className="h-4 w-4 stroke-[1.75]" />
@@ -671,7 +671,7 @@ export const JsonBackupModal: React.FC<JsonBackupModalProps> = ({
         {/* Body */}
         <div className="p-5 space-y-4 overflow-y-auto flex-1">
           {/* Segmented Tab Switcher */}
-          <div className="grid grid-cols-2 gap-1 p-1 rounded-full bg-[#F5F7FA] dark:bg-[#0B0E13] border border-[#D9E2EC] dark:border-[#20252D]">
+          <div className="grid grid-cols-2 gap-1 p-1 rounded-full bg-[#F4F4F5] dark:bg-[#0B0E13] border border-[#E4E4E7] dark:border-[#20252D]">
             <button
               type="button"
               onClick={() => setActiveTab('export')}
@@ -738,8 +738,8 @@ export const JsonBackupModal: React.FC<JsonBackupModalProps> = ({
                       }}
                       className={`p-3 rounded-xl border text-left transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/35 dark:focus-visible:ring-white/35 ${
                         active
-                          ? 'border-[#0F172A] dark:border-white bg-[#F5F7FA] dark:bg-[#161A22]'
-                          : 'border-[#D9E2EC] dark:border-[#20252D] bg-white dark:bg-[#0B0E13] hover:bg-[#F5F7FA] dark:hover:bg-[#161A22]/70'
+                          ? 'border-[#0F172A] dark:border-white bg-[#FAFAFA] dark:bg-[#161A22]'
+                          : 'border-[#E4E4E7] dark:border-[#20252D] bg-white dark:bg-[#0B0E13] hover:bg-[#FAFAFA] dark:hover:bg-[#161A22]/70'
                       }`}
                     >
                       <div className="flex items-center gap-1.5">
@@ -771,7 +771,7 @@ export const JsonBackupModal: React.FC<JsonBackupModalProps> = ({
               {/* Status Feedback */}
               {exportStatusMsg && (
                 <div
-                  className={`p-3 rounded-xl border bg-[#F5F7FA] dark:bg-[#0B0E13] border-[#D9E2EC] dark:border-[#20252D] text-xs flex items-center gap-2 ${
+                  className={`p-3 rounded-xl border bg-[#FAFAFA] dark:bg-[#0B0E13] border-[#E4E4E7] dark:border-[#20252D] text-xs flex items-center gap-2 ${
                     exportStatusMsg.type === 'success'
                       ? 'text-[#059669] dark:text-[#00A878]'
                       : exportStatusMsg.type === 'error'
@@ -793,7 +793,7 @@ export const JsonBackupModal: React.FC<JsonBackupModalProps> = ({
               {/* FORMAT A: ZIP */}
               {exportFormat === 'zip' && (
                 <div className="space-y-3.5">
-                  <div className="grid grid-cols-2 sm:grid-cols-4 rounded-xl bg-[#F5F7FA] dark:bg-[#0B0E13] border border-[#D9E2EC] dark:border-[#20252D] divide-y sm:divide-y-0 sm:divide-x divide-[#D9E2EC] dark:divide-[#20252D]">
+                  <div className="grid grid-cols-2 sm:grid-cols-4 rounded-xl bg-[#FAFAFA] dark:bg-[#0B0E13] border border-[#E4E4E7] dark:border-[#20252D] divide-y sm:divide-y-0 sm:divide-x divide-[#E4E4E7] dark:divide-[#20252D]">
                     <div className="px-3 py-2.5">
                       <span className="text-[10px] text-[#526071] dark:text-[#929BA9] block">
                         {tr('Transaksi', 'Trades')}
@@ -829,7 +829,7 @@ export const JsonBackupModal: React.FC<JsonBackupModalProps> = ({
                   </div>
 
                   {screenshotStats.storageCount > 0 && !currentUser?.id && (
-                    <div className="p-3 rounded-xl bg-[#F5F7FA] dark:bg-[#0B0E13] border border-[#D9E2EC] dark:border-[#20252D] text-[11px] text-[#D97706] dark:text-[#F59E0B] flex items-start gap-2">
+                    <div className="p-3 rounded-xl bg-[#FAFAFA] dark:bg-[#0B0E13] border border-[#E4E4E7] dark:border-[#20252D] text-[11px] text-[#D97706] dark:text-[#F59E0B] flex items-start gap-2">
                       <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5 stroke-[1.75]" />
                       <span>
                         {tr(
@@ -841,7 +841,7 @@ export const JsonBackupModal: React.FC<JsonBackupModalProps> = ({
                   )}
 
                   {zipPhase === 'running' && (
-                    <div className="p-4 rounded-xl bg-[#F5F7FA] dark:bg-[#0B0E13] border border-[#D9E2EC] dark:border-[#20252D] space-y-2.5">
+                    <div className="p-4 rounded-xl bg-[#FAFAFA] dark:bg-[#0B0E13] border border-[#E4E4E7] dark:border-[#20252D] space-y-2.5">
                       <div className="flex items-center justify-between text-xs">
                         <span className="font-semibold text-[#0F172A] dark:text-white flex items-center gap-2">
                           <Loader2 className="h-4 w-4 animate-spin stroke-[1.75]" />
@@ -851,7 +851,7 @@ export const JsonBackupModal: React.FC<JsonBackupModalProps> = ({
                           {zipProgress?.percent || 0}%
                         </span>
                       </div>
-                      <div className="w-full h-1.5 rounded-full bg-white dark:bg-[#101318] overflow-hidden border border-[#D9E2EC] dark:border-[#20252D]">
+                      <div className="w-full h-1.5 rounded-full bg-white dark:bg-[#101318] overflow-hidden border border-[#E4E4E7] dark:border-[#20252D]">
                         <div
                           className="h-full bg-[#0F172A] dark:bg-white transition-all duration-200"
                           style={{ width: `${zipProgress?.percent || 0}%` }}
@@ -873,7 +873,7 @@ export const JsonBackupModal: React.FC<JsonBackupModalProps> = ({
                   )}
 
                   {zipPhase === 'completed' && zipResult && (
-                    <div className="p-4 rounded-xl bg-[#F5F7FA] dark:bg-[#0B0E13] border border-[#D9E2EC] dark:border-[#20252D] space-y-3">
+                    <div className="p-4 rounded-xl bg-[#FAFAFA] dark:bg-[#0B0E13] border border-[#E4E4E7] dark:border-[#20252D] space-y-3">
                       <div className="flex items-center justify-between text-xs">
                         <span className="font-semibold text-[#059669] dark:text-[#00A878] flex items-center gap-1.5">
                           <CheckCircle2 className="h-4 w-4 stroke-[1.75]" />
@@ -905,7 +905,7 @@ export const JsonBackupModal: React.FC<JsonBackupModalProps> = ({
                           type="button"
                           onClick={handleResetZipState}
                           disabled={isRedownloadingZip}
-                          className="px-3.5 py-1.5 rounded-full border border-[#D9E2EC] dark:border-[#20252D] bg-white dark:bg-[#101318] text-xs font-semibold text-[#0F172A] dark:text-[#F2F4F7] cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/35 dark:focus-visible:ring-white/35"
+                          className="px-3.5 py-1.5 rounded-full border border-[#E4E4E7] dark:border-[#20252D] bg-white dark:bg-[#101318] text-xs font-semibold text-[#0F172A] dark:text-[#F2F4F7] cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/35 dark:focus-visible:ring-white/35"
                         >
                           {tr('Selesai', 'Done')}
                         </button>
@@ -914,7 +914,7 @@ export const JsonBackupModal: React.FC<JsonBackupModalProps> = ({
                   )}
 
                   {zipPhase === 'failed' && (
-                    <div className="p-4 rounded-xl bg-[#F5F7FA] dark:bg-[#0B0E13] border border-[#D9E2EC] dark:border-[#20252D] space-y-3">
+                    <div className="p-4 rounded-xl bg-[#FAFAFA] dark:bg-[#0B0E13] border border-[#E4E4E7] dark:border-[#20252D] space-y-3">
                       <div className="flex items-center gap-2 text-xs text-[#E11D48] dark:text-[#E05260] font-semibold">
                         <AlertTriangle className="h-4 w-4 shrink-0 stroke-[1.75]" />
                         <span>
@@ -924,7 +924,7 @@ export const JsonBackupModal: React.FC<JsonBackupModalProps> = ({
                           )}
                         </span>
                       </div>
-                      <div className="max-h-32 overflow-y-auto divide-y divide-[#D9E2EC] dark:divide-[#20252D] border-t border-b border-[#D9E2EC] dark:border-[#20252D] text-[11px]">
+                      <div className="max-h-32 overflow-y-auto divide-y divide-[#E4E4E7] dark:divide-[#20252D] border-t border-b border-[#E4E4E7] dark:border-[#20252D] text-[11px]">
                         {zipFailedItems.map((item, idx) => (
                           <div
                             key={idx}
@@ -951,7 +951,7 @@ export const JsonBackupModal: React.FC<JsonBackupModalProps> = ({
                         <button
                           type="button"
                           onClick={() => handleStartZipBackup(true)}
-                          className="px-3.5 py-1.5 rounded-full border border-[#D9E2EC] dark:border-[#20252D] bg-white dark:bg-[#101318] text-[#D97706] dark:text-[#F59E0B] text-xs font-semibold inline-flex items-center gap-1.5 cursor-pointer"
+                          className="px-3.5 py-1.5 rounded-full border border-[#E4E4E7] dark:border-[#20252D] bg-white dark:bg-[#101318] text-[#D97706] dark:text-[#F59E0B] text-xs font-semibold inline-flex items-center gap-1.5 cursor-pointer"
                         >
                           <AlertCircle className="h-3.5 w-3.5 stroke-[1.75]" />
                           <span>{tr('Unduh Parsial', 'Partial Backup')}</span>
@@ -992,7 +992,7 @@ export const JsonBackupModal: React.FC<JsonBackupModalProps> = ({
               {/* FORMAT B: JSON */}
               {exportFormat === 'json' && (
                 <div className="space-y-3.5">
-                  <div className="grid grid-cols-2 sm:grid-cols-4 rounded-xl bg-[#F5F7FA] dark:bg-[#0B0E13] border border-[#D9E2EC] dark:border-[#20252D] divide-y sm:divide-y-0 sm:divide-x divide-[#D9E2EC] dark:divide-[#20252D]">
+                  <div className="grid grid-cols-2 sm:grid-cols-4 rounded-xl bg-[#FAFAFA] dark:bg-[#0B0E13] border border-[#E4E4E7] dark:border-[#20252D] divide-y sm:divide-y-0 sm:divide-x divide-[#E4E4E7] dark:divide-[#20252D]">
                     <div className="px-3 py-2.5">
                       <span className="text-[10px] text-[#526071] dark:text-[#929BA9] block">
                         {tr('Total', 'Total')}
@@ -1053,7 +1053,7 @@ export const JsonBackupModal: React.FC<JsonBackupModalProps> = ({
               {/* FORMAT C: CSV */}
               {exportFormat === 'csv' && (
                 <div className="space-y-3.5">
-                  <div className="grid grid-cols-2 rounded-xl bg-[#F5F7FA] dark:bg-[#0B0E13] border border-[#D9E2EC] dark:border-[#20252D] divide-x divide-[#D9E2EC] dark:divide-[#20252D]">
+                  <div className="grid grid-cols-2 rounded-xl bg-[#FAFAFA] dark:bg-[#0B0E13] border border-[#E4E4E7] dark:border-[#20252D] divide-x divide-[#E4E4E7] dark:divide-[#20252D]">
                     <div className="px-3.5 py-2.5">
                       <span className="text-[10px] text-[#526071] dark:text-[#929BA9] block">
                         {tr('Baris Transaksi', 'Trade Rows')}
@@ -1103,7 +1103,7 @@ export const JsonBackupModal: React.FC<JsonBackupModalProps> = ({
           {activeTab === 'import' && (
             <div className="space-y-4">
               {/* File Picker */}
-              <div className="p-4 rounded-xl bg-[#F5F7FA] dark:bg-[#0B0E13] border border-dashed border-[#D9E2EC] dark:border-[#20252D] hover:border-[#0F172A] dark:hover:border-white transition-colors text-center">
+              <div className="p-4 rounded-xl bg-[#FAFAFA] dark:bg-[#0B0E13] border border-dashed border-[#E4E4E7] dark:border-[#20252D] hover:border-[#0F172A] dark:hover:border-white transition-colors text-center">
                 <input
                   type="file"
                   id="backup-file-input"
@@ -1132,7 +1132,7 @@ export const JsonBackupModal: React.FC<JsonBackupModalProps> = ({
               </div>
 
               {errorMessage && (
-                <div className="p-3 rounded-xl bg-[#F5F7FA] dark:bg-[#0B0E13] border border-[#D9E2EC] dark:border-[#20252D] text-xs text-[#E11D48] dark:text-[#E05260] flex items-center gap-2 font-medium">
+                <div className="p-3 rounded-xl bg-[#FAFAFA] dark:bg-[#0B0E13] border border-[#E4E4E7] dark:border-[#20252D] text-xs text-[#E11D48] dark:text-[#E05260] flex items-center gap-2 font-medium">
                   <AlertTriangle className="h-4 w-4 shrink-0 stroke-[1.75]" />
                   <span>{errorMessage}</span>
                 </div>
@@ -1140,7 +1140,7 @@ export const JsonBackupModal: React.FC<JsonBackupModalProps> = ({
 
               {/* Restore ZIP Progress */}
               {restoreZipPhase === 'uploading' && (
-                <div className="p-4 rounded-xl bg-[#F5F7FA] dark:bg-[#0B0E13] border border-[#D9E2EC] dark:border-[#20252D] space-y-2.5">
+                <div className="p-4 rounded-xl bg-[#FAFAFA] dark:bg-[#0B0E13] border border-[#E4E4E7] dark:border-[#20252D] space-y-2.5">
                   <div className="flex items-center justify-between text-xs">
                     <span className="font-semibold text-[#0F172A] dark:text-white flex items-center gap-2">
                       <Loader2 className="h-4 w-4 animate-spin stroke-[1.75]" />
@@ -1150,7 +1150,7 @@ export const JsonBackupModal: React.FC<JsonBackupModalProps> = ({
                       {restoreZipProgress?.percent || 0}%
                     </span>
                   </div>
-                  <div className="w-full h-1.5 rounded-full bg-white dark:bg-[#101318] overflow-hidden border border-[#D9E2EC] dark:border-[#20252D]">
+                  <div className="w-full h-1.5 rounded-full bg-white dark:bg-[#101318] overflow-hidden border border-[#E4E4E7] dark:border-[#20252D]">
                     <div
                       className="h-full bg-[#0F172A] dark:bg-white transition-all duration-200"
                       style={{ width: `${restoreZipProgress?.percent || 0}%` }}
@@ -1173,13 +1173,13 @@ export const JsonBackupModal: React.FC<JsonBackupModalProps> = ({
 
               {/* Restore ZIP Completed */}
               {restoreZipPhase === 'completed' && restoreZipSuccessSummary && (
-                <div className="p-4 rounded-xl bg-[#F5F7FA] dark:bg-[#0B0E13] border border-[#D9E2EC] dark:border-[#20252D] space-y-3">
+                <div className="p-4 rounded-xl bg-[#FAFAFA] dark:bg-[#0B0E13] border border-[#E4E4E7] dark:border-[#20252D] space-y-3">
                   <div className="flex items-center gap-2 text-xs text-[#059669] dark:text-[#00A878] font-semibold">
                     <CheckCircle2 className="h-4 w-4 stroke-[1.75]" />
                     <span>{tr('Pemulihan Arsip Selesai', 'Archive Restore Complete')}</span>
                   </div>
 
-                  <div className="grid grid-cols-3 border-t border-b border-[#D9E2EC] dark:border-[#20252D] divide-x divide-[#D9E2EC] dark:divide-[#20252D] text-xs">
+                  <div className="grid grid-cols-3 border-t border-b border-[#E4E4E7] dark:border-[#20252D] divide-x divide-[#E4E4E7] dark:divide-[#20252D] text-xs">
                     <div className="py-2.5 pr-3">
                       <span className="text-[10px] text-[#526071] dark:text-[#929BA9] block">
                         {tr('Dipulihkan', 'Restored')}
@@ -1218,7 +1218,7 @@ export const JsonBackupModal: React.FC<JsonBackupModalProps> = ({
 
               {/* Restore ZIP Failed */}
               {restoreZipPhase === 'failed' && (
-                <div className="p-4 rounded-xl bg-[#F5F7FA] dark:bg-[#0B0E13] border border-[#D9E2EC] dark:border-[#20252D] space-y-3">
+                <div className="p-4 rounded-xl bg-[#FAFAFA] dark:bg-[#0B0E13] border border-[#E4E4E7] dark:border-[#20252D] space-y-3">
                   <div className="flex items-center gap-2 text-xs text-[#E11D48] dark:text-[#E05260] font-semibold">
                     <AlertTriangle className="h-4 w-4 shrink-0 stroke-[1.75]" />
                     <span>
@@ -1228,7 +1228,7 @@ export const JsonBackupModal: React.FC<JsonBackupModalProps> = ({
                       )}
                     </span>
                   </div>
-                  <div className="max-h-32 overflow-y-auto divide-y divide-[#D9E2EC] dark:divide-[#20252D] border-t border-b border-[#D9E2EC] dark:border-[#20252D] text-[11px]">
+                  <div className="max-h-32 overflow-y-auto divide-y divide-[#E4E4E7] dark:divide-[#20252D] border-t border-b border-[#E4E4E7] dark:border-[#20252D] text-[11px]">
                     {restoreZipFailedItems.map((item, idx) => (
                       <div
                         key={idx}
@@ -1255,7 +1255,7 @@ export const JsonBackupModal: React.FC<JsonBackupModalProps> = ({
                     <button
                       type="button"
                       onClick={() => handleExecuteZipRestore(true)}
-                      className="px-3.5 py-1.5 rounded-full border border-[#D9E2EC] dark:border-[#20252D] bg-white dark:bg-[#101318] text-[#D97706] dark:text-[#F59E0B] text-xs font-semibold cursor-pointer"
+                      className="px-3.5 py-1.5 rounded-full border border-[#E4E4E7] dark:border-[#20252D] bg-white dark:bg-[#101318] text-[#D97706] dark:text-[#F59E0B] text-xs font-semibold cursor-pointer"
                     >
                       {tr('Lanjut Tanpa Gambar Gagal', 'Continue Without Failed Images')}
                     </button>
@@ -1273,7 +1273,7 @@ export const JsonBackupModal: React.FC<JsonBackupModalProps> = ({
               {/* Validation Report */}
               {validationReport && restoreZipPhase === 'idle' && (
                 <div className="space-y-3.5">
-                  <div className="p-3.5 rounded-xl bg-[#F5F7FA] dark:bg-[#0B0E13] border border-[#D9E2EC] dark:border-[#20252D] space-y-3">
+                  <div className="p-3.5 rounded-xl bg-[#FAFAFA] dark:bg-[#0B0E13] border border-[#E4E4E7] dark:border-[#20252D] space-y-3">
                     <div className="flex items-center justify-between gap-2 text-xs">
                       <span
                         className={`font-semibold flex items-center gap-1.5 ${
@@ -1300,7 +1300,7 @@ export const JsonBackupModal: React.FC<JsonBackupModalProps> = ({
                     </div>
 
                     {validationReport.isValid && (
-                      <div className="grid grid-cols-2 sm:grid-cols-4 border-t border-[#D9E2EC] dark:border-[#20252D] pt-2.5 gap-y-2 sm:gap-y-0 sm:divide-x divide-[#D9E2EC] dark:divide-[#20252D]">
+                      <div className="grid grid-cols-2 sm:grid-cols-4 border-t border-[#E4E4E7] dark:border-[#20252D] pt-2.5 gap-y-2 sm:gap-y-0 sm:divide-x divide-[#E4E4E7] dark:divide-[#20252D]">
                         <div className="sm:pr-3">
                           <span className="text-[10px] text-[#526071] dark:text-[#929BA9] block">
                             {tr('Transaksi', 'Trades')}
@@ -1370,8 +1370,8 @@ export const JsonBackupModal: React.FC<JsonBackupModalProps> = ({
                           onClick={() => setImportMode('merge')}
                           className={`p-3 rounded-xl border text-left transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/35 dark:focus-visible:ring-white/35 ${
                             importMode === 'merge'
-                              ? 'border-[#0F172A] dark:border-white bg-[#F5F7FA] dark:bg-[#161A22]'
-                              : 'border-[#D9E2EC] dark:border-[#20252D] bg-white dark:bg-[#0B0E13]'
+                              ? 'border-[#0F172A] dark:border-white bg-[#F4F4F5] dark:bg-[#161A22]'
+                              : 'border-[#E4E4E7] dark:border-[#20252D] bg-white dark:bg-[#0B0E13]'
                           }`}
                         >
                           <span
@@ -1393,8 +1393,8 @@ export const JsonBackupModal: React.FC<JsonBackupModalProps> = ({
                           onClick={() => setImportMode('replace')}
                           className={`p-3 rounded-xl border text-left transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#E11D48]/50 ${
                             importMode === 'replace'
-                              ? 'border-[#E11D48] dark:border-[#E05260] bg-[#F5F7FA] dark:bg-[#161A22]'
-                              : 'border-[#D9E2EC] dark:border-[#20252D] bg-white dark:bg-[#0B0E13]'
+                              ? 'border-[#E11D48] dark:border-[#E05260] bg-[#F4F4F5] dark:bg-[#161A22]'
+                              : 'border-[#E4E4E7] dark:border-[#20252D] bg-white dark:bg-[#0B0E13]'
                           }`}
                         >
                           <span className="font-bold text-[#E11D48] dark:text-[#E05260] block">
@@ -1407,7 +1407,7 @@ export const JsonBackupModal: React.FC<JsonBackupModalProps> = ({
                       </div>
 
                       {importMode === 'merge' && mergeStats && (
-                        <div className="px-3.5 py-2.5 rounded-xl bg-[#F5F7FA] dark:bg-[#0B0E13] border border-[#D9E2EC] dark:border-[#20252D] text-[11px] font-mono-numbers tabular-nums text-[#526071] dark:text-[#929BA9] flex flex-wrap gap-3">
+                        <div className="px-3.5 py-2.5 rounded-xl bg-[#FAFAFA] dark:bg-[#0B0E13] border border-[#E4E4E7] dark:border-[#20252D] text-[11px] font-mono-numbers tabular-nums text-[#526071] dark:text-[#929BA9] flex flex-wrap gap-3">
                           <span>
                             <strong className="text-[#059669] dark:text-[#00A878]">+{mergeStats.newItems}</strong>{' '}
                             {tr('baru', 'new')}
@@ -1424,12 +1424,12 @@ export const JsonBackupModal: React.FC<JsonBackupModalProps> = ({
                       )}
 
                       {importMode === 'replace' && (
-                        <label className="flex items-start gap-2.5 p-3 rounded-xl bg-[#F5F7FA] dark:bg-[#0B0E13] border border-[#D9E2EC] dark:border-[#20252D] cursor-pointer text-[11px] text-[#0F172A] dark:text-[#F2F4F7]">
+                        <label className="flex items-start gap-2.5 p-3 rounded-xl bg-[#FAFAFA] dark:bg-[#0B0E13] border border-[#E4E4E7] dark:border-[#20252D] cursor-pointer text-[11px] text-[#0F172A] dark:text-[#F2F4F7]">
                           <input
                             type="checkbox"
                             checked={confirmOverwrite}
                             onChange={(e) => setConfirmOverwrite(e.target.checked)}
-                            className="mt-0.5 rounded border-[#D9E2EC] dark:border-[#20252D] accent-[#0F172A] dark:accent-white focus:ring-0"
+                            className="mt-0.5 rounded border-[#E4E4E7] dark:border-[#20252D] accent-[#0F172A] dark:accent-white focus:ring-0"
                           />
                           <span>
                             {tr(
@@ -1441,7 +1441,7 @@ export const JsonBackupModal: React.FC<JsonBackupModalProps> = ({
                       )}
 
                       {currentUser && (
-                        <label className="flex items-center justify-between gap-3 p-3 rounded-xl bg-[#F5F7FA] dark:bg-[#0B0E13] border border-[#D9E2EC] dark:border-[#20252D] cursor-pointer text-xs">
+                        <label className="flex items-center justify-between gap-3 p-3 rounded-xl bg-[#FAFAFA] dark:bg-[#0B0E13] border border-[#E4E4E7] dark:border-[#20252D] cursor-pointer text-xs">
                           <div className="flex items-center gap-2 min-w-0">
                             <Cloud className="h-4 w-4 text-[#0F172A] dark:text-white shrink-0 stroke-[1.75]" />
                             <div className="min-w-0">
@@ -1457,7 +1457,7 @@ export const JsonBackupModal: React.FC<JsonBackupModalProps> = ({
                             type="checkbox"
                             checked={syncToCloud}
                             onChange={(e) => setSyncToCloud(e.target.checked)}
-                            className="rounded border-[#D9E2EC] dark:border-[#20252D] accent-[#0F172A] dark:accent-white focus:ring-0 shrink-0"
+                            className="rounded border-[#E4E4E7] dark:border-[#20252D] accent-[#0F172A] dark:accent-white focus:ring-0 shrink-0"
                           />
                         </label>
                       )}

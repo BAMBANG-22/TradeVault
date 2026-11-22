@@ -148,7 +148,7 @@ export const NotificationCenter: React.FC<NotificationCenterProps> = ({
         style={{
           contain: 'layout style paint',
         }}
-        className={`vlo-notif-panel z-50 fixed inset-x-3 top-[calc(3.75rem+env(safe-area-inset-top,0px))] sm:inset-x-auto sm:absolute sm:right-0 sm:top-[calc(100%+0.5rem)] sm:w-[396px] max-h-[min(74vh,480px)] sm:max-h-[min(72vh,520px)] flex flex-col rounded-xl border border-[#D9E2EC] dark:border-[#20252D] bg-white dark:bg-[#101318] shadow-[0_16px_40px_-12px_rgba(15,23,42,0.14),0_2px_8px_rgba(15,23,42,0.04)] dark:shadow-[0_24px_48px_-12px_rgba(0,0,0,0.75),inset_0_1px_0_rgba(255,255,255,0.04)] overflow-hidden ${
+        className={`vlo-notif-panel z-50 fixed inset-x-3 top-[calc(3.75rem+env(safe-area-inset-top,0px))] sm:inset-x-auto sm:absolute sm:right-0 sm:top-[calc(100%+0.5rem)] sm:w-[396px] max-h-[min(74vh,480px)] sm:max-h-[min(72vh,520px)] flex flex-col rounded-xl border border-[#E4E4E7] dark:border-[#20252D] bg-white dark:bg-[#101318] shadow-[0_16px_40px_-12px_rgba(15,23,42,0.14),0_2px_8px_rgba(15,23,42,0.04)] dark:shadow-[0_24px_48px_-12px_rgba(0,0,0,0.75),inset_0_1px_0_rgba(255,255,255,0.04)] overflow-hidden ${
           isVisible ? 'vlo-notif-panel-open' : 'vlo-notif-panel-closed'
         }`}
       >
@@ -170,7 +170,7 @@ export const NotificationCenter: React.FC<NotificationCenterProps> = ({
               <button
                 type="button"
                 onClick={onMarkAllRead}
-                className="inline-flex items-center gap-1.5 min-h-[30px] px-2.5 py-1 rounded-full text-[11px] font-semibold text-[#526071] dark:text-[#929BA9] hover:text-[#0F172A] dark:hover:text-[#F2F4F7] hover:bg-[#EEF2F6] dark:hover:bg-[#161A22] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/35 dark:focus-visible:ring-white/35 transition-colors cursor-pointer whitespace-nowrap"
+                className="inline-flex items-center gap-1.5 min-h-[30px] px-2.5 py-1 rounded-full text-[11px] font-semibold text-[#526071] dark:text-[#929BA9] hover:text-[#0F172A] dark:hover:text-[#F2F4F7] hover:bg-[#F4F4F5] dark:hover:bg-[#161A22] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/35 dark:focus-visible:ring-white/35 transition-colors cursor-pointer whitespace-nowrap"
                 title={tr('Tandai semua sudah dibaca', 'Mark all as read')}
               >
                 <CheckCheck className="h-3.5 w-3.5 stroke-[1.75]" />
@@ -181,7 +181,7 @@ export const NotificationCenter: React.FC<NotificationCenterProps> = ({
               <button
                 type="button"
                 onClick={onClearAll}
-                className="inline-flex items-center justify-center h-8 w-8 rounded-full text-[#526071] dark:text-[#929BA9] hover:text-[#E11D48] dark:hover:text-[#E05260] hover:bg-[#EEF2F6] dark:hover:bg-[#161A22] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/35 dark:focus-visible:ring-white/35 transition-colors cursor-pointer"
+                className="inline-flex items-center justify-center h-8 w-8 rounded-full text-[#526071] dark:text-[#929BA9] hover:text-[#E11D48] dark:hover:text-[#E05260] hover:bg-[#F4F4F5] dark:hover:bg-[#161A22] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/35 dark:focus-visible:ring-white/35 transition-colors cursor-pointer"
                 aria-label={tr('Bersihkan semua notifikasi', 'Clear all notifications')}
                 title={tr('Bersihkan semua notifikasi', 'Clear all notifications')}
               >
@@ -191,7 +191,7 @@ export const NotificationCenter: React.FC<NotificationCenterProps> = ({
             <button
               type="button"
               onClick={onClose}
-              className="sm:hidden inline-flex items-center justify-center h-8 w-8 rounded-full text-[#526071] dark:text-[#929BA9] hover:text-[#0F172A] dark:hover:text-[#F2F4F7] hover:bg-[#EEF2F6] dark:hover:bg-[#161A22] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/35 dark:focus-visible:ring-white/35 transition-colors cursor-pointer"
+              className="sm:hidden inline-flex items-center justify-center h-8 w-8 rounded-full text-[#526071] dark:text-[#929BA9] hover:text-[#0F172A] dark:hover:text-[#F2F4F7] hover:bg-[#F4F4F5] dark:hover:bg-[#161A22] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/35 dark:focus-visible:ring-white/35 transition-colors cursor-pointer"
               aria-label={tr('Tutup panel notifikasi', 'Close notifications')}
             >
               <X className="h-4 w-4 stroke-[1.75]" />
@@ -200,12 +200,12 @@ export const NotificationCenter: React.FC<NotificationCenterProps> = ({
         </div>
 
         {/* Minimal Editorial Underline Filter Tabs */}
-        <div className="flex items-center gap-5 px-4 border-b border-[#D9E2EC] dark:border-[#20252D] shrink-0">
+        <div className="flex items-center gap-5 px-4 border-b border-[#E4E4E7] dark:border-[#20252D] shrink-0">
           {(
             [
               { id: 'all', label: tr('Semua', 'All') },
               { id: 'trade', label: tr('Trade', 'Trades') },
-              { id: 'news', label: 'Trade News' },
+              { id: 'news', label: tr('Berita Trading', 'Trade News') },
             ] as const
           ).map((tab) => {
             const active = filter === tab.id;
@@ -233,10 +233,10 @@ export const NotificationCenter: React.FC<NotificationCenterProps> = ({
         </div>
 
         {/* Feed Body */}
-        <div className="flex-1 overflow-y-auto overscroll-contain divide-y divide-[#D9E2EC]/70 dark:divide-[#1A1F27]">
+        <div className="flex-1 overflow-y-auto overscroll-contain divide-y divide-[#E4E4E7]/70 dark:divide-[#1A1F27]">
           {filteredNotifications.length === 0 ? (
             <div className="flex flex-col items-center justify-center text-center px-6 py-11">
-              <div className="h-9 w-9 rounded-lg bg-[#F5F7FA] dark:bg-[#161A22] border border-[#D9E2EC] dark:border-[#20252D] flex items-center justify-center text-[#526071] dark:text-[#929BA9] mb-3">
+              <div className="h-9 w-9 rounded-lg bg-[#FAFAFA] dark:bg-[#161A22] border border-[#E4E4E7] dark:border-[#20252D] flex items-center justify-center text-[#526071] dark:text-[#929BA9] mb-3">
                 <Bell className="h-4 w-4 stroke-[1.75]" />
               </div>
               <p className="text-xs font-semibold text-[#0F172A] dark:text-[#F2F4F7]">
@@ -278,13 +278,13 @@ export const NotificationCenter: React.FC<NotificationCenterProps> = ({
                   onClick={() => onSelectNotification(item)}
                   className={`group w-full flex items-start gap-3 px-4 py-3 text-left transition-colors duration-150 cursor-pointer min-h-[58px] ${
                     item.read
-                      ? 'bg-transparent hover:bg-[#F5F7FA] dark:hover:bg-[#161A22]'
-                      : 'bg-[#F8FAFC] dark:bg-[#14181F] hover:bg-[#EEF2F6] dark:hover:bg-[#191E28]'
+                      ? 'bg-transparent hover:bg-[#F4F4F5] dark:hover:bg-[#161A22]'
+                      : 'bg-[#FAFAFA] dark:bg-[#14181F] hover:bg-[#F4F4F5] dark:hover:bg-[#191E28]'
                   }`}
                 >
                   {/* VLO Monochrome Carbon/Paper Icon Well */}
                   <div
-                    className={`mt-0.5 h-8 w-8 rounded-lg bg-[#F5F7FA] dark:bg-[#161A22] border border-[#D9E2EC] dark:border-[#20252D] flex items-center justify-center shrink-0 ${iconStrokeClass}`}
+                    className={`mt-0.5 h-8 w-8 rounded-lg bg-[#FAFAFA] dark:bg-[#161A22] border border-[#E4E4E7] dark:border-[#20252D] flex items-center justify-center shrink-0 ${iconStrokeClass}`}
                   >
                     <Icon className="h-4 w-4 stroke-[1.75]" />
                   </div>

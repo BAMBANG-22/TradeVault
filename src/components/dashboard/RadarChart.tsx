@@ -13,7 +13,7 @@ interface RadarChartProps {
   size?: number;
 }
 
-export const RadarChart: React.FC<RadarChartProps> = ({ indicators, size = 290 }) => {
+export const RadarChart: React.FC<RadarChartProps> = React.memo(({ indicators, size = 290 }) => {
   const { tr } = useLanguage();
   const [showFormulaModal, setShowFormulaModal] = useState(false);
 
@@ -120,7 +120,7 @@ export const RadarChart: React.FC<RadarChartProps> = ({ indicators, size = 290 }
         <button
           type="button"
           onClick={() => setShowFormulaModal(true)}
-          className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] text-[#526071] dark:text-[#929BA9] hover:text-[#0F172A] dark:hover:text-[#F2F4F7] bg-white dark:bg-[#101318] border border-[#D9E2EC] dark:border-[#20252D] transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/35 dark:focus-visible:ring-white/35"
+          className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] text-[#526071] dark:text-[#929BA9] hover:text-[#0F172A] dark:hover:text-[#F2F4F7] bg-white dark:bg-[#101318] border border-[#E4E4E7] dark:border-[#20252D] transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/35 dark:focus-visible:ring-white/35"
           title={tr('Penjelasan formula & kriteria penilaian radar', 'Radar formula & scoring criteria explanation')}
           aria-label={tr('Penjelasan formula & kriteria penilaian radar', 'Radar formula & scoring criteria explanation')}
         >
@@ -151,7 +151,7 @@ export const RadarChart: React.FC<RadarChartProps> = ({ indicators, size = 290 }
                 points={ringPoints}
                 fill="none"
                 stroke="currentColor"
-                className="text-[#D9E2EC] dark:text-[#20252D]"
+                className="text-[#E4E4E7] dark:text-[#20252D]"
                 strokeWidth="1"
                 strokeDasharray={lvlIdx < 4 ? '2 2' : undefined}
               />
@@ -169,7 +169,7 @@ export const RadarChart: React.FC<RadarChartProps> = ({ indicators, size = 290 }
                 x2={coord.x}
                 y2={coord.y}
                 stroke="currentColor"
-                className="text-[#D9E2EC] dark:text-[#20252D]"
+                className="text-[#E4E4E7] dark:text-[#20252D]"
                 strokeWidth="1"
               />
             );
@@ -245,7 +245,7 @@ export const RadarChart: React.FC<RadarChartProps> = ({ indicators, size = 290 }
 
         {/* Insufficient data notice (clean inline text, no bulky card) */}
         {!indicators.isDataSufficient && (
-          <div className="mt-2 py-2 px-3 rounded-lg bg-[#F5F7FA] dark:bg-[#0B0E13] border border-[#D9E2EC] dark:border-[#20252D] text-center max-w-xs">
+          <div className="mt-2 py-2 px-3 rounded-lg bg-[#FAFAFA] dark:bg-[#0B0E13] border border-[#E4E4E7] dark:border-[#20252D] text-center max-w-xs">
             <div className="flex items-center justify-center gap-1.5 text-[#D97706] dark:text-[#F59E0B] text-[11px] font-semibold">
               <ShieldAlert className="h-3.5 w-3.5 stroke-[1.75]" />
               <span>{tr('Data Belum Cukup (Min. 3 Trade)', 'Insufficient Data (Min. 3 Trades)')}</span>
@@ -271,17 +271,17 @@ export const RadarChart: React.FC<RadarChartProps> = ({ indicators, size = 290 }
             role="dialog"
             aria-modal="true"
             aria-label={tr('Metodologi & Target 6 Pilar Profil Performa', '6-Pillar Performance Profile Methodology & Targets')}
-            className="relative w-full max-w-lg rounded-2xl border border-[#D9E2EC] dark:border-[#20252D] bg-white dark:bg-[#101318] p-5 shadow-[0_20px_50px_-12px_rgba(15,23,42,0.22)] dark:shadow-[0_24px_60px_-12px_rgba(0,0,0,0.8)] space-y-4 max-h-[88vh] overflow-y-auto"
+            className="relative w-full max-w-lg rounded-2xl border border-[#E4E4E7] dark:border-[#20252D] bg-white dark:bg-[#101318] p-5 shadow-[0_20px_50px_-12px_rgba(15,23,42,0.22)] dark:shadow-[0_24px_60px_-12px_rgba(0,0,0,0.8)] space-y-4 max-h-[88vh] overflow-y-auto"
             onClick={(e) => e.stopPropagation()}
           >
-            <div className="flex items-center justify-between pb-3 border-b border-[#D9E2EC] dark:border-[#20252D]">
+            <div className="flex items-center justify-between pb-3 border-b border-[#E4E4E7] dark:border-[#20252D]">
               <h3 className="text-sm font-bold text-[#0F172A] dark:text-[#F2F4F7]">
                 {tr('Metodologi & Target 6 Pilar Profil Performa', '6-Pillar Performance Profile Methodology & Targets')}
               </h3>
               <button
                 type="button"
                 onClick={() => setShowFormulaModal(false)}
-                className="p-1.5 rounded-full text-[#526071] dark:text-[#929BA9] hover:text-[#0F172A] dark:hover:text-[#F2F4F7] hover:bg-[#F5F7FA] dark:hover:bg-[#161A22] transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/35 dark:focus-visible:ring-white/35"
+                className="p-1.5 rounded-full text-[#526071] dark:text-[#929BA9] hover:text-[#0F172A] dark:hover:text-[#F2F4F7] hover:bg-[#F4F4F5] dark:hover:bg-[#161A22] transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/35 dark:focus-visible:ring-white/35"
                 aria-label={tr('Tutup metodologi', 'Close methodology')}
               >
                 <X className="h-4 w-4 stroke-[1.75]" />
@@ -289,20 +289,20 @@ export const RadarChart: React.FC<RadarChartProps> = ({ indicators, size = 290 }
             </div>
 
             <div className="space-y-3 text-xs text-[#0F172A] dark:text-[#F2F4F7]">
-              <p className="text-[#526071] dark:text-[#929BA9] leading-relaxed">
+              <p className="text-[#526071] dark:text-[#929BA9] leading-relaxed text-editorial-justify">
                 {tr(
                   'Skala normalisasi skor 0–100 dirancang secara objektif berdasarkan standar evaluasi manajemen risiko prop-firm dan hedge fund profesional:',
                   'The 0–100 normalized scoring scale is objectively designed based on professional prop-firm and hedge fund risk management benchmarks:'
                 )}
               </p>
 
-              <div className="divide-y divide-[#D9E2EC] dark:divide-[#20252D]">
+              <div className="divide-y divide-[#E4E4E7] dark:divide-[#20252D]">
                 <div className="py-2.5">
                   <div className="flex items-center justify-between font-semibold">
                     <span>{tr('1. Rasio Menang (Tingkat Kemenangan)', '1. Win Rate (Winning Percentage)')}</span>
                     <span className="text-[#0F172A] dark:text-[#F2F4F7] tabular-nums">{tr('Skala: 0 - 100', 'Scale: 0 - 100')}</span>
                   </div>
-                  <p className="text-[#526071] dark:text-[#929BA9] text-[11px] mt-0.5">
+                  <p className="text-[#526071] dark:text-[#929BA9] text-[11px] mt-0.5 leading-relaxed text-editorial-justify">
                     {tr(
                       'Normalisasi persentase transaksi menang. Target: 50% = skor 65, sedangkan 70%+ = skor 100.',
                       'Normalized percentage of winning trades. Target: 50% = score 65, while 70%+ = score 100.'
@@ -315,7 +315,7 @@ export const RadarChart: React.FC<RadarChartProps> = ({ indicators, size = 290 }
                     <span>{tr('2. Faktor Profit (Faktor Keuntungan)', '2. Profit Factor')}</span>
                     <span className="text-[#0F172A] dark:text-[#F2F4F7] tabular-nums">{tr('Profit Kotor / Rugi Kotor', 'Gross Profit / Gross Loss')}</span>
                   </div>
-                  <p className="text-[#526071] dark:text-[#929BA9] text-[11px] mt-0.5">
+                  <p className="text-[#526071] dark:text-[#929BA9] text-[11px] mt-0.5 leading-relaxed text-editorial-justify">
                     {tr(
                       'Target: 1.0 = skor 50 (impas), 1.5 = skor 70, 2.0 = skor 85, dan ≥ 3.0 atau nol rugi (∞) = skor 100.',
                       'Target: 1.0 = score 50 (breakeven), 1.5 = score 70, 2.0 = score 85, and ≥ 3.0 or zero loss (∞) = score 100.'
@@ -328,7 +328,7 @@ export const RadarChart: React.FC<RadarChartProps> = ({ indicators, size = 290 }
                     <span>{tr('3. Rata-rata RR (Risiko / Imbalan Aktual)', '3. Average RR (Realized Risk / Reward)')}</span>
                     <span className="text-[#0F172A] dark:text-[#F2F4F7] tabular-nums">{tr('Rata-rata (Profit Bersih / Risiko)', 'Average (Net Profit / Risk)')}</span>
                   </div>
-                  <p className="text-[#526071] dark:text-[#929BA9] text-[11px] mt-0.5">
+                  <p className="text-[#526071] dark:text-[#929BA9] text-[11px] mt-0.5 leading-relaxed text-editorial-justify">
                     {tr(
                       'Rata-rata Realized Risk/Reward aktual dari seluruh transaksi tertutup: 0R = skor 50, +0.5R = skor 70, +1.0R = skor 85, ≥ +2.0R = skor 100.',
                       'Average realized Risk/Reward across closed trades: 0R = score 50, +0.5R = score 70, +1.0R = score 85, ≥ +2.0R = score 100.'
@@ -341,7 +341,7 @@ export const RadarChart: React.FC<RadarChartProps> = ({ indicators, size = 290 }
                     <span>{tr('4. Ekspektansi (Nilai Harapan per Trade)', '4. Expectancy (Expected Value per Trade)')}</span>
                     <span className="text-[#0F172A] dark:text-[#F2F4F7] tabular-nums">{tr('Total P/L Bersih / Total Trade', 'Total Net P/L / Total Trades')}</span>
                   </div>
-                  <p className="text-[#526071] dark:text-[#929BA9] text-[11px] mt-0.5">
+                  <p className="text-[#526071] dark:text-[#929BA9] text-[11px] mt-0.5 leading-relaxed text-editorial-justify">
                     {tr(
                       'Rata-rata keuntungan bersih setiap posisi dieksekusi terhadap modal. Positif bernilai > 50, mencapai 100 jika ≥ 1% modal.',
                       'Average net return per executed trade relative to balance. Positive scores > 50, reaching 100 at ≥ 1% of balance.'
@@ -354,7 +354,7 @@ export const RadarChart: React.FC<RadarChartProps> = ({ indicators, size = 290 }
                     <span>{tr('5. Kontrol Risiko (Pengendalian Risiko)', '5. Risk Control (Drawdown Discipline)')}</span>
                     <span className="text-[#0F172A] dark:text-[#F2F4F7] tabular-nums">{tr('Toleransi Drawdown Maks.', 'Max Drawdown Tolerance')}</span>
                   </div>
-                  <p className="text-[#526071] dark:text-[#929BA9] text-[11px] mt-0.5">
+                  <p className="text-[#526071] dark:text-[#929BA9] text-[11px] mt-0.5 leading-relaxed text-editorial-justify">
                     {tr(
                       'Toleransi penurunan modal dari puncak ekuitas: Max DD ≤ 2% = 100, ≤ 5% = 85, ≤ 10% = 70, ≤ 20% = 40.',
                       'Equity drawdown tolerance from peak: Max DD ≤ 2% = 100, ≤ 5% = 85, ≤ 10% = 70, ≤ 20% = 40.'
@@ -367,7 +367,7 @@ export const RadarChart: React.FC<RadarChartProps> = ({ indicators, size = 290 }
                     <span>{tr('6. Konsistensi (Konsistensi Harian)', '6. Consistency (Daily Consistency)')}</span>
                     <span className="text-[#0F172A] dark:text-[#F2F4F7] tabular-nums">{tr('Rasio Hari Profit', 'Profit Day Ratio')}</span>
                   </div>
-                  <p className="text-[#526071] dark:text-[#929BA9] text-[11px] mt-0.5">
+                  <p className="text-[#526071] dark:text-[#929BA9] text-[11px] mt-0.5 leading-relaxed text-editorial-justify">
                     {tr(
                       'Rasio hari trading profit dibanding total hari trading aktif: ≥ 60% hari profit = 80+, 50% = 65.',
                       'Ratio of profitable trading days to total active trading days: ≥ 60% profit days = 80+, 50% = 65.'
@@ -391,4 +391,4 @@ export const RadarChart: React.FC<RadarChartProps> = ({ indicators, size = 290 }
       )}
     </div>
   );
-};
+});

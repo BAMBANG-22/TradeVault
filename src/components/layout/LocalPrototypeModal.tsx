@@ -46,13 +46,13 @@ export const LocalPrototypeModal: React.FC<LocalPrototypeModalProps> = ({
         role="dialog"
         aria-modal="true"
         aria-label={tr('Penyimpanan Lokal Perangkat', 'Device Local Storage')}
-        className="w-full max-w-md rounded-2xl border border-[#D9E2EC] dark:border-[#20252D] bg-white dark:bg-[#101318] shadow-[0_20px_50px_-12px_rgba(15,23,42,0.22)] dark:shadow-[0_24px_60px_-12px_rgba(0,0,0,0.8)] overflow-hidden text-[#0F172A] dark:text-[#F2F4F7]"
+        className="w-full max-w-md rounded-2xl border border-[#E4E4E7] dark:border-[#20252D] bg-white dark:bg-[#101318] shadow-[0_20px_50px_-12px_rgba(15,23,42,0.22)] dark:shadow-[0_24px_60px_-12px_rgba(0,0,0,0.8)] overflow-hidden text-[#0F172A] dark:text-[#F2F4F7]"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
-        <div className="px-5 py-4 border-b border-[#D9E2EC] dark:border-[#20252D] flex items-center justify-between gap-3">
+        <div className="px-5 py-4 border-b border-[#E4E4E7] dark:border-[#20252D] flex items-center justify-between gap-3">
           <div className="flex items-center gap-3 min-w-0">
-            <div className="h-9 w-9 rounded-lg bg-[#F5F7FA] dark:bg-[#161A22] border border-[#D9E2EC] dark:border-[#20252D] flex items-center justify-center text-[#526071] dark:text-[#929BA9] shrink-0">
+            <div className="h-9 w-9 rounded-lg bg-[#FAFAFA] dark:bg-[#161A22] border border-[#E4E4E7] dark:border-[#20252D] flex items-center justify-center text-[#526071] dark:text-[#929BA9] shrink-0">
               <HardDrive className="h-4 w-4 stroke-[1.75]" />
             </div>
             <div className="min-w-0">
@@ -67,7 +67,7 @@ export const LocalPrototypeModal: React.FC<LocalPrototypeModalProps> = ({
           <button
             type="button"
             onClick={onClose}
-            className="h-8 w-8 flex items-center justify-center rounded-full text-[#526071] dark:text-[#929BA9] hover:text-[#0F172A] dark:hover:text-[#F2F4F7] hover:bg-[#EEF2F6] dark:hover:bg-[#161A22] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/35 dark:focus-visible:ring-white/35 transition-colors cursor-pointer shrink-0"
+            className="h-8 w-8 flex items-center justify-center rounded-full text-[#526071] dark:text-[#929BA9] hover:text-[#0F172A] dark:hover:text-[#F2F4F7] hover:bg-[#F4F4F5] dark:hover:bg-[#161A22] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/35 dark:focus-visible:ring-white/35 transition-colors cursor-pointer shrink-0"
             aria-label={tr('Tutup informasi penyimpanan lokal', 'Close local storage modal')}
           >
             <X className="h-4 w-4 stroke-[1.75]" />
@@ -77,7 +77,7 @@ export const LocalPrototypeModal: React.FC<LocalPrototypeModalProps> = ({
         {/* Body */}
         <div className="px-5 py-4 space-y-4">
           {/* Summary Strip (clean divided columns, no double nested cards) */}
-          <div className="grid grid-cols-2 divide-x divide-[#D9E2EC] dark:divide-[#20252D] py-1">
+          <div className="grid grid-cols-2 divide-x divide-[#E4E4E7] dark:divide-[#20252D] py-1">
             <div className="pr-4">
               <span className="text-[11px] text-[#526071] dark:text-[#929BA9] block">
                 {tr('Tersimpan Lokal', 'Saved Locally')}
@@ -98,7 +98,7 @@ export const LocalPrototypeModal: React.FC<LocalPrototypeModalProps> = ({
           </div>
 
           {/* Key Details List */}
-          <div className="border-y border-[#D9E2EC] dark:border-[#20252D] divide-y divide-[#D9E2EC] dark:divide-[#20252D]">
+          <div className="border-y border-[#E4E4E7] dark:border-[#20252D] divide-y divide-[#E4E4E7] dark:divide-[#20252D]">
             <div className="py-3 flex items-start gap-3">
               <Database className="h-4 w-4 text-[#526071] dark:text-[#929BA9] shrink-0 mt-0.5 stroke-[1.75]" />
               <div className="min-w-0">
@@ -152,7 +152,7 @@ export const LocalPrototypeModal: React.FC<LocalPrototypeModalProps> = ({
         </div>
 
         {/* Footer */}
-        <div className="px-5 py-3.5 border-t border-[#D9E2EC] dark:border-[#20252D] bg-[#F5F7FA]/70 dark:bg-[#0B0E13]/60 flex items-center justify-between gap-2">
+        <div className="px-5 py-3.5 border-t border-[#E4E4E7] dark:border-[#20252D] bg-[#FAFAFA] dark:bg-[#0B0E13]/60 flex items-center justify-between gap-2">
           {onOpenBackupModal ? (
             <button
               type="button"
@@ -172,7 +172,7 @@ export const LocalPrototypeModal: React.FC<LocalPrototypeModalProps> = ({
           <button
             type="button"
             onClick={onClose}
-            className="min-h-[38px] px-4 py-2 rounded-full border border-[#D9E2EC] dark:border-[#20252D] bg-white dark:bg-[#101318] hover:bg-[#EEF2F6] dark:hover:bg-[#161A22] text-xs font-semibold text-[#0F172A] dark:text-[#F2F4F7] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/35 dark:focus-visible:ring-white/35 transition-colors cursor-pointer"
+            className="min-h-[38px] px-4 py-2 rounded-full border border-[#E4E4E7] dark:border-[#20252D] bg-white dark:bg-[#101318] hover:bg-[#F4F4F5] dark:hover:bg-[#161A22] text-xs font-semibold text-[#0F172A] dark:text-[#F2F4F7] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/35 dark:focus-visible:ring-white/35 transition-colors cursor-pointer"
           >
             {tr('Tutup', 'Close')}
           </button>

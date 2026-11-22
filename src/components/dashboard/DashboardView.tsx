@@ -352,7 +352,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         onClick={() => setIsPeriodMenuOpen((prev) => !prev)}
         aria-haspopup="listbox"
         aria-expanded={isPeriodMenuOpen}
-        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-white dark:bg-[#101318] border border-[#D9E2EC] dark:border-[#20252D] hover:border-[#0F172A]/40 dark:hover:border-white/40 shadow-[0_1px_2px_rgba(15,23,42,0.04)] dark:shadow-none text-xs font-semibold text-[#0F172A] dark:text-[#F2F4F7] transition-colors cursor-pointer whitespace-nowrap focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/35 dark:focus-visible:ring-white/35"
+        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-white dark:bg-[#101318] border border-[#E4E4E7] dark:border-[#20252D] hover:border-[#0F172A]/40 dark:hover:border-white/40 shadow-[0_1px_2px_rgba(15,23,42,0.04)] dark:shadow-none text-xs font-semibold text-[#0F172A] dark:text-[#F2F4F7] transition-colors cursor-pointer whitespace-nowrap focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/35 dark:focus-visible:ring-white/35"
       >
         <span>
           {selectedPeriod === 'ALL'
@@ -371,7 +371,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           role="listbox"
           aria-label={tr('Pilih Periode Performa', 'Select Performance Period')}
           data-testid="dashboard-period-dropdown-menu"
-          className="absolute right-0 top-full mt-1.5 z-30 w-44 rounded-xl bg-white dark:bg-[#101318] border border-[#D9E2EC] dark:border-[#20252D] py-1 shadow-xl"
+          className="absolute right-0 top-full mt-1.5 z-30 w-44 rounded-xl bg-white dark:bg-[#101318] border border-[#E4E4E7] dark:border-[#20252D] py-1 shadow-xl"
         >
           {DASHBOARD_PERIOD_OPTIONS.map((opt) => {
             const isSelected = selectedPeriod === opt.id;
@@ -388,8 +388,8 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                 }}
                 className={`w-full px-3 py-2 text-left text-xs flex items-center justify-between transition-colors cursor-pointer ${
                   isSelected
-                    ? 'bg-[#F5F7FA] dark:bg-[#161A22] text-[#0F172A] dark:text-white font-semibold'
-                    : 'text-[#0F172A] dark:text-[#F2F4F7] hover:bg-[#F5F7FA] dark:hover:bg-[#161A22]'
+                    ? 'bg-[#F4F4F5] dark:bg-[#161A22] text-[#0F172A] dark:text-white font-semibold'
+                    : 'text-[#0F172A] dark:text-[#F2F4F7] hover:bg-[#FAFAFA] dark:hover:bg-[#161A22]'
                 }`}
               >
                 <div className="flex items-center gap-2">
@@ -412,7 +412,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   return (
     <div className="space-y-6">
       {/* TOP HEADER: DASHBOARD TITLE & CURRENT DATE */}
-      <div className="flex items-center justify-between pb-3 border-b border-[#D9E2EC] dark:border-[#20252D]">
+      <div className="flex items-center justify-between pb-3 border-b border-[#E4E4E7] dark:border-[#20252D]">
         <h1 className="text-xs font-bold uppercase tracking-[0.12em] text-[#0F172A] dark:text-[#F2F4F7]">
           {tr('DASBOR', 'DASHBOARD')}
         </h1>
@@ -481,7 +481,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                     type="button"
                     onClick={handleTogglePrivacy}
                     data-testid="dashboard-privacy-toggle"
-                    className="inline-flex items-center justify-center p-2 rounded-full bg-white dark:bg-[#101318] border border-[#D9E2EC] dark:border-[#20252D] shadow-[0_1px_2px_rgba(15,23,42,0.04)] dark:shadow-none text-[#526071] dark:text-[#929BA9] hover:text-[#0F172A] dark:hover:text-[#F2F4F7] hover:bg-[#F8FAFC] dark:hover:bg-[#161A22] hover:border-[#0F172A]/30 dark:hover:border-white/30 transition-colors cursor-pointer shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/35 dark:focus-visible:ring-white/35"
+                    className="inline-flex items-center justify-center p-2 rounded-full bg-white dark:bg-[#101318] border border-[#E4E4E7] dark:border-[#20252D] shadow-[0_1px_2px_rgba(15,23,42,0.04)] dark:shadow-none text-[#526071] dark:text-[#929BA9] hover:text-[#0F172A] dark:hover:text-[#F2F4F7] hover:bg-[#FAFAFA] dark:hover:bg-[#161A22] hover:border-[#0F172A]/30 dark:hover:border-white/30 transition-colors cursor-pointer shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/35 dark:focus-visible:ring-white/35"
                     title={
                       isPrivacyMode
                         ? tr('Tampilkan Nominal Saldo', 'Show Balance Amount')
@@ -506,7 +506,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                     type="button"
                     onClick={handleSwapCurrency}
                     data-testid="dashboard-currency-swap-btn"
-                    className="inline-flex items-center justify-center p-2 rounded-full bg-white dark:bg-[#101318] border border-[#D9E2EC] dark:border-[#20252D] shadow-[0_1px_2px_rgba(15,23,42,0.04)] dark:shadow-none text-[#526071] dark:text-[#929BA9] hover:text-[#0F172A] dark:hover:text-[#F2F4F7] hover:bg-[#F8FAFC] dark:hover:bg-[#161A22] hover:border-[#0F172A]/30 dark:hover:border-white/30 transition-all duration-300 cursor-pointer shrink-0 group select-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/35 dark:focus-visible:ring-white/35"
+                    className="inline-flex items-center justify-center p-2 rounded-full bg-white dark:bg-[#101318] border border-[#E4E4E7] dark:border-[#20252D] shadow-[0_1px_2px_rgba(15,23,42,0.04)] dark:shadow-none text-[#526071] dark:text-[#929BA9] hover:text-[#0F172A] dark:hover:text-[#F2F4F7] hover:bg-[#FAFAFA] dark:hover:bg-[#161A22] hover:border-[#0F172A]/30 dark:hover:border-white/30 transition-all duration-300 cursor-pointer shrink-0 group select-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/35 dark:focus-visible:ring-white/35"
                     title={tr(
                       `Tukar saldo utama ke ${dualBalance.secondaryCurrency}`,
                       `Swap primary balance to ${dualBalance.secondaryCurrency}`
@@ -529,12 +529,12 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         </section>
 
         {/* Thin divider (mobile only) */}
-        <div className="border-b border-[#D9E2EC] dark:border-[#20252D] md:hidden" />
+        <div className="border-b border-[#E4E4E7] dark:border-[#20252D] md:hidden" />
 
         {/* 2. ACCOUNT PERFORMANCE (Direct on background, zero card wrapper) */}
         <section
           aria-label={tr('Performa Akun', 'Account Performance')}
-          className="space-y-4 py-1 md:col-span-7 md:pl-8 md:border-l md:border-[#D9E2EC] md:dark:border-[#20252D] min-w-0"
+          className="space-y-4 py-1 md:col-span-7 md:pl-8 md:border-l md:border-[#E4E4E7] md:dark:border-[#20252D] min-w-0"
         >
           <h2 className="text-[11px] font-semibold uppercase tracking-[0.08em] text-[#526071] dark:text-[#929BA9]">
             {tr('PERFORMA AKUN', 'ACCOUNT PERFORMANCE')}
@@ -634,7 +634,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       </div>
 
       {/* Thin divider */}
-      <div className="border-b border-[#D9E2EC] dark:border-[#20252D]" />
+      <div className="border-b border-[#E4E4E7] dark:border-[#20252D]" />
 
       {/* BAND 2: 3. EQUITY CURVE + 4. PERFORMANCE CALENDAR */}
       <div className="space-y-6 lg:space-y-0 lg:grid lg:grid-cols-12 lg:gap-8 lg:items-start">
@@ -656,12 +656,12 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         </section>
 
         {/* Thin divider (mobile & tablet portrait) */}
-        <div className="border-b border-[#D9E2EC] dark:border-[#20252D] lg:hidden" />
+        <div className="border-b border-[#E4E4E7] dark:border-[#20252D] lg:hidden" />
 
         {/* 4. PERFORMANCE CALENDAR */}
         <section
           aria-label={tr('Kalender Performa', 'Performance Calendar')}
-          className="py-1 lg:col-span-5 lg:pl-8 lg:border-l lg:border-[#D9E2EC] lg:dark:border-[#20252D] min-w-0"
+          className="py-1 lg:col-span-5 lg:pl-8 lg:border-l lg:border-[#E4E4E7] lg:dark:border-[#20252D] min-w-0"
         >
           <DashboardCalendar
             trades={trades}
@@ -675,7 +675,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       </div>
 
       {/* Thin divider */}
-      <div className="border-b border-[#D9E2EC] dark:border-[#20252D]" />
+      <div className="border-b border-[#E4E4E7] dark:border-[#20252D]" />
 
       {/* BAND 3: 5. RISK SNAPSHOT + 6. RECENT TRADES */}
       <div className="space-y-6 md:space-y-0 md:grid md:grid-cols-12 md:gap-8 md:items-start">
@@ -693,14 +693,14 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         </section>
 
         {/* Thin divider (mobile only) */}
-        <div className="border-b border-[#D9E2EC] dark:border-[#20252D] md:hidden" />
+        <div className="border-b border-[#E4E4E7] dark:border-[#20252D] md:hidden" />
 
         {/* 6. RECENT TRADES (Seamless Black, zero card wrapper, zero blue accent) */}
         <section
           aria-label={tr('Transaksi Terbaru', 'Recent Trades')}
-          className="space-y-2 py-1 md:col-span-7 md:pl-8 md:border-l md:border-[#D9E2EC] md:dark:border-[#20252D] min-w-0"
+          className="space-y-2 py-1 md:col-span-7 md:pl-8 md:border-l md:border-[#E4E4E7] md:dark:border-[#20252D] min-w-0"
         >
-          <div className="flex items-center justify-between pb-2.5 border-b border-[#D9E2EC] dark:border-[#20252D]">
+          <div className="flex items-center justify-between pb-2.5 border-b border-[#E4E4E7] dark:border-[#20252D]">
             <h2 className="text-[11px] font-semibold uppercase tracking-[0.08em] text-[#526071] dark:text-[#929BA9]">
               {tr('TRANSAKSI TERBARU', 'RECENT TRADES')}
             </h2>
@@ -724,7 +724,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           ) : (
             <div
               data-testid="dashboard-recent-trades-list"
-              className="divide-y divide-[#D9E2EC] dark:divide-[#20252D]"
+              className="divide-y divide-[#E4E4E7] dark:divide-[#20252D]"
             >
               {recentThreeTrades.map((t) => {
                 const netProfit = computeTradeNetProfit(t);
@@ -738,7 +738,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                     key={t.id}
                     type="button"
                     onClick={() => onViewTrade(t)}
-                    className="w-full py-3.5 px-2.5 flex items-center justify-between gap-4 hover:bg-white/85 dark:hover:bg-[#101318] rounded-xl transition-colors text-left cursor-pointer font-sans tabular-nums group focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/35 dark:focus-visible:ring-white/35"
+                    className="w-full py-3.5 px-2.5 flex items-center justify-between gap-4 hover:bg-[#FAFAFA] dark:hover:bg-[#101318] rounded-xl transition-colors text-left cursor-pointer font-sans tabular-nums group focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/35 dark:focus-visible:ring-white/35"
                   >
                     {/* Left: Instrument, BUY/SELL, Lot Size on Line 1; Date on Line 2 */}
                     <div className="min-w-0 space-y-1">
@@ -810,7 +810,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       </div>
 
       {/* Thin divider */}
-      <div className="border-b border-[#D9E2EC] dark:border-[#20252D]" />
+      <div className="border-b border-[#E4E4E7] dark:border-[#20252D]" />
 
       {/* 7. SINGLE PRIMARY "TAMBAH ENTRY" BUTTON AT BOTTOM OF DASHBOARD (Seamless Black) */}
       <div className="pt-3 pb-6 flex justify-center">
@@ -818,7 +818,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           type="button"
           onClick={onAddTrade}
           data-testid="dashboard-add-entry-button"
-          className="w-full sm:w-auto sm:min-w-[200px] flex items-center justify-center gap-2 px-5 py-2.5 rounded-full bg-white dark:bg-[#101318] hover:bg-[#F8FAFC] dark:hover:bg-[#161A22] border border-[#D9E2EC] dark:border-[#20252D] hover:border-[#0F172A]/30 dark:hover:border-white/30 text-[#0F172A] dark:text-[#F2F4F7] text-xs sm:text-sm font-semibold transition-all duration-150 cursor-pointer shadow-[0_1px_2px_rgba(15,23,42,0.05)] dark:shadow-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/35 dark:focus-visible:ring-white/35"
+          className="w-full sm:w-auto sm:min-w-[200px] flex items-center justify-center gap-2 px-5 py-2.5 rounded-full bg-white dark:bg-[#101318] hover:bg-[#FAFAFA] dark:hover:bg-[#161A22] border border-[#E4E4E7] dark:border-[#20252D] hover:border-[#0F172A]/30 dark:hover:border-white/30 text-[#0F172A] dark:text-[#F2F4F7] text-xs sm:text-sm font-semibold transition-all duration-150 cursor-pointer shadow-[0_1px_2px_rgba(15,23,42,0.05)] dark:shadow-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/35 dark:focus-visible:ring-white/35"
         >
           <Plus className="h-4 w-4 stroke-[2] text-[#526071] dark:text-[#929BA9]" />
           <span>{tr('Tambah Entry', 'Add Entry')}</span>

@@ -52,27 +52,33 @@ export function resolveEquityCurvePointAtClientX(
 
 export interface DynamicTooltipPlacement {
   side: 'left' | 'right';
+  vertical: 'above' | 'below';
   leftPx: number;
+  caretOffsetPx: number;
   pointPx: number;
   touchPx: number;
   plotRatio: number;
 }
 
 /**
- * Shared dynamic horizontal tooltip positioning engine for EquityChart and DrawdownChart.
- * - Uses the active touch/point position relative to the chart plot area width.
- * - Left half of chart (plotRatio < 0.5) -> places tooltip to the RIGHT of the active point/finger.
- * - Right half of chart (plotRatio >= 0.5) -> places tooltip to the LEFT of the active point/finger.
- * - Clamps strictly within [edgeMarginPx, containerWidthPx - tooltipWidthPx - edgeMarginPx]
- *   so the tooltip never overflows the chart container or covers the active point/finger.
+ * Shared dynamic tooltip positioning engine for EquityChart and DrawdownChart.
+ * - Positions the tooltip cleanly OUTSIDE the SVG plot area (above the chart by default,
+ *   or below when the chart is scrolled close to the sticky top Navbar) so the tooltip
+ *   NEVER covers the active point, curve line, or center of the chart on mobile or desktop.
+ * - Centers horizontally over the active point and clamps strictly within
+ *   [edgeMarginPx, containerWidthPx - tooltipWidthPx - edgeMarginPx], providing an exact
+ *   caretOffsetPx pointing straight to the active crosshair.
  */
 export function computeDynamicChartTooltipPlacement(params: {
   pointIndex: number;
   totalPoints: number;
   containerWidthPx: number;
+  containerTopPx?: number;
   touchClientX?: number | null;
   containerLeftPx?: number;
   tooltipWidthPx?: number;
+  tooltipHeightPx?: number;
+  safeTopInsetPx?: number;
   svgWidth?: number;
   paddingLeft?: number;
   paddingRight?: number;
@@ -83,14 +89,16 @@ export function computeDynamicChartTooltipPlacement(params: {
     pointIndex,
     totalPoints,
     containerWidthPx,
+    containerTopPx = 200,
     touchClientX = null,
     containerLeftPx = 0,
-    tooltipWidthPx = 148,
+    tooltipWidthPx = 168,
+    tooltipHeightPx = 56,
+    safeTopInsetPx = 68,
     svgWidth = 760,
     paddingLeft = 62,
     paddingRight = 16,
-    gapPx = 16,
-    edgeMarginPx = 8,
+    edgeMarginPx = 6,
   } = params;
 
   const safeContainerWidth =
@@ -98,7 +106,9 @@ export function computeDynamicChartTooltipPlacement(params: {
   const safeTooltipWidth =
     Number.isFinite(tooltipWidthPx) && tooltipWidthPx > 0
       ? Math.min(tooltipWidthPx, Math.max(80, safeContainerWidth - edgeMarginPx * 2))
-      : 148;
+      : 168;
+  const safeTooltipHeight =
+    Number.isFinite(tooltipHeightPx) && tooltipHeightPx > 0 ? tooltipHeightPx : 56;
 
   const innerSvgWidth = svgWidth - paddingLeft - paddingRight;
   const clampedIndex = Math.max(0, Math.min(Math.max(0, totalPoints - 1), pointIndex));
@@ -126,42 +136,29 @@ export function computeDynamicChartTooltipPlacement(params: {
 
   const minLeftPx = edgeMarginPx;
   const maxLeftPx = Math.max(minLeftPx, safeContainerWidth - safeTooltipWidth - edgeMarginPx);
-  const minSafeGapPx = Math.min(gapPx, 10);
 
-  // Core rule: left half (< 0.5) -> tooltip on right; right half (>= 0.5) -> tooltip on left
-  let side: 'left' | 'right' = effectiveRatio < 0.5 ? 'right' : 'left';
+  // Center tooltip cleanly over the active data point and clamp strictly inside container bounds
+  const centeredLeftPx = pointPx - safeTooltipWidth / 2;
+  const leftPx = Math.round(Math.max(minLeftPx, Math.min(maxLeftPx, centeredLeftPx)));
 
-  const rightAnchorPx = Math.max(pointPx, touchPx);
-  const leftAnchorPx = Math.min(pointPx, touchPx);
+  // Directional caret points straight at the active crosshair/point
+  const caretOffsetPx = Math.round(
+    Math.max(14, Math.min(safeTooltipWidth - 14, pointPx - leftPx))
+  );
 
-  const fitsRightOfPoint =
-    pointPx + minSafeGapPx + safeTooltipWidth <= safeContainerWidth - edgeMarginPx;
-  const fitsLeftOfPoint = pointPx - minSafeGapPx - safeTooltipWidth >= edgeMarginPx;
+  // Prefer floating ABOVE the SVG plot area (out of the way of both curve and user's finger);
+  // automatically flip BELOW only if scrolled flush against the sticky top Navbar.
+  const hasRoomAbove =
+    !Number.isFinite(containerTopPx) || containerTopPx >= safeTopInsetPx + safeTooltipHeight + 10;
+  const vertical: 'above' | 'below' = hasRoomAbove ? 'above' : 'below';
 
-  if (side === 'right' && !fitsRightOfPoint && fitsLeftOfPoint) {
-    side = 'left';
-  } else if (side === 'left' && !fitsLeftOfPoint && fitsRightOfPoint) {
-    side = 'right';
-  }
-
-  let rawLeftPx: number;
-  if (side === 'right') {
-    const preferredRight = rightAnchorPx + gapPx;
-    rawLeftPx =
-      preferredRight + safeTooltipWidth <= safeContainerWidth - edgeMarginPx
-        ? preferredRight
-        : pointPx + gapPx;
-  } else {
-    const preferredLeft = leftAnchorPx - safeTooltipWidth - gapPx;
-    rawLeftPx =
-      preferredLeft >= edgeMarginPx ? preferredLeft : pointPx - safeTooltipWidth - gapPx;
-  }
-
-  const leftPx = Math.round(Math.max(minLeftPx, Math.min(maxLeftPx, rawLeftPx)));
+  const side: 'left' | 'right' = effectiveRatio < 0.5 ? 'right' : 'left';
 
   return {
     side,
+    vertical,
     leftPx,
+    caretOffsetPx,
     pointPx: Number(pointPx.toFixed(2)),
     touchPx: Number(touchPx.toFixed(2)),
     plotRatio: Number(effectiveRatio.toFixed(4)),
@@ -258,7 +255,7 @@ function formatCompactAxisCurrency(
   return formatCurrency(val, settings, false);
 }
 
-export const EquityChart: React.FC<EquityChartProps> = ({
+export const EquityChart: React.FC<EquityChartProps> = React.memo(({
   equityCurve,
   settings,
   startingBalance,
@@ -447,14 +444,20 @@ export const EquityChart: React.FC<EquityChartProps> = ({
         const measuredTooltipWidth =
           tooltipRef.current && tooltipRef.current.offsetWidth > 0
             ? tooltipRef.current.offsetWidth
-            : 148;
+            : 168;
+        const measuredTooltipHeight =
+          tooltipRef.current && tooltipRef.current.offsetHeight > 0
+            ? tooltipRef.current.offsetHeight
+            : 52;
         const placement = computeDynamicChartTooltipPlacement({
           pointIndex: point.index,
           totalPoints: renderCurve.length,
           containerWidthPx: rect.width,
+          containerTopPx: rect.top,
           touchClientX: clientX,
           containerLeftPx: rect.left,
           tooltipWidthPx: measuredTooltipWidth,
+          tooltipHeightPx: measuredTooltipHeight,
           svgWidth: width,
           paddingLeft: padding.left,
           paddingRight: padding.right,
@@ -466,25 +469,34 @@ export const EquityChart: React.FC<EquityChartProps> = ({
     [hasExecutedTrades, safeCurve, renderCurve.length, width, padding.left, padding.right]
   );
 
-  // Refine placement with exact DOM offsetWidth on first mount of tooltip
+  // Refine placement with exact DOM offsetWidth & offsetHeight on first mount of tooltip
   useEffect(() => {
     if (!hoveredPoint || !svgRef.current || !tooltipRef.current) return;
     const actualWidth = tooltipRef.current.offsetWidth;
+    const actualHeight = tooltipRef.current.offsetHeight;
     if (actualWidth <= 0) return;
     const rect = svgRef.current.getBoundingClientRect();
     const updated = computeDynamicChartTooltipPlacement({
       pointIndex: hoveredPoint.index,
       totalPoints: renderCurve.length,
       containerWidthPx: rect.width,
+      containerTopPx: rect.top,
       touchClientX: lastClientXRef.current,
       containerLeftPx: rect.left,
       tooltipWidthPx: actualWidth,
+      tooltipHeightPx: actualHeight > 0 ? actualHeight : 52,
       svgWidth: width,
       paddingLeft: padding.left,
       paddingRight: padding.right,
     });
     setTooltipPlacement((prev) =>
-      !prev || prev.leftPx !== updated.leftPx || prev.side !== updated.side ? updated : prev
+      !prev ||
+      prev.leftPx !== updated.leftPx ||
+      prev.vertical !== updated.vertical ||
+      prev.caretOffsetPx !== updated.caretOffsetPx ||
+      prev.side !== updated.side
+        ? updated
+        : prev
     );
   }, [hoveredPoint, renderCurve.length, width, padding.left, padding.right]);
 
@@ -536,7 +548,7 @@ export const EquityChart: React.FC<EquityChartProps> = ({
   const modeSelector = (
     <div
       data-testid="equity-mode-toggle"
-      className="relative inline-flex items-center rounded-full bg-[#F5F7FA] dark:bg-[#0B0E13] p-1 border border-[#D9E2EC] dark:border-[#20252D] text-xs select-none"
+      className="relative inline-flex items-center rounded-full bg-[#F4F4F5] dark:bg-[#0B0E13] p-1 border border-[#E4E4E7] dark:border-[#20252D] text-xs select-none"
     >
       {/* Smooth animated sliding indicator */}
       <span
@@ -586,9 +598,9 @@ export const EquityChart: React.FC<EquityChartProps> = ({
           {periodControl}
         </div>
       )}
-      <div className="relative w-full overflow-hidden select-none">
+      <div className="w-full select-none">
         {viewMode === 'growth' && !hasValidGrowth && (
-          <div className="mb-2.5 rounded-xl bg-[#F5F7FA] dark:bg-[#0B0E13] border border-[#D9E2EC] dark:border-[#20252D] px-3 py-2 text-[11px] text-[#D97706] dark:text-[#F59E0B] flex items-center justify-between gap-2">
+          <div className="mb-2.5 rounded-xl bg-[#FAFAFA] dark:bg-[#0B0E13] border border-[#E4E4E7] dark:border-[#20252D] px-3 py-2 text-[11px] text-[#D97706] dark:text-[#F59E0B] flex items-center justify-between gap-2">
             <span>
               {tr(
                 'Persentase pertumbuhan (N/A) tidak dapat dihitung karena saldo awal periode bernilai nol atau negatif.',
@@ -601,13 +613,14 @@ export const EquityChart: React.FC<EquityChartProps> = ({
                 clearInteraction();
                 setViewMode('equity');
               }}
-              className="px-3 py-1 rounded-full bg-white dark:bg-[#101318] border border-[#D9E2EC] dark:border-[#20252D] text-[#0F172A] dark:text-[#F2F4F7] font-semibold shrink-0 cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/35 dark:focus-visible:ring-white/35"
+              className="px-3 py-1 rounded-full bg-white dark:bg-[#101318] border border-[#E4E4E7] dark:border-[#20252D] text-[#0F172A] dark:text-[#F2F4F7] font-semibold shrink-0 cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/35 dark:focus-visible:ring-white/35"
             >
               {tr('Saldo', 'Balance')}
             </button>
           </div>
         )}
 
+        <div className="relative w-full overflow-visible">
         <svg
           ref={svgRef}
           data-testid="equity-chart-svg"
@@ -641,7 +654,7 @@ export const EquityChart: React.FC<EquityChartProps> = ({
                 x2={width - padding.right}
                 y2={tick.yPos}
                 stroke="currentColor"
-                className="text-[#D9E2EC]/80 dark:text-[#20252D]"
+                className="text-[#E4E4E7]/80 dark:text-[#20252D]"
                 strokeDasharray="3 3"
                 strokeWidth="1"
               />
@@ -687,13 +700,20 @@ export const EquityChart: React.FC<EquityChartProps> = ({
               <line
                 data-testid="equity-chart-crosshair"
                 x1={getX(hoveredPoint.index)}
-                y1={padding.top}
+                y1={tooltipPlacement?.vertical === 'below' ? padding.top : 2}
                 x2={getX(hoveredPoint.index)}
-                y2={padding.top + innerHeight}
+                y2={tooltipPlacement?.vertical === 'below' ? height - 2 : padding.top + innerHeight}
                 stroke="#3478DC"
                 strokeWidth="1"
                 strokeDasharray="2 2"
-                opacity="0.7"
+                opacity="0.75"
+              />
+              <circle
+                cx={getX(hoveredPoint.index)}
+                cy={getY(values[hoveredPoint.index] ?? values[0])}
+                r="8.5"
+                fill="#3478DC"
+                fillOpacity="0.16"
               />
               <circle
                 data-testid="equity-chart-point-marker"
@@ -732,7 +752,7 @@ export const EquityChart: React.FC<EquityChartProps> = ({
         {/* Empty Period Notice Overlay */}
         {!hasExecutedTrades && (
           <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-            <span className="px-3.5 py-1.5 rounded-lg bg-white/95 dark:bg-[#101318]/95 border border-[#D9E2EC] dark:border-[#20252D] text-[11px] text-[#526071] dark:text-[#929BA9] shadow-xs">
+            <span className="px-3.5 py-1.5 rounded-lg bg-white/95 dark:bg-[#101318]/95 border border-[#E4E4E7] dark:border-[#20252D] text-[11px] text-[#526071] dark:text-[#929BA9] shadow-xs">
               {tr('Belum ada transaksi pada periode ini', 'No trades in this period yet')}
             </span>
           </div>
@@ -771,14 +791,31 @@ export const EquityChart: React.FC<EquityChartProps> = ({
                 : `${hoveredPoint.netProfit >= 0 ? '+' : ''}${fmtMoney(hoveredPoint.netProfit)}`
                 : null;
 
+            const isBelow = tooltipPlacement?.vertical === 'below';
+            const caretLeftPx = tooltipPlacement?.caretOffsetPx ?? 24;
+
             return (
               <div
                 ref={tooltipRef}
                 data-testid="equity-chart-tooltip"
                 data-tooltip-side={tooltipPlacement?.side ?? 'right'}
-                style={{ left: `${tooltipPlacement?.leftPx ?? 8}px` }}
-                className="absolute top-2 z-10 rounded-xl bg-white/95 dark:bg-[#101318]/95 border border-[#D9E2EC] dark:border-[#20252D] px-3 py-1.5 shadow-lg text-xs pointer-events-none font-mono-numbers tabular-nums whitespace-nowrap"
+                data-tooltip-vertical={tooltipPlacement?.vertical ?? 'above'}
+                style={{
+                  transform: `translate3d(${tooltipPlacement?.leftPx ?? 6}px, 0, 0)`,
+                }}
+                className={`absolute left-0 z-20 max-w-[calc(100%-12px)] rounded-xl bg-white/98 dark:bg-[#101318]/98 border border-[#E4E4E7] dark:border-[#20252D] px-3 py-1.5 shadow-[0_10px_28px_-6px_rgba(15,23,42,0.16)] dark:shadow-[0_14px_32px_-6px_rgba(0,0,0,0.75)] text-xs pointer-events-none font-mono-numbers tabular-nums whitespace-nowrap will-change-transform ${
+                  isBelow ? 'top-[calc(100%+6px)]' : 'bottom-[calc(100%+6px)]'
+                }`}
               >
+                <span
+                  aria-hidden="true"
+                  style={{ left: `${caretLeftPx}px` }}
+                  className={`absolute h-2 w-2 -translate-x-1/2 rotate-45 bg-white dark:bg-[#101318] border-[#E4E4E7] dark:border-[#20252D] ${
+                    isBelow
+                      ? '-top-[5px] border-l border-t'
+                      : '-bottom-[5px] border-r border-b'
+                  }`}
+                />
                 <div className="flex items-center justify-between gap-4 text-[10px] text-[#526071] dark:text-[#929BA9] font-sans mb-0.5">
                   <span>
                     {hoveredPoint.index === 0
@@ -813,6 +850,7 @@ export const EquityChart: React.FC<EquityChartProps> = ({
               </div>
             );
           })()}
+        </div>
       </div>
 
     </>
@@ -823,8 +861,8 @@ export const EquityChart: React.FC<EquityChartProps> = ({
   }
 
   return (
-    <div className="relative rounded-2xl border border-[#D9E2EC] dark:border-[#20252D] bg-white dark:bg-[#101318] shadow-[0_1px_2px_rgba(15,23,42,0.04)] dark:shadow-none p-4 sm:p-5">
-      <div className="flex flex-wrap items-center justify-between gap-3 pb-3 mb-2 border-b border-[#D9E2EC] dark:border-[#20252D]">
+    <div className="relative rounded-2xl border border-[#E4E4E7] dark:border-[#20252D] bg-white dark:bg-[#101318] shadow-[0_1px_2px_rgba(15,23,42,0.04)] dark:shadow-none p-4 sm:p-5">
+      <div className="flex flex-wrap items-center justify-between gap-3 pb-3 mb-2 border-b border-[#E4E4E7] dark:border-[#20252D]">
         <div className="flex items-center gap-2.5">
           <TrendingUp className="h-4 w-4 stroke-[1.75] text-[#526071] dark:text-[#929BA9]" />
           <div>
@@ -852,7 +890,7 @@ export const EquityChart: React.FC<EquityChartProps> = ({
             className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full border text-xs font-medium transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/35 dark:focus-visible:ring-white/35 ${
               showPeakLine
                 ? 'bg-[#0F172A] dark:bg-white text-white dark:text-[#0F172A] border-[#0F172A] dark:border-white font-semibold'
-                : 'bg-white dark:bg-[#101318] text-[#526071] dark:text-[#929BA9] border-[#D9E2EC] dark:border-[#20252D] hover:text-[#0F172A] dark:hover:text-[#F2F4F7] hover:border-[#0F172A]/35 dark:hover:border-white/35 shadow-[0_1px_2px_rgba(15,23,42,0.04)] dark:shadow-none'
+                : 'bg-white dark:bg-[#101318] text-[#526071] dark:text-[#929BA9] border-[#E4E4E7] dark:border-[#20252D] hover:text-[#0F172A] dark:hover:text-[#F2F4F7] hover:border-[#0F172A]/35 dark:hover:border-white/35 shadow-[0_1px_2px_rgba(15,23,42,0.04)] dark:shadow-none'
             }`}
             title={tr(
               'Tampilkan / sembunyikan garis High Watermark (Puncak Saldo)',
@@ -868,4 +906,4 @@ export const EquityChart: React.FC<EquityChartProps> = ({
       {chartBody}
     </div>
   );
-};
+});

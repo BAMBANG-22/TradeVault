@@ -6,6 +6,7 @@
 import { Trade } from '../types/trade';
 import { decodeLifecycleMetaFromExecutionNotes } from './tradeLifecycle';
 import { MacroNewsSnapshot } from './macroNewsEngine';
+import { playErrorTone, playNotificationPing } from './soundEngine';
 
 export type AppNotificationCategory = 'trade' | 'news';
 export type AppNotificationTone = 'positive' | 'negative' | 'info' | 'warning';
@@ -91,6 +92,13 @@ export function pushAppNotification(
   };
 
   saveAppNotifications([nextItem, ...existing]);
+  if (input.category === 'news') {
+    if (input.tone === 'negative') {
+      playErrorTone();
+    } else {
+      playNotificationPing();
+    }
+  }
   return nextItem;
 }
 

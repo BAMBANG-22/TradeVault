@@ -189,11 +189,16 @@ function normalizeInstrument(raw: string | null | undefined): string {
   return s || 'XAUUSD';
 }
 
-function parseNumericValue(val: any, instrument = 'XAUUSD'): number | null {
+function parseNumericValue(
+  val: any,
+  instrument = 'XAUUSD',
+  options?: { isPrice?: boolean }
+): number | null {
+  const isPrice = options?.isPrice ?? true;
   if (val === null || val === undefined || val === '') return null;
   if (typeof val === 'number') {
     if (isNaN(val) || !Number.isFinite(val)) return null;
-    if (instrument === 'XAUUSD' && val >= 1.5 && val <= 6.5) {
+    if (isPrice && instrument === 'XAUUSD' && val >= 1.5 && val <= 6.5) {
       return Number((val * 1000).toFixed(3));
     }
     return val;
@@ -201,31 +206,35 @@ function parseNumericValue(val: any, instrument = 'XAUUSD'): number | null {
   if (typeof val === 'string') {
     let s = val.trim();
     if (!s) return null;
+    s = s.replace(/[\u2212\u2012\u2013\u2014\uFE63\uFF0D]/g, '-');
     const contextualMatch = s.match(
       /(?:at|@|entry[:\s]|open[:\s]|price[:\s]|level[:\s])\s*([+-]?[0-9][0-9., ]+)/i
     );
     if (contextualMatch) s = contextualMatch[1].trim();
+    const isParenNeg = /^\(.*\)$/.test(s) && !s.startsWith('(-');
     s = s.replace(/[^0-9.,+\- ]/g, '').trim();
     if (!s) return null;
-    if (/^[+-]?\d{1,3}(?:\.\d{3})+,\d+$/.test(s)) {
-      s = s.replace(/\./g, '').replace(',', '.');
-    } else if (/^[+-]?\d{1,3}(?:[ ,]\d{3})+\.\d+$/.test(s)) {
-      s = s.replace(/[ ,]/g, '');
+    s = s.replace(/^([+-])\s+(?=\d)/, '$1');
+    if (/^[+-]?\d{1,3}(?:[.\s]\d{3})+,\d+$/.test(s)) {
+      s = s.replace(/[.\s]/g, '').replace(',', '.');
+    } else if (/^[+-]?\d{1,3}(?:[ ,\s]\d{3})+\.\d+$/.test(s)) {
+      s = s.replace(/[ ,\s]/g, '');
     } else if (s.includes('.') && s.includes(',')) {
       const lastDot = s.lastIndexOf('.');
       const lastComma = s.lastIndexOf(',');
-      s = lastComma > lastDot ? s.replace(/\./g, '').replace(',', '.') : s.replace(/,/g, '');
+      s = lastComma > lastDot ? s.replace(/[.\s]/g, '').replace(',', '.') : s.replace(/[,\s]/g, '');
     } else if (s.includes(',') && !s.includes('.')) {
-      s = s.replace(',', '.');
+      s = s.replace(/\s+/g, '').replace(',', '.');
     } else if ((s.match(/\./g) || []).length >= 2) {
       const lastDot = s.lastIndexOf('.');
-      s = s.slice(0, lastDot).replace(/\./g, '') + '.' + s.slice(lastDot + 1);
+      s = s.slice(0, lastDot).replace(/[.\s]/g, '') + '.' + s.slice(lastDot + 1).replace(/\s+/g, '');
     } else {
-      s = s.replace(/ /g, '');
+      s = s.replace(/\s+/g, '');
     }
-    const num = parseFloat(s);
+    let num = parseFloat(s);
     if (isNaN(num) || !Number.isFinite(num)) return null;
-    if (instrument === 'XAUUSD' && num >= 1.5 && num <= 6.5) {
+    if (isParenNeg && num > 0) num = -num;
+    if (isPrice && instrument === 'XAUUSD' && num >= 1.5 && num <= 6.5) {
       return Number((num * 1000).toFixed(3));
     }
     return num;
@@ -286,6 +295,11 @@ function getNewsGeminiApiKeys(): string[] {
 const SCANNER_MODEL_CASCADE = [
   'gemini-4-hydrogen',
   'gemini-3.1-flash-lite',
+];
+
+const MT5_HISTORY_MODEL_CASCADE = [
+  'gemini-3.1-flash-lite',
+  'gemini-4-hydrogen',
 ];
 
 const NEWS_MODEL_CASCADE = [
@@ -1007,6 +1021,15 @@ function normalizeMt5DateTimeOutput(raw: unknown): string | null {
     const min = m[5].padStart(2, '0');
     return `${yyyy}-${mm}-${dd}T${hh}:${min}`;
   }
+  const eu = s.match(/\b(\d{1,2})[.\-\/](\d{1,2})[.\-\/](\d{4})[T\s]+(\d{1,2}):(\d{2})/);
+  if (eu) {
+    const dd = eu[1].padStart(2, '0');
+    const mm = eu[2].padStart(2, '0');
+    const yyyy = eu[3];
+    const hh = eu[4].padStart(2, '0');
+    const min = eu[5].padStart(2, '0');
+    return `${yyyy}-${mm}-${dd}T${hh}:${min}`;
+  }
   const parsed = new Date(s);
   if (!isNaN(parsed.getTime())) {
     const yyyy = parsed.getFullYear();
@@ -1068,7 +1091,10 @@ function inferMt5CloseType(params: {
   return 'Manual';
 }
 
-function parseAndNormalizeMt5HistoryResponse(responseText: string): {
+function parseAndNormalizeMt5HistoryResponse(
+  responseText: string,
+  maxImageIndex = 0
+): {
   parsedValidArray: boolean;
   explicitNoTrades: boolean;
   source: string;
@@ -1110,14 +1136,14 @@ function parseAndNormalizeMt5HistoryResponse(responseText: string): {
       }
       const position: 'BUY' | 'SELL' = isSell && !isBuy ? 'SELL' : isSell ? 'SELL' : 'BUY';
       const instrument = normalizeInstrument(row.instrument);
-      const lotRaw = parseNumericValue(row.lotSize, 'EURUSD');
-      const entryPrice = parseNumericValue(row.entryPrice, instrument);
-      const exitPrice = parseNumericValue(row.exitPrice, instrument);
-      const stopLoss = parseNumericValue(row.stopLoss, instrument);
-      const takeProfit = parseNumericValue(row.takeProfit, instrument);
-      const rawComm = parseNumericValue(row.commission, 'EURUSD');
-      const rawSwap = parseNumericValue(row.swap, 'EURUSD');
-      const rawProfit = parseNumericValue(row.netProfit, 'EURUSD');
+      const lotRaw = parseNumericValue(row.lotSize, 'EURUSD', { isPrice: false });
+      const entryPrice = parseNumericValue(row.entryPrice, instrument, { isPrice: true });
+      const exitPrice = parseNumericValue(row.exitPrice, instrument, { isPrice: true });
+      const stopLoss = parseNumericValue(row.stopLoss, instrument, { isPrice: true });
+      const takeProfit = parseNumericValue(row.takeProfit, instrument, { isPrice: true });
+      const rawComm = parseNumericValue(row.commission, 'EURUSD', { isPrice: false });
+      const rawSwap = parseNumericValue(row.swap, 'EURUSD', { isPrice: false });
+      const rawProfit = parseNumericValue(row.netProfit, 'EURUSD', { isPrice: false });
 
       if (entryPrice === null && exitPrice === null && rawProfit === null) {
         return null;
@@ -1150,7 +1176,14 @@ function parseAndNormalizeMt5HistoryResponse(responseText: string): {
       const cleanTicket =
         rawTicket && !/^(null|undefined|none|n\/a|-)$/i.test(rawTicket) ? rawTicket : null;
 
+      const rawImgIdx =
+        typeof row.imageIndex === 'number' && Number.isFinite(row.imageIndex)
+          ? Math.trunc(row.imageIndex)
+          : 0;
+      const imageIndex = Math.max(0, Math.min(Math.max(0, maxImageIndex), rawImgIdx));
+
       return {
+        imageIndex,
         ticketId: cleanTicket,
         instrument,
         position,
@@ -1183,10 +1216,15 @@ function parseAndNormalizeMt5HistoryResponse(responseText: string): {
 
 async function handleExtractMt5History(req: Request): Promise<Response> {
   try {
-    const body = await req.json();
-    const { imageBase64, imageUrl } = body || {};
-    if (!imageBase64 && !imageUrl) {
-      return jsonResponse({ success: false, error: 'Harap sertakan imageBase64 atau imageUrl.' }, 400);
+    const body = (await req.json()) || {};
+    const rawInputs: Array<{ imageBase64?: string; imageUrl?: string }> = Array.isArray(body.images)
+      ? body.images.slice(0, 5)
+      : body.imageBase64 || body.imageUrl
+      ? [{ imageBase64: body.imageBase64, imageUrl: body.imageUrl }]
+      : [];
+
+    if (rawInputs.length === 0) {
+      return jsonResponse({ success: false, error: 'Harap sertakan imageBase64, imageUrl, atau array images.' }, 400);
     }
 
     const scannerApiKeys = getScannerGeminiApiKeys();
@@ -1197,38 +1235,55 @@ async function handleExtractMt5History(req: Request): Promise<Response> {
       );
     }
 
-    let mimeType = 'image/jpeg';
-    let base64Data = '';
+    const resolvedImages: Array<{ index: number; mimeType: string; base64Data: string }> = [];
+    for (let idx = 0; idx < rawInputs.length; idx++) {
+      const inp = rawInputs[idx];
+      let mimeType = 'image/jpeg';
+      let base64Data = '';
 
-    if (imageBase64) {
-      const trimmedInput = String(imageBase64).trim();
-      const match = trimmedInput.match(/^data:([a-zA-Z0-9]+\/[a-zA-Z0-9-.+]+);base64,([\s\S]+)$/i);
-      if (match) {
-        const rawMime = match[1].toLowerCase();
+      if (inp?.imageBase64) {
+        const trimmedInput = String(inp.imageBase64).trim();
+        const match = trimmedInput.match(/^data:([a-zA-Z0-9]+\/[a-zA-Z0-9-.+]+);base64,([\s\S]+)$/i);
+        if (match) {
+          const rawMime = match[1].toLowerCase();
+          mimeType =
+            rawMime === 'image/png'
+              ? 'image/png'
+              : rawMime === 'image/webp'
+              ? 'image/webp'
+              : 'image/jpeg';
+          base64Data = match[2].replace(/\s+/g, '');
+        } else {
+          base64Data = trimmedInput.replace(/^data:[^,]+,/, '').replace(/\s+/g, '');
+        }
+      } else if (inp?.imageUrl) {
+        const fetched = await fetchImageBase64FromUrl(String(inp.imageUrl));
+        const rawMime = (fetched.mimeType || 'image/jpeg').toLowerCase();
         mimeType =
           rawMime === 'image/png'
             ? 'image/png'
             : rawMime === 'image/webp'
             ? 'image/webp'
             : 'image/jpeg';
-        base64Data = match[2].replace(/\s+/g, '');
-      } else {
-        base64Data = trimmedInput.replace(/^data:[^,]+,/, '').replace(/\s+/g, '');
+        base64Data = fetched.base64;
       }
-    } else if (imageUrl) {
-      const fetched = await fetchImageBase64FromUrl(String(imageUrl));
-      const rawMime = (fetched.mimeType || 'image/jpeg').toLowerCase();
-      mimeType =
-        rawMime === 'image/png'
-          ? 'image/png'
-          : rawMime === 'image/webp'
-          ? 'image/webp'
-          : 'image/jpeg';
-      base64Data = fetched.base64;
+
+      if (base64Data) {
+        resolvedImages.push({ index: idx, mimeType, base64Data });
+      }
     }
 
+    if (resolvedImages.length === 0) {
+      return jsonResponse({ success: false, error: 'Tidak ada gambar valid yang dikirim.' }, 400);
+    }
+
+    const isBatch = resolvedImages.length > 1;
     const prompt = `You are an elite MetaTrader 5 (MT5) & MetaTrader 4 (MT4) Account History OCR & trade-ledger extraction specialist.
-Inspect the FULL screenshot carefully from top to bottom and extract EVERY closed trade row visible (even if the screenshot is cropped and has no header).
+Inspect ${
+      isBatch
+        ? `ALL ${resolvedImages.length} labeled screenshots (imageIndex 0 to ${resolvedImages.length - 1})`
+        : 'the FULL screenshot'
+    } carefully from top to bottom and extract EVERY closed trade row visible (even if cropped and missing a header).
 
 STRICT EXTRACTION RULES:
 1. SUPPORTED SCREENSHOT VIEWS:
@@ -1236,30 +1291,41 @@ STRICT EXTRACTION RULES:
    - MT5 Mobile "History -> Deals" (rows showing symbol, buy/sell, "out" / "in/out", volume, price, profit — extract closing/profit deals as closed trades)
    - Indonesian MT5 locale ("beli" = BUY, "jual" = SELL) as well as English ("buy"/"long" = BUY, "sell"/"short" = SELL)
    - MT5 / MT4 Desktop Account History table
-   - Broker trade history lists showing closed positions with entry/exit or realized profit/loss
    - IGNORE summary header lines ("Profit:", "Deposit:", "Balance:", "Credit:", "Withdrawal:") and non-trade ledger rows ("balance", "deposit", "credit", "withdrawal") and unfilled "canceled" pending orders.
-2. READING MOBILE MT5 HISTORY ROWS:
+2. EXACT NUMERIC & SIGN FIDELITY (ZERO SILENT ERRORS):
    - Left: symbol + direction + lot, e.g. "XAUUSD, sell 0.10", "XAUUSDm, buy 0.05", "GOLD, beli 0.10"
-   - Below left: "2615.40 -> 2602.10" (entryPrice BEFORE "->", exitPrice AFTER "->")
+   - Prices: "2615.40 -> 2602.10" -> entryPrice BEFORE "->", exitPrice AFTER "->". Copy EVERY digit and decimal accurately (never drop a digit or decimal!).
+   - Profit Sign: Inspect BOTH the "-" / "−" prefix AND font color (red = negative loss, blue/green = positive profit). If a BUY exited lower than entry (or SELL exited higher than entry) and text is red/loss, netProfit MUST be negative (e.g. -45.20)!
    - Top-right of row: timestamp like "2026.11.14 14:22:10" (closeDateTime)
-   - Bottom-right of row: realized profit/loss like "133.00" or "-45.20" (preserve minus sign strictly for red/negative values!)
-   - Expanded row details (if expanded): "S / L:" -> stopLoss, "T / P:" -> takeProfit, "Open:" -> openDateTime, "Swap:" -> swap, "Commission:"/"Fee:" -> commission, "ID:"/"#12345" -> ticketId.
+   - Expanded row details (if visible): "S / L:" -> stopLoss, "T / P:" -> takeProfit, "Open:" -> openDateTime, "Swap:" -> swap, "Commission:"/"Fee:" -> commission, "ID:"/"#12345" -> ticketId.
 3. READING DESKTOP MT5 ACCOUNT HISTORY TABLE:
    - Map columns: Time (open), Position/Order/Ticket (ticketId), Symbol (instrument), Type (buy->BUY, sell->SELL), Volume (lotSize), Open Price (entryPrice), S/L (stopLoss), T/P (takeProfit), Close Time (closeDateTime), Close Price (exitPrice), Commission, Swap, Profit (netProfit).
 4. CLOSE TYPE DETECTION (TP / SL / Manual):
    - "TP": comment/tag shows "[tp]", OR T/P badge is green/highlighted, OR exitPrice closely matches takeProfit.
    - "SL": comment/tag shows "[sl]", OR S/L badge is red/highlighted, OR exitPrice closely matches stopLoss.
    - "Manual": otherwise (closed manually by trader).
-5. FORMATTING:
+5. FORMATTING${isBatch ? ' & IMAGE ATTRIBUTION' : ''}:
+   - ${isBatch ? `Set "imageIndex" strictly to the integer 0..${resolvedImages.length - 1} matching the screenshot containing that trade row.` : 'Set "imageIndex" to 0.'}
    - Return empty string "" (NEVER literal "null") when ticketId, openDateTime, closeDateTime, or notes are not visible.
    - Output openDateTime / closeDateTime in "YYYY-MM-DD HH:mm" if visible.
    - Never invent trades that are not visibly printed on screen.`;
+
+    const contentParts: any[] = [];
+    if (isBatch) {
+      for (const img of resolvedImages) {
+        contentParts.push(`Screenshot [imageIndex=${img.index}]:`);
+        contentParts.push({ inlineData: { mimeType: img.mimeType, data: img.base64Data } });
+      }
+    } else {
+      contentParts.push({ inlineData: { mimeType: resolvedImages[0].mimeType, data: resolvedImages[0].base64Data } });
+    }
+    contentParts.push(prompt);
 
     let winningResult: ReturnType<typeof parseAndNormalizeMt5HistoryResponse> | null = null;
     let usedModel = '';
     let confirmedEmptyModel = '';
     const mt5CascadeStartMs = Date.now();
-    const MAX_MT5_WALL_MS = 50_000;
+    const MAX_MT5_WALL_MS = 45_000;
     const mt5Failures: Array<{ model: string; code: string; summary: string }> = [];
 
     for (let pass = 0; pass < 2; pass++) {
@@ -1269,10 +1335,10 @@ STRICT EXTRACTION RULES:
         );
         const remainingBeforePass = MAX_MT5_WALL_MS - (Date.now() - mt5CascadeStartMs);
         if (!shouldRetryTransient || remainingBeforePass < 5000) break;
-        await new Promise((r) => setTimeout(r, 1200));
+        await new Promise((r) => setTimeout(r, 900));
       }
 
-      for (const model of SCANNER_MODEL_CASCADE) {
+      for (const model of MT5_HISTORY_MODEL_CASCADE) {
         if (MAX_MT5_WALL_MS - (Date.now() - mt5CascadeStartMs) < 2500) break;
         for (let keyIdx = 0; keyIdx < scannerApiKeys.length; keyIdx++) {
           const remainingWallMs = MAX_MT5_WALL_MS - (Date.now() - mt5CascadeStartMs);
@@ -1301,7 +1367,7 @@ STRICT EXTRACTION RULES:
               (abortSignal) =>
                 ai.models.generateContent({
                   model,
-                  contents: [{ inlineData: { mimeType, data: base64Data } }, prompt],
+                  contents: contentParts,
                   config: {
                     abortSignal,
                     ...(model === 'gemini-4-hydrogen'
@@ -1318,6 +1384,7 @@ STRICT EXTRACTION RULES:
                           items: {
                             type: Type.OBJECT,
                             properties: {
+                              imageIndex: { type: Type.INTEGER },
                               ticketId: { type: Type.STRING },
                               instrument: { type: Type.STRING },
                               position: { type: Type.STRING },
@@ -1334,7 +1401,7 @@ STRICT EXTRACTION RULES:
                               closeType: { type: Type.STRING },
                               notes: { type: Type.STRING },
                             },
-                            required: ['instrument', 'position'],
+                            required: ['imageIndex', 'instrument', 'position'],
                           },
                         },
                       },
@@ -1342,11 +1409,14 @@ STRICT EXTRACTION RULES:
                     },
                   },
                 }),
-              Math.min(18_000, remainingWallMs),
+              Math.min(isBatch ? 22_000 : 15_000, remainingWallMs),
               `MT5 Scan (${model})`
             );
             if (response && response.text) {
-              const candidate = parseAndNormalizeMt5HistoryResponse(response.text);
+              const candidate = parseAndNormalizeMt5HistoryResponse(
+                response.text,
+                resolvedImages.length - 1
+              );
               if (candidate.normalizedTrades.length > 0) {
                 winningResult = candidate;
                 usedModel = model;
@@ -1401,7 +1471,7 @@ STRICT EXTRACTION RULES:
         detected: true,
         source: winningResult.source,
         trades: winningResult.normalizedTrades,
-        modelUsed: usedModel || 'gemini-4-hydrogen',
+        modelUsed: usedModel || 'gemini-3.1-flash-lite',
       },
     });
   } catch (err: any) {
@@ -1683,6 +1753,34 @@ async function fetchPastActualsViaGoogleSearch(
   return {};
 }
 
+function getEdgeUpcomingFomcMeetingInfo(nowMs: number = Date.now()) {
+  const schedule = [
+    { cutoffIso: '2026-12-17T00:00:00Z', labelId: 'FOMC Desember 2026', shortId: 'Des 2026', searchPhraseEn: 'December 2026 FOMC meeting' },
+    { cutoffIso: '2027-01-28T00:00:00Z', labelId: 'FOMC Januari 2027', shortId: 'Jan 2027', searchPhraseEn: 'January 2027 FOMC meeting' },
+    { cutoffIso: '2027-03-18T00:00:00Z', labelId: 'FOMC Maret 2027', shortId: 'Mar 2027', searchPhraseEn: 'March 2027 FOMC meeting' },
+    { cutoffIso: '2027-04-29T00:00:00Z', labelId: 'FOMC April 2027', shortId: 'Apr 2027', searchPhraseEn: 'April 2027 FOMC meeting' },
+    { cutoffIso: '2027-06-10T00:00:00Z', labelId: 'FOMC Juni 2027', shortId: 'Jun 2027', searchPhraseEn: 'June 2027 FOMC meeting' },
+    { cutoffIso: '2027-07-29T00:00:00Z', labelId: 'FOMC Juli 2027', shortId: 'Jul 2027', searchPhraseEn: 'July 2027 FOMC meeting' },
+    { cutoffIso: '2027-09-16T00:00:00Z', labelId: 'FOMC September 2027', shortId: 'Sep 2027', searchPhraseEn: 'September 2027 FOMC meeting' },
+    { cutoffIso: '2027-11-04T00:00:00Z', labelId: 'FOMC November 2027', shortId: 'Nov 2027', searchPhraseEn: 'November 2027 FOMC meeting' },
+    { cutoffIso: '2027-12-16T00:00:00Z', labelId: 'FOMC Desember 2027', shortId: 'Des 2027', searchPhraseEn: 'December 2027 FOMC meeting' },
+  ];
+  const hit = schedule.find((item) => nowMs < new Date(item.cutoffIso).getTime());
+  if (hit) return hit;
+  const dt = new Date(nowMs);
+  const target = new Date(Date.UTC(dt.getUTCFullYear(), dt.getUTCMonth() + 1, 1));
+  const mId = ['Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni', 'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember'];
+  const sId = ['Jan', 'Feb', 'Mar', 'Apr', 'Mei', 'Jun', 'Jul', 'Agu', 'Sep', 'Okt', 'Nov', 'Des'];
+  const mEn = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+  const m = target.getUTCMonth();
+  const y = target.getUTCFullYear();
+  return {
+    labelId: `FOMC ${mId[m]} ${y}`,
+    shortId: `${sId[m]} ${y}`,
+    searchPhraseEn: `${mEn[m]} ${y} FOMC meeting`,
+  };
+}
+
 async function fetchCmeFedWatchWithGrounding(
   ai: GoogleGenAI,
   existingFedWatch: any,
@@ -1706,12 +1804,13 @@ async function fetchCmeFedWatchWithGrounding(
     return existingFedWatch;
   }
 
+  const upcomingFomc = getEdgeUpcomingFomcMeetingInfo();
   const todayIso = new Date().toISOString().slice(0, 10);
-  const fedWatchPrompt = `Today is ${todayIso}. Search for the latest CME FedWatch Tool target rate probabilities for the December 2026 FOMC meeting (FOMC Desember 2026).
+  const fedWatchPrompt = `Today is ${todayIso}. Search for the latest CME FedWatch Tool target rate probabilities for the next upcoming FOMC meeting (${upcomingFomc.searchPhraseEn} / ${upcomingFomc.labelId}).
 Return ONLY a valid JSON object (no markdown fences) with these exact fields:
 {
   "isAvailable": boolean,
-  "fomcMeetingDate": "FOMC Desember 2026",
+  "fomcMeetingDate": "string (e.g. '${upcomingFomc.labelId}')",
   "targetRateRange": "string (e.g. '450-475 bps' or '')",
   "hikeProbability": number or null,
   "holdProbability": number or null,
@@ -1735,28 +1834,58 @@ CRITICAL RULE: Do not invent numbers. If search results do not contain exact fig
         `CME FedWatch Grounding (${model})`
       );
       const parsed = parseAiJsonResponse(response?.text || '');
-      const cutVal = parsed.cutProbability != null ? Number(parsed.cutProbability) : null;
-      const holdVal = parsed.holdProbability != null ? Number(parsed.holdProbability) : null;
-      const hikeVal = parsed.hikeProbability != null ? Number(parsed.hikeProbability) : 0;
+      const cutRaw = parsed.cutProbability != null ? Number(parsed.cutProbability) : null;
+      const holdRaw = parsed.holdProbability != null ? Number(parsed.holdProbability) : null;
+      const hikeRaw = parsed.hikeProbability != null ? Number(parsed.hikeProbability) : 0;
 
       if (
         parsed.isAvailable !== false &&
-        cutVal !== null &&
-        holdVal !== null &&
-        Number.isFinite(cutVal) &&
-        Number.isFinite(holdVal) &&
-        cutVal + holdVal + (Number.isFinite(hikeVal) ? hikeVal : 0) > 0
+        cutRaw !== null &&
+        holdRaw !== null &&
+        Number.isFinite(cutRaw) &&
+        Number.isFinite(holdRaw) &&
+        cutRaw >= 0 &&
+        holdRaw >= 0 &&
+        cutRaw + holdRaw + (Number.isFinite(hikeRaw) && hikeRaw > 0 ? hikeRaw : 0) > 0
       ) {
+        const safeHike = Number.isFinite(hikeRaw) && hikeRaw >= 0 ? hikeRaw : 0;
+        const total = cutRaw + holdRaw + safeHike;
+        const cutProbability = Number(((cutRaw / total) * 100).toFixed(1));
+        const holdProbability = Number(((holdRaw / total) * 100).toFixed(1));
+        const hikeProbability = Number(Math.max(0, 100 - cutProbability - holdProbability).toFixed(1));
+        const dominantOutcome =
+          hikeProbability >= holdProbability && hikeProbability >= cutProbability && hikeProbability > 0
+            ? 'HIKE'
+            : cutProbability >= holdProbability && cutProbability >= hikeProbability
+            ? 'CUT'
+            : 'HOLD';
+        const saturationScenario =
+          hikeProbability >= 80
+            ? 'HIKE'
+            : cutProbability >= 80
+            ? 'CUT'
+            : holdProbability >= 80
+            ? 'HOLD'
+            : undefined;
+        const resolvedMeeting =
+          typeof parsed.fomcMeetingDate === 'string' && parsed.fomcMeetingDate.trim()
+            ? parsed.fomcMeetingDate.trim()
+            : upcomingFomc.labelId;
+
         const out = {
           ...(existingFedWatch || {}),
           isAvailable: true,
-          fomcMeetingDate: 'FOMC Desember 2026',
+          fomcMeetingDate: resolvedMeeting,
           targetRateRange: String(parsed.targetRateRange || existingFedWatch?.targetRateRange || ''),
-          cutProbability: cutVal,
-          holdProbability: holdVal,
-          hikeProbability: Number.isFinite(hikeVal) ? hikeVal : 0,
-          hawkishShiftDetected: Boolean(parsed.hawkishShiftDetected || (hikeVal ?? 0) >= 50),
-          sourceLabel: 'Sumber: CME FedWatch Grounding (Des 2026)',
+          cutProbability,
+          holdProbability,
+          hikeProbability,
+          dominantOutcome,
+          isPricedInSaturated: Boolean(saturationScenario),
+          saturationScenario,
+          hawkishShiftDetected: Boolean(parsed.hawkishShiftDetected || hikeProbability >= 25),
+          sourceLabel: `Sumber: CME FedWatch Grounding (${upcomingFomc.shortId})`,
+          updatedAt: new Date().toISOString(),
         };
         cachedEdgeFedWatch = { fetchedAt: Date.now(), data: out };
         return out;
@@ -2222,6 +2351,303 @@ async function handleMacroNewsAnalyze(req: Request): Promise<Response> {
   }
 }
 
+let lastEdgeFundamentalSnapshot: { fetchedAt: number; snapshot: any } | null = null;
+
+function sanitizeNoBuySellEdge(text: string): string {
+  if (!text) return '';
+  return text
+    .replace(/\bSTRONG\s+BUY\b/gi, 'Strong Bullish')
+    .replace(/\bSTRONG\s+SELL\b/gi, 'Strong Bearish')
+    .replace(/\bBUY\b/g, 'Bullish')
+    .replace(/\bbuy\b/g, 'bullish')
+    .replace(/\bSELL\b/g, 'Bearish')
+    .replace(/\bsell\b/g, 'bearish');
+}
+
+async function handleFundamentalGoldAnalyze(req: Request): Promise<Response> {
+  let baselineSnapshot: any = null;
+  try {
+    const body = await req.json();
+    const {
+      forceRefresh = false,
+      baselineSnapshot: clientBaseline,
+      cmeFedWatch: clientFedWatch,
+      previousSnapshot,
+      contextSummary,
+    } = body || {};
+    baselineSnapshot = clientBaseline || null;
+
+    if (!baselineSnapshot || !baselineSnapshot.horizons || !baselineSnapshot.narrative) {
+      return jsonResponse(
+        {
+          success: false,
+          error: 'baselineSnapshot Fundamental Gold wajib disertakan dari klien TradeVault.',
+        },
+        400
+      );
+    }
+
+    const newsApiKey = getNewsGeminiApiKeys()[0] || '';
+    let resolvedFedWatch: any = clientFedWatch || null;
+    let edgeAiClient: GoogleGenAI | null = null;
+
+    if (newsApiKey) {
+      edgeAiClient = new GoogleGenAI({
+        apiKey: newsApiKey,
+        httpOptions: {
+          headers: { 'User-Agent': 'aistudio-build' },
+          retryOptions: { attempts: 1 },
+        },
+      });
+      try {
+        const grounded = await fetchCmeFedWatchWithGrounding(
+          edgeAiClient,
+          clientFedWatch,
+          Boolean(forceRefresh)
+        );
+        if (grounded?.isAvailable) {
+          resolvedFedWatch = grounded;
+          baselineSnapshot = {
+            ...baselineSnapshot,
+            evidenceSummary: {
+              ...(baselineSnapshot.evidenceSummary || {}),
+              fedWatchDominant: grounded.dominantOutcome || baselineSnapshot.evidenceSummary?.fedWatchDominant,
+              fedWatchCutPct: grounded.cutProbability ?? baselineSnapshot.evidenceSummary?.fedWatchCutPct,
+              fedWatchHoldPct: grounded.holdProbability ?? baselineSnapshot.evidenceSummary?.fedWatchHoldPct,
+              fedWatchHikePct: grounded.hikeProbability ?? baselineSnapshot.evidenceSummary?.fedWatchHikePct,
+              fedWatchMeeting: grounded.fomcMeetingDate || baselineSnapshot.evidenceSummary?.fedWatchMeeting,
+              fedWatchSourceLabel: grounded.sourceLabel || baselineSnapshot.evidenceSummary?.fedWatchSourceLabel,
+              fedWatchImpliedRate: grounded.impliedFedFundsRate ?? baselineSnapshot.evidenceSummary?.fedWatchImpliedRate,
+            },
+          };
+        }
+      } catch {
+        // Non-blocking: preserve client FedWatch telemetry
+      }
+    }
+
+    if (
+      !forceRefresh &&
+      lastEdgeFundamentalSnapshot &&
+      Date.now() - lastEdgeFundamentalSnapshot.fetchedAt < 30 * 60 * 1000 &&
+      lastEdgeFundamentalSnapshot.snapshot?.sourceMode === 'GEMINI_AI' &&
+      lastEdgeFundamentalSnapshot.snapshot?.fundamentalFingerprint ===
+        baselineSnapshot.fundamentalFingerprint
+    ) {
+      return jsonResponse({
+        success: true,
+        cached: true,
+        cmeFedWatch: resolvedFedWatch,
+        snapshot: {
+          ...baselineSnapshot,
+          sourceMode: 'GEMINI_AI',
+          modelUsed: lastEdgeFundamentalSnapshot.snapshot.modelUsed,
+          narrative: lastEdgeFundamentalSnapshot.snapshot.narrative,
+        },
+      });
+    }
+
+    if (!edgeAiClient) {
+      lastEdgeFundamentalSnapshot = { fetchedAt: Date.now(), snapshot: baselineSnapshot };
+      return jsonResponse({
+        success: true,
+        fallbackUsed: true,
+        cmeFedWatch: resolvedFedWatch,
+        snapshot: baselineSnapshot,
+      });
+    }
+
+    const ai = edgeAiClient;
+
+    const isUnchanged = Boolean(
+      previousSnapshot &&
+        previousSnapshot.fundamentalFingerprint === baselineSnapshot.fundamentalFingerprint
+    );
+
+    const promptData = {
+      overallBias: baselineSnapshot.overallBias,
+      bullishProbability: baselineSnapshot.bullishProbability,
+      bearishProbability: baselineSnapshot.bearishProbability,
+      horizons: {
+        daily1D: baselineSnapshot.horizons?.daily1D,
+        weekly1W: baselineSnapshot.horizons?.weekly1W,
+        monthly1M: baselineSnapshot.horizons?.monthly1M,
+      },
+      marketRegime: baselineSnapshot.marketRegime,
+      regimeLabelEn: baselineSnapshot.regimeLabelEn,
+      isDataUnchangedFromLastCheck: isUnchanged,
+      changeDetection: baselineSnapshot.changeDetection,
+      topDrivers: Array.isArray(baselineSnapshot.drivers)
+        ? baselineSnapshot.drivers.slice(0, 7)
+        : [],
+      evidenceSummary: baselineSnapshot.evidenceSummary || {},
+      topHeadlines: Array.isArray(contextSummary?.topHeadlines)
+        ? contextSummary.topHeadlines.slice(0, 8)
+        : [],
+      externalEvents: Array.isArray(contextSummary?.externalEvents)
+        ? contextSummary.externalEvents.slice(0, 6)
+        : [],
+    };
+
+    const fundamentalSystemInstruction = `You are a sharp, trusted Senior Global Macro Desk Strategist writing a crisp, high-conviction daily Macro Desk Brief on XAU/USD (Gold) for serious active traders.
+CRITICAL RULES:
+1. NEVER use trading signal action words like "BUY" or "SELL" anywhere in your output! Strictly describe market direction as "BULLISH" (naik/menguat), "BEARISH" (turun/melemah), or "NEUTRAL" (seimbang/konsolidasi).
+2. Write in clean, authoritative, flowing editorial Indonesian (Id) and English (En) — like a Bloomberg / institutional morning desk note that stays effortless to grasp. Avoid stiff textbook phrasing, robotic translationese, or forced filler (e.g. do not force IPO mentions unless an actual major market event is present). Cite concrete numbers from evidenceSummary/topDrivers and immediately connect each indicator (DXY, US10Y, Real Yield, VIX, GLD, CFTC COT) to its direct impact on Gold.
+3. Preserve the mathematical probabilities computed in baselineSnapshot — explain WHY those probabilities lean Bullish, Bearish, or Neutral with causal clarity.
+4. HONESTY RULE: If isDataUnchangedFromLastCheck is true, explicitly open headline/dataStatusNote/sectionA stating honestly that core fundamental drivers have not shifted since the last check (zero manufactured drama).
+5. Connect the full A-to-Z macro picture seamlessly: (A) Macro Regime & what shifted, (B) Fed rates, Real Yields, US10Y & DXY opportunity-cost engine, (C) Cross-market capital flows (Wall Street risk appetite, VIX / Dash-for-Cash risk, GLD ETF, CFTC COT, Asia/China FX & oil), and (D) Clear 1-Day vs 1-Week vs 1-Month roadmap plus concrete invalidation triggers that would flip the thesis.`;
+
+    let aiResponseText = '';
+    let usedModel = '';
+
+    for (const model of NEWS_MODEL_CASCADE) {
+      const cooldownUntil = newsQuotaCooldownUntilByModel.get(model) || 0;
+      if (Date.now() < cooldownUntil) continue;
+      try {
+        const response = await withTimeoutAbort(
+          (abortSignal) =>
+            ai.models.generateContent({
+              model,
+              contents: `Synthesize this verified XAU/USD multi-horizon dataset into a crisp, authoritative A-Z Macro Desk Brief in Bahasa Indonesia (Id) and English (En):\n${JSON.stringify(
+                promptData
+              )}`,
+              config: {
+                abortSignal,
+                systemInstruction: fundamentalSystemInstruction,
+                responseMimeType: 'application/json',
+                responseSchema: {
+                  type: Type.OBJECT,
+                  properties: {
+                    headlineSummaryId: { type: Type.STRING },
+                    headlineSummaryEn: { type: Type.STRING },
+                    dataStatusNoteId: { type: Type.STRING },
+                    dataStatusNoteEn: { type: Type.STRING },
+                    sectionA_Id: { type: Type.STRING },
+                    sectionA_En: { type: Type.STRING },
+                    sectionB_Id: { type: Type.STRING },
+                    sectionB_En: { type: Type.STRING },
+                    sectionC_Id: { type: Type.STRING },
+                    sectionC_En: { type: Type.STRING },
+                    sectionD_Id: { type: Type.STRING },
+                    sectionD_En: { type: Type.STRING },
+                  },
+                  required: [
+                    'headlineSummaryId',
+                    'headlineSummaryEn',
+                    'dataStatusNoteId',
+                    'dataStatusNoteEn',
+                    'sectionA_Id',
+                    'sectionA_En',
+                    'sectionB_Id',
+                    'sectionB_En',
+                    'sectionC_Id',
+                    'sectionC_En',
+                    'sectionD_Id',
+                    'sectionD_En',
+                  ],
+                },
+              },
+            }),
+          20_000,
+          `Fundamental Gold Edge AI (${model})`
+        );
+        if (response && response.text) {
+          aiResponseText = response.text;
+          usedModel = model;
+          break;
+        }
+      } catch (err: any) {
+        if (isGeminiQuotaError(err) || isGeminiModelUnavailableError(err)) {
+          newsQuotaCooldownUntilByModel.set(model, Date.now() + 30 * 60 * 1000);
+        }
+        continue;
+      }
+    }
+
+    if (!aiResponseText) {
+      return jsonResponse({
+        success: true,
+        fallbackUsed: true,
+        cmeFedWatch: resolvedFedWatch,
+        snapshot: baselineSnapshot,
+      });
+    }
+
+    const aiParsed = parseAiJsonResponse(aiResponseText);
+    const enrichedSnapshot = {
+      ...baselineSnapshot,
+      analyzedAt: new Date().toISOString(),
+      sourceMode: 'GEMINI_AI',
+      modelUsed: usedModel || 'gemini-4-hydrogen',
+      narrative: {
+        id: {
+          headlineSummary: sanitizeNoBuySellEdge(
+            aiParsed.headlineSummaryId || baselineSnapshot.narrative.id.headlineSummary
+          ),
+          dataStatusNote: sanitizeNoBuySellEdge(
+            aiParsed.dataStatusNoteId || baselineSnapshot.narrative.id.dataStatusNote
+          ),
+          sectionA_StatusAndChange: sanitizeNoBuySellEdge(
+            aiParsed.sectionA_Id || baselineSnapshot.narrative.id.sectionA_StatusAndChange
+          ),
+          sectionB_RatesInflationAndGrowth: sanitizeNoBuySellEdge(
+            aiParsed.sectionB_Id ||
+              baselineSnapshot.narrative.id.sectionB_RatesInflationAndGrowth
+          ),
+          sectionC_CrossMarketEquitiesCentralBanks: sanitizeNoBuySellEdge(
+            aiParsed.sectionC_Id ||
+              baselineSnapshot.narrative.id.sectionC_CrossMarketEquitiesCentralBanks
+          ),
+          sectionD_HorizonOutlookAndRisks: sanitizeNoBuySellEdge(
+            aiParsed.sectionD_Id ||
+              baselineSnapshot.narrative.id.sectionD_HorizonOutlookAndRisks
+          ),
+        },
+        en: {
+          headlineSummary: sanitizeNoBuySellEdge(
+            aiParsed.headlineSummaryEn || baselineSnapshot.narrative.en.headlineSummary
+          ),
+          dataStatusNote: sanitizeNoBuySellEdge(
+            aiParsed.dataStatusNoteEn || baselineSnapshot.narrative.en.dataStatusNote
+          ),
+          sectionA_StatusAndChange: sanitizeNoBuySellEdge(
+            aiParsed.sectionA_En || baselineSnapshot.narrative.en.sectionA_StatusAndChange
+          ),
+          sectionB_RatesInflationAndGrowth: sanitizeNoBuySellEdge(
+            aiParsed.sectionB_En ||
+              baselineSnapshot.narrative.en.sectionB_RatesInflationAndGrowth
+          ),
+          sectionC_CrossMarketEquitiesCentralBanks: sanitizeNoBuySellEdge(
+            aiParsed.sectionC_En ||
+              baselineSnapshot.narrative.en.sectionC_CrossMarketEquitiesCentralBanks
+          ),
+          sectionD_HorizonOutlookAndRisks: sanitizeNoBuySellEdge(
+            aiParsed.sectionD_En ||
+              baselineSnapshot.narrative.en.sectionD_HorizonOutlookAndRisks
+          ),
+        },
+      },
+    };
+
+    lastEdgeFundamentalSnapshot = { fetchedAt: Date.now(), snapshot: enrichedSnapshot };
+    return jsonResponse({
+      success: true,
+      fallbackUsed: false,
+      cmeFedWatch: resolvedFedWatch,
+      snapshot: enrichedSnapshot,
+    });
+  } catch {
+    if (baselineSnapshot) {
+      return jsonResponse({
+        success: true,
+        fallbackUsed: true,
+        snapshot: baselineSnapshot,
+      });
+    }
+    return jsonResponse({ success: false, error: 'Gagal memproses Fundamental Gold.' }, 500);
+  }
+}
+
 Deno.serve(async (req: Request) => {
   if (req.method === 'OPTIONS') {
     return new Response(null, { status: 204, headers: CORS_HEADERS });
@@ -2260,6 +2686,10 @@ Deno.serve(async (req: Request) => {
 
   if (req.method === 'POST' && path.endsWith('/api/macro-news/analyze')) {
     return handleMacroNewsAnalyze(req);
+  }
+
+  if (req.method === 'POST' && path.endsWith('/api/macro-news/fundamental')) {
+    return handleFundamentalGoldAnalyze(req);
   }
 
   return jsonResponse(

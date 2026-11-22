@@ -157,7 +157,7 @@ export const RiskSnapshot: React.FC<RiskSnapshotProps> = ({
             </span>
           </div>
 
-          <div className="w-full h-1 rounded-full bg-[#D9E2EC] dark:bg-[#20252D] overflow-hidden">
+          <div className="w-full h-1 rounded-full bg-[#E4E4E7] dark:bg-[#20252D] overflow-hidden">
             <div
               className={`h-full rounded-full transition-all duration-300 ${
                 drawdownProgress > 80
@@ -207,7 +207,7 @@ export const RiskSnapshot: React.FC<RiskSnapshotProps> = ({
             </span>
           </div>
 
-          <div className="w-full h-1 rounded-full bg-[#D9E2EC] dark:bg-[#20252D] overflow-hidden">
+          <div className="w-full h-1 rounded-full bg-[#E4E4E7] dark:bg-[#20252D] overflow-hidden">
             {dailyLossConfig.isConfigured ? (
               <div
                 className={`h-full rounded-full transition-all duration-300 ${
@@ -220,7 +220,7 @@ export const RiskSnapshot: React.FC<RiskSnapshotProps> = ({
                 style={{ width: `${dailyLossProgress}%` }}
               />
             ) : (
-              <div className="h-full w-full bg-[#D9E2EC] dark:bg-[#20252D] opacity-40" />
+              <div className="h-full w-full bg-[#E4E4E7] dark:bg-[#20252D] opacity-40" />
             )}
           </div>
 

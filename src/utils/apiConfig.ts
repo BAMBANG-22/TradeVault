@@ -17,6 +17,7 @@ const SUPABASE_EDGE_SUPPORTED_PATHS = new Set([
   '/api/extract-trade-screenshot',
   '/api/extract-mt5-history',
   '/api/macro-news/analyze',
+  '/api/macro-news/fundamental',
 ]);
 
 /**

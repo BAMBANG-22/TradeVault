@@ -10,6 +10,7 @@ export type SmcSignalOutcomeStatus =
 export type SmcSignalBatchStatus = 'ON_GOING' | 'PREVIOUS';
 
 export type SmcHistoryDateFilterMode = 'ALL' | 'TODAY' | 'CUSTOM';
+export type SmcHistoryDirectionFilter = 'ALL' | 'BUY' | 'SELL';
 
 export interface SmcStoredSignalRecord {
   uid: string;
@@ -121,10 +122,21 @@ export function filterSignalHistoryRecords(params: {
   filterMode: SmcHistoryDateFilterMode;
   customDateKey: string;
   todayDateKey: string;
+  directionFilter?: SmcHistoryDirectionFilter;
 }): SmcStoredSignalRecord[] {
-  const { records, tradingMode, filterMode, customDateKey, todayDateKey } = params;
+  const {
+    records,
+    tradingMode,
+    filterMode,
+    customDateKey,
+    todayDateKey,
+    directionFilter = 'ALL',
+  } = params;
   const closedForMode = records.filter(
-    (r) => r.tradingMode === tradingMode && r.status !== 'ACTIVE'
+    (r) =>
+      r.tradingMode === tradingMode &&
+      r.status !== 'ACTIVE' &&
+      (directionFilter === 'ALL' || r.direction === directionFilter)
   );
 
   const filtered =

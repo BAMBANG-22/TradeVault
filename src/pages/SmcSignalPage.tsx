@@ -4,6 +4,7 @@
  */
 
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import {
   RefreshCw,
   Compass,
@@ -14,11 +15,14 @@ import {
   Calendar,
   CheckCircle2,
   XCircle,
+  Bookmark,
   BookmarkCheck,
   PlusCircle,
   RotateCcw,
   Trash2,
   SlidersHorizontal,
+  ChevronDown,
+  X,
 } from 'lucide-react';
 import { setNewsCycleOfflineMode } from '../utils/apiConfig';
 import {
@@ -50,6 +54,7 @@ import {
   type SmcSignalOutcomeStatus,
   type SmcSignalBatchStatus,
   type SmcHistoryDateFilterMode,
+  type SmcHistoryDirectionFilter,
   type SmcStoredSignalRecord,
   type SmcDeletedSignalRecord,
 } from '../utils/smcSignalHistory';
@@ -60,6 +65,7 @@ export type {
   SmcSignalOutcomeStatus,
   SmcSignalBatchStatus,
   SmcHistoryDateFilterMode,
+  SmcHistoryDirectionFilter,
   SmcStoredSignalRecord,
 };
 
@@ -228,6 +234,425 @@ const TIER_SORT_WEIGHT: Record<SmcLimitOrderSetup['tier'], number> = {
   HIGH_RISK: 3,
 };
 
+interface MemoSignalCardProps {
+  group: SmcStoredSignalRecord;
+  todayDateKey: string;
+  tr: <T = string>(idText: T, enText: T) => T;
+  onToggleTake: (uid: string) => void;
+  onToggleBatch: (uid: string, targetBatch: SmcSignalBatchStatus) => void;
+  onDelete: (uid: string) => void;
+  onRequestOutcome: (
+    record: SmcStoredSignalRecord,
+    outcome: Exclude<SmcSignalOutcomeStatus, 'ACTIVE'>
+  ) => void;
+}
+
+const MemoSignalCard: React.FC<MemoSignalCardProps> = React.memo(
+  ({ group, todayDateKey, tr, onToggleTake, onToggleBatch, onDelete, onRequestOutcome }) => {
+    const isTierAPlus = group.tier === 'A_PLUS';
+    const isTierB = group.tier === 'B_STANDARD';
+    const isPreviousBatch = (group.batchStatus || 'ON_GOING') === 'PREVIOUS';
+    const cardDateLabel = formatDateKeyHuman(group.dateKey, todayDateKey);
+    const isBuy = group.direction === 'BUY';
+
+    return (
+      <article
+        data-testid={`smc-group-card-${group.uid}`}
+        style={{ contain: 'layout style' }}
+        className={`rounded-xl border bg-white dark:bg-[#101318] p-4 sm:p-[18px] font-mono-numbers tabular-nums transition-colors duration-150 flex flex-col justify-between ${
+          group.isTaken
+            ? 'border-[#0F172A] dark:border-white/75'
+            : isPreviousBatch
+            ? 'border-[#E4E4E7]/85 dark:border-[#20252D]/85'
+            : 'border-[#E4E4E7] dark:border-[#20252D]'
+        }`}
+      >
+        <div>
+          {/* Clean 2-Line Editorial Header (Zero Pill Sandwich) */}
+          <div className="pb-3 mb-3 border-b border-[#E4E4E7]/80 dark:border-[#20252D]">
+            <div className="flex items-baseline justify-between gap-2">
+              <div className="flex items-baseline gap-2 min-w-0">
+                <span
+                  className={`text-[11px] font-sans font-bold uppercase tracking-[0.08em] shrink-0 ${
+                    isBuy
+                      ? 'text-[#059669] dark:text-[#00A878]'
+                      : 'text-[#E11D48] dark:text-[#E05260]'
+                  }`}
+                >
+                  {group.direction}
+                </span>
+                <h2 className="text-[13px] sm:text-sm font-sans font-bold text-[#0F172A] dark:text-[#F2F4F7] truncate">
+                  {group.headerTitle}
+                </h2>
+              </div>
+
+              <span
+                className={`text-[10px] font-sans font-semibold uppercase tracking-[0.06em] shrink-0 ${
+                  isTierAPlus
+                    ? 'text-[#0F172A] dark:text-[#F2F4F7]'
+                    : isTierB
+                    ? 'text-[#526071] dark:text-[#929BA9]'
+                    : 'text-[#E11D48] dark:text-[#E05260]'
+                }`}
+              >
+                {isTierAPlus ? 'A+' : isTierB ? 'Setup B' : 'High Risk'}
+              </span>
+            </div>
+
+            <div className="mt-1 flex items-center justify-between gap-2 text-[11px] text-[#526071] dark:text-[#929BA9] font-sans">
+              <div className="flex flex-wrap items-center gap-x-1.5 gap-y-0.5 min-w-0">
+                <span className="truncate">
+                  {cardDateLabel} · {group.createdTimeWib}
+                </span>
+                <span aria-hidden="true">·</span>
+                <span className="text-[#0F172A] dark:text-[#CBD5E1] font-medium">
+                  {isPreviousBatch ? 'Previous' : 'On Going'}
+                </span>
+                {group.isTaken && (
+                  <>
+                    <span aria-hidden="true">·</span>
+                    <span className="font-semibold text-[#0F172A] dark:text-white">
+                      {tr('Diambil', 'Taken')}
+                    </span>
+                  </>
+                )}
+                {group.resurfacedFromBatch && (
+                  <span
+                    data-testid={`smc-resurfaced-badge-${group.uid}`}
+                    className="text-[#526071] dark:text-[#929BA9]"
+                  >
+                    · {group.resurfacedFromBatch === 'PREVIOUS'
+                      ? tr('Muncul lagi', 'Re-shown')
+                      : tr('Muncul lagi', 'Re-shown')}
+                  </span>
+                )}
+              </div>
+
+              {isPreviousBatch && (
+                <button
+                  type="button"
+                  onClick={() => onToggleBatch(group.uid, 'ON_GOING')}
+                  className="text-[11px] font-medium text-[#0F172A] dark:text-[#F2F4F7] underline underline-offset-2 decoration-[#CBD5E1] dark:decoration-[#3A4250] hover:decoration-current transition-colors shrink-0 cursor-pointer"
+                >
+                  {tr('Ke On Going', 'To On Going')}
+                </button>
+              )}
+            </div>
+          </div>
+
+          {/* High-Clarity Price Matrix: Entry (Focus), SL (Rose Red), TP 1/2/Max (Emerald Green) */}
+          <div className="space-y-2 text-xs">
+            <div className="flex items-baseline justify-between gap-2 pb-2 border-b border-[#E4E4E7]/70 dark:border-[#20252D]/80">
+              <div className="flex items-baseline gap-2">
+                <span className="text-[11px] text-[#526071] dark:text-[#929BA9] font-sans font-medium">
+                  Entry Limit
+                </span>
+                <span className="text-[10px] text-[#526071]/80 dark:text-[#929BA9]/80">
+                  Spot {group.spotPriceAtCapture.toFixed(1)}
+                </span>
+              </div>
+              <span className="text-base sm:text-[17px] font-bold tracking-tight text-[#0F172A] dark:text-[#F2F4F7]">
+                {group.entryLimit.toFixed(1)}
+              </span>
+            </div>
+
+            {/* Stop Loss — Clear & High-Contrast */}
+            <div className="flex items-center justify-between gap-2 py-0.5">
+              <span className="text-[11px] font-sans font-semibold text-[#E11D48] dark:text-[#E05260]">
+                SL
+              </span>
+              <span className="text-[13px] font-bold text-[#E11D48] dark:text-[#E05260]">
+                {group.stopLoss.toFixed(1)}{' '}
+                <span className="text-[10px] font-normal opacity-80">
+                  ({group.slPips}p + {group.slPoints}pt)
+                </span>
+              </span>
+            </div>
+
+            {/* Take Profit Levels — Clear & High-Contrast */}
+            <div className="pt-1.5 border-t border-[#E4E4E7]/60 dark:border-[#20252D]/70 space-y-1.5">
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-[11px] font-sans font-medium text-[#526071] dark:text-[#929BA9]">
+                  TP 1
+                </span>
+                <span className="text-[13px] font-semibold text-[#059669] dark:text-[#00A878]">
+                  {group.tp1.toFixed(1)}{' '}
+                  <span className="text-[10px] font-normal opacity-80">(1:1)</span>
+                </span>
+              </div>
+
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-[11px] font-sans font-medium text-[#526071] dark:text-[#929BA9]">
+                  TP 2
+                </span>
+                <span className="text-[13px] font-semibold text-[#059669] dark:text-[#00A878]">
+                  {group.tp2.toFixed(1)}{' '}
+                  <span className="text-[10px] font-normal opacity-80">(1:2)</span>
+                </span>
+              </div>
+
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-[11px] font-sans font-semibold text-[#059669] dark:text-[#00A878]">
+                  TP Max
+                </span>
+                <span className="text-[13px] font-bold text-[#059669] dark:text-[#00A878]">
+                  {group.tpMax.toFixed(1)}{' '}
+                  <span className="text-[10px] font-normal opacity-80">({group.tpMaxRrLabel})</span>
+                </span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Clean Monochrome Footer Actions + On-Demand TP/SL Outcome Row */}
+        <div className="mt-4 pt-3 border-t border-[#E4E4E7]/80 dark:border-[#20252D] space-y-2.5 font-sans">
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              data-testid={`smc-take-signal-${group.uid}`}
+              onClick={() => onToggleTake(group.uid)}
+              className={`flex-1 h-9 px-4 rounded-full text-xs font-semibold transition-colors duration-150 flex items-center justify-center gap-1.5 cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/35 dark:focus-visible:ring-white/35 ${
+                group.isTaken
+                  ? 'bg-[#0F172A] text-white dark:bg-white dark:text-[#050607]'
+                  : 'bg-[#FAFAFA] dark:bg-[#161A22] border border-[#E4E4E7] dark:border-[#20252D] text-[#0F172A] dark:text-[#F2F4F7] hover:bg-[#F4F4F5] dark:hover:bg-[#1E2430]'
+              }`}
+            >
+              {group.isTaken ? (
+                <BookmarkCheck className="w-3.5 h-3.5 shrink-0" />
+              ) : (
+                <Bookmark className="w-3.5 h-3.5 shrink-0 opacity-70" />
+              )}
+              <span className="truncate">
+                {group.isTaken
+                  ? tr('Sedang Diambil', 'Signal Taken')
+                  : tr('Ambil Sinyal', 'Take Signal')}
+              </span>
+            </button>
+
+            <button
+              type="button"
+              title={tr('Hapus sinyal ini', 'Delete this signal')}
+              aria-label={tr('Hapus sinyal ini', 'Delete this signal')}
+              onClick={() => onDelete(group.uid)}
+              className="h-9 w-9 rounded-full shrink-0 inline-flex items-center justify-center border border-[#E4E4E7] dark:border-[#20252D] text-[#526071] dark:text-[#929BA9] hover:text-[#E11D48] dark:hover:text-[#E05260] hover:bg-[#F4F4F5] dark:hover:bg-[#161A22] transition-colors duration-150 cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/35 dark:focus-visible:ring-white/35"
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+            </button>
+          </div>
+
+          {group.isTaken && (
+            <div className="pt-2 border-t border-dashed border-[#E4E4E7] dark:border-[#20252D] space-y-1.5 animate-in fade-in slide-in-from-top-1 duration-150">
+              <div className="flex items-center justify-between text-[10px] font-medium text-[#526071] dark:text-[#929BA9]">
+                <span>{tr('Catat hasil ke riwayat', 'Record outcome')}</span>
+              </div>
+              <div className="grid grid-cols-4 gap-1.5">
+                <button
+                  type="button"
+                  data-testid={`smc-hit-tp1-${group.uid}`}
+                  onClick={() => onRequestOutcome(group, 'HIT_TP1')}
+                  className="h-8 px-1.5 rounded-full border border-[#E4E4E7] dark:border-[#20252D] bg-[#FAFAFA] dark:bg-[#161A22] text-[11px] font-semibold text-[#059669] dark:text-[#00A878] hover:border-[#059669]/50 dark:hover:border-[#00A878]/50 transition-colors duration-150 cursor-pointer"
+                >
+                  TP 1
+                </button>
+                <button
+                  type="button"
+                  data-testid={`smc-hit-tp2-${group.uid}`}
+                  onClick={() => onRequestOutcome(group, 'HIT_TP2')}
+                  className="h-8 px-1.5 rounded-full border border-[#E4E4E7] dark:border-[#20252D] bg-[#FAFAFA] dark:bg-[#161A22] text-[11px] font-semibold text-[#059669] dark:text-[#00A878] hover:border-[#059669]/50 dark:hover:border-[#00A878]/50 transition-colors duration-150 cursor-pointer"
+                >
+                  TP 2
+                </button>
+                <button
+                  type="button"
+                  data-testid={`smc-hit-tpmax-${group.uid}`}
+                  onClick={() => onRequestOutcome(group, 'HIT_TP_MAX')}
+                  className="h-8 px-1.5 rounded-full border border-[#E4E4E7] dark:border-[#20252D] bg-[#FAFAFA] dark:bg-[#161A22] text-[11px] font-semibold text-[#059669] dark:text-[#00A878] hover:border-[#059669]/50 dark:hover:border-[#00A878]/50 transition-colors duration-150 cursor-pointer"
+                >
+                  Max
+                </button>
+                <button
+                  type="button"
+                  data-testid={`smc-hit-sl-${group.uid}`}
+                  onClick={() => onRequestOutcome(group, 'HIT_SL')}
+                  className="h-8 px-1.5 rounded-full border border-[#E4E4E7] dark:border-[#20252D] bg-[#FAFAFA] dark:bg-[#161A22] text-[11px] font-semibold text-[#E11D48] dark:text-[#E05260] hover:border-[#E11D48]/50 dark:hover:border-[#E05260]/50 transition-colors duration-150 cursor-pointer"
+                >
+                  SL
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+      </article>
+    );
+  }
+);
+
+interface MemoHistorySignalCardProps {
+  item: SmcStoredSignalRecord;
+  todayDateKey: string;
+  tr: <T = string>(idText: T, enText: T) => T;
+  onRestore: (uid: string) => void;
+  onDelete: (uid: string) => void;
+}
+
+const MemoHistorySignalCard: React.FC<MemoHistorySignalCardProps> = React.memo(
+  ({ item, todayDateKey, tr, onRestore, onDelete }) => {
+    const isWin = item.status !== 'HIT_SL';
+    const statusBadgeLabel =
+      item.status === 'HIT_TP1'
+        ? 'HIT TP 1'
+        : item.status === 'HIT_TP2'
+        ? 'HIT TP 2'
+        : item.status === 'HIT_TP_MAX'
+        ? `HIT MAX (${item.tpMaxRrLabel})`
+        : 'HIT SL';
+    const effectiveClosedDateKey = getSignalHistoryEffectiveDateKey(item);
+    const isBuy = item.direction === 'BUY';
+
+    return (
+      <article
+        data-testid={`smc-history-card-${item.uid}`}
+        style={{ contain: 'layout style' }}
+        className="rounded-xl border border-[#E4E4E7] dark:border-[#20252D] bg-white dark:bg-[#101318] p-4 sm:p-[18px] font-mono-numbers tabular-nums flex flex-col justify-between"
+      >
+        <div>
+          <div className="pb-3 mb-3 border-b border-[#E4E4E7]/80 dark:border-[#20252D]">
+            <div className="flex items-baseline justify-between gap-2">
+              <div className="flex items-baseline gap-2 min-w-0">
+                <span
+                  className={`text-[11px] font-sans font-bold uppercase tracking-[0.08em] shrink-0 ${
+                    isBuy
+                      ? 'text-[#059669] dark:text-[#00A878]'
+                      : 'text-[#E11D48] dark:text-[#E05260]'
+                  }`}
+                >
+                  {item.direction}
+                </span>
+                <h2 className="text-[13px] sm:text-sm font-sans font-bold text-[#0F172A] dark:text-[#F2F4F7] truncate">
+                  {item.headerTitle}
+                </h2>
+              </div>
+
+              <span
+                className={`inline-flex items-center gap-1 text-[10px] font-sans font-bold uppercase tracking-[0.05em] shrink-0 ${
+                  isWin
+                    ? 'text-[#059669] dark:text-[#00A878]'
+                    : 'text-[#E11D48] dark:text-[#E05260]'
+                }`}
+              >
+                {isWin ? (
+                  <CheckCircle2 className="w-3 h-3 shrink-0" />
+                ) : (
+                  <XCircle className="w-3 h-3 shrink-0" />
+                )}
+                <span>{statusBadgeLabel}</span>
+              </span>
+            </div>
+
+            <p className="mt-1 text-[11px] text-[#526071] dark:text-[#929BA9] font-sans truncate">
+              {formatDateKeyHuman(item.dateKey, todayDateKey)} {item.createdTimeWib} →{' '}
+              {formatDateKeyHuman(effectiveClosedDateKey, todayDateKey)} {item.closedTimeWib || '—'}
+            </p>
+          </div>
+
+          <div className="space-y-1.5 text-xs">
+            <div className="flex items-baseline justify-between gap-2 pb-1.5 border-b border-[#E4E4E7]/70 dark:border-[#20252D]/80">
+              <span className="text-[11px] text-[#526071] dark:text-[#929BA9] font-sans font-medium">
+                Entry Limit
+              </span>
+              <span className="text-base font-bold tracking-tight text-[#0F172A] dark:text-[#F2F4F7]">
+                {item.entryLimit.toFixed(1)}
+              </span>
+            </div>
+
+            <div className="flex items-center justify-between gap-2 pt-0.5">
+              <span className="text-[11px] font-sans font-semibold text-[#E11D48] dark:text-[#E05260]">
+                SL
+              </span>
+              <span className="text-[13px] font-bold text-[#E11D48] dark:text-[#E05260]">
+                {item.stopLoss.toFixed(1)}{' '}
+                <span className="text-[10px] opacity-80 font-normal">
+                  ({item.slPips}p + {item.slPoints}pt)
+                </span>
+              </span>
+            </div>
+
+            <div className="pt-1.5 border-t border-[#E4E4E7]/60 dark:border-[#20252D]/70 space-y-1.5">
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-[11px] text-[#526071] dark:text-[#929BA9] font-sans">
+                  TP 1
+                </span>
+                <span className="text-[13px] font-semibold text-[#059669] dark:text-[#00A878]">
+                  {item.tp1.toFixed(1)}{' '}
+                  <span className="text-[10px] opacity-80 font-normal">(1:1)</span>
+                </span>
+              </div>
+
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-[11px] text-[#526071] dark:text-[#929BA9] font-sans">
+                  TP 2
+                </span>
+                <span className="text-[13px] font-semibold text-[#059669] dark:text-[#00A878]">
+                  {item.tp2.toFixed(1)}{' '}
+                  <span className="text-[10px] opacity-80 font-normal">(1:2)</span>
+                </span>
+              </div>
+
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-[11px] font-sans font-semibold text-[#059669] dark:text-[#00A878]">
+                  TP Max
+                </span>
+                <span className="text-[13px] font-bold text-[#059669] dark:text-[#00A878]">
+                  {item.tpMax.toFixed(1)}{' '}
+                  <span className="text-[10px] opacity-80 font-normal">({item.tpMaxRrLabel})</span>
+                </span>
+              </div>
+            </div>
+
+            <div className="flex items-center justify-between gap-2 pt-2 border-t border-[#E4E4E7]/70 dark:border-[#20252D]/80">
+              <span className="text-[11px] text-[#526071] dark:text-[#929BA9] font-sans font-medium">
+                {tr('Hasil', 'Result')}
+              </span>
+              <span
+                className={`text-sm font-bold ${
+                  (item.resultPips ?? 0) >= 0
+                    ? 'text-[#059669] dark:text-[#00A878]'
+                    : 'text-[#E11D48] dark:text-[#E05260]'
+                }`}
+              >
+                {(item.resultPips ?? 0) >= 0
+                  ? `+${item.resultPips} pips`
+                  : `${item.resultPips} pips`}
+              </span>
+            </div>
+          </div>
+        </div>
+
+        <div className="mt-4 pt-3 border-t border-[#E4E4E7]/80 dark:border-[#20252D] flex items-center gap-2 font-sans">
+          <button
+            type="button"
+            onClick={() => onRestore(item.uid)}
+            className="flex-1 h-9 px-4 rounded-full text-xs font-semibold bg-[#FAFAFA] dark:bg-[#161A22] border border-[#E4E4E7] dark:border-[#20252D] text-[#0F172A] dark:text-[#F2F4F7] hover:bg-[#F4F4F5] dark:hover:bg-[#1E2430] inline-flex items-center justify-center gap-1.5 transition-colors duration-150 cursor-pointer"
+          >
+            <RotateCcw className="w-3.5 h-3.5 shrink-0 opacity-75" />
+            <span className="truncate">{tr('Kembalikan ke Aktif', 'Restore to Active')}</span>
+          </button>
+
+          <button
+            type="button"
+            title={tr('Hapus riwayat ini', 'Delete this history item')}
+            aria-label={tr('Hapus riwayat ini', 'Delete this history item')}
+            onClick={() => onDelete(item.uid)}
+            className="h-9 w-9 rounded-full shrink-0 inline-flex items-center justify-center border border-[#E4E4E7] dark:border-[#20252D] text-[#526071] dark:text-[#929BA9] hover:text-[#E11D48] dark:hover:text-[#E05260] hover:bg-[#F4F4F5] dark:hover:bg-[#161A22] transition-colors duration-150 cursor-pointer"
+          >
+            <Trash2 className="w-3.5 h-3.5" />
+          </button>
+        </div>
+      </article>
+    );
+  }
+);
+
 export const SmcSignalPage: React.FC<SmcSignalPageProps> = ({
   isActive = true,
   onNavigate,
@@ -245,17 +670,51 @@ export const SmcSignalPage: React.FC<SmcSignalPageProps> = ({
   }, []);
   const [selectedSide, setSelectedSide] = useState<'BUY' | 'SELL'>('BUY');
   const [hasUserToggledSide, setHasUserToggledSide] = useState<boolean>(false);
+  const hasUserToggledSideRef = useRef<boolean>(false);
+  hasUserToggledSideRef.current = hasUserToggledSide;
   const [selectedDateKey, setSelectedDateKey] = useState<string>(todayDateKey);
   const [previousDateFilter, setPreviousDateFilter] = useState<string>('ALL');
   const [historyDateFilterMode, setHistoryDateFilterMode] =
     useState<SmcHistoryDateFilterMode>('ALL');
+  const [historyDirectionFilter, setHistoryDirectionFilter] =
+    useState<SmcHistoryDirectionFilter>('ALL');
   const [historyCustomDateKey, setHistoryCustomDateKey] = useState<string>(todayDateKey);
   const [viewSection, setViewSection] = useState<'ACTIVE' | 'HISTORY'>('ACTIVE');
   const [batchFilter, setBatchFilter] = useState<'ALL' | 'ON_GOING' | 'TAKEN' | 'PREVIOUS'>('ALL');
   const [captureFeedback, setCaptureFeedback] = useState<string | null>(null);
+  const [pendingOutcomeConfirm, setPendingOutcomeConfirm] = useState<{
+    record: SmcStoredSignalRecord;
+    outcome: Exclude<SmcSignalOutcomeStatus, 'ACTIVE'>;
+  } | null>(null);
+  const [recentOutcomeUndo, setRecentOutcomeUndo] = useState<{
+    uid: string;
+    previousRecord: SmcStoredSignalRecord;
+    summaryText: string;
+  } | null>(null);
+  const undoTimerRef = useRef<number | null>(null);
   const [isOptionsMenuOpen, setIsOptionsMenuOpen] = useState<boolean>(false);
   const [isDateFilterOpen, setIsDateFilterOpen] = useState<boolean>(false);
+  const [isChochDetailOpen, setIsChochDetailOpen] = useState<boolean>(false);
   const optionsMenuRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (!pendingOutcomeConfirm) return;
+    const handleEsc = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setPendingOutcomeConfirm(null);
+      }
+    };
+    window.addEventListener('keydown', handleEsc);
+    return () => window.removeEventListener('keydown', handleEsc);
+  }, [pendingOutcomeConfirm]);
+
+  useEffect(() => {
+    return () => {
+      if (undoTimerRef.current !== null) {
+        window.clearTimeout(undoTimerRef.current);
+      }
+    };
+  }, []);
 
   useEffect(() => {
     if (!isOptionsMenuOpen) return;
@@ -653,9 +1112,10 @@ export const SmcSignalPage: React.FC<SmcSignalPageProps> = ({
       const currentDayKey = getCurrentWibDateKey();
       setSelectedDateKey(currentDayKey);
       setViewSection('ACTIVE');
-      // Sync selected side with latest real-time Cycle priority when user pulls latest data
-      setHasUserToggledSide(false);
-      setSelectedSide(cycleCompass.recommendedSide);
+      // Only follow Cycle recommendedSide automatically if user hasn't explicitly chosen a side tab
+      if (!hasUserToggledSideRef.current) {
+        setSelectedSide(cycleCompass.recommendedSide);
+      }
       showTimedFeedback(formatPullFeedback(stats, false));
     }
   }, [
@@ -680,15 +1140,17 @@ export const SmcSignalPage: React.FC<SmcSignalPageProps> = ({
         pendingManualCaptureRef.current = false;
         const stats = captureSignalsToOfflineVault(true);
         setViewSection('ACTIVE');
-        setHasUserToggledSide(false);
-        setSelectedSide(cycleCompass.recommendedSide);
+        if (!hasUserToggledSideRef.current) {
+          setSelectedSide(cycleCompass.recommendedSide);
+        }
         showTimedFeedback(formatPullFeedback(stats, false));
       }
     } else {
       const stats = captureSignalsToOfflineVault(true);
       setViewSection('ACTIVE');
-      setHasUserToggledSide(false);
-      setSelectedSide(cycleCompass.recommendedSide);
+      if (!hasUserToggledSideRef.current) {
+        setSelectedSide(cycleCompass.recommendedSide);
+      }
       showTimedFeedback(formatPullFeedback(stats, true));
     }
   };
@@ -946,8 +1408,8 @@ export const SmcSignalPage: React.FC<SmcSignalPageProps> = ({
     [storedSignals, tradingMode, todayDateKey]
   );
 
-  // Filtered History signals according to active filter mode ('ALL' | 'TODAY' | 'CUSTOM')
-  const filteredHistorySignals = useMemo(
+  // History signals matching active date filter (before BUY/SELL filter) for accurate direction counts
+  const dateFilteredHistorySignals = useMemo(
     () =>
       filterSignalHistoryRecords({
         records: storedSignals,
@@ -957,6 +1419,37 @@ export const SmcSignalPage: React.FC<SmcSignalPageProps> = ({
         todayDateKey,
       }),
     [storedSignals, tradingMode, historyDateFilterMode, historyCustomDateKey, todayDateKey]
+  );
+
+  const historyBuyCount = useMemo(
+    () => dateFilteredHistorySignals.filter((r) => r.direction === 'BUY').length,
+    [dateFilteredHistorySignals]
+  );
+
+  const historySellCount = useMemo(
+    () => dateFilteredHistorySignals.filter((r) => r.direction === 'SELL').length,
+    [dateFilteredHistorySignals]
+  );
+
+  // Filtered History signals according to active date filter AND direction filter ('ALL' | 'BUY' | 'SELL')
+  const filteredHistorySignals = useMemo(
+    () =>
+      filterSignalHistoryRecords({
+        records: storedSignals,
+        tradingMode,
+        filterMode: historyDateFilterMode,
+        customDateKey: historyCustomDateKey,
+        todayDateKey,
+        directionFilter: historyDirectionFilter,
+      }),
+    [
+      storedSignals,
+      tradingMode,
+      historyDateFilterMode,
+      historyCustomDateKey,
+      todayDateKey,
+      historyDirectionFilter,
+    ]
   );
 
   // History grouped by effective completion date (newest date first) for combined 'ALL' view
@@ -971,27 +1464,70 @@ export const SmcSignalPage: React.FC<SmcSignalPageProps> = ({
     [filteredHistorySignals]
   );
 
-  // Handlers for interacting with signal cards
-  const handleToggleTakeSignal = (uid: string) => {
+  const computeOutcomeResultPips = useCallback(
+    (
+      record: SmcStoredSignalRecord,
+      outcome: Exclude<SmcSignalOutcomeStatus, 'ACTIVE'>
+    ): number => {
+      if (outcome === 'HIT_TP1') {
+        return record.tp1Pips || Math.round(Math.abs(record.tp1 - record.entryLimit) * 10);
+      }
+      if (outcome === 'HIT_TP2') {
+        return 100; // 1:2 = 100 pips
+      }
+      if (outcome === 'HIT_TP_MAX') {
+        return Math.round(Math.abs(record.tpMax - record.entryLimit) * 10);
+      }
+      // HIT_SL: 50 pips + 20 point = 52 pips risk
+      return -(record.slPips + Math.round(record.slPoints / 10));
+    },
+    []
+  );
+
+  const formatOutcomeShortLabel = useCallback(
+    (
+      record: SmcStoredSignalRecord,
+      outcome: Exclude<SmcSignalOutcomeStatus, 'ACTIVE'>
+    ): string => {
+      if (outcome === 'HIT_TP1') return 'HIT TP 1 (1:1)';
+      if (outcome === 'HIT_TP2') return 'HIT TP 2 (1:2)';
+      if (outcome === 'HIT_TP_MAX') return `HIT TP MAX (${record.tpMaxRrLabel})`;
+      return 'HIT SL';
+    },
+    []
+  );
+
+  // Handlers for interacting with signal cards (memoized so MemoSignalCard / MemoHistorySignalCard stay 60fps)
+  const handleToggleTakeSignal = useCallback((uid: string) => {
     setStoredSignals((prev) =>
       prev.map((item) => (item.uid === uid ? { ...item, isTaken: !item.isTaken } : item))
     );
-  };
+  }, []);
 
-  const handleToggleBatchStatus = (uid: string, targetBatch: SmcSignalBatchStatus) => {
-    const currentDayKey = getCurrentWibDateKey();
-    setStoredSignals((prev) =>
-      prev.map((item) =>
-        item.uid === uid
-          ? {
-              ...item,
-              batchStatus: targetBatch,
-              promotedDateKey: targetBatch === 'ON_GOING' ? currentDayKey : null,
-            }
-          : item
-      )
-    );
-  };
+  const handleToggleBatchStatus = useCallback(
+    (uid: string, targetBatch: SmcSignalBatchStatus) => {
+      const currentDayKey = getCurrentWibDateKey();
+      setStoredSignals((prev) =>
+        prev.map((item) =>
+          item.uid === uid
+            ? {
+                ...item,
+                batchStatus: targetBatch,
+                promotedDateKey: targetBatch === 'ON_GOING' ? currentDayKey : null,
+              }
+            : item
+        )
+      );
+    },
+    []
+  );
+
+  const handleRequestOutcomeConfirm = useCallback(
+    (record: SmcStoredSignalRecord, outcome: Exclude<SmcSignalOutcomeStatus, 'ACTIVE'>) => {
+      setPendingOutcomeConfirm({ record, outcome });
+    },
+    []
+  );
 
   const handleMarkSignalOutcome = (
     record: SmcStoredSignalRecord,
@@ -1001,18 +1537,9 @@ export const SmcSignalPage: React.FC<SmcSignalPageProps> = ({
     const closedAtIso = now.toISOString();
     const closedDateKey = getCurrentWibDateKey(now);
     const closedTimeWib = getCurrentWibTimeLabel(now);
+    const resultPips = computeOutcomeResultPips(record, outcome);
 
-    let resultPips = 0;
-    if (outcome === 'HIT_TP1') {
-      resultPips = record.tp1Pips || Math.round(Math.abs(record.tp1 - record.entryLimit) * 10);
-    } else if (outcome === 'HIT_TP2') {
-      resultPips = 100; // 1:2 = 100 pips
-    } else if (outcome === 'HIT_TP_MAX') {
-      resultPips = Math.round(Math.abs(record.tpMax - record.entryLimit) * 10);
-    } else if (outcome === 'HIT_SL') {
-      // 50 pips + 20 point = 52 pips risk
-      resultPips = -(record.slPips + Math.round(record.slPoints / 10));
-    }
+    const previousSnapshot: SmcStoredSignalRecord = { ...record };
 
     setStoredSignals((prev) =>
       prev.map((item) =>
@@ -1029,9 +1556,52 @@ export const SmcSignalPage: React.FC<SmcSignalPageProps> = ({
           : item
       )
     );
+
+    if (undoTimerRef.current !== null) {
+      window.clearTimeout(undoTimerRef.current);
+    }
+    const pipsText = resultPips >= 0 ? `+${resultPips} pips` : `${resultPips} pips`;
+    setRecentOutcomeUndo({
+      uid: record.uid,
+      previousRecord: previousSnapshot,
+      summaryText: tr(
+        `${record.headerTitle} (${record.direction}) dicatat ${formatOutcomeShortLabel(
+          record,
+          outcome
+        )} · ${pipsText} ke Riwayat TP / SL.`,
+        `${record.headerTitle} (${record.direction}) recorded as ${formatOutcomeShortLabel(
+          record,
+          outcome
+        )} · ${pipsText} in History.`
+      ),
+    });
+    undoTimerRef.current = window.setTimeout(() => {
+      setRecentOutcomeUndo(null);
+      undoTimerRef.current = null;
+    }, 9000);
   };
 
-  const handleRestoreToActive = (uid: string) => {
+  const handleUndoRecentOutcome = () => {
+    if (!recentOutcomeUndo) return;
+    const { uid, previousRecord } = recentOutcomeUndo;
+    setStoredSignals((prev) =>
+      prev.map((item) => (item.uid === uid ? { ...previousRecord } : item))
+    );
+    setRecentOutcomeUndo(null);
+    if (undoTimerRef.current !== null) {
+      window.clearTimeout(undoTimerRef.current);
+      undoTimerRef.current = null;
+    }
+    showTimedFeedback(
+      tr(
+        `${previousRecord.headerTitle} (${previousRecord.direction}) dibatalkan & dikembalikan ke Sinyal Aktif.`,
+        `${previousRecord.headerTitle} (${previousRecord.direction}) restored to Active Signals.`
+      ),
+      4000
+    );
+  };
+
+  const handleRestoreToActive = useCallback((uid: string) => {
     const currentDayKey = getCurrentWibDateKey();
     setStoredSignals((prev) =>
       prev.map((item) =>
@@ -1049,37 +1619,40 @@ export const SmcSignalPage: React.FC<SmcSignalPageProps> = ({
           : item
       )
     );
-  };
+  }, []);
 
-  const handleDeleteSignal = (uid: string) => {
-    const target = storedSignalsRef.current.find((item) => item.uid === uid);
-    const nextSignals = storedSignalsRef.current.filter((item) => item.uid !== uid);
-    storedSignalsRef.current = nextSignals;
-    setStoredSignals(nextSignals);
+  const handleDeleteSignal = useCallback(
+    (uid: string) => {
+      const target = storedSignalsRef.current.find((item) => item.uid === uid);
+      const nextSignals = storedSignalsRef.current.filter((item) => item.uid !== uid);
+      storedSignalsRef.current = nextSignals;
+      setStoredSignals(nextSignals);
 
-    if (target && target.status === 'ACTIVE') {
-      const nextDeleted = recordDeletedActiveSignal(
-        deletedSignalsRef.current,
-        target,
-        new Date().toISOString()
-      );
-      deletedSignalsRef.current = nextDeleted;
-      setDeletedSignals(nextDeleted);
+      if (target && target.status === 'ACTIVE') {
+        const nextDeleted = recordDeletedActiveSignal(
+          deletedSignalsRef.current,
+          target,
+          new Date().toISOString()
+        );
+        deletedSignalsRef.current = nextDeleted;
+        setDeletedSignals(nextDeleted);
 
-      setCaptureFeedback(
-        resurfaceOptionRef.current
-          ? tr(
-              `Sinyal ${target.headerTitle} dihapus. Jika nanti analisa market menemukan sinyal ini lagi, akan dimunculkan kembali.`,
-              `Signal ${target.headerTitle} deleted. If future market analysis finds the same setup, it will re-appear.`
-            )
-          : tr(
-              `Sinyal ${target.headerTitle} dihapus & disembunyikan permanen.`,
-              `Signal ${target.headerTitle} deleted & kept hidden.`
-            )
-      );
-      window.setTimeout(() => setCaptureFeedback(null), 4500);
-    }
-  };
+        showTimedFeedback(
+          resurfaceOptionRef.current
+            ? tr(
+                `Sinyal ${target.headerTitle} dihapus. Akan muncul kembali jika analisa menemukan setup yang sama.`,
+                `Signal ${target.headerTitle} deleted. It will re-appear if later analysis finds the same setup.`
+              )
+            : tr(
+                `Sinyal ${target.headerTitle} dihapus & disembunyikan permanen.`,
+                `Signal ${target.headerTitle} deleted & kept hidden.`
+              ),
+          4500
+        );
+      }
+    },
+    [showTimedFeedback, tr]
+  );
 
   const handleToggleResurfaceDeleted = () => {
     const next = !resurfaceOptionRef.current;
@@ -1111,38 +1684,174 @@ export const SmcSignalPage: React.FC<SmcSignalPageProps> = ({
     }
   }, [lastUpdatedAt]);
 
+  const confirmModalNode = pendingOutcomeConfirm
+    ? (() => {
+        const { record, outcome } = pendingOutcomeConfirm;
+        const isSl = outcome === 'HIT_SL';
+        const outcomeLabel = formatOutcomeShortLabel(record, outcome);
+        const estimatedPips = computeOutcomeResultPips(record, outcome);
+        const targetPrice =
+          outcome === 'HIT_TP1'
+            ? record.tp1
+            : outcome === 'HIT_TP2'
+            ? record.tp2
+            : outcome === 'HIT_TP_MAX'
+            ? record.tpMax
+            : record.stopLoss;
+
+        return (
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="smc-outcome-confirm-title"
+            data-testid="smc-outcome-confirm-modal"
+            className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/55 dark:bg-black/75 animate-in fade-in duration-150"
+            onClick={() => setPendingOutcomeConfirm(null)}
+          >
+            <div
+              style={{ contain: 'layout style' }}
+              className="w-full max-w-sm rounded-2xl border border-[#E4E4E7] dark:border-[#20252D] bg-white dark:bg-[#101318] p-4 sm:p-5 shadow-[0_20px_48px_-12px_rgba(15,23,42,0.22)] dark:shadow-[0_24px_56px_-12px_rgba(0,0,0,0.78)] space-y-4 font-sans"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="flex items-start justify-between gap-2">
+                <div className="space-y-1 min-w-0">
+                  <div className="flex items-center gap-2 text-[11px] font-bold uppercase tracking-[0.06em]">
+                    <span
+                      className={
+                        record.direction === 'BUY'
+                          ? 'text-[#059669] dark:text-[#00A878]'
+                          : 'text-[#E11D48] dark:text-[#E05260]'
+                      }
+                    >
+                      {record.direction}
+                    </span>
+                    <span className="text-[#CBD5E1] dark:text-[#3A4250]">·</span>
+                    <span
+                      className={
+                        isSl
+                          ? 'text-[#E11D48] dark:text-[#E05260]'
+                          : 'text-[#059669] dark:text-[#00A878]'
+                      }
+                    >
+                      {outcomeLabel}
+                    </span>
+                  </div>
+                  <h3
+                    id="smc-outcome-confirm-title"
+                    className="text-sm font-bold text-[#0F172A] dark:text-[#F2F4F7] truncate"
+                  >
+                    {tr('Konfirmasi Simpan ke Riwayat?', 'Confirm Save to History?')}
+                  </h3>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setPendingOutcomeConfirm(null)}
+                  aria-label={tr('Tutup dialog', 'Close dialog')}
+                  className="h-7 w-7 rounded-full inline-flex items-center justify-center text-[#526071] dark:text-[#929BA9] hover:bg-[#F4F4F5] dark:hover:bg-[#161A22] cursor-pointer"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+
+              <div className="rounded-xl border border-[#E4E4E7] dark:border-[#20252D] bg-[#FAFAFA] dark:bg-[#161A22] p-3.5 space-y-2 text-xs font-mono-numbers tabular-nums">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="font-sans text-[#526071] dark:text-[#929BA9]">Sinyal</span>
+                  <span className="font-sans font-semibold text-[#0F172A] dark:text-[#F2F4F7] truncate">
+                    {record.headerTitle}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between gap-2">
+                  <span className="font-sans text-[#526071] dark:text-[#929BA9]">Entry Limit</span>
+                  <span className="font-bold text-[#0F172A] dark:text-[#F2F4F7]">
+                    {record.entryLimit.toFixed(1)}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between gap-2">
+                  <span className="font-sans text-[#526071] dark:text-[#929BA9]">
+                    {isSl ? 'Level SL' : 'Target Level'}
+                  </span>
+                  <span
+                    className={`font-bold ${
+                      isSl
+                        ? 'text-[#E11D48] dark:text-[#E05260]'
+                        : 'text-[#059669] dark:text-[#00A878]'
+                    }`}
+                  >
+                    {targetPrice.toFixed(1)}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between gap-2 pt-2 border-t border-[#E4E4E7] dark:border-[#20252D]">
+                  <span className="font-sans font-semibold text-[#526071] dark:text-[#929BA9]">
+                    {tr('Estimasi Hasil', 'Est. Result')}
+                  </span>
+                  <span
+                    className={`font-bold ${
+                      estimatedPips >= 0
+                        ? 'text-[#059669] dark:text-[#00A878]'
+                        : 'text-[#E11D48] dark:text-[#E05260]'
+                    }`}
+                  >
+                    {estimatedPips >= 0 ? `+${estimatedPips} pips` : `${estimatedPips} pips`}
+                  </span>
+                </div>
+              </div>
+
+              <p className="text-[11px] text-[#526071] dark:text-[#929BA9] leading-relaxed text-editorial-justify">
+                {tr(
+                  'Sinyal dipindahkan ke Riwayat TP / SL dan tetap dapat dikembalikan kapan saja.',
+                  'Signal moves to TP / SL History and can be restored anytime.'
+                )}
+              </p>
+
+              <div className="flex items-center gap-2 pt-1">
+                <button
+                  type="button"
+                  data-testid="smc-outcome-confirm-cancel"
+                  onClick={() => setPendingOutcomeConfirm(null)}
+                  className="flex-1 h-9 px-4 rounded-full border border-[#E4E4E7] dark:border-[#20252D] bg-white dark:bg-[#101318] text-xs font-semibold text-[#0F172A] dark:text-[#F2F4F7] hover:bg-[#F4F4F5] dark:hover:bg-[#161A22] transition-colors cursor-pointer"
+                >
+                  {tr('Batal', 'Cancel')}
+                </button>
+                <button
+                  type="button"
+                  data-testid="smc-outcome-confirm-submit"
+                  onClick={() => {
+                    handleMarkSignalOutcome(record, outcome);
+                    setPendingOutcomeConfirm(null);
+                  }}
+                  className={`flex-1 h-9 px-4 rounded-full text-xs font-bold text-white transition-opacity hover:opacity-90 cursor-pointer ${
+                    isSl
+                      ? 'bg-[#E11D48] dark:bg-[#E05260]'
+                      : 'bg-[#059669] dark:bg-[#00A878] dark:text-[#050607]'
+                  }`}
+                >
+                  {tr('Ya, Simpan', 'Yes, Save')}
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()
+    : null;
+
   return (
     <div
       data-testid="smc-signal-page"
-      className="space-y-5 pb-10 text-[#0F172A] dark:text-[#F2F4F7] font-sans transition-colors duration-150 overflow-x-hidden"
+      className="space-y-5 pb-10 text-[#0F172A] dark:text-[#F2F4F7] font-sans overflow-x-hidden"
     >
       {/* =====================================================================
-          HEADER MINIMALIS + POPOVER OPSI + UNDERLINE TABS & TIMEFRAME SWITCH
+          HEADER EDITORIAL MINIMALIS + UNDERLINE TABS & GPU SLIDING MODE SWITCH
          ===================================================================== */}
-      <div className="space-y-3">
-        {/* Row 1: Title/Spot Meta + 4 Compact Header Actions */}
+      <div className="space-y-3.5">
+        {/* Row 1: Title & Live Spot + Compact Monochrome Actions */}
         <div className="relative flex flex-wrap items-center justify-between gap-2.5">
           <div className="min-w-0">
-            <div className="flex items-center gap-2">
-              <h1 className="text-xs font-bold uppercase tracking-[0.12em] text-[#0F172A] dark:text-[#F2F4F7] truncate">
-                SMC SIGNAL · XAU/USD
-              </h1>
-              <span
-                title={
-                  isOfflineMode
-                    ? tr('Mode Offline Aktif (Tersimpan Lokal)', 'Offline Mode Active (Local Storage)')
-                    : tr('Terhubung Online · Cache Offline Aktif', 'Online Connected · Offline Cache Active')
-                }
-                className={`w-1.5 h-1.5 rounded-full shrink-0 ${
-                  isOfflineMode
-                    ? 'bg-[#D97706] dark:bg-[#F59E0B]'
-                    : 'bg-[#059669] dark:bg-[#00A878]'
-                }`}
-              />
-            </div>
+            <h1 className="text-xs font-bold uppercase tracking-[0.14em] text-[#0F172A] dark:text-[#F2F4F7] truncate">
+              SMC Signal · XAU/USD
+            </h1>
             <p className="text-[11px] text-[#526071] dark:text-[#929BA9] font-mono-numbers tabular-nums mt-0.5 truncate">
               {spotPrice > 0 ? `$${spotPrice.toFixed(1)}` : tr('Memuat...', 'Loading...')}
-              {` · ${isOfflineMode ? tr('Tersimpan Offline', 'Saved Offline') : tr('Sync Lokal', 'Local Sync')} · ${formattedUpdatedTime}`}
+              {` · ${isOfflineMode ? tr('Offline', 'Offline') : tr('Sync Lokal', 'Local Sync')} · ${formattedUpdatedTime}`}
             </p>
           </div>
 
@@ -1157,10 +1866,10 @@ export const SmcSignalPage: React.FC<SmcSignalPageProps> = ({
                   : tr('Mode Online Aktif — klik untuk Offline', 'Online Mode — click for Offline')
               }
               aria-label={isOfflineMode ? 'Mode Offline' : 'Mode Online'}
-              className={`h-8 w-8 inline-flex items-center justify-center rounded-full border transition-colors shrink-0 cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/35 dark:focus-visible:ring-white/35 ${
+              className={`h-8 w-8 inline-flex items-center justify-center rounded-full border transition-colors duration-150 shrink-0 cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/35 dark:focus-visible:ring-white/35 ${
                 isOfflineMode
                   ? 'bg-[#D97706]/10 dark:bg-[#F59E0B]/15 border-[#D97706]/40 dark:border-[#F59E0B]/40 text-[#B45309] dark:text-[#F59E0B]'
-                  : 'bg-white dark:bg-[#101318] border-[#D9E2EC] dark:border-[#20252D] hover:bg-[#F8FAFC] dark:hover:bg-[#161A22] text-[#059669] dark:text-[#00A878]'
+                  : 'bg-white dark:bg-[#101318] border-[#E4E4E7] dark:border-[#20252D] hover:bg-[#F4F4F5] dark:hover:bg-[#161A22] text-[#526071] dark:text-[#929BA9] hover:text-[#0F172A] dark:hover:text-[#F2F4F7]'
               }`}
             >
               {isOfflineMode ? (
@@ -1175,15 +1884,15 @@ export const SmcSignalPage: React.FC<SmcSignalPageProps> = ({
                 type="button"
                 data-testid="smc-signal-open-cycle-button"
                 onClick={() => onNavigate('cycle-confluence')}
-                className="h-8 px-3 inline-flex items-center justify-center gap-1.5 rounded-full bg-white dark:bg-[#101318] border border-[#D9E2EC] dark:border-[#20252D] hover:bg-[#F8FAFC] dark:hover:bg-[#161A22] text-xs font-semibold text-[#0F172A] dark:text-[#F2F4F7] transition-colors whitespace-nowrap shrink-0 cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/35 dark:focus-visible:ring-white/35"
+                className="h-8 px-3 inline-flex items-center justify-center gap-1.5 rounded-full bg-white dark:bg-[#101318] border border-[#E4E4E7] dark:border-[#20252D] hover:bg-[#F4F4F5] dark:hover:bg-[#161A22] text-xs font-medium text-[#0F172A] dark:text-[#F2F4F7] transition-colors duration-150 whitespace-nowrap shrink-0 cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/35 dark:focus-visible:ring-white/35"
               >
                 <Compass className="w-3.5 h-3.5 stroke-[1.75] text-[#526071] dark:text-[#929BA9]" />
                 <span>Cycle</span>
               </button>
             )}
 
-            {/* Overflow Options Menu (Resurface Deleted Signal Switch & Reset) */}
-            <div ref={optionsMenuRef}>
+            {/* Overflow Options Menu */}
+            <div ref={optionsMenuRef} className="relative">
               <button
                 type="button"
                 data-testid="smc-signal-options-button"
@@ -1191,30 +1900,28 @@ export const SmcSignalPage: React.FC<SmcSignalPageProps> = ({
                 aria-haspopup="menu"
                 onClick={() => setIsOptionsMenuOpen((prev) => !prev)}
                 title={tr('Pengaturan Sinyal', 'Signal Options')}
-                className={`relative h-8 w-8 inline-flex items-center justify-center rounded-full border transition-colors shrink-0 cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/35 dark:focus-visible:ring-white/35 ${
+                className={`relative h-8 w-8 inline-flex items-center justify-center rounded-full border transition-colors duration-150 shrink-0 cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/35 dark:focus-visible:ring-white/35 ${
                   isOptionsMenuOpen
                     ? 'bg-[#0F172A] text-white border-[#0F172A] dark:bg-white dark:text-[#050607] dark:border-white'
-                    : 'bg-white dark:bg-[#101318] border-[#D9E2EC] dark:border-[#20252D] hover:bg-[#F8FAFC] dark:hover:bg-[#161A22] text-[#0F172A] dark:text-[#F2F4F7]'
+                    : 'bg-white dark:bg-[#101318] border-[#E4E4E7] dark:border-[#20252D] hover:bg-[#F4F4F5] dark:hover:bg-[#161A22] text-[#526071] dark:text-[#929BA9] hover:text-[#0F172A] dark:hover:text-[#F2F4F7]'
                 }`}
               >
                 <SlidersHorizontal className="w-3.5 h-3.5 stroke-[1.75]" />
-                {deletedForModeCount > 0 && (
-                  <span className="absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full bg-[#D97706] dark:bg-[#F59E0B] ring-2 ring-white dark:ring-[#101318]" />
-                )}
               </button>
 
               {isOptionsMenuOpen && (
                 <div
                   role="menu"
-                  className="absolute left-0 top-full mt-2 w-72 sm:w-80 max-w-[calc(100vw-2rem)] rounded-xl bg-white dark:bg-[#101318] border border-[#D9E2EC] dark:border-[#20252D] shadow-lg p-3 space-y-2.5 z-40"
+                  style={{ contain: 'layout style' }}
+                  className="absolute right-0 top-full mt-2 w-72 sm:w-80 max-w-[calc(100vw-2rem)] rounded-xl bg-white dark:bg-[#101318] border border-[#E4E4E7] dark:border-[#20252D] shadow-[0_12px_32px_-8px_rgba(15,23,42,0.16)] dark:shadow-[0_16px_36px_-8px_rgba(0,0,0,0.75)] p-3.5 space-y-3 z-40 animate-in fade-in slide-in-from-top-1 duration-150"
                 >
-                  <div className="flex items-center justify-between border-b border-[#D9E2EC] dark:border-[#20252D] pb-2">
-                    <span className="text-[11px] font-bold uppercase tracking-wider text-[#526071] dark:text-[#929BA9]">
+                  <div className="flex items-center justify-between border-b border-[#E4E4E7] dark:border-[#20252D] pb-2">
+                    <span className="text-[11px] font-semibold uppercase tracking-wider text-[#526071] dark:text-[#929BA9]">
                       {tr('Pengaturan Sinyal', 'Signal Settings')}
                     </span>
                     {deletedForModeCount > 0 && (
-                      <span className="text-[10px] font-mono-numbers font-semibold text-[#D97706] dark:text-[#F59E0B]">
-                        {deletedForModeCount} {tr('arsip hapus', 'deleted')}
+                      <span className="text-[11px] font-mono-numbers text-[#526071] dark:text-[#929BA9]">
+                        {deletedForModeCount} {tr('arsip', 'archived')}
                       </span>
                     )}
                   </div>
@@ -1225,44 +1932,34 @@ export const SmcSignalPage: React.FC<SmcSignalPageProps> = ({
                     aria-checked={resurfaceDeletedSignals}
                     data-testid="smc-resurface-deleted-toggle"
                     onClick={handleToggleResurfaceDeleted}
-                    className={`w-full px-3 py-2.5 rounded-lg border text-left transition-colors cursor-pointer ${
-                      resurfaceDeletedSignals
-                        ? 'bg-[#059669]/8 dark:bg-[#00A878]/12 border-[#059669]/30 dark:border-[#00A878]/30'
-                        : 'bg-[#F8FAFC] dark:bg-[#161A22] border-[#D9E2EC] dark:border-[#20252D]'
-                    }`}
+                    className="w-full px-3 py-2.5 rounded-lg border border-[#E4E4E7] dark:border-[#20252D] bg-[#FAFAFA] dark:bg-[#161A22] text-left transition-colors hover:border-[#0F172A]/35 dark:hover:border-white/30 cursor-pointer"
                   >
                     <div className="flex items-center justify-between gap-2">
                       <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-[#0F172A] dark:text-[#F2F4F7]">
-                        <RotateCcw
-                          className={`w-3.5 h-3.5 shrink-0 ${
-                            resurfaceDeletedSignals
-                              ? 'text-[#059669] dark:text-[#00A878]'
-                              : 'text-[#526071] dark:text-[#929BA9]'
-                          }`}
-                        />
+                        <RotateCcw className="w-3.5 h-3.5 shrink-0 text-[#526071] dark:text-[#929BA9]" />
                         <span>
                           {tr('Munculkan Lagi Sinyal Dihapus', 'Re-surface Deleted Signals')}
                         </span>
                       </span>
                       <span
-                        className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                        className={`text-[10px] font-bold uppercase tracking-wider ${
                           resurfaceDeletedSignals
-                            ? 'bg-[#059669] text-white dark:bg-[#00A878] dark:text-[#050607]'
-                            : 'bg-[#E2E8F0] dark:bg-[#20252D] text-[#526071] dark:text-[#929BA9]'
+                            ? 'text-[#059669] dark:text-[#00A878]'
+                            : 'text-[#526071] dark:text-[#929BA9]'
                         }`}
                       >
                         {resurfaceDeletedSignals ? 'ON' : 'OFF'}
                       </span>
                     </div>
-                    <p className="text-[11px] text-[#526071] dark:text-[#929BA9] mt-1 leading-relaxed">
+                    <p className="text-[11px] text-[#526071] dark:text-[#929BA9] mt-1 leading-relaxed text-editorial-justify">
                       {resurfaceDeletedSignals
                         ? tr(
-                            'Sinyal On Going/Previous yang dihapus muncul lagi otomatis jika analisa nanti menemukan setup sama.',
-                            'Deleted On Going/Previous signals re-appear automatically if later analysis finds the same setup.'
+                            'Sinyal yang dihapus muncul lagi otomatis jika analisa nanti menemukan setup sama.',
+                            'Deleted signals re-appear automatically if later analysis finds the same setup.'
                           )
                         : tr(
-                            'Sinyal yang dihapus tetap tersembunyi permanen sampai arsip di-reset.',
-                            'Deleted signals stay hidden permanently until the archive is reset.'
+                            'Sinyal yang dihapus tetap tersembunyi sampai arsip di-reset.',
+                            'Deleted signals stay hidden until the archive is reset.'
                           )}
                     </p>
                   </button>
@@ -1275,7 +1972,7 @@ export const SmcSignalPage: React.FC<SmcSignalPageProps> = ({
                         handleClearDeletedArchiveForMode();
                         setIsOptionsMenuOpen(false);
                       }}
-                      className="w-full h-8 px-3 rounded-full border border-[#D9E2EC] dark:border-[#20252D] hover:bg-[#F8FAFC] dark:hover:bg-[#161A22] text-xs font-semibold text-[#E11D48] dark:text-[#E05260] inline-flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
+                      className="w-full h-8 px-3 rounded-lg border border-[#E4E4E7] dark:border-[#20252D] hover:bg-[#F4F4F5] dark:hover:bg-[#161A22] text-xs font-semibold text-[#E11D48] dark:text-[#E05260] inline-flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
                     >
                       <Trash2 className="w-3.5 h-3.5" />
                       <span>
@@ -1292,7 +1989,7 @@ export const SmcSignalPage: React.FC<SmcSignalPageProps> = ({
               data-testid="smc-signal-pull-new-button"
               onClick={() => void handlePullNewRealtimeSignals()}
               disabled={isRefreshing || isLoading}
-              className="h-8 inline-flex items-center justify-center gap-1.5 px-3.5 rounded-full bg-[#0F172A] dark:bg-white text-white dark:text-[#050607] hover:opacity-90 text-xs font-semibold transition-opacity disabled:opacity-45 disabled:cursor-not-allowed whitespace-nowrap shrink-0 cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/35 dark:focus-visible:ring-white/35"
+              className="h-8 inline-flex items-center justify-center gap-1.5 px-3.5 rounded-full bg-[#0F172A] dark:bg-white text-white dark:text-[#050607] hover:opacity-90 text-xs font-semibold transition-opacity duration-150 disabled:opacity-45 disabled:cursor-not-allowed whitespace-nowrap shrink-0 cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/35 dark:focus-visible:ring-white/35"
             >
               {isRefreshing || isLoading ? (
                 <RefreshCw className="w-3.5 h-3.5 stroke-[2] animate-spin" />
@@ -1304,14 +2001,45 @@ export const SmcSignalPage: React.FC<SmcSignalPageProps> = ({
           </div>
         </div>
 
+        {/* Quiet Monochrome Feedback / Undo Banners */}
         {captureFeedback && (
-          <div className="px-3.5 py-2 rounded-xl bg-[#059669]/10 dark:bg-[#00A878]/15 border border-[#059669]/30 dark:border-[#00A878]/30 text-xs font-semibold text-[#059669] dark:text-[#00A878]">
+          <div className="px-3.5 py-2.5 rounded-xl bg-[#FAFAFA] dark:bg-[#161A22] border border-[#E4E4E7] dark:border-[#20252D] text-xs text-[#0F172A] dark:text-[#F2F4F7] animate-in fade-in duration-150">
             {captureFeedback}
           </div>
         )}
 
-        {/* Row 2: Editorial Underline Tabs + Compact Timeframe Switch */}
-        <div className="flex flex-wrap items-center justify-between gap-2.5 border-b border-[#D9E2EC] dark:border-[#20252D]">
+        {recentOutcomeUndo && (
+          <div
+            data-testid="smc-outcome-undo-banner"
+            className="px-3.5 py-2.5 rounded-xl bg-[#FAFAFA] dark:bg-[#161A22] border border-[#0F172A]/25 dark:border-white/25 flex flex-wrap items-center justify-between gap-2 text-xs animate-in fade-in duration-150"
+          >
+            <span className="font-medium text-[#0F172A] dark:text-[#F2F4F7]">
+              {recentOutcomeUndo.summaryText}
+            </span>
+            <div className="flex items-center gap-1.5 shrink-0">
+              <button
+                type="button"
+                data-testid="smc-outcome-undo-button"
+                onClick={handleUndoRecentOutcome}
+                className="h-7 px-3 rounded-full bg-[#0F172A] dark:bg-white text-white dark:text-[#050607] text-[11px] font-semibold inline-flex items-center gap-1 cursor-pointer"
+              >
+                <RotateCcw className="w-3 h-3" />
+                <span>{tr('Batalkan', 'Undo')}</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setRecentOutcomeUndo(null)}
+                aria-label={tr('Tutup notifikasi', 'Dismiss notice')}
+                className="h-7 w-7 rounded-full inline-flex items-center justify-center text-[#526071] dark:text-[#929BA9] hover:text-[#0F172A] dark:hover:text-white cursor-pointer"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* Row 2: Editorial Underline Tabs + GPU-Sliding Timeframe Switch */}
+        <div className="flex flex-wrap items-center justify-between gap-2.5 border-b border-[#E4E4E7] dark:border-[#20252D]">
           <div
             role="tablist"
             aria-label="Sinyal Aktif atau Riwayat"
@@ -1323,14 +2051,14 @@ export const SmcSignalPage: React.FC<SmcSignalPageProps> = ({
               aria-selected={viewSection === 'ACTIVE'}
               data-testid="smc-view-active-button"
               onClick={() => setViewSection('ACTIVE')}
-              className={`pb-2.5 text-xs font-bold border-b-2 -mb-px transition-colors inline-flex items-center gap-1.5 whitespace-nowrap cursor-pointer ${
+              className={`pb-2.5 text-xs font-semibold border-b-2 -mb-px transition-colors duration-150 inline-flex items-baseline gap-1.5 whitespace-nowrap cursor-pointer ${
                 viewSection === 'ACTIVE'
                   ? 'border-[#0F172A] dark:border-white text-[#0F172A] dark:text-[#F2F4F7]'
                   : 'border-transparent text-[#526071] dark:text-[#929BA9] hover:text-[#0F172A] dark:hover:text-[#F2F4F7]'
               }`}
             >
               <span>{tr('Sinyal Aktif', 'Active Signals')}</span>
-              <span className="px-1.5 py-0.2 rounded-full text-[10px] font-mono-numbers bg-[#F1F5F9] dark:bg-[#161A22] text-[#0F172A] dark:text-[#F2F4F7]">
+              <span className="text-[11px] font-mono-numbers tabular-nums opacity-65">
                 {totalActiveAllDates}
               </span>
             </button>
@@ -1341,14 +2069,14 @@ export const SmcSignalPage: React.FC<SmcSignalPageProps> = ({
               aria-selected={viewSection === 'HISTORY'}
               data-testid="smc-view-history-button"
               onClick={() => setViewSection('HISTORY')}
-              className={`pb-2.5 text-xs font-bold border-b-2 -mb-px transition-colors inline-flex items-center gap-1.5 whitespace-nowrap cursor-pointer ${
+              className={`pb-2.5 text-xs font-semibold border-b-2 -mb-px transition-colors duration-150 inline-flex items-baseline gap-1.5 whitespace-nowrap cursor-pointer ${
                 viewSection === 'HISTORY'
                   ? 'border-[#0F172A] dark:border-white text-[#0F172A] dark:text-[#F2F4F7]'
                   : 'border-transparent text-[#526071] dark:text-[#929BA9] hover:text-[#0F172A] dark:hover:text-[#F2F4F7]'
               }`}
             >
               <span>{tr('Riwayat TP / SL', 'TP / SL History')}</span>
-              <span className="px-1.5 py-0.2 rounded-full text-[10px] font-mono-numbers bg-[#F1F5F9] dark:bg-[#161A22] text-[#0F172A] dark:text-[#F2F4F7]">
+              <span className="text-[11px] font-mono-numbers tabular-nums opacity-65">
                 {allHistorySignalsForMode.length}
               </span>
             </button>
@@ -1357,15 +2085,21 @@ export const SmcSignalPage: React.FC<SmcSignalPageProps> = ({
           <div
             role="group"
             aria-label="Mode Timeframe"
-            className="mb-1.5 inline-flex items-center p-0.5 rounded-full bg-white dark:bg-[#101318] border border-[#D9E2EC] dark:border-[#20252D]"
+            className="relative mb-1.5 inline-grid grid-cols-2 p-0.5 rounded-full bg-[#FAFAFA] dark:bg-[#101318] border border-[#E4E4E7] dark:border-[#20252D]"
           >
+            <span
+              aria-hidden="true"
+              className={`pointer-events-none absolute top-0.5 bottom-0.5 left-0.5 w-[calc(50%-2px)] rounded-full bg-[#0F172A] dark:bg-white transition-transform duration-200 ease-[cubic-bezier(0.16,1,0.3,1)] ${
+                tradingMode === 'SWING' ? 'translate-x-full' : 'translate-x-0'
+              }`}
+            />
             <button
               type="button"
               data-testid="smc-signal-mode-scalp"
               onClick={() => setTradingMode('SCALP')}
-              className={`h-7 px-3 rounded-full text-[11px] font-semibold transition-colors whitespace-nowrap shrink-0 cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/35 dark:focus-visible:ring-white/35 ${
+              className={`relative z-10 h-7 px-3 rounded-full text-[11px] font-semibold transition-colors duration-150 whitespace-nowrap cursor-pointer ${
                 tradingMode === 'SCALP'
-                  ? 'bg-[#0F172A] text-white dark:bg-white dark:text-[#050607]'
+                  ? 'text-white dark:text-[#050607]'
                   : 'text-[#526071] dark:text-[#929BA9] hover:text-[#0F172A] dark:hover:text-[#F2F4F7]'
               }`}
             >
@@ -1375,9 +2109,9 @@ export const SmcSignalPage: React.FC<SmcSignalPageProps> = ({
               type="button"
               data-testid="smc-signal-mode-swing"
               onClick={() => setTradingMode('SWING')}
-              className={`h-7 px-3 rounded-full text-[11px] font-semibold transition-colors whitespace-nowrap shrink-0 cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/35 dark:focus-visible:ring-white/35 ${
+              className={`relative z-10 h-7 px-3 rounded-full text-[11px] font-semibold transition-colors duration-150 whitespace-nowrap cursor-pointer ${
                 tradingMode === 'SWING'
-                  ? 'bg-[#0F172A] text-white dark:bg-white dark:text-[#050607]'
+                  ? 'text-white dark:text-[#050607]'
                   : 'text-[#526071] dark:text-[#929BA9] hover:text-[#0F172A] dark:hover:text-[#F2F4F7]'
               }`}
             >
@@ -1388,147 +2122,191 @@ export const SmcSignalPage: React.FC<SmcSignalPageProps> = ({
       </div>
 
       {/* =====================================================================
-          BARIS INFO UTAMA (REAL-TIME DARI CYCLE): SATU STRIP RINGKAS BERSEKAT
+          CYCLE COMPASS STRIP: RINGKAS, MINIMALIS, CHoCH PENUH & BISA DIBUKA DETAIL
          ===================================================================== */}
       <div
         data-testid="smc-cycle-compass-card"
-        className="rounded-xl border border-[#D9E2EC] dark:border-[#20252D] bg-white dark:bg-[#101318] grid grid-cols-1 md:grid-cols-3 divide-y md:divide-y-0 md:divide-x divide-[#D9E2EC] dark:divide-[#20252D]"
+        style={{ contain: 'layout style' }}
+        className="rounded-xl overflow-hidden border border-[#E4E4E7] dark:border-[#20252D] bg-white dark:bg-[#101318] divide-y divide-[#E4E4E7] dark:divide-[#20252D]"
       >
-        {/* 1. BIAS DOMINAN & POSISI EQUILIBRIUM */}
-        <div className="min-w-0 px-3.5 py-2.5 sm:px-4 sm:py-3 flex flex-col justify-between gap-1">
-          <div className="flex items-center justify-between gap-2">
-            <span className="text-[10px] font-semibold uppercase tracking-[0.08em] text-[#526071] dark:text-[#929BA9]">
-              {tr('Bias Cycle', 'Cycle Bias')}
-            </span>
-            <span className="text-[10px] font-mono-numbers tabular-nums text-[#526071] dark:text-[#929BA9]">
-              EQ ${cycleCompass.equilibriumPrice.toFixed(1)}
-            </span>
+        {/* Row 1: Bias Cycle + Prioritas Setup (Balanced 2-Column) */}
+        <div className="grid grid-cols-2 divide-x divide-[#E4E4E7] dark:divide-[#20252D]">
+          {/* 1. BIAS CYCLE */}
+          <div className="min-w-0 px-3.5 py-2.5 sm:px-4 sm:py-3 flex flex-col justify-between gap-1">
+            <div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-0.5">
+              <span className="text-[10px] font-medium uppercase tracking-[0.08em] text-[#526071] dark:text-[#929BA9]">
+                {tr('Bias Cycle', 'Cycle Bias')}
+              </span>
+              <span className="text-[10px] font-mono-numbers tabular-nums text-[#526071] dark:text-[#929BA9]">
+                EQ ${cycleCompass.equilibriumPrice.toFixed(1)}
+              </span>
+            </div>
+            <div className="flex flex-wrap items-baseline justify-between gap-x-2 gap-y-0.5 font-mono-numbers tabular-nums">
+              <span
+                className={`text-xs sm:text-sm font-bold ${
+                  activeDateCompass.dominantBias === 'BULLISH'
+                    ? 'text-[#059669] dark:text-[#00A878]'
+                    : activeDateCompass.dominantBias === 'BEARISH'
+                    ? 'text-[#E11D48] dark:text-[#E05260]'
+                    : 'text-[#0F172A] dark:text-[#F2F4F7]'
+                }`}
+              >
+                {activeDateCompass.dominantBias}
+                {activeDateCompass.isLiveCycle &&
+                typeof cycleCompass.cycleUptrendPct === 'number' &&
+                typeof cycleCompass.cycleDowntrendPct === 'number'
+                  ? activeDateCompass.dominantBias === 'BULLISH'
+                    ? ` ${cycleCompass.cycleUptrendPct}%`
+                    : activeDateCompass.dominantBias === 'BEARISH'
+                    ? ` ${cycleCompass.cycleDowntrendPct}%`
+                    : ''
+                  : ''}
+              </span>
+              <span className="text-[11px] text-[#526071] dark:text-[#929BA9]">
+                {activeDateCompass.pdZone} {activeDateCompass.positionPct.toFixed(0)}%
+              </span>
+            </div>
           </div>
-          <div className="flex items-center justify-between gap-2 font-mono-numbers tabular-nums">
-            <span
-              className={`text-sm font-bold ${
-                activeDateCompass.dominantBias === 'BULLISH'
-                  ? 'text-[#059669] dark:text-[#00A878]'
-                  : activeDateCompass.dominantBias === 'BEARISH'
-                  ? 'text-[#E11D48] dark:text-[#E05260]'
-                  : 'text-[#D97706] dark:text-[#F59E0B]'
-              }`}
-            >
-              {activeDateCompass.dominantBias}
-              {activeDateCompass.isLiveCycle &&
-              typeof cycleCompass.cycleUptrendPct === 'number' &&
-              typeof cycleCompass.cycleDowntrendPct === 'number'
-                ? activeDateCompass.dominantBias === 'BULLISH'
-                  ? ` ${cycleCompass.cycleUptrendPct}%`
-                  : activeDateCompass.dominantBias === 'BEARISH'
-                  ? ` ${cycleCompass.cycleDowntrendPct}%`
-                  : ` ${cycleCompass.cycleUptrendPct}%/${cycleCompass.cycleDowntrendPct}%`
-                : ''}
-            </span>
-            <span className="text-[11px] font-semibold text-[#0F172A] dark:text-[#F2F4F7]">
-              {activeDateCompass.pdZone} {activeDateCompass.positionPct.toFixed(0)}%
-            </span>
-          </div>
-          {cycleCompass.rawMacroContext?.macroSourceLabelId && (
-            <p className="text-[10px] text-[#526071] dark:text-[#929BA9] font-mono-numbers truncate">
-              Makro: {cycleCompass.rawMacroContext.fundamentalBias} ·{' '}
-              {cycleCompass.rawMacroContext.macroSourceLabelId}
-            </p>
-          )}
-        </div>
 
-        {/* 2. INDIKASI VALIDASI CHoCH / MSS */}
-        <div
-          data-testid="smc-choch-indication-card"
-          className="min-w-0 px-3.5 py-2.5 sm:px-4 sm:py-3 flex flex-col justify-between gap-1"
-        >
-          <div className="flex items-center justify-between gap-2">
-            <span className="text-[10px] font-semibold uppercase tracking-[0.08em] text-[#526071] dark:text-[#929BA9]">
-              {tradingMode === 'SCALP'
-                ? tr('Indikasi CHoCH · M5/M15', 'CHoCH · M5/M15')
-                : tr('Indikasi CHoCH · 1H', 'CHoCH · 1H')}
-            </span>
-            <span className="text-[10px] font-mono-numbers tabular-nums text-[#526071] dark:text-[#929BA9]">
-              {selectedSide === 'BUY'
-                ? twoStage.narrowPullbackHighToBreak
-                  ? `PB $${twoStage.narrowPullbackHighToBreak.toFixed(1)}`
-                  : twoStage.referenceLhPrice
-                  ? `LH $${twoStage.referenceLhPrice.toFixed(1)}`
-                  : ''
-                : twoStage.narrowPullbackLowToBreak
-                ? `PB $${twoStage.narrowPullbackLowToBreak.toFixed(1)}`
-                : twoStage.referenceHlPrice
-                ? `HL $${twoStage.referenceHlPrice.toFixed(1)}`
-                : ''}
-            </span>
-          </div>
-          <div className="flex items-center justify-between gap-2">
-            <span
-              className={`text-xs font-bold uppercase font-mono-numbers truncate ${
-                twoStage.stage === 'STAGE_2_CHOCH_BULLISH' ||
-                twoStage.stage === 'STAGE_2_CHOCH_BEARISH' ||
-                twoStage.narrowBullishChochValid ||
-                twoStage.narrowBearishChochValid
-                  ? 'text-[#059669] dark:text-[#00A878]'
-                  : twoStage.isImpulsiveDropWithoutChoch || twoStage.isImpulsiveRallyWithoutChoch
-                  ? 'text-[#E11D48] dark:text-[#E05260]'
-                  : 'text-[#D97706] dark:text-[#F59E0B]'
-              }`}
-            >
-              {twoStage.statusBadgeId}
-            </span>
-            <span className="text-[10px] font-mono-numbers font-semibold text-[#526071] dark:text-[#929BA9] shrink-0">
-              {activeSidePlan.healthyObAudit.isHealthySmcOb ? 'OB+FVG ✓' : 'Cek OB+FVG'}
-            </span>
-          </div>
-        </div>
-
-        {/* 3. PRIORITAS SETUP */}
-        <div className="min-w-0 px-3.5 py-2.5 sm:px-4 sm:py-3 flex flex-col justify-between gap-1">
-          <div className="flex items-center justify-between gap-2">
-            <span className="text-[10px] font-semibold uppercase tracking-[0.08em] text-[#526071] dark:text-[#929BA9]">
-              {tr('Prioritas Setup', 'Priority Setup')}
-            </span>
-            <span className="text-[10px] font-mono-numbers tabular-nums text-[#526071] dark:text-[#929BA9]">
-              {activeDateCompass.isLiveCycle ? 'LIVE CYCLE' : activeDateCompass.capturedTimeWib}
-            </span>
-          </div>
-          <div className="flex items-center justify-between gap-2">
+          {/* 2. PRIORITAS SETUP */}
+          <div className="min-w-0 px-3.5 py-2.5 sm:px-4 sm:py-3 flex flex-col justify-between gap-1">
+            <div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-0.5">
+              <span className="text-[10px] font-medium uppercase tracking-[0.08em] text-[#526071] dark:text-[#929BA9]">
+                {tr('Prioritas', 'Priority')}
+              </span>
+              <span className="text-[10px] font-mono-numbers tabular-nums text-[#526071] dark:text-[#929BA9]">
+                {activeDateCompass.isLiveCycle ? 'LIVE' : activeDateCompass.capturedTimeWib}
+              </span>
+            </div>
             <span
               data-testid="smc-priority-recommendation-badge"
-              className={`inline-flex items-center gap-1 text-sm font-bold uppercase ${
+              className={`inline-flex items-center gap-1 text-xs sm:text-sm font-bold uppercase ${
                 activeDateCompass.recommendedSide === 'BUY'
                   ? 'text-[#059669] dark:text-[#00A878]'
                   : 'text-[#E11D48] dark:text-[#E05260]'
               }`}
             >
               {activeDateCompass.recommendedSide === 'BUY' ? (
-                <ArrowUpRight className="w-4 h-4 shrink-0" />
+                <ArrowUpRight className="w-3.5 h-3.5 shrink-0" />
               ) : (
-                <ArrowDownRight className="w-4 h-4 shrink-0" />
+                <ArrowDownRight className="w-3.5 h-3.5 shrink-0" />
               )}
               <span>
                 {activeDateCompass.recommendedSide === 'BUY'
-                  ? tr('UTAMAKAN BUY', 'PRIORITIZE BUY')
-                  : tr('UTAMAKAN SELL', 'PRIORITIZE SELL')}
+                  ? tr('Utamakan BUY', 'Prioritize BUY')
+                  : tr('Utamakan SELL', 'Prioritize SELL')}
               </span>
             </span>
           </div>
         </div>
+
+        {/* Row 2: VALIDASI CHoCH — Full-Width Uncut Status + Tap-to-Expand Complete Explanation */}
+        <div data-testid="smc-choch-indication-card" className="min-w-0">
+          <button
+            type="button"
+            data-testid="smc-choch-expand-toggle"
+            aria-expanded={isChochDetailOpen}
+            onClick={() => setIsChochDetailOpen((prev) => !prev)}
+            className="w-full px-3.5 py-2.5 sm:px-4 sm:py-3 text-left flex flex-col gap-1.5 hover:bg-[#FAFAFA] dark:hover:bg-[#161A22]/70 transition-colors duration-150 cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[#0F172A]/30 dark:focus-visible:ring-white/30"
+          >
+            <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
+              <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[10px] font-mono-numbers tabular-nums text-[#526071] dark:text-[#929BA9]">
+                <span className="font-sans font-medium uppercase tracking-[0.08em]">
+                  {tradingMode === 'SCALP' ? 'CHoCH · M5/M15' : 'CHoCH · 1H'}
+                </span>
+                <span aria-hidden="true">·</span>
+                <span>
+                  {activeSidePlan.healthyObAudit.isHealthySmcOb ? 'OB+FVG ✓' : 'Cek OB+FVG'}
+                </span>
+                {selectedSide === 'BUY' && twoStage.narrowPullbackHighToBreak > 0 && (
+                  <>
+                    <span aria-hidden="true">·</span>
+                    <span>PB ${twoStage.narrowPullbackHighToBreak.toFixed(1)}</span>
+                  </>
+                )}
+                {selectedSide === 'SELL' && twoStage.narrowPullbackLowToBreak > 0 && (
+                  <>
+                    <span aria-hidden="true">·</span>
+                    <span>PB ${twoStage.narrowPullbackLowToBreak.toFixed(1)}</span>
+                  </>
+                )}
+              </div>
+
+              <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-[#526071] dark:text-[#929BA9] shrink-0">
+                <span>
+                  {isChochDetailOpen
+                    ? tr('Tutup', 'Close')
+                    : tr('Penjelasan', 'Details')}
+                </span>
+                <ChevronDown
+                  className={`w-3.5 h-3.5 transition-transform duration-200 ease-[cubic-bezier(0.16,1,0.3,1)] ${
+                    isChochDetailOpen ? 'rotate-180' : 'rotate-0'
+                  }`}
+                />
+              </span>
+            </div>
+
+            <p className="text-xs font-semibold text-[#0F172A] dark:text-[#F2F4F7] font-mono-numbers leading-snug break-words">
+              {tr(twoStage.statusBadgeId, twoStage.statusBadgeEn)}
+            </p>
+          </button>
+
+          {isChochDetailOpen && (
+            <div
+              data-testid="smc-choch-detail-panel"
+              className="px-3.5 pb-3 pt-2.5 sm:px-4 sm:pb-3.5 border-t border-dashed border-[#E4E4E7] dark:border-[#20252D] bg-[#FAFAFA]/70 dark:bg-[#161A22]/50 space-y-2 animate-in fade-in slide-in-from-top-1 duration-150"
+            >
+              <p className="text-xs text-[#334155] dark:text-[#CBD5E1] leading-relaxed text-editorial-justify">
+                {tr(twoStage.summaryId, twoStage.summaryEn)}
+              </p>
+              <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] font-mono-numbers tabular-nums text-[#526071] dark:text-[#929BA9]">
+                <span>
+                  {twoStage.structureAnchorTf} LH ${twoStage.referenceLhPrice.toFixed(1)}
+                </span>
+                <span aria-hidden="true">·</span>
+                <span>
+                  {twoStage.structureAnchorTf} HL ${twoStage.referenceHlPrice.toFixed(1)}
+                </span>
+                {twoStage.narrowPullbackHighToBreak > 0 && (
+                  <>
+                    <span aria-hidden="true">·</span>
+                    <span className="text-[#059669] dark:text-[#00A878]">
+                      Buy CHoCH &gt; ${twoStage.narrowPullbackHighToBreak.toFixed(1)}
+                    </span>
+                  </>
+                )}
+                {twoStage.narrowPullbackLowToBreak > 0 && (
+                  <>
+                    <span aria-hidden="true">·</span>
+                    <span className="text-[#E11D48] dark:text-[#E05260]">
+                      Sell CHoCH &lt; ${twoStage.narrowPullbackLowToBreak.toFixed(1)}
+                    </span>
+                  </>
+                )}
+              </div>
+            </div>
+          )}
+        </div>
       </div>
 
       {/* =====================================================================
-          ROW 3: FILTER BAR RINGKAS (TANPA KAPSUL BERTUMPUK) + DRAWER TANGGAL
+          FILTER BAR MONOKROM & FLUID + DRAWER TANGGAL ON-DEMAND
          ===================================================================== */}
       <div className="space-y-2.5">
         {viewSection === 'ACTIVE' ? (
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            {/* Segmented BUY vs SELL (Fluid Rounded-Full) */}
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
+            {/* GPU-Sliding BUY vs SELL Switch (Zero Inner Color Pills) */}
             <div
               role="tablist"
               aria-label="Pilih Opsi Buy atau Sell"
-              className="w-full sm:w-auto grid grid-cols-2 sm:inline-flex items-center p-0.5 rounded-full bg-white dark:bg-[#101318] border border-[#D9E2EC] dark:border-[#20252D]"
+              className="relative w-full sm:w-auto grid grid-cols-2 p-0.5 rounded-full bg-[#FAFAFA] dark:bg-[#101318] border border-[#E4E4E7] dark:border-[#20252D] shrink-0"
             >
+              <span
+                aria-hidden="true"
+                className={`pointer-events-none absolute top-0.5 bottom-0.5 left-0.5 w-[calc(50%-2px)] rounded-full bg-[#0F172A] dark:bg-white transition-transform duration-200 ease-[cubic-bezier(0.16,1,0.3,1)] ${
+                  selectedSide === 'SELL' ? 'translate-x-full' : 'translate-x-0'
+                }`}
+              />
               <button
                 type="button"
                 role="tab"
@@ -1538,14 +2316,15 @@ export const SmcSignalPage: React.FC<SmcSignalPageProps> = ({
                   setHasUserToggledSide(true);
                   setSelectedSide('BUY');
                 }}
-                className={`h-8 sm:h-7 px-3 rounded-full text-xs font-bold transition-colors flex items-center justify-center gap-1 cursor-pointer ${
+                className={`relative z-10 h-8 sm:h-7 px-3.5 rounded-full text-xs font-semibold transition-colors duration-150 flex items-center justify-center gap-1 cursor-pointer whitespace-nowrap ${
                   selectedSide === 'BUY'
-                    ? 'bg-[#0F172A] text-white dark:bg-white dark:text-[#050607]'
+                    ? 'text-white dark:text-[#050607]'
                     : 'text-[#526071] dark:text-[#929BA9] hover:text-[#0F172A] dark:hover:text-[#F2F4F7]'
                 }`}
               >
                 <ArrowUpRight className="w-3.5 h-3.5 shrink-0" />
-                <span>BUY ({activeBuyCount})</span>
+                <span>BUY</span>
+                <span className="font-mono-numbers tabular-nums opacity-70">{activeBuyCount}</span>
               </button>
 
               <button
@@ -1557,84 +2336,79 @@ export const SmcSignalPage: React.FC<SmcSignalPageProps> = ({
                   setHasUserToggledSide(true);
                   setSelectedSide('SELL');
                 }}
-                className={`h-8 sm:h-7 px-3 rounded-full text-xs font-bold transition-colors flex items-center justify-center gap-1 cursor-pointer ${
+                className={`relative z-10 h-8 sm:h-7 px-3.5 rounded-full text-xs font-semibold transition-colors duration-150 flex items-center justify-center gap-1 cursor-pointer whitespace-nowrap ${
                   selectedSide === 'SELL'
-                    ? 'bg-[#0F172A] text-white dark:bg-white dark:text-[#050607]'
+                    ? 'text-white dark:text-[#050607]'
                     : 'text-[#526071] dark:text-[#929BA9] hover:text-[#0F172A] dark:hover:text-[#F2F4F7]'
                 }`}
               >
                 <ArrowDownRight className="w-3.5 h-3.5 shrink-0" />
-                <span>SELL ({activeSellCount})</span>
+                <span>SELL</span>
+                <span className="font-mono-numbers tabular-nums opacity-70">{activeSellCount}</span>
               </button>
             </div>
 
-            {/* Filter Status Pill Bulat + Tombol Tanggal */}
-            <div className="flex flex-wrap items-center justify-between gap-1.5 flex-1 min-w-0">
+            {/* Clean Monochrome Status Filters + Single Date Button */}
+            <div className="flex items-center justify-between gap-2 flex-1 min-w-0">
               <div
                 role="group"
-                aria-label="Filter On Going, Sedang Diambil, atau Previous"
-                className="flex flex-wrap items-center gap-1.5"
+                aria-label="Filter status sinyal"
+                className="flex items-center gap-1 overflow-x-auto no-scrollbar py-0.5 min-w-0"
               >
-                <button
-                  type="button"
-                  data-testid="smc-batch-filter-all"
-                  onClick={() => setBatchFilter('ALL')}
-                  className={`h-8 px-3 rounded-full border text-[11px] font-semibold whitespace-nowrap transition-colors cursor-pointer ${
-                    batchFilter === 'ALL'
-                      ? 'bg-[#0F172A] border-[#0F172A] text-white dark:bg-white dark:border-white dark:text-[#050607]'
-                      : 'bg-white dark:bg-[#101318] border-[#D9E2EC] dark:border-[#20252D] text-[#526071] dark:text-[#929BA9] hover:bg-[#F8FAFC] dark:hover:bg-[#161A22] hover:text-[#0F172A] dark:hover:text-[#F2F4F7]'
-                  }`}
-                >
-                  Semua <span className="font-mono-numbers opacity-80">({allActiveSideCount})</span>
-                </button>
-                <button
-                  type="button"
-                  data-testid="smc-batch-filter-ongoing"
-                  onClick={() => setBatchFilter('ON_GOING')}
-                  className={`h-8 px-3 rounded-full border text-[11px] font-semibold whitespace-nowrap transition-colors cursor-pointer ${
-                    batchFilter === 'ON_GOING'
-                      ? 'bg-[#059669]/15 dark:bg-[#00A878]/20 border-[#059669]/40 dark:border-[#00A878]/40 text-[#059669] dark:text-[#00A878]'
-                      : 'bg-white dark:bg-[#101318] border-[#D9E2EC] dark:border-[#20252D] text-[#526071] dark:text-[#929BA9] hover:bg-[#F8FAFC] dark:hover:bg-[#161A22] hover:text-[#0F172A] dark:hover:text-[#F2F4F7]'
-                  }`}
-                >
-                  On Going <span className="font-mono-numbers opacity-80">({onGoingSideCount})</span>
-                </button>
-                <button
-                  type="button"
-                  data-testid="smc-batch-filter-taken"
-                  onClick={() => setBatchFilter('TAKEN')}
-                  className={`h-8 px-3 rounded-full border text-[11px] font-semibold whitespace-nowrap transition-colors inline-flex items-center gap-1 cursor-pointer ${
-                    batchFilter === 'TAKEN'
-                      ? 'bg-[#0284C7]/15 dark:bg-[#38BDF8]/20 border-[#0284C7]/40 dark:border-[#38BDF8]/40 text-[#0284C7] dark:text-[#38BDF8]'
-                      : 'bg-white dark:bg-[#101318] border-[#D9E2EC] dark:border-[#20252D] text-[#526071] dark:text-[#929BA9] hover:bg-[#F8FAFC] dark:hover:bg-[#161A22] hover:text-[#0F172A] dark:hover:text-[#F2F4F7]'
-                  }`}
-                >
-                  <span>{tr('Sedang Diambil', 'Taken')}</span>
-                  <span className="font-mono-numbers opacity-80">({takenSideCount})</span>
-                </button>
-                <button
-                  type="button"
-                  data-testid="smc-batch-filter-previous"
-                  onClick={() => setBatchFilter('PREVIOUS')}
-                  className={`h-8 px-3 rounded-full border text-[11px] font-semibold whitespace-nowrap transition-colors cursor-pointer ${
-                    batchFilter === 'PREVIOUS'
-                      ? 'bg-[#D97706]/15 dark:bg-[#F59E0B]/20 border-[#D97706]/40 dark:border-[#F59E0B]/40 text-[#B45309] dark:text-[#F59E0B]'
-                      : 'bg-white dark:bg-[#101318] border-[#D9E2EC] dark:border-[#20252D] text-[#526071] dark:text-[#929BA9] hover:bg-[#F8FAFC] dark:hover:bg-[#161A22] hover:text-[#0F172A] dark:hover:text-[#F2F4F7]'
-                  }`}
-                >
-                  Previous <span className="font-mono-numbers opacity-80">({previousSideCount})</span>
-                </button>
+                {[
+                  {
+                    id: 'ALL' as const,
+                    testId: 'smc-batch-filter-all',
+                    label: tr('Semua', 'All'),
+                    count: allActiveSideCount,
+                  },
+                  {
+                    id: 'ON_GOING' as const,
+                    testId: 'smc-batch-filter-ongoing',
+                    label: 'On Going',
+                    count: onGoingSideCount,
+                  },
+                  {
+                    id: 'TAKEN' as const,
+                    testId: 'smc-batch-filter-taken',
+                    label: tr('Diambil', 'Taken'),
+                    count: takenSideCount,
+                  },
+                  {
+                    id: 'PREVIOUS' as const,
+                    testId: 'smc-batch-filter-previous',
+                    label: 'Previous',
+                    count: previousSideCount,
+                  },
+                ].map((tab) => {
+                  const active = batchFilter === tab.id;
+                  return (
+                    <button
+                      key={tab.id}
+                      type="button"
+                      data-testid={tab.testId}
+                      onClick={() => setBatchFilter(tab.id)}
+                      className={`h-8 px-3 rounded-full text-[11px] font-semibold whitespace-nowrap shrink-0 transition-colors duration-150 cursor-pointer ${
+                        active
+                          ? 'bg-[#0F172A] text-white dark:bg-white dark:text-[#050607]'
+                          : 'text-[#526071] dark:text-[#929BA9] hover:bg-[#F4F4F5] dark:hover:bg-[#161A22] hover:text-[#0F172A] dark:hover:text-[#F2F4F7]'
+                      }`}
+                    >
+                      {tab.label}{' '}
+                      <span className="font-mono-numbers tabular-nums opacity-70">{tab.count}</span>
+                    </button>
+                  );
+                })}
               </div>
 
-              {/* Compact On-Demand Date Filter Toggle */}
               <button
                 type="button"
                 data-testid="smc-signal-date-toggle-button"
                 onClick={() => setIsDateFilterOpen((prev) => !prev)}
-                className={`h-8 px-3 rounded-full border text-xs font-semibold inline-flex items-center gap-1.5 transition-colors whitespace-nowrap shrink-0 cursor-pointer ml-auto ${
+                className={`h-8 px-3 rounded-full border text-xs font-medium inline-flex items-center gap-1.5 transition-colors duration-150 whitespace-nowrap shrink-0 cursor-pointer ${
                   isDateFilterOpen || previousDateFilter !== 'ALL'
-                    ? 'bg-[#D97706]/10 dark:bg-[#F59E0B]/15 border-[#D97706]/40 dark:border-[#F59E0B]/40 text-[#B45309] dark:text-[#F59E0B]'
-                    : 'bg-white dark:bg-[#101318] border-[#D9E2EC] dark:border-[#20252D] hover:bg-[#F8FAFC] dark:hover:bg-[#161A22] text-[#526071] dark:text-[#929BA9] hover:text-[#0F172A] dark:hover:text-[#F2F4F7]'
+                    ? 'bg-[#F4F4F5] dark:bg-[#161A22] border-[#0F172A]/45 dark:border-white/45 text-[#0F172A] dark:text-[#F2F4F7]'
+                    : 'bg-white dark:bg-[#101318] border-[#E4E4E7] dark:border-[#20252D] hover:bg-[#F4F4F5] dark:hover:bg-[#161A22] text-[#526071] dark:text-[#929BA9] hover:text-[#0F172A] dark:hover:text-[#F2F4F7]'
                 }`}
               >
                 <Calendar className="w-3.5 h-3.5" />
@@ -1647,12 +2421,12 @@ export const SmcSignalPage: React.FC<SmcSignalPageProps> = ({
             </div>
           </div>
         ) : (
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            {/* Compact Fluid History Mode Switch: Semua | Hari Ini | Pilih Tanggal */}
+          <div className="flex flex-col items-start sm:flex-row sm:flex-wrap sm:items-center sm:justify-start gap-2">
+            {/* Monochrome History Range Switch */}
             <div
               role="group"
               aria-label="Filter Riwayat TP / SL"
-              className="w-full sm:w-auto flex flex-wrap sm:inline-flex items-center gap-1.5 sm:gap-0 sm:p-0.5 sm:rounded-full sm:bg-white sm:dark:bg-[#101318] sm:border sm:border-[#D9E2EC] sm:dark:border-[#20252D]"
+              className="flex items-center gap-1 overflow-x-auto no-scrollbar max-w-full py-0.5"
             >
               <button
                 type="button"
@@ -1661,13 +2435,14 @@ export const SmcSignalPage: React.FC<SmcSignalPageProps> = ({
                   setHistoryDateFilterMode('ALL');
                   setIsDateFilterOpen(false);
                 }}
-                className={`flex-1 sm:flex-initial h-8 sm:h-7 px-3 rounded-full border sm:border-0 text-xs font-semibold transition-colors whitespace-nowrap cursor-pointer ${
+                className={`h-8 px-3 rounded-full text-xs font-semibold transition-colors duration-150 whitespace-nowrap shrink-0 cursor-pointer ${
                   historyDateFilterMode === 'ALL'
-                    ? 'bg-[#0F172A] border-[#0F172A] text-white dark:bg-white dark:border-white dark:text-[#050607]'
-                    : 'bg-white dark:bg-[#101318] border-[#D9E2EC] dark:border-[#20252D] text-[#526071] dark:text-[#929BA9] hover:text-[#0F172A] dark:hover:text-[#F2F4F7]'
+                    ? 'bg-[#0F172A] text-white dark:bg-white dark:text-[#050607]'
+                    : 'text-[#526071] dark:text-[#929BA9] hover:bg-[#F4F4F5] dark:hover:bg-[#161A22] hover:text-[#0F172A] dark:hover:text-[#F2F4F7]'
                 }`}
               >
-                {tr('Semua Tanggal', 'All Dates')} ({allHistorySignalsForMode.length})
+                {tr('Semua', 'All')}{' '}
+                <span className="font-mono-numbers opacity-70">{allHistorySignalsForMode.length}</span>
               </button>
 
               <button
@@ -1678,13 +2453,14 @@ export const SmcSignalPage: React.FC<SmcSignalPageProps> = ({
                   setHistoryCustomDateKey(todayDateKey);
                   setIsDateFilterOpen(false);
                 }}
-                className={`flex-1 sm:flex-initial h-8 sm:h-7 px-3 rounded-full border sm:border-0 text-xs font-semibold transition-colors whitespace-nowrap cursor-pointer ${
+                className={`h-8 px-3 rounded-full text-xs font-semibold transition-colors duration-150 whitespace-nowrap shrink-0 cursor-pointer ${
                   historyDateFilterMode === 'TODAY'
-                    ? 'bg-[#0F172A] border-[#0F172A] text-white dark:bg-white dark:border-white dark:text-[#050607]'
-                    : 'bg-white dark:bg-[#101318] border-[#D9E2EC] dark:border-[#20252D] text-[#526071] dark:text-[#929BA9] hover:text-[#0F172A] dark:hover:text-[#F2F4F7]'
+                    ? 'bg-[#0F172A] text-white dark:bg-white dark:text-[#050607]'
+                    : 'text-[#526071] dark:text-[#929BA9] hover:bg-[#F4F4F5] dark:hover:bg-[#161A22] hover:text-[#0F172A] dark:hover:text-[#F2F4F7]'
                 }`}
               >
-                {tr('Hari Ini', 'Today')} ({todayHistoryCount})
+                {tr('Hari Ini', 'Today')}{' '}
+                <span className="font-mono-numbers opacity-70">{todayHistoryCount}</span>
               </button>
 
               <button
@@ -1694,42 +2470,89 @@ export const SmcSignalPage: React.FC<SmcSignalPageProps> = ({
                   setHistoryDateFilterMode('CUSTOM');
                   setIsDateFilterOpen(true);
                 }}
-                className={`flex-1 sm:flex-initial h-8 sm:h-7 px-3 rounded-full border sm:border-0 text-xs font-semibold transition-colors whitespace-nowrap cursor-pointer ${
+                className={`h-8 px-3 rounded-full text-xs font-semibold transition-colors duration-150 whitespace-nowrap shrink-0 cursor-pointer ${
                   historyDateFilterMode === 'CUSTOM'
-                    ? 'bg-[#D97706] border-[#D97706] text-white dark:bg-[#F59E0B] dark:border-[#F59E0B] dark:text-[#050607]'
-                    : 'bg-white dark:bg-[#101318] border-[#D9E2EC] dark:border-[#20252D] text-[#526071] dark:text-[#929BA9] hover:text-[#0F172A] dark:hover:text-[#F2F4F7]'
+                    ? 'bg-[#0F172A] text-white dark:bg-white dark:text-[#050607]'
+                    : 'text-[#526071] dark:text-[#929BA9] hover:bg-[#F4F4F5] dark:hover:bg-[#161A22] hover:text-[#0F172A] dark:hover:text-[#F2F4F7]'
                 }`}
               >
                 {tr('Pilih Tanggal', 'Choose Date')}
               </button>
             </div>
 
-            <button
-              type="button"
-              data-testid="smc-signal-date-toggle-button"
-              onClick={() => setIsDateFilterOpen((prev) => !prev)}
-              className={`h-8 px-3 rounded-full border text-xs font-semibold inline-flex items-center gap-1.5 transition-colors whitespace-nowrap shrink-0 cursor-pointer ml-auto ${
-                isDateFilterOpen || historyDateFilterMode === 'CUSTOM'
-                  ? 'bg-[#D97706]/10 dark:bg-[#F59E0B]/15 border-[#D97706]/40 dark:border-[#F59E0B]/40 text-[#B45309] dark:text-[#F59E0B]'
-                  : 'bg-white dark:bg-[#101318] border-[#D9E2EC] dark:border-[#20252D] hover:bg-[#F8FAFC] dark:hover:bg-[#161A22] text-[#526071] dark:text-[#929BA9] hover:text-[#0F172A] dark:hover:text-[#F2F4F7]'
-              }`}
-            >
-              <Calendar className="w-3.5 h-3.5" />
-              <span>
-                {historyDateFilterMode === 'CUSTOM'
-                  ? formatDateKeyHuman(historyCustomDateKey, todayDateKey)
-                  : tr('Kalender', 'Calendar')}
-              </span>
-            </button>
+            <div className="flex items-center justify-start gap-1.5 flex-wrap">
+              {/* Clean Monochrome Direction Filter */}
+              <div
+                role="group"
+                aria-label="Filter Arah Riwayat BUY atau SELL"
+                className="inline-flex items-center p-0.5 rounded-full bg-[#FAFAFA] dark:bg-[#101318] border border-[#E4E4E7] dark:border-[#20252D]"
+              >
+                <button
+                  type="button"
+                  data-testid="smc-history-dir-all"
+                  onClick={() => setHistoryDirectionFilter('ALL')}
+                  className={`h-7 px-2.5 rounded-full text-[11px] font-semibold transition-colors duration-150 cursor-pointer ${
+                    historyDirectionFilter === 'ALL'
+                      ? 'bg-[#0F172A] text-white dark:bg-white dark:text-[#050607]'
+                      : 'text-[#526071] dark:text-[#929BA9] hover:text-[#0F172A] dark:hover:text-[#F2F4F7]'
+                  }`}
+                >
+                  {tr('Semua', 'All')} {dateFilteredHistorySignals.length}
+                </button>
+                <button
+                  type="button"
+                  data-testid="smc-history-dir-buy"
+                  onClick={() => setHistoryDirectionFilter('BUY')}
+                  className={`h-7 px-2.5 rounded-full text-[11px] font-semibold transition-colors duration-150 cursor-pointer ${
+                    historyDirectionFilter === 'BUY'
+                      ? 'bg-[#0F172A] text-white dark:bg-white dark:text-[#050607]'
+                      : 'text-[#526071] dark:text-[#929BA9] hover:text-[#059669] dark:hover:text-[#00A878]'
+                  }`}
+                >
+                  BUY {historyBuyCount}
+                </button>
+                <button
+                  type="button"
+                  data-testid="smc-history-dir-sell"
+                  onClick={() => setHistoryDirectionFilter('SELL')}
+                  className={`h-7 px-2.5 rounded-full text-[11px] font-semibold transition-colors duration-150 cursor-pointer ${
+                    historyDirectionFilter === 'SELL'
+                      ? 'bg-[#0F172A] text-white dark:bg-white dark:text-[#050607]'
+                      : 'text-[#526071] dark:text-[#929BA9] hover:text-[#E11D48] dark:hover:text-[#E05260]'
+                  }`}
+                >
+                  SELL {historySellCount}
+                </button>
+              </div>
+
+              <button
+                type="button"
+                data-testid="smc-signal-date-toggle-button"
+                onClick={() => setIsDateFilterOpen((prev) => !prev)}
+                className={`h-8 px-3 rounded-full border text-xs font-medium inline-flex items-center gap-1.5 transition-colors duration-150 whitespace-nowrap shrink-0 cursor-pointer ${
+                  isDateFilterOpen || historyDateFilterMode === 'CUSTOM'
+                    ? 'bg-[#F4F4F5] dark:bg-[#161A22] border-[#0F172A]/45 dark:border-white/45 text-[#0F172A] dark:text-[#F2F4F7]'
+                    : 'bg-white dark:bg-[#101318] border-[#E4E4E7] dark:border-[#20252D] hover:bg-[#F4F4F5] dark:hover:bg-[#161A22] text-[#526071] dark:text-[#929BA9] hover:text-[#0F172A] dark:hover:text-[#F2F4F7]'
+                }`}
+              >
+                <Calendar className="w-3.5 h-3.5" />
+                <span>
+                  {historyDateFilterMode === 'CUSTOM'
+                    ? formatDateKeyHuman(historyCustomDateKey, todayDateKey)
+                    : tr('Kalender', 'Calendar')}
+                </span>
+              </button>
+            </div>
           </div>
         )}
 
-        {/* Drawer Tanggal On-Demand (Terbuka saat user klik Tanggal / Pilih Tanggal / Kalender) */}
+        {/* Single Centralized On-Demand Date Drawer (Monochrome, GPU Entry) */}
         {(isDateFilterOpen ||
           (viewSection === 'HISTORY' && historyDateFilterMode === 'CUSTOM')) && (
           <div
             data-testid="smc-signal-date-bar"
-            className="rounded-xl border border-[#D9E2EC] dark:border-[#20252D] bg-white dark:bg-[#101318] p-2.5 flex flex-wrap items-center justify-between gap-2"
+            style={{ contain: 'layout style' }}
+            className="rounded-xl border border-[#E4E4E7] dark:border-[#20252D] bg-white dark:bg-[#101318] p-2.5 flex flex-wrap items-center justify-between gap-2 animate-in fade-in slide-in-from-top-1 duration-150"
           >
             {viewSection === 'ACTIVE' ? (
               <>
@@ -1741,15 +2564,15 @@ export const SmcSignalPage: React.FC<SmcSignalPageProps> = ({
                       setSelectedDateKey(todayDateKey);
                       setPreviousDateFilter('ALL');
                     }}
-                    className={`h-7 px-3 rounded-full text-[11px] font-semibold transition-colors whitespace-nowrap shrink-0 flex items-center gap-1.5 cursor-pointer ${
+                    className={`h-7 px-3 rounded-full text-[11px] font-semibold transition-colors duration-150 whitespace-nowrap shrink-0 flex items-center gap-1.5 cursor-pointer ${
                       previousDateFilter === 'ALL'
-                        ? 'bg-[#D97706] text-white dark:bg-[#F59E0B] dark:text-[#050607]'
-                        : 'bg-[#F8FAFC] dark:bg-[#161A22] text-[#526071] dark:text-[#929BA9] hover:text-[#0F172A] dark:hover:text-[#F2F4F7] border border-[#D9E2EC] dark:border-[#20252D]'
+                        ? 'bg-[#0F172A] text-white dark:bg-white dark:text-[#050607]'
+                        : 'bg-[#FAFAFA] dark:bg-[#161A22] text-[#526071] dark:text-[#929BA9] hover:text-[#0F172A] dark:hover:text-[#F2F4F7] border border-[#E4E4E7] dark:border-[#20252D]'
                     }`}
                   >
                     <span>{tr('Semua Tanggal', 'All Dates')}</span>
-                    <span className="font-mono-numbers opacity-85">
-                      ({allActiveSignalsForMode.filter((r) => (r.batchStatus || 'ON_GOING') === 'PREVIOUS').length})
+                    <span className="font-mono-numbers opacity-75">
+                      {allActiveSignalsForMode.filter((r) => (r.batchStatus || 'ON_GOING') === 'PREVIOUS').length}
                     </span>
                   </button>
 
@@ -1771,14 +2594,14 @@ export const SmcSignalPage: React.FC<SmcSignalPageProps> = ({
                           setSelectedDateKey(dKey);
                           setPreviousDateFilter(dKey);
                         }}
-                        className={`h-7 px-3 rounded-full text-[11px] font-semibold transition-colors whitespace-nowrap shrink-0 flex items-center gap-1.5 cursor-pointer ${
+                        className={`h-7 px-3 rounded-full text-[11px] font-semibold transition-colors duration-150 whitespace-nowrap shrink-0 flex items-center gap-1.5 cursor-pointer ${
                           isSelected
                             ? 'bg-[#0F172A] text-white dark:bg-white dark:text-[#050607]'
-                            : 'bg-[#F8FAFC] dark:bg-[#161A22] text-[#526071] dark:text-[#929BA9] hover:text-[#0F172A] dark:hover:text-[#F2F4F7] border border-[#D9E2EC] dark:border-[#20252D]'
+                            : 'bg-[#FAFAFA] dark:bg-[#161A22] text-[#526071] dark:text-[#929BA9] hover:text-[#0F172A] dark:hover:text-[#F2F4F7] border border-[#E4E4E7] dark:border-[#20252D]'
                         }`}
                       >
                         <span>{formatDateKeyHuman(dKey, todayDateKey)}</span>
-                        <span className="font-mono-numbers opacity-80">({countActive})</span>
+                        <span className="font-mono-numbers opacity-75">{countActive}</span>
                       </button>
                     );
                   })}
@@ -1794,7 +2617,7 @@ export const SmcSignalPage: React.FC<SmcSignalPageProps> = ({
                       setPreviousDateFilter(e.target.value);
                     }
                   }}
-                  className="h-8 px-3 w-full sm:w-auto rounded-full text-[11px] font-mono-numbers bg-[#F8FAFC] dark:bg-[#161A22] border border-[#D9E2EC] dark:border-[#20252D] text-[#0F172A] dark:text-[#F2F4F7] focus:outline-none shrink-0"
+                  className="h-8 px-3 w-full sm:w-auto rounded-full text-[11px] font-mono-numbers bg-[#FAFAFA] dark:bg-[#161A22] border border-[#E4E4E7] dark:border-[#20252D] text-[#0F172A] dark:text-[#F2F4F7] focus:outline-none shrink-0"
                 />
               </>
             ) : (
@@ -1819,14 +2642,14 @@ export const SmcSignalPage: React.FC<SmcSignalPageProps> = ({
                             setHistoryCustomDateKey(dKey);
                             setHistoryDateFilterMode('CUSTOM');
                           }}
-                          className={`h-7 px-3 rounded-full text-[11px] font-semibold transition-colors whitespace-nowrap shrink-0 flex items-center gap-1.5 cursor-pointer ${
+                          className={`h-7 px-3 rounded-full text-[11px] font-semibold transition-colors duration-150 whitespace-nowrap shrink-0 flex items-center gap-1.5 cursor-pointer ${
                             isSelectedCustom
                               ? 'bg-[#0F172A] text-white dark:bg-white dark:text-[#050607]'
-                              : 'bg-[#F8FAFC] dark:bg-[#161A22] text-[#526071] dark:text-[#929BA9] hover:text-[#0F172A] dark:hover:text-[#F2F4F7] border border-[#D9E2EC] dark:border-[#20252D]'
+                              : 'bg-[#FAFAFA] dark:bg-[#161A22] text-[#526071] dark:text-[#929BA9] hover:text-[#0F172A] dark:hover:text-[#F2F4F7] border border-[#E4E4E7] dark:border-[#20252D]'
                           }`}
                         >
                           <span>{formatDateKeyHuman(dKey, todayDateKey)}</span>
-                          <span className="font-mono-numbers opacity-80">({countHistOnDate})</span>
+                          <span className="font-mono-numbers opacity-75">{countHistOnDate}</span>
                         </button>
                       );
                     })}
@@ -1843,7 +2666,7 @@ export const SmcSignalPage: React.FC<SmcSignalPageProps> = ({
                       setHistoryDateFilterMode('CUSTOM');
                     }
                   }}
-                  className="h-8 px-3 w-full sm:w-auto rounded-full text-[11px] font-mono-numbers bg-[#F8FAFC] dark:bg-[#161A22] border border-[#D9E2EC] dark:border-[#20252D] text-[#0F172A] dark:text-[#F2F4F7] focus:outline-none shrink-0"
+                  className="h-8 px-3 w-full sm:w-auto rounded-full text-[11px] font-mono-numbers bg-[#FAFAFA] dark:bg-[#161A22] border border-[#E4E4E7] dark:border-[#20252D] text-[#0F172A] dark:text-[#F2F4F7] focus:outline-none shrink-0"
                 />
               </>
             )}
@@ -1852,249 +2675,23 @@ export const SmcSignalPage: React.FC<SmcSignalPageProps> = ({
       </div>
 
       {/* =====================================================================
-          VIEW 1: DAFTAR KELOMPOK SINYAL AKTIF (ON GOING + PREVIOUS DATA PER TANGGAL)
+          VIEW 1: DAFTAR SINYAL AKTIF (MINIMALIS EDITORIAL)
          ===================================================================== */}
       {viewSection === 'ACTIVE' && (() => {
-        const renderSignalCard = (group: SmcStoredSignalRecord) => {
-          const isTierAPlus = group.tier === 'A_PLUS';
-          const isTierB = group.tier === 'B_STANDARD';
-          const isPreviousBatch = (group.batchStatus || 'ON_GOING') === 'PREVIOUS';
-          const cardDateLabel = formatDateKeyHuman(group.dateKey, todayDateKey);
-
-          return (
-            <div
-              key={group.uid}
-              data-testid={`smc-group-card-${group.uid}`}
-              className={`rounded-xl border bg-white dark:bg-[#101318] p-4 font-mono-numbers tabular-nums transition-colors flex flex-col justify-between ${
-                group.isTaken
-                  ? 'border-[#0284C7]/60 dark:border-[#38BDF8]/55 ring-1 ring-[#0284C7]/20 dark:ring-[#38BDF8]/20'
-                  : isPreviousBatch
-                  ? 'border-[#D9E2EC] dark:border-[#20252D] opacity-95'
-                  : isTierAPlus
-                  ? 'border-[#0F172A]/45 dark:border-white/35'
-                  : 'border-[#D9E2EC] dark:border-[#20252D]'
-              }`}
-            >
-              <div>
-                {/* Micro Status Eyebrow + Quick Action */}
-                <div className="flex items-center justify-between gap-2 mb-2 font-sans">
-                  <div className="flex flex-wrap items-center gap-1.5 min-w-0 text-[10px] font-semibold uppercase tracking-[0.06em]">
-                    <span
-                      className={`inline-flex items-center gap-1.5 ${
-                        isPreviousBatch
-                          ? 'text-[#B45309] dark:text-[#F59E0B]'
-                          : 'text-[#059669] dark:text-[#00A878]'
-                      }`}
-                    >
-                      <span
-                        className={`w-1.5 h-1.5 rounded-full shrink-0 ${
-                          isPreviousBatch
-                            ? 'bg-[#D97706] dark:bg-[#F59E0B]'
-                            : 'bg-[#059669] dark:bg-[#00A878]'
-                        }`}
-                      />
-                      <span>
-                        {isPreviousBatch
-                          ? `PREVIOUS · ${cardDateLabel}`
-                          : 'ON GOING'}
-                      </span>
-                    </span>
-
-                    {group.isTaken && (
-                      <span className="text-[#0284C7] dark:text-[#38BDF8]">
-                        · {tr('DIAMBIL', 'TAKEN')}
-                      </span>
-                    )}
-
-                    {group.resurfacedFromBatch && (
-                      <span
-                        data-testid={`smc-resurfaced-badge-${group.uid}`}
-                        className="inline-flex items-center gap-0.5 text-[#0369A1] dark:text-[#38BDF8]"
-                      >
-                        · {group.resurfacedFromBatch === 'PREVIOUS'
-                          ? tr('MUNCUL LAGI (EKS PREV)', 'RE-SHOWN (EX PREV)')
-                          : tr('MUNCUL LAGI', 'RE-SHOWN')}
-                      </span>
-                    )}
-                  </div>
-
-                  {isPreviousBatch && (
-                    <button
-                      type="button"
-                      onClick={() => handleToggleBatchStatus(group.uid, 'ON_GOING')}
-                      className="px-2.5 py-0.5 rounded-full border border-[#059669]/30 dark:border-[#00A878]/30 bg-[#059669]/8 dark:bg-[#00A878]/12 text-[10px] font-sans font-semibold text-[#059669] dark:text-[#00A878] hover:bg-[#059669]/15 dark:hover:bg-[#00A878]/20 transition-colors shrink-0 cursor-pointer"
-                    >
-                      {tr('Ke On Going', 'To On Going')}
-                    </button>
-                  )}
-                </div>
-
-                {/* Title + Single Tier Label */}
-                <div className="flex items-start justify-between gap-2 pb-2.5 mb-3 border-b border-[#D9E2EC] dark:border-[#20252D]">
-                  <div className="min-w-0">
-                    <h2 className="text-sm font-bold text-[#0F172A] dark:text-[#F2F4F7] truncate">
-                      {group.headerTitle}
-                    </h2>
-                    <span className="text-[10px] text-[#526071] dark:text-[#929BA9] font-sans block mt-0.5 truncate">
-                      {cardDateLabel} · {group.createdTimeWib} · Spot ${group.spotPriceAtCapture.toFixed(1)}
-                    </span>
-                  </div>
-
-                  <span
-                    className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider shrink-0 ${
-                      isTierAPlus
-                        ? 'bg-[#059669]/10 dark:bg-[#00A878]/15 text-[#059669] dark:text-[#00A878]'
-                        : isTierB
-                        ? 'bg-[#D97706]/10 dark:bg-[#F59E0B]/15 text-[#D97706] dark:text-[#F59E0B]'
-                        : 'bg-[#E11D48]/10 dark:bg-[#E05260]/15 text-[#E11D48] dark:text-[#E05260]'
-                    }`}
-                  >
-                    {isTierAPlus ? 'A+' : isTierB ? 'SETUP B' : 'HIGH RISK'}
-                  </span>
-                </div>
-
-                {/* Clean Tabular Price Matrix */}
-                <div className="space-y-1.5 text-xs">
-                  <div className="flex items-baseline justify-between gap-2 pb-1">
-                    <span className="text-[11px] text-[#526071] dark:text-[#929BA9] font-sans font-medium">
-                      Entry Limit
-                    </span>
-                    <span className="text-base font-bold tracking-tight text-[#0F172A] dark:text-[#F2F4F7]">
-                      {group.entryLimit.toFixed(1)}
-                    </span>
-                  </div>
-
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="text-[11px] text-[#526071] dark:text-[#929BA9] font-sans">
-                      SL
-                    </span>
-                    <span className="font-semibold text-[#E11D48] dark:text-[#E05260]">
-                      {group.stopLoss.toFixed(1)}{' '}
-                      <span className="text-[10px] opacity-75 font-normal">
-                        ({group.slPips}p + {group.slPoints}pt)
-                      </span>
-                    </span>
-                  </div>
-
-                  <div className="flex items-center justify-between gap-2 pt-1.5 border-t border-[#D9E2EC]/70 dark:border-[#20252D]/70">
-                    <span className="text-[11px] text-[#526071] dark:text-[#929BA9] font-sans">
-                      TP 1
-                    </span>
-                    <span className="font-semibold text-[#059669] dark:text-[#00A878]">
-                      {group.tp1.toFixed(1)}{' '}
-                      <span className="text-[10px] opacity-75 font-normal">(1:1)</span>
-                    </span>
-                  </div>
-
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="text-[11px] text-[#526071] dark:text-[#929BA9] font-sans">
-                      TP 2
-                    </span>
-                    <span className="font-semibold text-[#059669] dark:text-[#00A878]">
-                      {group.tp2.toFixed(1)}{' '}
-                      <span className="text-[10px] opacity-75 font-normal">(1:2)</span>
-                    </span>
-                  </div>
-
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="text-[11px] text-[#526071] dark:text-[#929BA9] font-sans">
-                      TP Max
-                    </span>
-                    <span className="font-semibold text-[#059669] dark:text-[#00A878]">
-                      {group.tpMax.toFixed(1)}{' '}
-                      <span className="text-[10px] opacity-75 font-normal">({group.tpMaxRrLabel})</span>
-                    </span>
-                  </div>
-                </div>
-              </div>
-
-              {/* =========================================================
-                  TOMBOL AKSI ROUNDED-FULL & RESPONSIF: AMBIL SINYAL & HIT TP/SL
-                 ========================================================= */}
-              <div className="mt-3.5 pt-3 border-t border-[#D9E2EC] dark:border-[#20252D] space-y-2 font-sans">
-                <div className="flex items-center gap-2">
-                  <button
-                    type="button"
-                    data-testid={`smc-take-signal-${group.uid}`}
-                    onClick={() => handleToggleTakeSignal(group.uid)}
-                    className={`flex-1 h-8 px-3.5 rounded-full text-[11px] font-semibold transition-colors flex items-center justify-center gap-1.5 cursor-pointer ${
-                      group.isTaken
-                        ? 'bg-[#0284C7] text-white dark:bg-[#38BDF8] dark:text-[#050607]'
-                        : 'bg-[#F8FAFC] dark:bg-[#161A22] border border-[#D9E2EC] dark:border-[#20252D] text-[#0F172A] dark:text-[#F2F4F7] hover:bg-[#E2E8F0] dark:hover:bg-[#20252D]'
-                    }`}
-                  >
-                    <BookmarkCheck className="w-3.5 h-3.5 shrink-0" />
-                    <span className="truncate">
-                      {group.isTaken
-                        ? tr('Sedang Diambil', 'Signal Taken')
-                        : tr('Ambil Sinyal', 'Take Signal')}
-                    </span>
-                  </button>
-
-                  <button
-                    type="button"
-                    title={tr('Hapus sinyal ini', 'Delete this signal')}
-                    onClick={() => handleDeleteSignal(group.uid)}
-                    className="h-8 w-8 rounded-full shrink-0 inline-flex items-center justify-center border border-[#D9E2EC] dark:border-[#20252D] text-[#526071] dark:text-[#929BA9] hover:text-[#E11D48] dark:hover:text-[#E05260] hover:bg-[#F8FAFC] dark:hover:bg-[#161A22] transition-colors cursor-pointer"
-                  >
-                    <Trash2 className="w-3.5 h-3.5" />
-                  </button>
-                </div>
-
-                {/* Pill Bulat Hasil: TP 1 | TP 2 | Max | SL (Fluid Grid) */}
-                <div className="grid grid-cols-2 min-[340px]:grid-cols-4 gap-1.5">
-                  <button
-                    type="button"
-                    data-testid={`smc-hit-tp1-${group.uid}`}
-                    onClick={() => handleMarkSignalOutcome(group, 'HIT_TP1')}
-                    className="h-7 px-2 rounded-full border border-[#D9E2EC] dark:border-[#20252D] bg-[#F8FAFC] dark:bg-[#161A22] text-[10px] font-semibold text-[#059669] dark:text-[#00A878] hover:bg-[#059669]/12 dark:hover:bg-[#00A878]/15 hover:border-[#059669]/35 dark:hover:border-[#00A878]/35 transition-colors cursor-pointer"
-                  >
-                    TP 1
-                  </button>
-                  <button
-                    type="button"
-                    data-testid={`smc-hit-tp2-${group.uid}`}
-                    onClick={() => handleMarkSignalOutcome(group, 'HIT_TP2')}
-                    className="h-7 px-2 rounded-full border border-[#D9E2EC] dark:border-[#20252D] bg-[#F8FAFC] dark:bg-[#161A22] text-[10px] font-semibold text-[#059669] dark:text-[#00A878] hover:bg-[#059669]/12 dark:hover:bg-[#00A878]/15 hover:border-[#059669]/35 dark:hover:border-[#00A878]/35 transition-colors cursor-pointer"
-                  >
-                    TP 2
-                  </button>
-                  <button
-                    type="button"
-                    data-testid={`smc-hit-tpmax-${group.uid}`}
-                    onClick={() => handleMarkSignalOutcome(group, 'HIT_TP_MAX')}
-                    className="h-7 px-2 rounded-full border border-[#D9E2EC] dark:border-[#20252D] bg-[#F8FAFC] dark:bg-[#161A22] text-[10px] font-semibold text-[#059669] dark:text-[#00A878] hover:bg-[#059669]/12 dark:hover:bg-[#00A878]/15 hover:border-[#059669]/35 dark:hover:border-[#00A878]/35 transition-colors cursor-pointer"
-                  >
-                    Max
-                  </button>
-                  <button
-                    type="button"
-                    data-testid={`smc-hit-sl-${group.uid}`}
-                    onClick={() => handleMarkSignalOutcome(group, 'HIT_SL')}
-                    className="h-7 px-2 rounded-full border border-[#D9E2EC] dark:border-[#20252D] bg-[#F8FAFC] dark:bg-[#161A22] text-[10px] font-semibold text-[#E11D48] dark:text-[#E05260] hover:bg-[#E11D48]/12 dark:hover:bg-[#E05260]/15 hover:border-[#E11D48]/35 dark:hover:border-[#E05260]/35 transition-colors cursor-pointer"
-                  >
-                    SL
-                  </button>
-                </div>
-              </div>
-            </div>
-          );
-        };
-
         if (activeSideSignals.length === 0) {
           return (
-            <div className="rounded-xl border border-[#D9E2EC] dark:border-[#20252D] bg-white dark:bg-[#101318] p-6 text-center space-y-3">
-              <p className="text-xs font-semibold text-[#526071] dark:text-[#929BA9]">
+            <div className="rounded-xl border border-[#E4E4E7] dark:border-[#20252D] bg-white dark:bg-[#101318] p-8 text-center space-y-3">
+              <p className="text-xs font-medium text-[#526071] dark:text-[#929BA9]">
                 {tr(
                   `Tidak ada sinyal ${selectedSide} (${
                     batchFilter === 'ON_GOING'
                       ? 'On Going'
                       : batchFilter === 'TAKEN'
-                      ? 'Sedang Diambil'
+                      ? 'Diambil'
                       : batchFilter === 'PREVIOUS'
                       ? previousDateFilter === 'ALL'
-                        ? 'Previous Data'
-                        : `Previous Data · ${formatDateKeyHuman(previousDateFilter, todayDateKey)}`
+                        ? 'Previous'
+                        : `Previous · ${formatDateKeyHuman(previousDateFilter, todayDateKey)}`
                       : 'Aktif'
                   }).`,
                   `No ${selectedSide} signals available.`
@@ -2103,10 +2700,10 @@ export const SmcSignalPage: React.FC<SmcSignalPageProps> = ({
               <button
                 type="button"
                 onClick={() => void handlePullNewRealtimeSignals()}
-                className="h-9 px-4 py-1.5 rounded-full bg-[#0F172A] dark:bg-white text-white dark:text-[#050607] text-xs font-bold inline-flex items-center gap-1.5 cursor-pointer"
+                className="h-9 px-4 rounded-full bg-[#0F172A] dark:bg-white text-white dark:text-[#050607] text-xs font-semibold inline-flex items-center gap-1.5 cursor-pointer hover:opacity-90 transition-opacity"
               >
                 <PlusCircle className="w-3.5 h-3.5" />
-                <span>{tr('+ Tarik Sinyal Baru Hari Ini', '+ Pull New Signal Today')}</span>
+                <span>{tr('Tarik Sinyal Baru', 'Pull New Signal')}</span>
               </button>
             </div>
           );
@@ -2120,297 +2717,146 @@ export const SmcSignalPage: React.FC<SmcSignalPageProps> = ({
           batchFilter === 'ALL'
             ? untakenFilteredPreviousSideSignals.length
             : filteredPreviousSideSignals.length;
-        const displayPreviousChipPool =
-          batchFilter === 'ALL'
-            ? allPreviousSideSignals.filter((r) => !r.isTaken)
-            : allPreviousSideSignals;
 
         return (
-          <div data-testid={`smc-signal-groups-${selectedSide.toLowerCase()}`} className="space-y-6">
-            {/* BAGIAN 0: SEDANG DIAMBIL (PINNED TOP — GABUNGAN ON GOING & PREVIOUS YANG DIAMBIL) */}
+          <div data-testid={`smc-signal-groups-${selectedSide.toLowerCase()}`} className="space-y-7">
+            {/* SECTION: POSISI DIAMBIL */}
             {(batchFilter === 'ALL' || batchFilter === 'TAKEN') && takenSideSignals.length > 0 && (
-              <div data-testid="smc-taken-signals-section" className="space-y-3">
-                <div className="flex items-center justify-between gap-2 pb-1.5 border-b border-[#0284C7]/35 dark:border-[#38BDF8]/30">
-                  <span className="text-xs font-bold uppercase tracking-wider text-[#0284C7] dark:text-[#38BDF8] inline-flex items-center gap-1.5">
-                    <BookmarkCheck className="w-3.5 h-3.5" />
-                    <span>
-                      {tr('SEDANG DIAMBIL · PRIORITAS POSISI AKTIF', 'TAKEN SIGNALS · ACTIVE TRADES')} ({takenSideSignals.length})
-                    </span>
+              <section data-testid="smc-taken-signals-section" className="space-y-3">
+                <div className="flex items-center justify-between gap-2 pb-2 border-b border-[#E4E4E7] dark:border-[#20252D]">
+                  <h3 className="text-[11px] font-semibold uppercase tracking-[0.12em] text-[#0F172A] dark:text-[#F2F4F7]">
+                    {tr('Posisi Diambil', 'Taken Signals')}
+                  </h3>
+                  <span className="text-[11px] font-mono-numbers tabular-nums text-[#526071] dark:text-[#929BA9]">
+                    {takenSideSignals.length}
                   </span>
                 </div>
-                <div className="grid grid-cols-[repeat(auto-fill,minmax(min(100%,285px),1fr))] gap-3.5 sm:gap-4">
-                  {takenSideSignals.map(renderSignalCard)}
+                <div className="grid grid-cols-[repeat(auto-fill,minmax(min(100%,290px),1fr))] gap-3.5 sm:gap-4">
+                  {takenSideSignals.map((group) => (
+                    <MemoSignalCard
+                      key={group.uid}
+                      group={group}
+                      todayDateKey={todayDateKey}
+                      tr={tr}
+                      onToggleTake={handleToggleTakeSignal}
+                      onToggleBatch={handleToggleBatchStatus}
+                      onDelete={handleDeleteSignal}
+                      onRequestOutcome={handleRequestOutcomeConfirm}
+                    />
+                  ))}
                 </div>
-              </div>
+              </section>
             )}
 
-            {/* BAGIAN 1: ON GOING (DATA TERBARU) */}
+            {/* SECTION: ON GOING */}
             {(batchFilter === 'ALL' || batchFilter === 'ON_GOING') && displayOnGoingSignals.length > 0 && (
-              <div className="space-y-3">
-                <div className="flex items-center justify-between gap-2 pb-1.5 border-b border-[#D9E2EC] dark:border-[#20252D]">
-                  <span className="text-xs font-bold uppercase tracking-wider text-[#059669] dark:text-[#00A878]">
-                    {tr('ON GOING · DATA TERBARU', 'ON GOING · LATEST SIGNALS')} ({displayOnGoingSignals.length})
+              <section className="space-y-3">
+                <div className="flex items-center justify-between gap-2 pb-2 border-b border-[#E4E4E7] dark:border-[#20252D]">
+                  <h3 className="text-[11px] font-semibold uppercase tracking-[0.12em] text-[#0F172A] dark:text-[#F2F4F7]">
+                    On Going
+                  </h3>
+                  <span className="text-[11px] font-mono-numbers tabular-nums text-[#526071] dark:text-[#929BA9]">
+                    {displayOnGoingSignals.length}
                   </span>
                 </div>
-                <div className="grid grid-cols-[repeat(auto-fill,minmax(min(100%,285px),1fr))] gap-3.5 sm:gap-4">
-                  {displayOnGoingSignals.map(renderSignalCard)}
+                <div className="grid grid-cols-[repeat(auto-fill,minmax(min(100%,290px),1fr))] gap-3.5 sm:gap-4">
+                  {displayOnGoingSignals.map((group) => (
+                    <MemoSignalCard
+                      key={group.uid}
+                      group={group}
+                      todayDateKey={todayDateKey}
+                      tr={tr}
+                      onToggleTake={handleToggleTakeSignal}
+                      onToggleBatch={handleToggleBatchStatus}
+                      onDelete={handleDeleteSignal}
+                      onRequestOutcome={handleRequestOutcomeConfirm}
+                    />
+                  ))}
                 </div>
-              </div>
+              </section>
             )}
 
-            {/* BAGIAN 2: PREVIOUS DATA (GABUNGAN HARI INI & TANGGAL SEBELUMNYA, DIKELOMPOKKAN PER TANGGAL) */}
+            {/* SECTION: PREVIOUS */}
             {(batchFilter === 'ALL' || batchFilter === 'PREVIOUS') &&
               displayPreviousGroups.length > 0 && (
-                <div data-testid="smc-previous-data-grouped" className="space-y-4">
-                  <div className="flex flex-wrap items-center justify-between gap-2 pb-1.5 border-b border-[#D9E2EC] dark:border-[#20252D]">
-                    <span className="text-xs font-bold uppercase tracking-wider text-[#B45309] dark:text-[#F59E0B]">
-                      {tr(
-                        'PREVIOUS DATA · GABUNGAN HARI INI & HARI SEBELUMNYA',
-                        'PREVIOUS DATA · TODAY & PRIOR DAYS COMBINED'
-                      )}{' '}
-                      ({displayPreviousCount})
+                <section data-testid="smc-previous-data-grouped" className="space-y-4">
+                  <div className="flex items-center justify-between gap-2 pb-2 border-b border-[#E4E4E7] dark:border-[#20252D]">
+                    <h3 className="text-[11px] font-semibold uppercase tracking-[0.12em] text-[#526071] dark:text-[#929BA9]">
+                      Previous
+                    </h3>
+                    <span className="text-[11px] font-mono-numbers tabular-nums text-[#526071] dark:text-[#929BA9]">
+                      {displayPreviousCount}
                     </span>
-
-                    {/* Filter Tanggal Cepat di dalam Previous Data */}
-                    <div className="flex flex-wrap items-center gap-1.5">
-                      <button
-                        type="button"
-                        onClick={() => setPreviousDateFilter('ALL')}
-                        className={`px-2.5 py-0.5 rounded-full border text-[10px] font-semibold transition-colors cursor-pointer ${
-                          previousDateFilter === 'ALL'
-                            ? 'bg-[#D97706]/15 dark:bg-[#F59E0B]/20 border-[#D97706]/35 dark:border-[#F59E0B]/35 text-[#B45309] dark:text-[#F59E0B]'
-                            : 'border-transparent text-[#526071] dark:text-[#929BA9] hover:bg-[#F1F5F9] dark:hover:bg-[#161A22] hover:text-[#0F172A] dark:hover:text-[#F2F4F7]'
-                        }`}
-                      >
-                        Semua ({displayPreviousChipPool.length})
-                      </button>
-                      {previousAvailableDates.map((dKey) => {
-                        const dateCount = displayPreviousChipPool.filter((r) => r.dateKey === dKey).length;
-                        if (dateCount === 0) return null;
-                        return (
-                          <button
-                            key={`prev-sub-${dKey}`}
-                            type="button"
-                            onClick={() => setPreviousDateFilter(dKey)}
-                            className={`px-2.5 py-0.5 rounded-full border text-[10px] font-semibold transition-colors cursor-pointer ${
-                              previousDateFilter === dKey
-                                ? 'bg-[#0F172A]/10 dark:bg-white/15 border-[#0F172A]/20 dark:border-white/25 text-[#0F172A] dark:text-white'
-                                : 'border-transparent text-[#526071] dark:text-[#929BA9] hover:bg-[#F1F5F9] dark:hover:bg-[#161A22] hover:text-[#0F172A] dark:hover:text-[#F2F4F7]'
-                            }`}
-                          >
-                            {formatDateKeyHuman(dKey, todayDateKey)} ({dateCount})
-                          </button>
-                        );
-                      })}
-                    </div>
                   </div>
 
                   <div className="space-y-5">
                     {displayPreviousGroups.map(([dateKey, recordsOnDate]) => (
                       <div key={`prev-group-${dateKey}`} className="space-y-2.5">
-                        <div className="flex items-center justify-between text-[11px] font-semibold text-[#526071] dark:text-[#929BA9]">
-                          <span>
-                            {dateKey === todayDateKey
-                              ? tr(`Hari Ini · ${formatDateKeyHuman(dateKey, todayDateKey)}`, `Today · ${formatDateKeyHuman(dateKey, todayDateKey)}`)
-                              : formatDateKeyHuman(dateKey, todayDateKey)}
+                        <div className="flex items-center justify-between text-[11px] text-[#526071] dark:text-[#929BA9]">
+                          <span className="font-medium">
+                            {formatDateKeyHuman(dateKey, todayDateKey)}
                           </span>
-                          <span className="font-mono-numbers opacity-80">
+                          <span className="font-mono-numbers tabular-nums opacity-75">
                             {recordsOnDate.length} {tr('sinyal', 'signals')}
                           </span>
                         </div>
 
-                        <div className="grid grid-cols-[repeat(auto-fill,minmax(min(100%,285px),1fr))] gap-3.5 sm:gap-4">
-                          {recordsOnDate.map(renderSignalCard)}
+                        <div className="grid grid-cols-[repeat(auto-fill,minmax(min(100%,290px),1fr))] gap-3.5 sm:gap-4">
+                          {recordsOnDate.map((group) => (
+                            <MemoSignalCard
+                              key={group.uid}
+                              group={group}
+                              todayDateKey={todayDateKey}
+                              tr={tr}
+                              onToggleTake={handleToggleTakeSignal}
+                              onToggleBatch={handleToggleBatchStatus}
+                              onDelete={handleDeleteSignal}
+                              onRequestOutcome={handleRequestOutcomeConfirm}
+                            />
+                          ))}
                         </div>
                       </div>
                     ))}
                   </div>
-                </div>
+                </section>
               )}
           </div>
         );
       })()}
 
       {/* =====================================================================
-          VIEW 2: DAFTAR RIWAYAT SINYAL (SEMUA TANGGAL / HARI INI / PILIH TANGGAL)
+          VIEW 2: RIWAYAT TP / SL
          ===================================================================== */}
       {viewSection === 'HISTORY' && (() => {
         const historyBannerLabel =
           historyDateFilterMode === 'ALL'
-            ? tr('SEMUA TANGGAL (GABUNGAN)', 'ALL DATES (COMBINED)')
+            ? tr('Semua Tanggal', 'All Dates')
             : historyDateFilterMode === 'TODAY'
             ? formatDateKeyHuman(todayDateKey, todayDateKey)
             : formatDateKeyHuman(historyCustomDateKey, todayDateKey);
 
-        const renderHistoryCard = (item: SmcStoredSignalRecord) => {
-          const isWin = item.status !== 'HIT_SL';
-          const statusBadgeLabel =
-            item.status === 'HIT_TP1'
-              ? 'HIT TP 1 (1:1)'
-              : item.status === 'HIT_TP2'
-              ? 'HIT TP 2 (1:2)'
-              : item.status === 'HIT_TP_MAX'
-              ? `HIT TP MAX (${item.tpMaxRrLabel})`
-              : 'HIT SL';
-          const effectiveClosedDateKey = getSignalHistoryEffectiveDateKey(item);
-
-          return (
-            <div
-              key={item.uid}
-              data-testid={`smc-history-card-${item.uid}`}
-              className={`rounded-xl border bg-white dark:bg-[#101318] p-4 font-mono-numbers tabular-nums flex flex-col justify-between ${
-                isWin
-                  ? 'border-[#059669]/40 dark:border-[#00A878]/40'
-                  : 'border-[#E11D48]/40 dark:border-[#E05260]/40'
-              }`}
-            >
-              <div>
-                <div className="flex items-start justify-between gap-2 pb-2.5 mb-3 border-b border-[#D9E2EC] dark:border-[#20252D]">
-                  <div className="space-y-0.5 min-w-0">
-                    <h2 className="text-sm font-bold text-[#0F172A] dark:text-[#F2F4F7] truncate">
-                      {item.headerTitle}
-                    </h2>
-                    <div className="text-[10px] text-[#526071] dark:text-[#929BA9] font-sans leading-relaxed">
-                      <div>
-                        Input {formatDateKeyHuman(item.dateKey, todayDateKey)} · {item.createdTimeWib}
-                      </div>
-                      <div>
-                        Selesai {formatDateKeyHuman(effectiveClosedDateKey, todayDateKey)} ·{' '}
-                        {item.closedTimeWib || '—'}
-                      </div>
-                    </div>
-                  </div>
-
-                  <span
-                    className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold uppercase shrink-0 ${
-                      isWin
-                        ? 'bg-[#059669]/12 text-[#059669] dark:text-[#00A878]'
-                        : 'bg-[#E11D48]/12 text-[#E11D48] dark:text-[#E05260]'
-                    }`}
-                  >
-                    {isWin ? (
-                      <CheckCircle2 className="w-3 h-3" />
-                    ) : (
-                      <XCircle className="w-3 h-3" />
-                    )}
-                    <span>{statusBadgeLabel}</span>
-                  </span>
-                </div>
-
-                <div className="space-y-1.5 text-xs">
-                  <div className="flex items-baseline justify-between gap-2 pb-1">
-                    <span className="text-[11px] text-[#526071] dark:text-[#929BA9] font-sans font-medium">
-                      Entry Limit
-                    </span>
-                    <span className="text-base font-bold tracking-tight text-[#0F172A] dark:text-[#F2F4F7]">
-                      {item.entryLimit.toFixed(1)}
-                    </span>
-                  </div>
-
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="text-[11px] text-[#526071] dark:text-[#929BA9] font-sans">
-                      SL
-                    </span>
-                    <span className="font-semibold text-[#E11D48] dark:text-[#E05260]">
-                      {item.stopLoss.toFixed(1)}{' '}
-                      <span className="text-[10px] opacity-75 font-normal">
-                        ({item.slPips}p + {item.slPoints}pt)
-                      </span>
-                    </span>
-                  </div>
-
-                  <div className="flex items-center justify-between gap-2 pt-1.5 border-t border-[#D9E2EC]/70 dark:border-[#20252D]/70">
-                    <span className="text-[11px] text-[#526071] dark:text-[#929BA9] font-sans">
-                      TP 1
-                    </span>
-                    <span className="font-semibold text-[#059669] dark:text-[#00A878]">
-                      {item.tp1.toFixed(1)}{' '}
-                      <span className="text-[10px] opacity-75 font-normal">(1:1)</span>
-                    </span>
-                  </div>
-
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="text-[11px] text-[#526071] dark:text-[#929BA9] font-sans">
-                      TP 2
-                    </span>
-                    <span className="font-semibold text-[#059669] dark:text-[#00A878]">
-                      {item.tp2.toFixed(1)}{' '}
-                      <span className="text-[10px] opacity-75 font-normal">(1:2)</span>
-                    </span>
-                  </div>
-
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="text-[11px] text-[#526071] dark:text-[#929BA9] font-sans">
-                      TP Max
-                    </span>
-                    <span className="font-semibold text-[#059669] dark:text-[#00A878]">
-                      {item.tpMax.toFixed(1)}{' '}
-                      <span className="text-[10px] opacity-75 font-normal">({item.tpMaxRrLabel})</span>
-                    </span>
-                  </div>
-
-                  <div className="flex items-center justify-between gap-2 pt-1.5 border-t border-[#D9E2EC]/70 dark:border-[#20252D]/70">
-                    <span className="text-[11px] text-[#526071] dark:text-[#929BA9] font-sans font-medium">
-                      Hasil
-                    </span>
-                    <span
-                      className={`font-bold ${
-                        (item.resultPips ?? 0) >= 0
-                          ? 'text-[#059669] dark:text-[#00A878]'
-                          : 'text-[#E11D48] dark:text-[#E05260]'
-                      }`}
-                    >
-                      {(item.resultPips ?? 0) >= 0
-                        ? `+${item.resultPips} pips`
-                        : `${item.resultPips} pips`}
-                    </span>
-                  </div>
-                </div>
-              </div>
-
-              <div className="mt-3.5 pt-3 border-t border-[#D9E2EC] dark:border-[#20252D] flex items-center justify-between gap-2 font-sans">
-                <button
-                  type="button"
-                  onClick={() => handleRestoreToActive(item.uid)}
-                  className="flex-1 h-8 px-3.5 rounded-full text-[11px] font-semibold bg-[#F8FAFC] dark:bg-[#161A22] border border-[#D9E2EC] dark:border-[#20252D] text-[#0F172A] dark:text-[#F2F4F7] hover:bg-[#E2E8F0] dark:hover:bg-[#20252D] inline-flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
-                >
-                  <RotateCcw className="w-3 h-3 shrink-0" />
-                  <span className="truncate">{tr('Kembalikan ke Aktif', 'Restore to Active')}</span>
-                </button>
-
-                <button
-                  type="button"
-                  title={tr('Hapus riwayat ini', 'Delete this history item')}
-                  onClick={() => handleDeleteSignal(item.uid)}
-                  className="h-8 w-8 rounded-full shrink-0 inline-flex items-center justify-center border border-[#D9E2EC] dark:border-[#20252D] text-[#526071] dark:text-[#929BA9] hover:text-[#E11D48] dark:hover:text-[#E05260] hover:bg-[#F8FAFC] dark:hover:bg-[#161A22] transition-colors cursor-pointer"
-                >
-                  <Trash2 className="w-3.5 h-3.5" />
-                </button>
-              </div>
-            </div>
-          );
-        };
-
         return (
-          <div className="space-y-4">
-            {/* Baris Rekap Gabungan / Harian Ringkas */}
+          <div className="space-y-5">
+            {/* Compact Editorial Summary Strip */}
             <div
               data-testid="smc-history-summary-bar"
-              className="rounded-xl border border-[#D9E2EC] dark:border-[#20252D] bg-white dark:bg-[#101318] px-4 py-3 flex flex-wrap items-center justify-between gap-2.5 text-xs font-mono-numbers"
+              className="rounded-xl border border-[#E4E4E7] dark:border-[#20252D] bg-white dark:bg-[#101318] px-4 py-3 flex flex-wrap items-center justify-between gap-2.5 text-xs font-mono-numbers tabular-nums"
             >
               <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5">
-                <span className="font-sans font-bold uppercase text-[#526071] dark:text-[#929BA9]">
-                  {historyBannerLabel} ({historySummary.totalClosed}{' '}
-                  {tr('sinyal', 'signals')})
+                <span className="font-sans font-semibold text-[#0F172A] dark:text-[#F2F4F7]">
+                  {historyBannerLabel}{' '}
+                  <span className="text-[#526071] dark:text-[#929BA9] font-normal">
+                    · {historySummary.totalClosed} {tr('sinyal', 'signals')}
+                  </span>
                 </span>
-                <span className="font-bold text-[#059669] dark:text-[#00A878]">
-                  Hit TP: {historySummary.tpCount}
+                <span className="font-semibold text-[#059669] dark:text-[#00A878]">
+                  TP {historySummary.tpCount}
                 </span>
-                <span className="font-bold text-[#E11D48] dark:text-[#E05260]">
-                  Hit SL: {historySummary.slCount}
+                <span className="font-semibold text-[#E11D48] dark:text-[#E05260]">
+                  SL {historySummary.slCount}
                 </span>
-                <span className="font-bold text-[#0F172A] dark:text-[#F2F4F7]">
-                  Win Rate: {historySummary.winRate}%
+                <span className="font-semibold text-[#0F172A] dark:text-[#F2F4F7]">
+                  WR {historySummary.winRate}%
                 </span>
               </div>
               <div
@@ -2420,7 +2866,6 @@ export const SmcSignalPage: React.FC<SmcSignalPageProps> = ({
                     : 'text-[#E11D48] dark:text-[#E05260]'
                 }`}
               >
-                Net:{' '}
                 {historySummary.netPips >= 0
                   ? `+${historySummary.netPips}`
                   : historySummary.netPips}{' '}
@@ -2429,54 +2874,71 @@ export const SmcSignalPage: React.FC<SmcSignalPageProps> = ({
             </div>
 
             {filteredHistorySignals.length === 0 ? (
-              <div className="rounded-xl border border-[#D9E2EC] dark:border-[#20252D] bg-white dark:bg-[#101318] p-6 text-center text-xs font-semibold text-[#526071] dark:text-[#929BA9]">
+              <div className="rounded-xl border border-[#E4E4E7] dark:border-[#20252D] bg-white dark:bg-[#101318] p-8 text-center text-xs font-medium text-[#526071] dark:text-[#929BA9]">
                 {historyDateFilterMode === 'ALL'
                   ? tr(
-                      'Belum ada sinyal yang ditandai Hit TP atau Hit SL di tanggal mana pun.',
-                      'No signals marked Hit TP or Hit SL on any date yet.'
+                      'Belum ada sinyal yang dicatat Hit TP atau Hit SL.',
+                      'No signals marked Hit TP or Hit SL yet.'
                     )
                   : historyDateFilterMode === 'TODAY'
                   ? tr(
-                      'Belum ada sinyal yang ditandai Hit TP atau Hit SL pada hari ini.',
+                      'Belum ada sinyal yang dicatat Hit TP atau Hit SL hari ini.',
                       'No signals marked Hit TP or Hit SL today yet.'
                     )
                   : tr(
-                      'Belum ada sinyal yang ditandai Hit TP atau Hit SL pada tanggal terpilih.',
-                      'No signals marked Hit TP or Hit SL on the selected date yet.'
+                      'Belum ada sinyal yang dicatat Hit TP atau Hit SL pada tanggal terpilih.',
+                      'No signals marked Hit TP or Hit SL on the selected date.'
                     )}
               </div>
             ) : historyDateFilterMode === 'ALL' ? (
               <div className="space-y-5">
                 {groupedHistorySignals.map(([dateKey, recordsOnDate]) => (
                   <div key={`hist-group-${dateKey}`} className="space-y-2.5">
-                    <div className="flex items-center justify-between text-[11px] font-semibold text-[#526071] dark:text-[#929BA9]">
-                      <span>
-                        {dateKey === todayDateKey
-                          ? tr(
-                              `Selesai Hari Ini · ${formatDateKeyHuman(dateKey, todayDateKey)}`,
-                              `Closed Today · ${formatDateKeyHuman(dateKey, todayDateKey)}`
-                            )
-                          : formatDateKeyHuman(dateKey, todayDateKey)}
+                    <div className="flex items-center justify-between text-[11px] text-[#526071] dark:text-[#929BA9]">
+                      <span className="font-medium">
+                        {formatDateKeyHuman(dateKey, todayDateKey)}
                       </span>
-                      <span className="font-mono-numbers opacity-80">
+                      <span className="font-mono-numbers tabular-nums opacity-75">
                         {recordsOnDate.length} {tr('sinyal', 'signals')}
                       </span>
                     </div>
 
-                    <div className="grid grid-cols-[repeat(auto-fill,minmax(min(100%,285px),1fr))] gap-3.5 sm:gap-4">
-                      {recordsOnDate.map(renderHistoryCard)}
+                    <div className="grid grid-cols-[repeat(auto-fill,minmax(min(100%,290px),1fr))] gap-3.5 sm:gap-4">
+                      {recordsOnDate.map((item) => (
+                        <MemoHistorySignalCard
+                          key={item.uid}
+                          item={item}
+                          todayDateKey={todayDateKey}
+                          tr={tr}
+                          onRestore={handleRestoreToActive}
+                          onDelete={handleDeleteSignal}
+                        />
+                      ))}
                     </div>
                   </div>
                 ))}
               </div>
             ) : (
-              <div className="grid grid-cols-[repeat(auto-fill,minmax(min(100%,285px),1fr))] gap-3.5 sm:gap-4">
-                {filteredHistorySignals.map(renderHistoryCard)}
+              <div className="grid grid-cols-[repeat(auto-fill,minmax(min(100%,290px),1fr))] gap-3.5 sm:gap-4">
+                {filteredHistorySignals.map((item) => (
+                  <MemoHistorySignalCard
+                    key={item.uid}
+                    item={item}
+                    todayDateKey={todayDateKey}
+                    tr={tr}
+                    onRestore={handleRestoreToActive}
+                    onDelete={handleDeleteSignal}
+                  />
+                ))}
               </div>
             )}
           </div>
         );
       })()}
+
+      {confirmModalNode && typeof document !== 'undefined'
+        ? createPortal(confirmModalNode, document.body)
+        : confirmModalNode}
     </div>
   );
 };

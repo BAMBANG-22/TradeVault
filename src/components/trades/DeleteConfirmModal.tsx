@@ -42,10 +42,10 @@ export const DeleteConfirmModal: React.FC<DeleteConfirmModalProps> = ({
         role="dialog"
         aria-modal="true"
         aria-label={tr('Konfirmasi Hapus Trade', 'Confirm Delete Trade')}
-        className="w-full max-w-md rounded-2xl border border-[#D9E2EC] dark:border-[#20252D] bg-white dark:bg-[#101318] p-6 shadow-[0_20px_50px_-12px_rgba(15,23,42,0.22)] dark:shadow-[0_24px_60px_-12px_rgba(0,0,0,0.8)] text-[#0F172A] dark:text-[#F2F4F7]"
+        className="w-full max-w-md rounded-2xl border border-[#E4E4E7] dark:border-[#20252D] bg-white dark:bg-[#101318] p-6 shadow-[0_20px_50px_-12px_rgba(15,23,42,0.22)] dark:shadow-[0_24px_60px_-12px_rgba(0,0,0,0.8)] text-[#0F172A] dark:text-[#F2F4F7]"
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="flex items-center gap-3 pb-3.5 border-b border-[#D9E2EC] dark:border-[#20252D]">
+        <div className="flex items-center gap-3 pb-3.5 border-b border-[#E4E4E7] dark:border-[#20252D]">
           <div className="rounded-xl bg-[#E11D48]/10 dark:bg-[#E05260]/15 p-2.5 text-[#E11D48] dark:text-[#E05260] border border-[#E11D48]/20 dark:border-[#E05260]/25">
             <AlertTriangle className="h-5 w-5 stroke-[1.75]" />
           </div>
@@ -59,7 +59,7 @@ export const DeleteConfirmModal: React.FC<DeleteConfirmModalProps> = ({
           </div>
         </div>
 
-        <div className="my-3 divide-y divide-[#D9E2EC] dark:divide-[#20252D] text-xs font-mono-numbers tabular-nums">
+        <div className="my-3 divide-y divide-[#E4E4E7] dark:divide-[#20252D] text-xs font-mono-numbers tabular-nums">
           <div className="py-2.5 flex justify-between gap-3">
             <span className="font-sans text-[#526071] dark:text-[#929BA9]">{tr('ID Trade', 'Trade ID')}</span>
             <span className="font-semibold text-[#0F172A] dark:text-[#F2F4F7]">{trade.id}</span>
@@ -97,12 +97,12 @@ export const DeleteConfirmModal: React.FC<DeleteConfirmModalProps> = ({
           )}
         </p>
 
-        <div className="mt-5 flex items-center justify-end gap-2.5 pt-3.5 border-t border-[#D9E2EC] dark:border-[#20252D]">
+        <div className="mt-5 flex items-center justify-end gap-2.5 pt-3.5 border-t border-[#E4E4E7] dark:border-[#20252D]">
           <button
             type="button"
             onClick={onCancel}
             disabled={isDeleting}
-            className="min-h-[40px] px-4 py-2 rounded-full bg-[#F5F7FA] hover:bg-[#EEF2F6] dark:bg-[#161A22] dark:hover:bg-[#1E2430] border border-[#D9E2EC] dark:border-[#20252D] text-xs font-semibold text-[#0F172A] dark:text-[#F2F4F7] disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/35 dark:focus-visible:ring-white/35 transition-colors cursor-pointer"
+            className="min-h-[40px] px-4 py-2 rounded-full bg-[#FAFAFA] hover:bg-[#F4F4F5] dark:bg-[#161A22] dark:hover:bg-[#1E2430] border border-[#E4E4E7] dark:border-[#20252D] text-xs font-semibold text-[#0F172A] dark:text-[#F2F4F7] disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/35 dark:focus-visible:ring-white/35 transition-colors cursor-pointer"
           >
             {tr('Batal', 'Cancel')}
           </button>

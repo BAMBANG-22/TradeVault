@@ -3,9 +3,10 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useEffect, useState } from 'react';
-import { VloDotRevealLogo } from './VloDotRevealLogo';
+import React, { useEffect, useRef, useState } from 'react';
+import { VloMech } from './VloMechanicalOrbit';
 import { BrandLogo } from './BrandLogo';
+import { useTheme } from '../../utils/theme';
 
 interface SplashScreenProps {
   onComplete?: () => void;
@@ -13,10 +14,14 @@ interface SplashScreenProps {
 
 /**
  * VLO Startup Splash Screen
- * Plays the Dot-to-Solid ("Kosong -> Titik Mikro -> Desain Tegas") reveal once on app mount,
+ * Plays the Mechanical Orbital Assembly reveal once on app mount,
  * then smoothly fades out into the live dashboard without blocking background hydration.
  */
 export const SplashScreen: React.FC<SplashScreenProps> = ({ onComplete }) => {
+  const { theme } = useTheme();
+  const onCompleteRef = useRef(onComplete);
+  onCompleteRef.current = onComplete;
+
   const [phase, setPhase] = useState<'active' | 'fading' | 'done'>(() => {
     if (
       typeof window !== 'undefined' &&
@@ -29,24 +34,26 @@ export const SplashScreen: React.FC<SplashScreenProps> = ({ onComplete }) => {
 
   useEffect(() => {
     if (phase === 'done') {
-      onComplete?.();
+      onCompleteRef.current?.();
       return;
     }
 
+    if (phase === 'fading') return;
+
     const fadeTimer = window.setTimeout(() => {
       setPhase('fading');
-    }, 1680);
+    }, 1780);
 
     const doneTimer = window.setTimeout(() => {
       setPhase('done');
-      onComplete?.();
-    }, 1960);
+      onCompleteRef.current?.();
+    }, 2060);
 
     return () => {
       window.clearTimeout(fadeTimer);
       window.clearTimeout(doneTimer);
     };
-  }, [phase, onComplete]);
+  }, [phase]);
 
   if (phase === 'done') return null;
 
@@ -54,25 +61,20 @@ export const SplashScreen: React.FC<SplashScreenProps> = ({ onComplete }) => {
     <div
       data-testid="vlo-splash-screen"
       onClick={() => {
+        onCompleteRef.current?.();
         setPhase('fading');
         window.setTimeout(() => {
           setPhase('done');
-          onComplete?.();
         }, 180);
       }}
       style={{ contain: 'strict', transform: 'translateZ(0)' }}
-      className={`fixed inset-0 z-[100] flex flex-col items-center justify-center bg-[#EEF2F6] dark:bg-[#050607] transition-opacity duration-280 ease-out will-change-[opacity] select-none ${
+      className={`fixed inset-0 z-[100] flex flex-col items-center justify-center bg-white dark:bg-[#050607] transition-opacity duration-280 ease-out will-change-[opacity] select-none ${
         phase === 'fading' ? 'opacity-0 pointer-events-none' : 'opacity-100 cursor-pointer'
       }`}
       aria-label="VLO"
     >
       <div className="flex flex-col items-center gap-6">
-        <VloDotRevealLogo
-          size={144}
-          speed="normal"
-          roundedClassName="rounded-[26%]"
-          title="VLO"
-        />
+        <VloMech theme={theme} size={144} slowMo={1} className="shrink-0" />
         <div className="vlo-splash-wordmark flex flex-col items-center gap-2">
           <BrandLogo variant="wordmark" className="h-10 sm:h-11 w-auto" title="VLO" />
           <span className="text-[11px] font-semibold uppercase tracking-[0.26em] text-[#697586] dark:text-[#929BA9]">

@@ -326,10 +326,10 @@ export const CycleConfluencePage: React.FC<CycleConfluencePageProps> = ({
         mode: CrosshairMode.Normal,
       },
       rightPriceScale: {
-        borderColor: isDark ? '#20252D' : '#D9E2EC',
+        borderColor: isDark ? '#20252D' : '#E4E4E7',
       },
       timeScale: {
-        borderColor: isDark ? '#20252D' : '#D9E2EC',
+        borderColor: isDark ? '#20252D' : '#E4E4E7',
         timeVisible: true,
         secondsVisible: false,
       },
@@ -928,7 +928,7 @@ export const CycleConfluencePage: React.FC<CycleConfluencePageProps> = ({
       {/* =====================================================================
           HEADER & TOP CONTROLS (MINIMALIST 2-ROW EDITORIAL LAYOUT)
          ===================================================================== */}
-      <div className="space-y-3 pb-4 border-b border-[#D9E2EC] dark:border-[#20252D]">
+      <div className="space-y-3 pb-4 border-b border-[#E4E4E7] dark:border-[#20252D]">
         <div className="relative flex flex-wrap items-center justify-between gap-2.5">
           <div className="min-w-0">
             <div className="flex items-center gap-2">
@@ -995,7 +995,7 @@ export const CycleConfluencePage: React.FC<CycleConfluencePageProps> = ({
               className={`h-8 w-8 p-0 inline-flex items-center justify-center rounded-full border transition-colors shrink-0 cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/35 dark:focus-visible:ring-white/35 ${
                 isOfflineMode
                   ? 'bg-[#D97706]/10 dark:bg-[#F59E0B]/15 border-[#D97706]/40 dark:border-[#F59E0B]/40 text-[#B45309] dark:text-[#F59E0B]'
-                  : 'bg-white dark:bg-[#101318] border-[#D9E2EC] dark:border-[#20252D] hover:bg-[#F8FAFC] dark:hover:bg-[#161A22] text-[#059669] dark:text-[#00A878]'
+                  : 'bg-white dark:bg-[#101318] border-[#E4E4E7] dark:border-[#20252D] hover:bg-[#F4F4F5] dark:hover:bg-[#161A22] text-[#059669] dark:text-[#00A878]'
               }`}
             >
               {isOfflineMode ? (
@@ -1011,7 +1011,7 @@ export const CycleConfluencePage: React.FC<CycleConfluencePageProps> = ({
                 data-testid="cycle-open-smc-signal-button"
                 onClick={() => onNavigate('smc-signal')}
                 title={tr('Buka Menu SMC Signal', 'Open SMC Signal Menu')}
-                className="h-8 px-3 inline-flex items-center justify-center gap-1.5 rounded-full bg-white dark:bg-[#101318] border border-[#D9E2EC] dark:border-[#20252D] hover:bg-[#F8FAFC] dark:hover:bg-[#161A22] text-xs font-semibold text-[#0F172A] dark:text-[#F2F4F7] transition-colors whitespace-nowrap shrink-0 cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/35 dark:focus-visible:ring-white/35"
+                className="h-8 px-3 inline-flex items-center justify-center gap-1.5 rounded-full bg-white dark:bg-[#101318] border border-[#E4E4E7] dark:border-[#20252D] hover:bg-[#F4F4F5] dark:hover:bg-[#161A22] text-xs font-semibold text-[#0F172A] dark:text-[#F2F4F7] transition-colors whitespace-nowrap shrink-0 cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/35 dark:focus-visible:ring-white/35"
               >
                 <Target className="w-3.5 h-3.5 stroke-[1.75] text-[#526071] dark:text-[#929BA9]" />
                 <span>Signal</span>
@@ -1028,7 +1028,7 @@ export const CycleConfluencePage: React.FC<CycleConfluencePageProps> = ({
                 className={`h-8 w-8 p-0 inline-flex items-center justify-center rounded-full border transition-colors shrink-0 cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/35 dark:focus-visible:ring-white/35 ${
                   isToolbarMenuOpen || isSessionPanelOpen || isApiKeyPanelOpen || viewMode === 'BASIC'
                     ? 'bg-[#0F172A] text-white border-[#0F172A] dark:bg-white dark:text-[#050607] dark:border-white'
-                    : 'bg-white dark:bg-[#101318] border-[#D9E2EC] dark:border-[#20252D] hover:bg-[#F8FAFC] dark:hover:bg-[#161A22] text-[#526071] dark:text-[#929BA9]'
+                    : 'bg-white dark:bg-[#101318] border-[#E4E4E7] dark:border-[#20252D] hover:bg-[#F4F4F5] dark:hover:bg-[#161A22] text-[#526071] dark:text-[#929BA9]'
                 }`}
               >
                 <SlidersHorizontal className="w-3.5 h-3.5 stroke-[1.75]" />
@@ -1037,7 +1037,7 @@ export const CycleConfluencePage: React.FC<CycleConfluencePageProps> = ({
               {isToolbarMenuOpen && (
                 <div
                   data-testid="cycle-toolbar-popover"
-                  className="absolute left-0 top-full mt-2 w-64 max-w-[calc(100vw-2rem)] rounded-xl border border-[#D9E2EC] dark:border-[#20252D] bg-white dark:bg-[#101318] shadow-[0_12px_32px_rgba(15,23,42,0.12)] dark:shadow-[0_12px_32px_rgba(0,0,0,0.45)] p-2 z-40 space-y-1.5"
+                  className="absolute left-0 top-full mt-2 w-64 max-w-[calc(100vw-2rem)] rounded-xl border border-[#E4E4E7] dark:border-[#20252D] bg-white dark:bg-[#101318] shadow-[0_12px_32px_rgba(15,23,42,0.12)] dark:shadow-[0_12px_32px_rgba(0,0,0,0.45)] p-2 z-40 space-y-1.5"
                 >
                   <div className="px-2 pt-1 pb-0.5">
                     <span className="text-[10px] font-bold uppercase tracking-wider text-[#526071] dark:text-[#929BA9]">
@@ -1046,7 +1046,7 @@ export const CycleConfluencePage: React.FC<CycleConfluencePageProps> = ({
                     <div
                       role="group"
                       aria-label="Mode Analisis"
-                      className="mt-1.5 grid grid-cols-2 gap-1 p-0.5 rounded-lg bg-[#F5F7FA] dark:bg-[#0B0E13] border border-[#D9E2EC] dark:border-[#20252D]"
+                      className="mt-1.5 grid grid-cols-2 gap-1 p-0.5 rounded-lg bg-[#F4F4F5] dark:bg-[#0B0E13] border border-[#E4E4E7] dark:border-[#20252D]"
                     >
                       <button
                         type="button"
@@ -1081,7 +1081,7 @@ export const CycleConfluencePage: React.FC<CycleConfluencePageProps> = ({
                     </div>
                   </div>
 
-                  <div className="h-px bg-[#D9E2EC]/70 dark:bg-[#20252D]" />
+                  <div className="h-px bg-[#E4E4E7]/70 dark:bg-[#20252D]" />
 
                   <button
                     type="button"
@@ -1091,7 +1091,7 @@ export const CycleConfluencePage: React.FC<CycleConfluencePageProps> = ({
                       setIsSessionPanelOpen((prev) => !prev);
                       setIsToolbarMenuOpen(false);
                     }}
-                    className="w-full px-2.5 py-2 rounded-lg flex items-center justify-between gap-2 text-xs font-medium text-[#0F172A] dark:text-[#F2F4F7] hover:bg-[#F5F7FA] dark:hover:bg-[#161A22] transition-colors cursor-pointer"
+                    className="w-full px-2.5 py-2 rounded-lg flex items-center justify-between gap-2 text-xs font-medium text-[#0F172A] dark:text-[#F2F4F7] hover:bg-[#F4F4F5] dark:hover:bg-[#161A22] transition-colors cursor-pointer"
                   >
                     <span className="inline-flex items-center gap-2">
                       <Clock className="w-3.5 h-3.5 text-[#526071] dark:text-[#929BA9]" />
@@ -1110,7 +1110,7 @@ export const CycleConfluencePage: React.FC<CycleConfluencePageProps> = ({
                       setIsApiKeyPanelOpen((prev) => !prev);
                       setIsToolbarMenuOpen(false);
                     }}
-                    className="w-full px-2.5 py-2 rounded-lg flex items-center justify-between gap-2 text-xs font-medium text-[#0F172A] dark:text-[#F2F4F7] hover:bg-[#F5F7FA] dark:hover:bg-[#161A22] transition-colors cursor-pointer"
+                    className="w-full px-2.5 py-2 rounded-lg flex items-center justify-between gap-2 text-xs font-medium text-[#0F172A] dark:text-[#F2F4F7] hover:bg-[#F4F4F5] dark:hover:bg-[#161A22] transition-colors cursor-pointer"
                   >
                     <span className="inline-flex items-center gap-2">
                       <KeyRound className="w-3.5 h-3.5 text-[#526071] dark:text-[#929BA9]" />
@@ -1134,7 +1134,7 @@ export const CycleConfluencePage: React.FC<CycleConfluencePageProps> = ({
                       setShowPlaybookGuide(true);
                       setIsToolbarMenuOpen(false);
                     }}
-                    className="w-full px-2.5 py-2 rounded-lg flex items-center justify-between gap-2 text-xs font-medium text-[#0F172A] dark:text-[#F2F4F7] hover:bg-[#F5F7FA] dark:hover:bg-[#161A22] transition-colors cursor-pointer"
+                    className="w-full px-2.5 py-2 rounded-lg flex items-center justify-between gap-2 text-xs font-medium text-[#0F172A] dark:text-[#F2F4F7] hover:bg-[#F4F4F5] dark:hover:bg-[#161A22] transition-colors cursor-pointer"
                   >
                     <span className="inline-flex items-center gap-2">
                       <Info className="w-3.5 h-3.5 text-[#526071] dark:text-[#929BA9]" />
@@ -1175,7 +1175,7 @@ export const CycleConfluencePage: React.FC<CycleConfluencePageProps> = ({
             <div
               role="group"
               aria-label="Pilih Horizon Trading"
-              className="w-full sm:w-auto inline-flex items-center p-0.5 rounded-full bg-white dark:bg-[#101318] border border-[#D9E2EC] dark:border-[#20252D]"
+              className="w-full sm:w-auto inline-flex items-center p-0.5 rounded-full bg-white dark:bg-[#101318] border border-[#E4E4E7] dark:border-[#20252D]"
             >
               <button
                 type="button"
@@ -1278,7 +1278,7 @@ export const CycleConfluencePage: React.FC<CycleConfluencePageProps> = ({
                     ? tr('API Key Twelve Data Belum Disimpan di Browser', 'Twelve Data API Key Not Saved in Browser')
                     : tr('Status Umpan Data Pasar XAU/USD (Senin–Jumat)', 'XAU/USD Market Data Feed Status (Mon–Fri)')}
                 </p>
-                <p className="text-[11px] text-[#526071] dark:text-[#929BA9] leading-relaxed">
+                <p className="text-[11px] text-[#526071] dark:text-[#929BA9] leading-relaxed text-editorial-justify">
                   {isOfflineMode
                     ? cooldownNotice ||
                       error ||
@@ -1315,7 +1315,7 @@ export const CycleConfluencePage: React.FC<CycleConfluencePageProps> = ({
                     type="button"
                     data-testid="banner-load-sample-button"
                     onClick={loadSampleOrCachedCandles}
-                    className="min-h-[32px] px-3.5 py-1 rounded-full border border-[#D9E2EC] dark:border-[#20252D] bg-[#F5F7FA] dark:bg-[#0B0E13] text-xs font-semibold text-[#0F172A] dark:text-[#F2F4F7] hover:bg-[#EAEEF4] dark:hover:bg-[#161A22] hover:border-[#0F172A]/30 dark:hover:border-white/30 transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/35 dark:focus-visible:ring-white/35"
+                    className="min-h-[32px] px-3.5 py-1 rounded-full border border-[#E4E4E7] dark:border-[#20252D] bg-[#FAFAFA] dark:bg-[#0B0E13] text-xs font-semibold text-[#0F172A] dark:text-[#F2F4F7] hover:bg-[#F4F4F5] dark:hover:bg-[#161A22] hover:border-[#0F172A]/30 dark:hover:border-white/30 transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/35 dark:focus-visible:ring-white/35"
                   >
                     {tr('Cek Cache Lokal', 'Check Local Cache')}
                   </button>
@@ -1329,7 +1329,7 @@ export const CycleConfluencePage: React.FC<CycleConfluencePageProps> = ({
                       setApiKeyInput(getRawStoredTwelveDataKey());
                       setIsApiKeyPanelOpen((prev) => !prev);
                     }}
-                    className="min-h-[32px] px-3.5 py-1 rounded-full border border-[#D9E2EC] dark:border-[#20252D] bg-[#F5F7FA] dark:bg-[#0B0E13] text-xs font-semibold text-[#0F172A] dark:text-[#F2F4F7] hover:bg-[#EAEEF4] dark:hover:bg-[#161A22] hover:border-[#0F172A]/30 dark:hover:border-white/30 transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/35 dark:focus-visible:ring-white/35"
+                    className="min-h-[32px] px-3.5 py-1 rounded-full border border-[#E4E4E7] dark:border-[#20252D] bg-[#FAFAFA] dark:bg-[#0B0E13] text-xs font-semibold text-[#0F172A] dark:text-[#F2F4F7] hover:bg-[#F4F4F5] dark:hover:bg-[#161A22] hover:border-[#0F172A]/30 dark:hover:border-white/30 transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/35 dark:focus-visible:ring-white/35"
                   >
                     {tr('Atur API Key', 'Set API Key')}
                   </button>
@@ -1351,7 +1351,7 @@ export const CycleConfluencePage: React.FC<CycleConfluencePageProps> = ({
         {isSessionPanelOpen && (
           <div
             data-testid="cycle-session-wib-panel"
-            className="rounded-lg border border-[#D9E2EC] dark:border-[#20252D] bg-white dark:bg-[#101318] shadow-[0_1px_2px_rgba(15,23,42,0.04)] dark:shadow-none p-3.5 space-y-3"
+            className="rounded-lg border border-[#E4E4E7] dark:border-[#20252D] bg-white dark:bg-[#101318] shadow-[0_1px_2px_rgba(15,23,42,0.04)] dark:shadow-none p-3.5 space-y-3"
           >
             <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-1.5">
               <div className="space-y-0.5">
@@ -1373,7 +1373,7 @@ export const CycleConfluencePage: React.FC<CycleConfluencePageProps> = ({
                   setSessionConfig(DEFAULT_SESSION_HOURS_WIB);
                   saveStoredSessionHoursWib(DEFAULT_SESSION_HOURS_WIB);
                 }}
-                className="min-h-[32px] px-3.5 py-1 rounded-full border border-[#D9E2EC] dark:border-[#20252D] bg-[#F5F7FA] dark:bg-[#0B0E13] text-xs font-semibold text-[#526071] dark:text-[#929BA9] hover:text-[#0F172A] dark:hover:text-[#F2F4F7] hover:bg-[#EAEEF4] dark:hover:bg-[#161A22] transition-colors self-start sm:self-auto cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/35 dark:focus-visible:ring-white/35"
+                className="min-h-[32px] px-3.5 py-1 rounded-full border border-[#E4E4E7] dark:border-[#20252D] bg-[#FAFAFA] dark:bg-[#0B0E13] text-xs font-semibold text-[#526071] dark:text-[#929BA9] hover:text-[#0F172A] dark:hover:text-[#F2F4F7] hover:bg-[#F4F4F5] dark:hover:bg-[#161A22] transition-colors self-start sm:self-auto cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/35 dark:focus-visible:ring-white/35"
               >
                 Reset LuxAlgo
               </button>
@@ -1385,7 +1385,7 @@ export const CycleConfluencePage: React.FC<CycleConfluencePageProps> = ({
                 return (
                   <div
                     key={key}
-                    className="rounded-lg border border-[#D9E2EC] dark:border-[#20252D] bg-[#F5F7FA] dark:bg-[#0B0E13] p-3 space-y-2"
+                    className="rounded-lg border border-[#E4E4E7] dark:border-[#20252D] bg-[#FAFAFA] dark:bg-[#0B0E13] p-3 space-y-2"
                   >
                     <div className="flex items-center justify-between gap-2 text-xs">
                       <span className="font-semibold text-[#0F172A] dark:text-[#F2F4F7]">
@@ -1408,7 +1408,7 @@ export const CycleConfluencePage: React.FC<CycleConfluencePageProps> = ({
                               [key]: { ...prev[key], startHour: h },
                             }));
                           }}
-                          className="w-full min-h-[34px] px-2 py-1 rounded-lg border border-[#D9E2EC] dark:border-[#20252D] bg-white dark:bg-[#101318] text-xs font-mono-numbers tabular-nums text-[#0F172A] dark:text-[#F2F4F7] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/35 dark:focus-visible:ring-white/35"
+                          className="w-full min-h-[34px] px-2 py-1 rounded-lg border border-[#E4E4E7] dark:border-[#20252D] bg-white dark:bg-[#101318] text-xs font-mono-numbers tabular-nums text-[#0F172A] dark:text-[#F2F4F7] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/35 dark:focus-visible:ring-white/35"
                         >
                           {WIB_HOUR_OPTIONS.map((h) => (
                             <option key={h} value={h}>
@@ -1429,7 +1429,7 @@ export const CycleConfluencePage: React.FC<CycleConfluencePageProps> = ({
                               [key]: { ...prev[key], endHour: h },
                             }));
                           }}
-                          className="w-full min-h-[34px] px-2 py-1 rounded-lg border border-[#D9E2EC] dark:border-[#20252D] bg-white dark:bg-[#101318] text-xs font-mono-numbers tabular-nums text-[#0F172A] dark:text-[#F2F4F7] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/35 dark:focus-visible:ring-white/35"
+                          className="w-full min-h-[34px] px-2 py-1 rounded-lg border border-[#E4E4E7] dark:border-[#20252D] bg-white dark:bg-[#101318] text-xs font-mono-numbers tabular-nums text-[#0F172A] dark:text-[#F2F4F7] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/35 dark:focus-visible:ring-white/35"
                         >
                           {WIB_HOUR_OPTIONS.map((h) => (
                             <option key={h} value={h}>
@@ -1448,7 +1448,7 @@ export const CycleConfluencePage: React.FC<CycleConfluencePageProps> = ({
               <button
                 type="button"
                 onClick={() => setIsSessionPanelOpen(false)}
-                className="min-h-[34px] px-3.5 py-1 rounded-full border border-[#D9E2EC] dark:border-[#20252D] bg-[#F5F7FA] dark:bg-[#0B0E13] text-xs font-semibold text-[#526071] dark:text-[#929BA9] hover:text-[#0F172A] dark:hover:text-[#F2F4F7] hover:bg-[#EAEEF4] dark:hover:bg-[#161A22] transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/35 dark:focus-visible:ring-white/35"
+                className="min-h-[34px] px-3.5 py-1 rounded-full border border-[#E4E4E7] dark:border-[#20252D] bg-[#FAFAFA] dark:bg-[#0B0E13] text-xs font-semibold text-[#526071] dark:text-[#929BA9] hover:text-[#0F172A] dark:hover:text-[#F2F4F7] hover:bg-[#F4F4F5] dark:hover:bg-[#161A22] transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/35 dark:focus-visible:ring-white/35"
               >
                 {tr('Tutup', 'Close')}
               </button>
@@ -1472,7 +1472,7 @@ export const CycleConfluencePage: React.FC<CycleConfluencePageProps> = ({
         {isApiKeyPanelOpen && (
           <div
             data-testid="cycle-apikey-settings-panel"
-            className="rounded-lg border border-[#D9E2EC] dark:border-[#20252D] bg-white dark:bg-[#101318] shadow-[0_1px_2px_rgba(15,23,42,0.04)] dark:shadow-none p-3.5 space-y-2.5"
+            className="rounded-lg border border-[#E4E4E7] dark:border-[#20252D] bg-white dark:bg-[#101318] shadow-[0_1px_2px_rgba(15,23,42,0.04)] dark:shadow-none p-3.5 space-y-2.5"
           >
             <div className="flex items-center justify-between gap-2">
               <span className="text-xs font-semibold text-[#0F172A] dark:text-[#F2F4F7]">
@@ -1494,7 +1494,7 @@ export const CycleConfluencePage: React.FC<CycleConfluencePageProps> = ({
                 value={apiKeyInput}
                 onChange={(e) => setApiKeyInput(e.target.value)}
                 placeholder={tr('Masukkan API Key Twelve Data Anda...', 'Enter your Twelve Data API Key...')}
-                className="flex-1 min-h-[36px] px-4 py-1.5 rounded-full border border-[#D9E2EC] dark:border-[#20252D] bg-[#F5F7FA] dark:bg-[#0B0E13] text-xs font-mono-numbers text-[#0F172A] dark:text-[#F2F4F7] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/35 dark:focus-visible:ring-white/35 focus:border-[#0F172A] dark:focus:border-white"
+                className="flex-1 min-h-[36px] px-4 py-1.5 rounded-full border border-[#E4E4E7] dark:border-[#20252D] bg-[#FAFAFA] dark:bg-[#0B0E13] text-xs font-mono-numbers text-[#0F172A] dark:text-[#F2F4F7] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/35 dark:focus-visible:ring-white/35 focus:border-[#0F172A] dark:focus:border-white"
               />
               <div className="flex items-center gap-2 shrink-0">
                 <button
@@ -1515,7 +1515,7 @@ export const CycleConfluencePage: React.FC<CycleConfluencePageProps> = ({
                       setApiKeyInput('');
                       void updateApiKeyAndReload('');
                     }}
-                    className="min-h-[36px] px-3.5 py-1.5 rounded-full border border-[#D9E2EC] dark:border-[#20252D] bg-[#F5F7FA] dark:bg-[#0B0E13] hover:bg-[#EAEEF4] dark:hover:bg-[#161A22] text-xs font-semibold text-[#E11D48] dark:text-[#E05260] transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/35 dark:focus-visible:ring-white/35"
+                    className="min-h-[36px] px-3.5 py-1.5 rounded-full border border-[#E4E4E7] dark:border-[#20252D] bg-[#FAFAFA] dark:bg-[#0B0E13] hover:bg-[#F4F4F5] dark:hover:bg-[#161A22] text-xs font-semibold text-[#E11D48] dark:text-[#E05260] transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/35 dark:focus-visible:ring-white/35"
                   >
                     {tr('Hapus', 'Clear')}
                   </button>
@@ -1531,7 +1531,7 @@ export const CycleConfluencePage: React.FC<CycleConfluencePageProps> = ({
          ===================================================================== */}
       <section
         data-testid="probability-card"
-        className="space-y-4 pb-6 border-b border-[#D9E2EC] dark:border-[#20252D]"
+        className="space-y-4 pb-6 border-b border-[#E4E4E7] dark:border-[#20252D]"
       >
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div className="flex flex-wrap items-center gap-2">
@@ -1606,7 +1606,7 @@ export const CycleConfluencePage: React.FC<CycleConfluencePageProps> = ({
             </span>
           </div>
 
-          <p className="text-xs text-[#526071] dark:text-[#929BA9] leading-relaxed">
+          <p className="text-xs text-[#526071] dark:text-[#929BA9] leading-relaxed text-editorial-justify">
             {gatekeeperDisplay.oneLineRule}
           </p>
         </div>
@@ -1615,7 +1615,7 @@ export const CycleConfluencePage: React.FC<CycleConfluencePageProps> = ({
         <div className="space-y-2 pt-0.5">
           <div
             data-testid="direction-split-bar"
-            className="h-1 w-full rounded-full overflow-hidden flex bg-[#E2E8F0] dark:bg-[#161A22]"
+            className="h-1 w-full rounded-full overflow-hidden flex bg-[#F4F4F5] dark:bg-[#161A22]"
           >
             <div
               className="h-full bg-[#059669] dark:bg-[#00A878] transition-all duration-200"
@@ -1645,7 +1645,7 @@ export const CycleConfluencePage: React.FC<CycleConfluencePageProps> = ({
             {/* Baris Tahap 1-3: Fundamental + Intermarket Mentah (DXY, OIL, US10Y, US02Y) */}
             <div
               data-testid="cycle-raw-macro-pipeline-strip"
-              className="rounded-lg border border-[#D9E2EC] dark:border-[#20252D] bg-[#F8FAFC] dark:bg-[#0B0E13] px-3.5 py-2.5 flex flex-wrap items-center justify-between gap-2 text-xs font-mono-numbers"
+              className="rounded-lg border border-[#E4E4E7] dark:border-[#20252D] bg-[#FAFAFA] dark:bg-[#0B0E13] px-3.5 py-2.5 flex flex-wrap items-center justify-between gap-2 text-xs font-mono-numbers"
             >
               <div className="flex flex-wrap items-center gap-2">
                 <span className="font-sans text-[10px] font-bold uppercase tracking-wider text-[#526071] dark:text-[#929BA9]">
@@ -1708,7 +1708,7 @@ export const CycleConfluencePage: React.FC<CycleConfluencePageProps> = ({
 
             <div
               data-testid="cycle-beginner-compass-strip"
-              className="grid grid-cols-1 md:grid-cols-3 divide-y md:divide-y-0 md:divide-x divide-[#D9E2EC] dark:divide-[#20252D] border-y border-[#D9E2EC] dark:border-[#20252D] bg-white/60 dark:bg-[#101318]/60"
+              className="grid grid-cols-1 md:grid-cols-3 divide-y md:divide-y-0 md:divide-x divide-[#E4E4E7] dark:divide-[#20252D] border-y border-[#E4E4E7] dark:border-[#20252D] bg-white/60 dark:bg-[#101318]/60"
             >
               {/* 1. Posisi Harga & Nilai Tengah (Equilibrium 50% pada M15 / 1H) */}
               <div className="py-3 md:pr-4 space-y-1">
@@ -1788,7 +1788,7 @@ export const CycleConfluencePage: React.FC<CycleConfluencePageProps> = ({
                       : tr('UTAMAKAN OPSI SELL LIMIT', 'PRIORITIZE SELL LIMIT')}
                   </span>
                 </div>
-                <p className="text-[11px] text-[#526071] dark:text-[#929BA9] leading-snug">
+                <p className="text-[11px] text-[#526071] dark:text-[#929BA9] leading-relaxed text-editorial-justify">
                   {isEn
                     ? result.twoStageValidation.detailNarrativeEn
                     : result.twoStageValidation.detailNarrativeId}
@@ -1865,7 +1865,7 @@ export const CycleConfluencePage: React.FC<CycleConfluencePageProps> = ({
             <div
               role="group"
               aria-label="Manual AMD Override"
-              className="inline-flex items-center p-1 rounded-full bg-white dark:bg-[#101318] border border-[#D9E2EC] dark:border-[#20252D] shadow-[0_1px_2px_rgba(15,23,42,0.04)] dark:shadow-none overflow-x-auto max-w-full self-start sm:self-auto"
+              className="inline-flex items-center p-1 rounded-full bg-white dark:bg-[#101318] border border-[#E4E4E7] dark:border-[#20252D] shadow-[0_1px_2px_rgba(15,23,42,0.04)] dark:shadow-none overflow-x-auto max-w-full self-start sm:self-auto"
             >
               {MANUAL_AMD_OVERRIDE_OPTIONS.map((opt) => {
                 const isSelected = manualAmdOverride === opt.id;
@@ -1895,7 +1895,7 @@ export const CycleConfluencePage: React.FC<CycleConfluencePageProps> = ({
          ===================================================================== */}
       <section
         data-testid="session-liquidity-map-card"
-        className="space-y-3 pb-6 border-b border-[#D9E2EC] dark:border-[#20252D]"
+        className="space-y-3 pb-6 border-b border-[#E4E4E7] dark:border-[#20252D]"
       >
         <div className="flex flex-wrap items-center justify-between gap-2">
           <h2 className="text-[11px] font-semibold uppercase tracking-[0.08em] text-[#526071] dark:text-[#929BA9]">
@@ -1913,7 +1913,7 @@ export const CycleConfluencePage: React.FC<CycleConfluencePageProps> = ({
         </div>
 
         {/* Seamless 3-Tier Range Strip */}
-        <div className="grid grid-cols-1 sm:grid-cols-3 divide-y sm:divide-y-0 sm:divide-x divide-[#D9E2EC] dark:divide-[#20252D] border-y border-[#D9E2EC] dark:border-[#20252D]">
+        <div className="grid grid-cols-1 sm:grid-cols-3 divide-y sm:divide-y-0 sm:divide-x divide-[#E4E4E7] dark:divide-[#20252D] border-y border-[#E4E4E7] dark:border-[#20252D]">
           {/* Upper Target (BSL Terdekat) */}
           <div className="py-3.5 sm:pr-5 flex sm:flex-col justify-between gap-2">
             <div>
@@ -1955,7 +1955,7 @@ export const CycleConfluencePage: React.FC<CycleConfluencePageProps> = ({
                 EQ 50%: <strong className="text-[#0F172A] dark:text-[#F2F4F7]">${liquidityMapMetrics.equilibrium.toFixed(1)}</strong>
               </span>
             </div>
-            <div className="h-1 w-full rounded-full bg-[#E2E8F0] dark:bg-[#161A22] overflow-hidden">
+            <div className="h-1 w-full rounded-full bg-[#F4F4F5] dark:bg-[#161A22] overflow-hidden">
               <div
                 className="h-full bg-[#0F172A] dark:bg-white rounded-full transition-all duration-200"
                 style={{ width: `${liquidityMapMetrics.positionPct}%` }}
@@ -2040,7 +2040,7 @@ export const CycleConfluencePage: React.FC<CycleConfluencePageProps> = ({
          ===================================================================== */}
       <section
         data-testid="smc-pro-desk-read-card"
-        className="space-y-3 pb-6 border-b border-[#D9E2EC] dark:border-[#20252D]"
+        className="space-y-3 pb-6 border-b border-[#E4E4E7] dark:border-[#20252D]"
       >
         <div className="flex flex-wrap items-center justify-between gap-2">
           <h2 className="text-[11px] font-semibold uppercase tracking-[0.08em] text-[#526071] dark:text-[#929BA9]">
@@ -2058,7 +2058,7 @@ export const CycleConfluencePage: React.FC<CycleConfluencePageProps> = ({
         </div>
 
         {/* Seamless 2-Column Plan A & Plan B (No Nested Box Clutter) */}
-        <div className="grid grid-cols-1 md:grid-cols-2 divide-y md:divide-y-0 md:divide-x divide-[#D9E2EC] dark:divide-[#20252D] border-y border-[#D9E2EC] dark:border-[#20252D]">
+        <div className="grid grid-cols-1 md:grid-cols-2 divide-y md:divide-y-0 md:divide-x divide-[#E4E4E7] dark:divide-[#20252D] border-y border-[#E4E4E7] dark:border-[#20252D]">
           {/* Plan A: Primary Trend Setup */}
           <div
             data-testid="smc-pro-read-structure"
@@ -2080,7 +2080,7 @@ export const CycleConfluencePage: React.FC<CycleConfluencePageProps> = ({
                     {executionScenarios.planA.badge}
                   </span>
                 </div>
-                <p className="text-[11px] text-[#526071] dark:text-[#929BA9] leading-snug">
+                <p className="text-[11px] text-[#526071] dark:text-[#929BA9] leading-relaxed text-editorial-justify">
                   {executionScenarios.planA.summary}
                 </p>
               </div>
@@ -2121,7 +2121,7 @@ export const CycleConfluencePage: React.FC<CycleConfluencePageProps> = ({
               </dl>
             </div>
 
-            <p className="pt-2 border-t border-[#D9E2EC] dark:border-[#20252D] text-xs font-mono-numbers tabular-nums text-[#E11D48] dark:text-[#E05260]">
+            <p className="pt-2 border-t border-[#E4E4E7] dark:border-[#20252D] text-xs font-mono-numbers tabular-nums text-[#E11D48] dark:text-[#E05260]">
               {executionScenarios.planA.invalidation}
             </p>
           </div>
@@ -2141,7 +2141,7 @@ export const CycleConfluencePage: React.FC<CycleConfluencePageProps> = ({
                     {executionScenarios.planB.badge}
                   </span>
                 </div>
-                <p className="text-[11px] text-[#526071] dark:text-[#929BA9] leading-snug">
+                <p className="text-[11px] text-[#526071] dark:text-[#929BA9] leading-relaxed text-editorial-justify">
                   {executionScenarios.planB.summary}
                 </p>
               </div>
@@ -2182,7 +2182,7 @@ export const CycleConfluencePage: React.FC<CycleConfluencePageProps> = ({
               </dl>
             </div>
 
-            <p className="pt-2 border-t border-[#D9E2EC] dark:border-[#20252D] text-xs font-mono-numbers tabular-nums text-[#E11D48] dark:text-[#E05260]">
+            <p className="pt-2 border-t border-[#E4E4E7] dark:border-[#20252D] text-xs font-mono-numbers tabular-nums text-[#E11D48] dark:text-[#E05260]">
               {executionScenarios.planB.invalidation}
             </p>
           </div>
@@ -2197,7 +2197,7 @@ export const CycleConfluencePage: React.FC<CycleConfluencePageProps> = ({
           {tr('DETAIL TEKNIS & SIKLUS MAKRO', 'TECHNICAL DETAILS & MACRO CYCLES')}
         </h2>
 
-        <div className="divide-y divide-[#D9E2EC] dark:divide-[#20252D] border-y border-[#D9E2EC] dark:border-[#20252D]">
+        <div className="divide-y divide-[#E4E4E7] dark:divide-[#20252D] border-y border-[#E4E4E7] dark:border-[#20252D]">
           {/* 4A. Collapsible 3-Row MTF Structure & POI Table */}
           {viewMode === 'FULL' && mtfList.length > 0 && (
             <div>
@@ -2218,7 +2218,7 @@ export const CycleConfluencePage: React.FC<CycleConfluencePageProps> = ({
                       .join(' · ')}
                   </span>
                 </div>
-                <span className="w-7 h-7 rounded-full bg-[#F5F7FA] dark:bg-[#0B0E13] border border-[#D9E2EC] dark:border-[#20252D] inline-flex items-center justify-center shrink-0">
+                <span className="w-7 h-7 rounded-full bg-[#FAFAFA] dark:bg-[#0B0E13] border border-[#E4E4E7] dark:border-[#20252D] inline-flex items-center justify-center shrink-0">
                   <ChevronDown
                     className={`w-3.5 h-3.5 text-[#526071] dark:text-[#929BA9] transition-transform duration-200 ${
                       isMtfTableOpen ? 'rotate-180' : 'rotate-0'
@@ -2231,14 +2231,14 @@ export const CycleConfluencePage: React.FC<CycleConfluencePageProps> = ({
                 <div className="pb-3.5 pt-1 overflow-x-auto">
                   <table className="w-full border-collapse text-xs">
                     <thead>
-                      <tr className="border-b border-[#D9E2EC] dark:border-[#20252D] text-[11px] uppercase tracking-wider text-[#526071] dark:text-[#929BA9]">
+                      <tr className="border-b border-[#E4E4E7] dark:border-[#20252D] text-[11px] uppercase tracking-wider text-[#526071] dark:text-[#929BA9]">
                         <th className="py-2 pr-3 text-left font-semibold">TF</th>
                         <th className="py-2 px-2 text-left font-semibold">{tr('Struktur & Zona', 'Structure & Zone')}</th>
                         <th className="py-2 px-2 text-left font-semibold">{tr('POI & Kualitas OB', 'POI & OB Quality')}</th>
                         <th className="py-2 pl-2 text-right font-semibold">{tr('Kunci LH/HL', 'LH/HL Lock')}</th>
                       </tr>
                     </thead>
-                    <tbody className="divide-y divide-[#D9E2EC] dark:divide-[#20252D] font-mono-numbers tabular-nums">
+                    <tbody className="divide-y divide-[#E4E4E7] dark:divide-[#20252D] font-mono-numbers tabular-nums">
                       {mtfList.map((tfItem, idx) => {
                         const poi = tfItem.poiHierarchy;
                         const activeLayer =
@@ -2318,7 +2318,7 @@ export const CycleConfluencePage: React.FC<CycleConfluencePageProps> = ({
                   TF {selectedChartTf.toUpperCase()} · Read-Only
                 </span>
               </div>
-              <span className="w-7 h-7 rounded-full bg-[#F5F7FA] dark:bg-[#0B0E13] border border-[#D9E2EC] dark:border-[#20252D] inline-flex items-center justify-center shrink-0">
+              <span className="w-7 h-7 rounded-full bg-[#FAFAFA] dark:bg-[#0B0E13] border border-[#E4E4E7] dark:border-[#20252D] inline-flex items-center justify-center shrink-0">
                 <ChevronDown
                   className={`w-3.5 h-3.5 text-[#526071] dark:text-[#929BA9] transition-transform duration-200 ${
                     isChartOpen ? 'rotate-180' : 'rotate-0'
@@ -2330,7 +2330,7 @@ export const CycleConfluencePage: React.FC<CycleConfluencePageProps> = ({
             {isChartOpen && (
               <div className="pb-4 pt-2 space-y-3">
                 <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2.5">
-                  <div className="inline-flex items-center p-1 rounded-full bg-white dark:bg-[#101318] border border-[#D9E2EC] dark:border-[#20252D] shadow-[0_1px_2px_rgba(15,23,42,0.04)] dark:shadow-none self-start">
+                  <div className="inline-flex items-center p-1 rounded-full bg-white dark:bg-[#101318] border border-[#E4E4E7] dark:border-[#20252D] shadow-[0_1px_2px_rgba(15,23,42,0.04)] dark:shadow-none self-start">
                     {CHART_TF_PILLS[tradingMode].map((tf) => (
                       <button
                         key={tf.id}
@@ -2367,7 +2367,7 @@ export const CycleConfluencePage: React.FC<CycleConfluencePageProps> = ({
                 </div>
 
                 {chartCandles.length === 0 ? (
-                  <div className="h-[280px] rounded-lg border border-[#D9E2EC] dark:border-[#20252D] bg-white dark:bg-[#101318] shadow-[0_1px_2px_rgba(15,23,42,0.04)] dark:shadow-none flex flex-col items-center justify-center gap-3 px-4 text-center text-xs text-[#526071] dark:text-[#929BA9]">
+                  <div className="h-[280px] rounded-lg border border-[#E4E4E7] dark:border-[#20252D] bg-white dark:bg-[#101318] shadow-[0_1px_2px_rgba(15,23,42,0.04)] dark:shadow-none flex flex-col items-center justify-center gap-3 px-4 text-center text-xs text-[#526071] dark:text-[#929BA9]">
                     <span>
                       {isLoading
                         ? tr('Memuat data candlestick XAU/USD...', 'Loading XAU/USD candlestick data...')
@@ -2387,7 +2387,7 @@ export const CycleConfluencePage: React.FC<CycleConfluencePageProps> = ({
                   <div
                     ref={chartContainerRef}
                     data-testid="confluence-mini-chart-canvas"
-                    className="w-full h-[280px] rounded-lg overflow-hidden border border-[#D9E2EC] dark:border-[#20252D]"
+                    className="w-full h-[280px] rounded-lg overflow-hidden border border-[#E4E4E7] dark:border-[#20252D]"
                   />
                 )}
               </div>
@@ -2418,7 +2418,7 @@ export const CycleConfluencePage: React.FC<CycleConfluencePageProps> = ({
                   {result.seasonality.liveMomPct}%
                 </span>
               </div>
-              <span className="w-7 h-7 rounded-full bg-[#F5F7FA] dark:bg-[#0B0E13] border border-[#D9E2EC] dark:border-[#20252D] inline-flex items-center justify-center shrink-0">
+              <span className="w-7 h-7 rounded-full bg-[#FAFAFA] dark:bg-[#0B0E13] border border-[#E4E4E7] dark:border-[#20252D] inline-flex items-center justify-center shrink-0">
                 <ChevronDown
                   className={`w-3.5 h-3.5 text-[#526071] dark:text-[#929BA9] transition-transform duration-200 ${
                     isCycleDetailOpen ? 'rotate-180' : 'rotate-0'
@@ -2430,7 +2430,7 @@ export const CycleConfluencePage: React.FC<CycleConfluencePageProps> = ({
             {isCycleDetailOpen && (
               <div className="pb-4 pt-2 space-y-4">
                 {/* Seamless 3-Column Cycle Breakdown */}
-                <div className="grid grid-cols-1 md:grid-cols-3 divide-y md:divide-y-0 md:divide-x divide-[#D9E2EC] dark:divide-[#20252D] border-y border-[#D9E2EC] dark:border-[#20252D] text-xs">
+                <div className="grid grid-cols-1 md:grid-cols-3 divide-y md:divide-y-0 md:divide-x divide-[#E4E4E7] dark:divide-[#20252D] border-y border-[#E4E4E7] dark:border-[#20252D] text-xs">
                   <div className="py-3 md:pr-4 space-y-1">
                     <span className="text-[11px] font-semibold uppercase tracking-[0.06em] text-[#526071] dark:text-[#929BA9] block">
                       {tr('SIKLUS LUNAR (ASTRONACCI)', 'LUNAR CYCLE (ASTRONACCI)')}
@@ -2491,8 +2491,8 @@ export const CycleConfluencePage: React.FC<CycleConfluencePageProps> = ({
                   <div className="overflow-x-auto">
                     <table className="w-full min-w-[720px] border-collapse text-xs font-mono-numbers tabular-nums">
                       <thead>
-                        <tr className="border-b border-[#D9E2EC] dark:border-[#20252D] text-[#526071] dark:text-[#929BA9]">
-                          <th className="py-2 pr-3 text-left font-semibold sticky left-0 bg-[#EEF2F6] dark:bg-[#050607] z-10">
+                        <tr className="border-b border-[#E4E4E7] dark:border-[#20252D] text-[#526071] dark:text-[#929BA9]">
+                          <th className="py-2 pr-3 text-left font-semibold sticky left-0 bg-white dark:bg-[#050607] z-10">
                             {tr('Tahun', 'Year')}
                           </th>
                           {MONTH_LABELS_ID.map((m, mIdx) => (
@@ -2509,12 +2509,12 @@ export const CycleConfluencePage: React.FC<CycleConfluencePageProps> = ({
                           ))}
                         </tr>
                       </thead>
-                      <tbody className="divide-y divide-[#D9E2EC] dark:divide-[#20252D]">
+                      <tbody className="divide-y divide-[#E4E4E7] dark:divide-[#20252D]">
                         {heatmapYears.map((year) => {
                           const row = XAUUSD_SEASONALITY.monthlyPct[year] || [];
                           return (
                             <tr key={year}>
-                              <td className="py-1.5 pr-3 font-semibold text-[#0F172A] dark:text-[#F2F4F7] sticky left-0 bg-[#EEF2F6] dark:bg-[#050607] z-10">
+                              <td className="py-1.5 pr-3 font-semibold text-[#0F172A] dark:text-[#F2F4F7] sticky left-0 bg-white dark:bg-[#050607] z-10">
                                 {year}
                               </td>
                               {MONTH_LABELS_ID.map((_, mIdx) => {
@@ -2558,15 +2558,15 @@ export const CycleConfluencePage: React.FC<CycleConfluencePageProps> = ({
           )}
           data-testid="cycle-playbook-sheet"
           onClick={() => setShowPlaybookGuide(false)}
-          className="fixed inset-0 z-50 bg-black/60 dark:bg-black/75 flex items-end sm:items-center justify-center sm:p-4"
+          className="fixed inset-0 z-50 bg-black/60 dark:bg-black/75 flex items-end sm:items-center justify-center sm:p-4 animate-in fade-in duration-150"
         >
           <div
             onClick={(e) => e.stopPropagation()}
-            className="w-full sm:max-w-lg rounded-t-[20px] sm:rounded-2xl bg-white dark:bg-[#101318] border-t sm:border border-[#D9E2EC] dark:border-[#20252D] shadow-[0_20px_50px_-12px_rgba(15,23,42,0.22)] dark:shadow-[0_24px_60px_-12px_rgba(0,0,0,0.8)] max-h-[85vh] overflow-y-auto px-5 pt-3 pb-[calc(1.5rem+env(safe-area-inset-bottom,0px))] sm:p-6 space-y-4"
+            className="w-full sm:max-w-lg rounded-t-[20px] sm:rounded-2xl bg-white dark:bg-[#101318] border-t sm:border border-[#E4E4E7] dark:border-[#20252D] shadow-[0_20px_50px_-12px_rgba(15,23,42,0.22)] dark:shadow-[0_24px_60px_-12px_rgba(0,0,0,0.8)] max-h-[85vh] overflow-y-auto px-5 pt-3 pb-[calc(1.5rem+env(safe-area-inset-bottom,0px))] sm:p-6 space-y-4"
           >
-            <div className="w-10 h-1 rounded-full bg-[#D9E2EC] dark:bg-[#20252D] mx-auto sm:hidden" />
+            <div className="w-10 h-1 rounded-full bg-[#E4E4E7] dark:bg-[#20252D] mx-auto sm:hidden" />
 
-            <div className="flex items-start justify-between gap-4 pb-3 border-b border-[#D9E2EC] dark:border-[#20252D]">
+            <div className="flex items-start justify-between gap-4 pb-3 border-b border-[#E4E4E7] dark:border-[#20252D]">
               <div className="min-w-0">
                 <span className="text-[11px] font-semibold uppercase tracking-[0.08em] text-[#526071] dark:text-[#929BA9] block">
                   {tr('PLAYBOOK SMC & SIKLUS · XAU/USD', 'SMC & CYCLE PLAYBOOK · XAU/USD')}
@@ -2582,13 +2582,13 @@ export const CycleConfluencePage: React.FC<CycleConfluencePageProps> = ({
                 type="button"
                 onClick={() => setShowPlaybookGuide(false)}
                 aria-label={tr('Tutup Playbook', 'Close Playbook')}
-                className="min-h-[44px] min-w-[44px] -mr-2 -mt-2 flex items-center justify-center rounded-full text-[#526071] dark:text-[#929BA9] hover:text-[#0F172A] dark:hover:text-[#F2F4F7] hover:bg-[#F5F7FA] dark:hover:bg-[#161A22] transition-colors cursor-pointer shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/35 dark:focus-visible:ring-white/35"
+                className="min-h-[44px] min-w-[44px] -mr-2 -mt-2 flex items-center justify-center rounded-full text-[#526071] dark:text-[#929BA9] hover:text-[#0F172A] dark:hover:text-[#F2F4F7] hover:bg-[#F4F4F5] dark:hover:bg-[#161A22] transition-colors cursor-pointer shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/35 dark:focus-visible:ring-white/35"
               >
                 <X className="w-4 h-4 stroke-[2]" />
               </button>
             </div>
 
-            <div className="divide-y divide-[#D9E2EC] dark:divide-[#20252D]">
+            <div className="divide-y divide-[#E4E4E7] dark:divide-[#20252D]">
               {[
                 {
                   badge: '01 · AMD GATEKEEPER',
@@ -2653,14 +2653,14 @@ export const CycleConfluencePage: React.FC<CycleConfluencePageProps> = ({
                   <h4 className="text-xs sm:text-sm font-bold text-[#0F172A] dark:text-[#F2F4F7]">
                     {sec.title}
                   </h4>
-                  <p className="text-xs text-[#526071] dark:text-[#929BA9] leading-relaxed">
+                  <p className="text-xs text-[#526071] dark:text-[#929BA9] leading-relaxed text-editorial-justify">
                     {sec.body}
                   </p>
                 </div>
               ))}
             </div>
 
-            <div className="pt-3 border-t border-[#D9E2EC] dark:border-[#20252D] flex items-center justify-between gap-2">
+            <div className="pt-3 border-t border-[#E4E4E7] dark:border-[#20252D] flex items-center justify-between gap-2">
               <span className="text-[11px] text-[#526071] dark:text-[#929BA9]">
                 {tr(
                   'Tip: Gunakan Full Confluence ON untuk memadukan struktur candle + siklus.',

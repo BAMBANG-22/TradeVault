@@ -304,7 +304,7 @@ export const DashboardCalendar: React.FC<DashboardCalendarProps> = ({
             onClick={() => setIsMonthDropdownOpen((prev) => !prev)}
             aria-haspopup="listbox"
             aria-expanded={isMonthDropdownOpen}
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-white dark:bg-[#101318] border border-[#D9E2EC] dark:border-[#20252D] hover:border-[#0F172A]/40 dark:hover:border-white/40 shadow-[0_1px_2px_rgba(15,23,42,0.04)] dark:shadow-none text-xs font-semibold text-[#0F172A] dark:text-[#F2F4F7] transition-colors cursor-pointer whitespace-nowrap focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/35 dark:focus-visible:ring-white/35"
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-white dark:bg-[#101318] border border-[#E4E4E7] dark:border-[#20252D] hover:border-[#0F172A]/40 dark:hover:border-white/40 shadow-[0_1px_2px_rgba(15,23,42,0.04)] dark:shadow-none text-xs font-semibold text-[#0F172A] dark:text-[#F2F4F7] transition-colors cursor-pointer whitespace-nowrap focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/35 dark:focus-visible:ring-white/35"
           >
             <span>{monthDisplayLabel}</span>
             <ChevronDown
@@ -319,7 +319,7 @@ export const DashboardCalendar: React.FC<DashboardCalendarProps> = ({
               role="listbox"
               aria-label={tr('Pilih Bulan Kalender', 'Select Calendar Month')}
               data-testid="calendar-month-dropdown-menu"
-              className="absolute right-0 top-full mt-1.5 z-30 w-48 max-h-64 overflow-y-auto rounded-xl bg-white dark:bg-[#101318] border border-[#D9E2EC] dark:border-[#20252D] py-1 shadow-xl"
+              className="absolute right-0 top-full mt-1.5 z-30 w-48 max-h-64 overflow-y-auto rounded-xl bg-white dark:bg-[#101318] border border-[#E4E4E7] dark:border-[#20252D] py-1 shadow-xl"
             >
               {availableMonths.map((mKey) => {
                 const [yS, mS] = mKey.split('-');
@@ -343,8 +343,8 @@ export const DashboardCalendar: React.FC<DashboardCalendarProps> = ({
                     }}
                     className={`w-full px-3 py-2 text-left text-xs flex items-center justify-between transition-colors cursor-pointer ${
                       isSelected
-                        ? 'bg-[#F5F7FA] dark:bg-[#161A22] text-[#0F172A] dark:text-white font-semibold'
-                        : 'text-[#0F172A] dark:text-[#F2F4F7] hover:bg-[#F5F7FA] dark:hover:bg-[#161A22]'
+                        ? 'bg-[#F4F4F5] dark:bg-[#161A22] text-[#0F172A] dark:text-white font-semibold'
+                        : 'text-[#0F172A] dark:text-[#F2F4F7] hover:bg-[#FAFAFA] dark:hover:bg-[#161A22]'
                     }`}
                   >
                     <span>{label}</span>
@@ -396,7 +396,7 @@ export const DashboardCalendar: React.FC<DashboardCalendarProps> = ({
             <div key={dayName}>{dayName}</div>
           ))}
         </div>
-        <div className="border-b border-[#D9E2EC] dark:border-[#20252D] my-1" />
+        <div className="border-b border-[#E4E4E7] dark:border-[#20252D] my-1" />
       </div>
 
       {/* 4.C Calendar Grid */}
@@ -460,9 +460,9 @@ export const DashboardCalendar: React.FC<DashboardCalendarProps> = ({
           data-testid="daily-performance-smoked-card"
           role="region"
           aria-label={tr('Detail Performa Harian', 'Daily Performance Detail')}
-          className="mt-5 p-4 sm:p-5 rounded-2xl bg-white dark:bg-[#101318] border border-[#D9E2EC] dark:border-[#20252D] shadow-[0_4px_20px_rgba(15,23,42,0.06)] dark:shadow-none transition-all duration-200 select-none animate-in fade-in slide-in-from-top-2"
+          className="mt-5 p-4 sm:p-5 rounded-2xl bg-white dark:bg-[#101318] border border-[#E4E4E7] dark:border-[#20252D] shadow-[0_4px_20px_rgba(15,23,42,0.06)] dark:shadow-none transition-all duration-200 select-none animate-in fade-in slide-in-from-top-2"
         >
-          <div className="flex items-start justify-between gap-4 pb-3 border-b border-[#D9E2EC] dark:border-[#20252D]">
+          <div className="flex items-start justify-between gap-4 pb-3 border-b border-[#E4E4E7] dark:border-[#20252D]">
             <div className="space-y-0.5 min-w-0">
               <span className="block text-[10px] font-bold uppercase tracking-[0.1em] text-[#526071] dark:text-[#929BA9]">
                 {tr('PERFORMA HARIAN', 'DAILY PERFORMANCE')}
@@ -475,7 +475,7 @@ export const DashboardCalendar: React.FC<DashboardCalendarProps> = ({
               type="button"
               data-testid="daily-card-close-button"
               onClick={() => setSelectedDate(null)}
-              className="p-1.5 rounded-full text-[#526071] dark:text-[#929BA9] hover:text-[#0F172A] dark:hover:text-[#F2F4F7] hover:bg-[#F5F7FA] dark:hover:bg-[#161A22] transition-colors cursor-pointer shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/35 dark:focus-visible:ring-white/35"
+              className="p-1.5 rounded-full text-[#526071] dark:text-[#929BA9] hover:text-[#0F172A] dark:hover:text-[#F2F4F7] hover:bg-[#F4F4F5] dark:hover:bg-[#161A22] transition-colors cursor-pointer shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/35 dark:focus-visible:ring-white/35"
               title={tr('Tutup Detail Harian', 'Close Daily Detail')}
               aria-label={tr('Tutup Detail Harian', 'Close Daily Detail')}
             >
@@ -545,13 +545,13 @@ export const DashboardCalendar: React.FC<DashboardCalendarProps> = ({
             </div>
           </div>
 
-          <div className="pt-2 border-t border-[#D9E2EC] dark:border-[#20252D]">
+          <div className="pt-2 border-t border-[#E4E4E7] dark:border-[#20252D]">
             {selectedTrades.length === 0 ? (
               <div className="py-4 text-center text-xs text-[#526071] dark:text-[#929BA9]">
                 {tr('Tidak ada transaksi pada tanggal ini', 'No trades on this date')}
               </div>
             ) : (
-              <div className="divide-y divide-[#D9E2EC] dark:divide-[#20252D] max-h-60 overflow-y-auto pr-0.5">
+              <div className="divide-y divide-[#E4E4E7] dark:divide-[#20252D] max-h-60 overflow-y-auto pr-0.5">
                 {selectedTrades.map((t) => {
                   const pnl = computeTradeNetProfit(t);
                   const isBuy = t.position === 'BUY';
@@ -563,7 +563,7 @@ export const DashboardCalendar: React.FC<DashboardCalendarProps> = ({
                       key={t.id}
                       type="button"
                       onClick={() => onViewTrade?.(t)}
-                      className="w-full py-2.5 px-2 flex items-center justify-between text-left cursor-pointer text-xs font-mono-numbers tabular-nums group transition-colors hover:bg-[#F5F7FA] dark:hover:bg-[#161A22] rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/35 dark:focus-visible:ring-white/35"
+                      className="w-full py-2.5 px-2 flex items-center justify-between text-left cursor-pointer text-xs font-mono-numbers tabular-nums group transition-colors hover:bg-[#FAFAFA] dark:hover:bg-[#161A22] rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F172A]/35 dark:focus-visible:ring-white/35"
                     >
                       <div className="flex items-center gap-3 min-w-0">
                         <span className="font-bold text-[#0F172A] dark:text-[#F2F4F7] group-hover:text-black dark:group-hover:text-white transition-colors truncate">

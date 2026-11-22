@@ -34,7 +34,7 @@ export const StatCard: React.FC<StatCardProps> = ({
       : 'text-[#526071] dark:text-[#929BA9]';
 
   return (
-    <div className="relative rounded-xl bg-white dark:bg-[#101318] border border-[#D9E2EC] dark:border-[#20252D] shadow-[0_1px_2px_rgba(15,23,42,0.04)] dark:shadow-none p-4 transition-colors duration-150 flex flex-col justify-between">
+    <div className="relative rounded-xl bg-white dark:bg-[#101318] border border-[#E4E4E7] dark:border-[#20252D] shadow-[0_1px_2px_rgba(15,23,42,0.04)] dark:shadow-none p-4 transition-colors duration-150 flex flex-col justify-between">
       <div className="space-y-2">
         <div className="flex items-start justify-between gap-2">
           <div className="flex items-center gap-1.5 min-w-0">
@@ -58,7 +58,7 @@ export const StatCard: React.FC<StatCardProps> = ({
       </div>
 
       {(subtitle || trendValue) && (
-        <div className="mt-3 flex flex-wrap items-center justify-between gap-1.5 text-xs pt-2.5 border-t border-[#D9E2EC] dark:border-[#20252D]">
+        <div className="mt-3 flex flex-wrap items-center justify-between gap-1.5 text-xs pt-2.5 border-t border-[#E4E4E7] dark:border-[#20252D]">
           {subtitle && (
             <span className="text-[11px] text-[#526071] dark:text-[#929BA9] leading-snug break-words">
               {subtitle}
