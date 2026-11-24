@@ -419,6 +419,13 @@ export async function nativeHttpGetText(
   }
 
   const authHeaders = buildBackendAuthHeaders(targetUrl);
+  const isTradingViewTarget = /tradingview\.com/i.test(targetUrl);
+  const domainHeaders: Record<string, string> = isTradingViewTarget
+    ? {
+        Origin: 'https://www.tradingview.com',
+        Referer: 'https://www.tradingview.com/',
+      }
+    : {};
 
   try {
     const response = await CapacitorHttp.get({
@@ -431,6 +438,7 @@ export async function nativeHttpGetText(
         'User-Agent':
           'Mozilla/5.0 (Linux; Android 14; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36',
         'Cache-Control': 'no-cache, no-store, must-revalidate',
+        ...domainHeaders,
         ...authHeaders,
       },
     });

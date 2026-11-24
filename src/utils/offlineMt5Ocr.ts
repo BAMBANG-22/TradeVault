@@ -33,6 +33,7 @@ export interface OfflineOcrResult {
 
 let cachedWorkerPromise: Promise<Worker> | null = null;
 let workerQueuePromise: Promise<void> = Promise.resolve();
+let lastPsmApplied: string | null = null;
 
 function isBrowserLikeEnv(): boolean {
   return typeof window !== 'undefined' && typeof document !== 'undefined';
@@ -50,6 +51,7 @@ function resolveBrowserAssetUrl(relativePath: string): string {
 async function createOfflineTesseractWorker(): Promise<Worker> {
   const tesseractMod = await import('tesseract.js');
   const { createWorker, OEM, PSM } = tesseractMod;
+  lastPsmApplied = null;
 
   if (isBrowserLikeEnv()) {
     const worker = await createWorker('eng', OEM.LSTM_ONLY, {
@@ -60,10 +62,11 @@ async function createOfflineTesseractWorker(): Promise<Worker> {
       gzip: true,
     });
     await worker.setParameters({
-      tessedit_pageseg_mode: PSM.AUTO,
+      tessedit_pageseg_mode: PSM.SINGLE_BLOCK,
       preserve_interword_spaces: '1',
       user_defined_dpi: '300',
     });
+    lastPsmApplied = String(PSM.SINGLE_BLOCK);
     return worker;
   }
 
@@ -76,10 +79,11 @@ async function createOfflineTesseractWorker(): Promise<Worker> {
     gzip: true,
   });
   await worker.setParameters({
-    tessedit_pageseg_mode: PSM.AUTO,
+    tessedit_pageseg_mode: PSM.SINGLE_BLOCK,
     preserve_interword_spaces: '1',
     user_defined_dpi: '300',
   });
+  lastPsmApplied = String(PSM.SINGLE_BLOCK);
   return worker;
 }
 
@@ -87,15 +91,28 @@ async function getOfflineWorker(): Promise<Worker> {
   if (!cachedWorkerPromise) {
     cachedWorkerPromise = createOfflineTesseractWorker().catch((err) => {
       cachedWorkerPromise = null;
+      lastPsmApplied = null;
       throw err;
     });
   }
   return cachedWorkerPromise;
 }
 
+/**
+ * Starts initializing the local WASM + LSTM eng.traineddata worker in the background
+ * so offline OCR starts immediately when a screenshot is chosen.
+ */
+export function prewarmOfflineTesseractWorker(): void {
+  if (!isBrowserLikeEnv()) return;
+  void getOfflineWorker().catch(() => {
+    // Ignore warmup failures; actual scan handles errors cleanly
+  });
+}
+
 export async function terminateOfflineTesseractWorker(): Promise<void> {
   const existing = cachedWorkerPromise;
   cachedWorkerPromise = null;
+  lastPsmApplied = null;
   if (existing) {
     try {
       const worker = await existing;
@@ -117,10 +134,16 @@ export function reconstructStructuredLinesFromWords(
 
   const heights = words
     .map((w) => w.height)
+    .filter((h) => Number.isFinite(h) && h >= 8)
+    .sort((a, b) => a - b);
+  const fallbackHeights = words
+    .map((w) => w.height)
     .filter((h) => Number.isFinite(h) && h > 0)
     .sort((a, b) => a - b);
-  const medianH = heights.length > 0 ? heights[Math.floor(heights.length / 2)] : 18;
-  const rowTolerance = Math.max(8, medianH * 0.62);
+  const activeHeights = heights.length > 0 ? heights : fallbackHeights;
+  const medianH =
+    activeHeights.length > 0 ? activeHeights[Math.floor(activeHeights.length / 2)] : 18;
+  const rowTolerance = Math.max(9, medianH * 0.68);
 
   const sortedByY = [...words].sort((a, b) => a.centerY - b.centerY || a.left - b.left);
   const bands: Array<{ meanY: number; items: OfflineOcrWordBox[] }> = [];
@@ -166,7 +189,7 @@ export function reconstructStructuredLinesFromWords(
         lineText = cleanToken;
       } else {
         const gap = item.left - prevRight;
-        lineText += gap > medianH * 1.4 ? `   ${cleanToken}` : ` ${cleanToken}`;
+        lineText += gap > medianH * 1.35 ? `   ${cleanToken}` : ` ${cleanToken}`;
       }
       prevRight = itemRight;
     }
@@ -186,9 +209,145 @@ export function reconstructStructuredLinesFromWords(
 
 /**
  * Generates high-precision Black-on-White OCR image variants from a Data URL in the browser:
- * - Variant 0 (Primary): 2x upscaled + 24px white padding + Chromatic Contrast Extraction
- *   (uses max RGB channel delta from background so red '-' losses & blue profits become jet black).
- * - Variant 1 (Soft Fallback): 2x upscaled soft grayscale inversion without aggressive contrast cliff.
+ * - Variant 0 (Primary): Upscaled + 24px white padding + Chromatic Contrast Extraction
+ *   (uses max RGB channel delta from background so red '-' losses, blue profits, and muted grey S/L & T/P labels become crisp black).
+ * - Variant 1 (Soft Fallback): Upscaled soft grayscale inversion with boosted contrast for tricky anti-aliased screens.
+ */
+export type PrecisionOcrVariantMode = 'chromatic_sharp' | 'soft_luma';
+
+function renderCanvasOcrVariant(
+  img: HTMLImageElement,
+  mode: PrecisionOcrVariantMode,
+  fallbackUrl: string
+): string {
+  const srcW = img.width;
+  const srcH = img.height;
+  if (!srcW || !srcH) return fallbackUrl;
+
+  // Target optimal Tesseract LSTM character height (~22-32px) within a fast ~4.8MP budget
+  let scale = srcW < 1050 ? Math.min(1.85, 1450 / srcW) : srcW < 1450 ? 1.15 : 1;
+  const maxPixelBudget = 4_800_000;
+  if (srcW * scale * (srcH * scale) > maxPixelBudget) {
+    scale = Math.max(0.85, Math.sqrt(maxPixelBudget / (srcW * srcH)));
+  }
+  const innerW = Math.round(srcW * scale);
+  const innerH = Math.round(srcH * scale);
+  const pad = 20;
+  const outW = innerW + pad * 2;
+  const outH = innerH + pad * 2;
+
+  const canvas = document.createElement('canvas');
+  canvas.width = outW;
+  canvas.height = outH;
+  const ctx = canvas.getContext('2d', { willReadFrequently: true });
+  if (!ctx) return fallbackUrl;
+
+  ctx.fillStyle = '#ffffff';
+  ctx.fillRect(0, 0, outW, outH);
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = 'high';
+  ctx.drawImage(img, pad, pad, innerW, innerH);
+
+  const imgData = ctx.getImageData(pad, pad, innerW, innerH);
+  const pixels = imgData.data;
+
+  // Estimate background RGB median from sparse grid
+  const rSamples: number[] = [];
+  const gSamples: number[] = [];
+  const bSamples: number[] = [];
+  const step = Math.max(16, Math.floor(pixels.length / 3000) * 4);
+  for (let i = 0; i < pixels.length; i += step) {
+    rSamples.push(pixels[i]);
+    gSamples.push(pixels[i + 1]);
+    bSamples.push(pixels[i + 2]);
+  }
+  rSamples.sort((a, b) => a - b);
+  gSamples.sort((a, b) => a - b);
+  bSamples.sort((a, b) => a - b);
+  const mid = Math.floor(rSamples.length / 2);
+  const bgR = rSamples[mid] ?? 18;
+  const bgG = gSamples[mid] ?? 22;
+  const bgB = bSamples[mid] ?? 28;
+  const bgLum = 0.299 * bgR + 0.587 * bgG + 0.114 * bgB;
+  const isDarkBg = bgLum < 128;
+
+  // Precomputed LUT for fast branchless-style intensity mapping on millions of pixels
+  if (mode === 'chromatic_sharp') {
+    const lut = new Uint8ClampedArray(256);
+    for (let s = 0; s < 256; s++) {
+      if (s <= 10) {
+        lut[s] = 255;
+      } else {
+        const normalized = Math.min(1, (s - 10) / 88);
+        lut[s] = Math.round(255 * (1 - Math.pow(normalized, 0.62)));
+      }
+    }
+    for (let i = 0; i < pixels.length; i += 4) {
+      const r = pixels[i];
+      const g = pixels[i + 1];
+      const b = pixels[i + 2];
+      const deltaR = isDarkBg ? r - bgR : bgR - r;
+      const deltaG = isDarkBg ? g - bgG : bgG - g;
+      const deltaB = isDarkBg ? b - bgB : bgB - b;
+      const luma = 0.299 * r + 0.587 * g + 0.114 * b;
+      const deltaLuma = isDarkBg ? luma - bgLum : bgLum - luma;
+      const inkStrength = Math.max(0, deltaR, deltaG, deltaB, deltaLuma) | 0;
+      const v = lut[inkStrength > 255 ? 255 : inkStrength];
+      pixels[i] = v;
+      pixels[i + 1] = v;
+      pixels[i + 2] = v;
+      pixels[i + 3] = 255;
+    }
+  } else {
+    for (let i = 0; i < pixels.length; i += 4) {
+      let lum = 0.299 * pixels[i] + 0.587 * pixels[i + 1] + 0.114 * pixels[i + 2];
+      if (isDarkBg) lum = 255 - lum;
+      const stretched = Math.max(0, Math.min(255, Math.round((lum - 128) * 1.55 + 128)));
+      pixels[i] = stretched;
+      pixels[i + 1] = stretched;
+      pixels[i + 2] = stretched;
+      pixels[i + 3] = 255;
+    }
+  }
+
+  ctx.putImageData(imgData, pad, pad);
+  // WebP q=0.94 compresses several times faster than PNG on multi-megapixel screenshots
+  let url = canvas.toDataURL('image/webp', 0.94);
+  if (!url.startsWith('data:image/webp')) {
+    url = canvas.toDataURL('image/png');
+  }
+  canvas.width = 0;
+  canvas.height = 0;
+  return url;
+}
+
+/**
+ * Generates a single Black-on-White OCR image variant on demand (avoids wasting CPU encoding unused variants).
+ */
+export async function preparePrecisionOcrVariant(
+  dataUrl: string,
+  mode: PrecisionOcrVariantMode = 'chromatic_sharp'
+): Promise<string> {
+  if (!isBrowserLikeEnv() || typeof Image === 'undefined') {
+    return dataUrl;
+  }
+
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.onerror = () => resolve(dataUrl);
+    img.onload = () => {
+      try {
+        resolve(renderCanvasOcrVariant(img, mode, dataUrl));
+      } catch {
+        resolve(dataUrl);
+      }
+    };
+    img.src = dataUrl;
+  });
+}
+
+/**
+ * Generates high-precision Black-on-White OCR image variants from a Data URL in the browser.
  */
 export async function preparePrecisionOcrVariants(dataUrl: string): Promise<string[]> {
   if (!isBrowserLikeEnv() || typeof Image === 'undefined') {
@@ -200,106 +359,8 @@ export async function preparePrecisionOcrVariants(dataUrl: string): Promise<stri
     img.onerror = () => resolve([dataUrl]);
     img.onload = () => {
       try {
-        const srcW = img.width;
-        const srcH = img.height;
-        if (!srcW || !srcH) {
-          resolve([dataUrl]);
-          return;
-        }
-
-        // Scale smaller screenshots up so tiny digits & thin '-' minus glyphs have 24-44px height
-        const scale = srcW < 1100 ? Math.min(2.2, 1600 / srcW) : srcW < 1600 ? 1.4 : 1;
-        const innerW = Math.round(srcW * scale);
-        const innerH = Math.round(srcH * scale);
-        const pad = 24;
-        const outW = innerW + pad * 2;
-        const outH = innerH + pad * 2;
-
-        const renderVariant = (mode: 'chromatic_sharp' | 'soft_luma'): string => {
-          const canvas = document.createElement('canvas');
-          canvas.width = outW;
-          canvas.height = outH;
-          const ctx = canvas.getContext('2d');
-          if (!ctx) return dataUrl;
-
-          ctx.fillStyle = mode === 'chromatic_sharp' ? '#ffffff' : '#ffffff';
-          ctx.fillRect(0, 0, outW, outH);
-          ctx.imageSmoothingEnabled = true;
-          ctx.imageSmoothingQuality = 'high';
-          ctx.drawImage(img, pad, pad, innerW, innerH);
-
-          const imgData = ctx.getImageData(pad, pad, innerW, innerH);
-          const pixels = imgData.data;
-
-          // Estimate background RGB median from sparse grid
-          const rSamples: number[] = [];
-          const gSamples: number[] = [];
-          const bSamples: number[] = [];
-          const step = Math.max(16, Math.floor(pixels.length / 4000) * 4);
-          for (let i = 0; i < pixels.length; i += step) {
-            rSamples.push(pixels[i]);
-            gSamples.push(pixels[i + 1]);
-            bSamples.push(pixels[i + 2]);
-          }
-          rSamples.sort((a, b) => a - b);
-          gSamples.sort((a, b) => a - b);
-          bSamples.sort((a, b) => a - b);
-          const mid = Math.floor(rSamples.length / 2);
-          const bgR = rSamples[mid] ?? 18;
-          const bgG = gSamples[mid] ?? 22;
-          const bgB = bSamples[mid] ?? 28;
-          const bgLum = 0.299 * bgR + 0.587 * bgG + 0.114 * bgB;
-          const isDarkBg = bgLum < 128;
-
-          for (let i = 0; i < pixels.length; i += 4) {
-            const r = pixels[i];
-            const g = pixels[i + 1];
-            const b = pixels[i + 2];
-
-            if (mode === 'chromatic_sharp') {
-              // Chromatic channel delta preserves red negative profits and blue positive profits equally!
-              const deltaR = isDarkBg ? r - bgR : bgR - r;
-              const deltaG = isDarkBg ? g - bgG : bgG - g;
-              const deltaB = isDarkBg ? b - bgB : bgB - b;
-              const luma = 0.299 * r + 0.587 * g + 0.114 * b;
-              const deltaLuma = isDarkBg ? luma - bgLum : bgLum - luma;
-
-              const inkStrength = Math.max(0, deltaR, deltaG, deltaB, deltaLuma);
-              // Smooth noise floor (<14) to crisp white; boost foreground (>24) to crisp black
-              let v: number;
-              if (inkStrength <= 12) {
-                v = 255;
-              } else {
-                const normalized = Math.min(1, (inkStrength - 12) / 115);
-                // Mild gamma makes thin strokes like '-' or '.' solid without thickening digits together
-                v = Math.round(255 * (1 - Math.pow(normalized, 0.72)));
-              }
-              pixels[i] = v;
-              pixels[i + 1] = v;
-              pixels[i + 2] = v;
-            } else {
-              let lum = 0.299 * r + 0.587 * g + 0.114 * b;
-              if (isDarkBg) lum = 255 - lum;
-              const stretched = Math.max(
-                0,
-                Math.min(255, Math.round((lum - 128) * 1.35 + 128))
-              );
-              pixels[i] = stretched;
-              pixels[i + 1] = stretched;
-              pixels[i + 2] = stretched;
-            }
-            pixels[i + 3] = 255;
-          }
-
-          ctx.putImageData(imgData, pad, pad);
-          const url = canvas.toDataURL('image/png');
-          canvas.width = 0;
-          canvas.height = 0;
-          return url;
-        };
-
-        const primary = renderVariant('chromatic_sharp');
-        const soft = renderVariant('soft_luma');
+        const primary = renderCanvasOcrVariant(img, 'chromatic_sharp', dataUrl);
+        const soft = renderCanvasOcrVariant(img, 'soft_luma', dataUrl);
         resolve(primary === soft ? [primary] : [primary, soft]);
       } catch {
         resolve([dataUrl]);
@@ -364,13 +425,16 @@ export async function runOfflineTesseractOcr(
       const { PSM } = await import('tesseract.js');
       const worker = await getOfflineWorker();
       const targetPsm = options?.psm
-        ? (options.psm as unknown as typeof PSM.AUTO)
-        : PSM.AUTO;
-      await worker.setParameters({
-        tessedit_pageseg_mode: targetPsm,
-        preserve_interword_spaces: '1',
-        user_defined_dpi: '300',
-      });
+        ? (options.psm as unknown as typeof PSM.SINGLE_BLOCK)
+        : PSM.SINGLE_BLOCK;
+      if (lastPsmApplied !== String(targetPsm)) {
+        await worker.setParameters({
+          tessedit_pageseg_mode: targetPsm,
+          preserve_interword_spaces: '1',
+          user_defined_dpi: '300',
+        });
+        lastPsmApplied = String(targetPsm);
+      }
 
       const recognized = await worker.recognize(
         imageInput,
@@ -394,6 +458,7 @@ export async function runOfflineTesseractOcr(
     } catch (err) {
       // Reset cached worker if WASM threw so subsequent offline scans recover cleanly
       cachedWorkerPromise = null;
+      lastPsmApplied = null;
       resultReject(err);
     }
   });

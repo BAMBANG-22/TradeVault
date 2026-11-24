@@ -22,6 +22,13 @@ import {
   computeImpliedFedWatchFromMarketQuotes,
   createUnavailableFedWatchState,
   mapRawTradingViewEventsToCalendarEvents,
+  enrichCalendarEventsWithRawTradingViewActuals,
+  isEventReleasedOrImminent,
+  isPlaceholderMacroValue,
+  RawTradingViewCalendarEvent,
+  buildGoogleNewsRssQueryForMissingActual,
+  parseGoogleNewsRssItemsFromXml,
+  extractVerifiedActualFromWireHeadlines,
 } from './macroNewsEngine';
 import { isMarketDay } from './date';
 import {
@@ -388,7 +395,7 @@ export async function fetchClientForexFactoryCalendar(): Promise<MacroCalendarEv
       return ta - tb;
     });
 
-    return dedupedRaw.slice(0, 90).map((item: any, idx: number) => {
+    const mappedEvents: MacroCalendarEvent[] = dedupedRaw.slice(0, 90).map((item: any, idx: number) => {
       // Exact title from ForexFactory feed (e.g., "Core PPI m/m", "PPI m/m")
       const title = String(item.title || '').trim();
       const previous = String(item.previous ?? '').trim();
@@ -398,13 +405,6 @@ export async function fetchClientForexFactoryCalendar(): Promise<MacroCalendarEv
       const prevParsed = parseMacroNumeric(previous);
       const fcstParsed = parseMacroNumeric(forecast);
       const actParsed = parseMacroNumeric(actual);
-
-      const evalResult = evaluateSingleEventForGold(
-        title,
-        actParsed.value,
-        fcstParsed.value,
-        prevParsed.value
-      );
 
       const rawImpact = String(item.impact || 'Medium').trim();
       const impact: 'High' | 'Medium' | 'Low' =
@@ -422,6 +422,18 @@ export async function fetchClientForexFactoryCalendar(): Promise<MacroCalendarEv
         }
       }
 
+      const evMs = new Date(isoDate).getTime();
+      const isReleased = Number.isFinite(evMs) && evMs <= Date.now() + 2 * 60 * 1000;
+      const safeActual = isReleased ? actual : '';
+      const safeActualNum = isReleased ? actParsed.value : null;
+
+      const evalResult = evaluateSingleEventForGold(
+        title,
+        safeActualNum,
+        fcstParsed.value,
+        prevParsed.value
+      );
+
       const eventCategory: MacroCalendarEvent['eventCategory'] = isPrimaryHighImpactEvent({
         title,
         impact,
@@ -438,10 +450,10 @@ export async function fetchClientForexFactoryCalendar(): Promise<MacroCalendarEv
         impact,
         previous: previous || '—',
         forecast: forecast || '—',
-        actual: actual || '',
+        actual: safeActual || '',
         previousNum: prevParsed.value,
         forecastNum: fcstParsed.value,
-        actualNum: actParsed.value,
+        actualNum: safeActualNum,
         unit: fcstParsed.unit || prevParsed.unit || actParsed.unit || '',
         pillar: classifyFomcPillar(title),
         isInverseIndicator: isInverseUsdIndicator(title),
@@ -452,6 +464,101 @@ export async function fetchClientForexFactoryCalendar(): Promise<MacroCalendarEv
         eventCategory,
       };
     });
+
+    const nowMs = Date.now();
+    let workingEvents = mappedEvents;
+    const hasMissingReleasedActual = workingEvents.some(
+      (ev) => isEventReleasedOrImminent(ev.date, nowMs) && isPlaceholderMacroValue(ev.actual)
+    );
+
+    if (hasMissingReleasedActual) {
+      try {
+        const fromIso = new Date(nowMs - 10 * 24 * 60 * 60 * 1000).toISOString();
+        const toIso = new Date(nowMs + 60 * 60 * 1000).toISOString();
+        const tvUrl = `https://economic-calendar.tradingview.com/events?from=${encodeURIComponent(fromIso)}&to=${encodeURIComponent(toIso)}&countries=US`;
+        const tvJsonStr = await fetchWithCorsProxy(tvUrl, 7500, 'application/json');
+        const tvJson = JSON.parse(tvJsonStr);
+        const rawList: RawTradingViewCalendarEvent[] = Array.isArray(tvJson?.result) ? tvJson.result : [];
+        if (rawList.length > 0) {
+          workingEvents = enrichCalendarEventsWithRawTradingViewActuals(workingEvents, rawList, nowMs);
+        }
+      } catch {
+        // Fallback: server history-backfill endpoint (10 days)
+        try {
+          const backfill10 = await fetchClientHistoricalActualsBackfill(10);
+          if (backfill10.length > 0) {
+            const rawAdapted: RawTradingViewCalendarEvent[] = backfill10.map((b) => ({
+              id: b.id,
+              title: b.title,
+              country: 'US',
+              date: b.date,
+              actual: b.actualNum,
+              forecast: b.forecastNum,
+              previous: b.previousNum,
+              unit: b.unit,
+              importance: b.impact === 'High' ? 1 : 0,
+            }));
+            workingEvents = enrichCalendarEventsWithRawTradingViewActuals(workingEvents, rawAdapted, nowMs);
+          }
+        } catch {
+          // Non-blocking: wire RSS & server analyze will still enrich
+        }
+      }
+
+      // Secondary 0-token enrichment: Google News RSS wire consensus for S&P Global Flash PMI / indicators where TradingView JSON leaves actual: null
+      const stillMissingWireEvents = workingEvents.filter((ev) => {
+        const evMs = new Date(ev.date).getTime();
+        return (
+          (ev.impact === 'High' || ev.impact === 'Medium') &&
+          Number.isFinite(evMs) &&
+          evMs <= nowMs - 30 * 1000 &&
+          nowMs - evMs <= 72 * 60 * 60 * 1000 &&
+          isPlaceholderMacroValue(ev.actual) &&
+          (ev.forecastNum !== null || ev.previousNum !== null)
+        );
+      });
+
+      if (stillMissingWireEvents.length > 0) {
+        const rssCacheByQuery = new Map<string, Array<{ title: string; pubDate: string; pubMs: number }>>();
+        for (const ev of stillMissingWireEvents) {
+          const q = buildGoogleNewsRssQueryForMissingActual(ev.title);
+          if (!q || rssCacheByQuery.has(q)) continue;
+          try {
+            const rssUrl = `https://news.google.com/rss/search?q=${encodeURIComponent(q)}&hl=en-US&gl=US&ceid=US:en`;
+            const xml = await fetchWithCorsProxy(rssUrl, 6000, 'application/rss+xml, application/xml, text/xml');
+            rssCacheByQuery.set(q, parseGoogleNewsRssItemsFromXml(xml));
+          } catch {
+            rssCacheByQuery.set(q, []);
+          }
+        }
+
+        workingEvents = workingEvents.map((ev) => {
+          if (!isPlaceholderMacroValue(ev.actual)) return ev;
+          const q = buildGoogleNewsRssQueryForMissingActual(ev.title);
+          if (!q) return ev;
+          const headlines = rssCacheByQuery.get(q) || [];
+          const extracted = extractVerifiedActualFromWireHeadlines(headlines, ev, nowMs);
+          if (!extracted) return ev;
+          const evalRes = evaluateSingleEventForGold(
+            ev.title,
+            extracted.actualNum,
+            ev.forecastNum,
+            ev.previousNum
+          );
+          return {
+            ...ev,
+            actual: extracted.actual,
+            actualNum: extracted.actualNum,
+            eventBiasForGold: evalRes.bias,
+            biasReasonId: evalRes.reasonId,
+            biasReasonEn: evalRes.reasonEn,
+            actualSource: 'TV_ENRICH',
+          };
+        });
+      }
+    }
+
+    return workingEvents;
   } catch (err) {
     console.warn('[MacroClient] Live ForexFactory calendar fetch failed:', err);
     return [];
@@ -1078,6 +1185,7 @@ export async function fetchLiveIntermarketPulseBundle(): Promise<{
   us10y: IntermarketAssetPulse;
   vix: VixRiskPulse;
   goldPositioning: GoldPositioningPulse;
+  eurUsd?: ExtendedMarketAssetPulse;
   fetchedAt: string;
 } | null> {
   const endpoints = getApiEndpointCandidates('/api/macro-news/intermarket-live');
@@ -1121,13 +1229,20 @@ export async function fetchLiveIntermarketPulseBundle(): Promise<{
   }
 
   try {
-    const [dxy, us02y, usoil, us10y, vix, goldPositioning] = await Promise.all([
+    const [dxy, us02y, usoil, us10y, vix, goldPositioning, eurUsd] = await Promise.all([
       fetchClientYahooAsset('DXY', 'DX-Y.NYB', 'US Dollar Index (DXY)', 104.85, 104.42),
       fetchClientYahooAsset('US02Y', '2YY=F', 'US 2Y Treasury Yield', 4.25, 4.22),
       fetchClientYahooAsset('USOIL', 'CL=F', 'US Oil WTI Crude', 73.4, 71.95),
       fetchClientYahooAsset('US10Y', '^TNX', 'US 10Y Treasury Yield', 4.38, 4.31),
       fetchClientVixPulse(),
       fetchClientGoldPositioning(),
+      fetchClientExtendedAsset({
+        symbol: 'EURUSD',
+        yahooTicker: 'EURUSD=X',
+        name: 'EUR/USD',
+        category: 'FX_G10',
+        bullishWhenUp: true,
+      }),
     ]);
 
     if (dxy.isAvailable || us10y.isAvailable || usoil.isAvailable || us02y.isAvailable) {
@@ -1138,6 +1253,7 @@ export async function fetchLiveIntermarketPulseBundle(): Promise<{
         us10y,
         vix,
         goldPositioning,
+        eurUsd,
         fetchedAt: new Date().toISOString(),
       };
     }
@@ -1177,7 +1293,7 @@ export async function fetchClientFedFundsFuturesBackup(
   }
 }
 
-async function fetchClientExtendedAsset(params: {
+export async function fetchClientExtendedAsset(params: {
   symbol: string;
   yahooTicker: string;
   name: string;
@@ -1385,8 +1501,9 @@ export async function fetchClientExtendedFundamentalFeeds(): Promise<Fundamental
         const raw = await nativeHttpGetText(urlWithTs, 7000, 'application/json');
         if (raw) {
           const parsed = JSON.parse(raw);
-          if (parsed?.success && parsed?.extendedFeeds) {
-            return parsed.extendedFeeds as FundamentalExtendedFeeds;
+          const resolvedFeeds = parsed?.extendedFeeds || parsed?.feeds;
+          if (parsed?.success && resolvedFeeds) {
+            return resolvedFeeds as FundamentalExtendedFeeds;
           }
         }
       } else {
@@ -1400,8 +1517,9 @@ export async function fetchClientExtendedFundamentalFeeds(): Promise<Fundamental
         clearTimeout(timer);
         if (res.ok) {
           const parsed = await res.json();
-          if (parsed?.success && parsed?.extendedFeeds) {
-            return parsed.extendedFeeds as FundamentalExtendedFeeds;
+          const resolvedFeeds = parsed?.extendedFeeds || parsed?.feeds;
+          if (parsed?.success && resolvedFeeds) {
+            return resolvedFeeds as FundamentalExtendedFeeds;
           }
         }
       }

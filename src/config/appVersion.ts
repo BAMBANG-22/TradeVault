@@ -13,11 +13,20 @@ export interface AppVersionEntry {
   summaryEn: string;
 }
 
-export const APP_VERSION = '1.3.0';
-export const APP_CHANGE_CODE = 'VLO-2611-PRO01';
-export const APP_RELEASE_DATE = '2026-11-22';
+export const APP_VERSION = '1.3.1';
+export const APP_CHANGE_CODE = 'VLO-2611-MAC04';
+export const APP_RELEASE_DATE = '2026-11-24';
 
 export const APP_VERSION_HISTORY: AppVersionEntry[] = [
+  {
+    version: '1.3.1',
+    changeCode: 'VLO-2611-MAC04',
+    date: '2026-11-24',
+    titleId: "Sinkronisasi Fundamental 3-Fitur & Real-Time Actual APK",
+    titleEn: "Sinkronisasi Fundamental 3-Fitur & Real-Time Actual APK",
+    summaryId: "Penyeragaman warna XAU/USD, ekstraksi actual PMI real-time, Intraday Tactical Overlay, dan dukungan native APK TradingView.",
+    summaryEn: "Penyeragaman warna XAU/USD, ekstraksi actual PMI real-time, Intraday Tactical Overlay, dan dukungan native APK TradingView.",
+  },
   {
     version: '1.3.0',
     changeCode: 'VLO-2611-PRO01',

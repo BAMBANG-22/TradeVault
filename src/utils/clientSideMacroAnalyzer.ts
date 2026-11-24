@@ -28,6 +28,8 @@ import {
   saveFundamentalGoldSnapshotToLocal,
   saveCmeFedWatchToLocal,
   computeFundamentalGoldCadenceSlot,
+  normalizeCanonicalMacroTitleKey,
+  isEventReleasedOrImminent,
 } from './macroNewsEngine';
 import {
   fetchClientForexFactoryCalendar,
@@ -38,6 +40,7 @@ import {
   fetchClientVixPulse,
   fetchClientGoldPositioning,
   fetchClientExtendedFundamentalFeeds,
+  fetchClientExtendedAsset,
 } from './macroFeedFetcher';
 import {
   getApiEndpointCandidates,
@@ -142,12 +145,12 @@ export async function analyzeMacroWithGeminiClient(params: {
  * 2. Analyze via server-side Gemini proxy (/api/macro-news/analyze) including Google Search Grounding for CME FedWatch & live ZQ=F Futures backup.
  * 3. Persist verified actuals to Offline Archive & save snapshot to Supabase `macro_news_snapshots`.
  */
-const HIST_BACKFILL_LAST_SYNC_KEY = 'tradevault_macro_hist_backfill_last_v1';
+const HIST_BACKFILL_LAST_SYNC_KEY = 'tradevault_macro_hist_backfill_last_v3';
 const HIST_BACKFILL_COOLDOWN_MS = 6 * 60 * 60 * 1000;
 
 /**
  * Ensures the offline archive has the verified Sep–Nov 2026 baseline and pulls up to 90 days
- * of released USD macro actuals (CPI, PPI, NFP, PCE, FOMC, GDP, Retail Sales, ISM) at 0 Gemini tokens.
+ * of released USD macro actuals (CPI, PPI, NFP, PCE, FOMC, GDP, Retail Sales, ISM, Flash PMI, etc.) at 0 Gemini tokens.
  */
 export async function syncHistoricalActualsArchive(force = false): Promise<{
   totalRecords: number;
@@ -217,7 +220,7 @@ export async function executeClientSideMacroAnalysis(
   }
 
   // Step 1: Pull all live public feeds + throttled 90-day 0-token historical backfill in parallel
-  const [rawCalendarEvents, _backfillRes, dxy, us02y, usoil, us10y, vix, goldPositioning, rssResult] =
+  const [rawCalendarEvents, backfillRes, dxy, us02y, usoil, us10y, vix, goldPositioning, rssResult, eurUsd] =
     await Promise.all([
       fetchClientForexFactoryCalendar(),
       syncHistoricalActualsArchive(forceRefresh),
@@ -228,13 +231,36 @@ export async function executeClientSideMacroAnalysis(
       fetchClientVixPulse(),
       fetchClientGoldPositioning(),
       fetchClientBreakingHeadlinesWithHealth(),
+      fetchClientExtendedAsset({
+        symbol: 'EURUSD',
+        yahooTicker: 'EURUSD=X',
+        name: 'EUR/USD',
+        category: 'FX_G10',
+        bullishWhenUp: true,
+      }).catch(() => undefined),
     ]);
 
   // Persist any fresh calendar actuals immediately and fill gaps/prior-week releases from Offline Archive
   if (rawCalendarEvents.length > 0) {
     recordReleasedActualsToOfflineArchive(rawCalendarEvents, 'LIVE_FEED');
   }
-  const calendarEvents = hydrateEventsWithOfflineArchive(rawCalendarEvents);
+  let calendarEvents = hydrateEventsWithOfflineArchive(rawCalendarEvents);
+
+  // If any recently released event (last 72h) still lacks an actual and archive sync was skipped by cooldown, force a live backfill once
+  const nowCheckMs = Date.now();
+  const hasRecentMissingActual = calendarEvents.some((ev) => {
+    const evMs = new Date(ev.date).getTime();
+    return (
+      Number.isFinite(evMs) &&
+      isEventReleasedOrImminent(ev.date, nowCheckMs) &&
+      nowCheckMs - evMs <= 72 * 60 * 60 * 1000 &&
+      isPlaceholderMacroValue(ev.actual)
+    );
+  });
+  if (hasRecentMissingActual && !forceRefresh && backfillRes.syncedLiveCount === 0) {
+    await syncHistoricalActualsArchive(true);
+    calendarEvents = hydrateEventsWithOfflineArchive(rawCalendarEvents, nowCheckMs);
+  }
 
   const breakingNews = rssResult.headlines;
   if (breakingNews.length > 0) {
@@ -242,7 +268,7 @@ export async function executeClientSideMacroAnalysis(
   }
   const rssFeedHealth = rssResult.rssFeedHealth;
 
-  const intermarketPulse = { dxy, us02y, usoil, us10y, vix, goldPositioning };
+  const intermarketPulse = { dxy, us02y, usoil, us10y, vix, goldPositioning, eurUsd };
   const cmeFedWatchBackup = await fetchClientFedFundsFuturesBackup(us10y);
 
   // Step 2: Analyze with server-side Gemini proxy
@@ -262,37 +288,44 @@ export async function executeClientSideMacroAnalysis(
 
   // Preserve live calendar events from client or server (including server TradingView / Grounding actual enrichment)
   if (calendarEvents.length > 0 && calendarEvents.every((e) => e.isLiveFeed)) {
+    const nowMs = Date.now();
     const serverActualBySlot = new Map<string, { actual: string; actualNum: number | null; unit?: string }>();
-    const serverActualByTitle = new Map<string, { actual: string; actualNum: number | null; unit?: string }>();
+    const serverActualByDay = new Map<string, { actual: string; actualNum: number | null; unit?: string }>();
     if (Array.isArray(analyzedSnapshot.calendarEvents)) {
-      const serverEnrichedWithNums = analyzedSnapshot.calendarEvents.filter(
-        (sEv) => !isPlaceholderMacroValue(sEv.actual)
-      );
+      const serverEnrichedWithNums = analyzedSnapshot.calendarEvents.filter((sEv) => {
+        const sMs = new Date(sEv.date).getTime();
+        return !isPlaceholderMacroValue(sEv.actual) && Number.isFinite(sMs) && sMs <= nowMs + 2 * 60 * 1000;
+      });
       if (serverEnrichedWithNums.length > 0) {
-        recordReleasedActualsToOfflineArchive(serverEnrichedWithNums, 'TV_ENRICH');
+        recordReleasedActualsToOfflineArchive(serverEnrichedWithNums, 'TV_ENRICH', undefined, nowMs);
       }
-      for (const sEv of analyzedSnapshot.calendarEvents) {
-        if (!isPlaceholderMacroValue(sEv.actual)) {
-          const titleKey = sEv.title.trim().toLowerCase();
-          const slotKey = `${titleKey}|${(sEv.date || '').slice(0, 13)}`;
-          const entry = {
-            actual: sEv.actual.trim(),
-            actualNum: sEv.actualNum ?? null,
-            unit: sEv.unit,
-          };
-          serverActualBySlot.set(slotKey, entry);
-          if (!serverActualByTitle.has(titleKey)) {
-            serverActualByTitle.set(titleKey, entry);
-          }
+      for (const sEv of serverEnrichedWithNums) {
+        const titleKey = normalizeCanonicalMacroTitleKey(sEv.title);
+        const slotKey = `${titleKey}|${(sEv.date || '').slice(0, 13)}`;
+        const dayKey = `${titleKey}|${(sEv.date || '').slice(0, 10)}`;
+        const entry = {
+          actual: sEv.actual.trim(),
+          actualNum: sEv.actualNum ?? null,
+          unit: sEv.unit,
+        };
+        serverActualBySlot.set(slotKey, entry);
+        if (!serverActualByDay.has(dayKey)) {
+          serverActualByDay.set(dayKey, entry);
         }
       }
     }
     let anyActualUpdated = false;
     const mergedCal = calendarEvents.map((cEv) => {
+      const cMs = new Date(cEv.date).getTime();
+      const isReleased = Number.isFinite(cMs) && cMs <= nowMs + 2 * 60 * 1000;
+      if (!isReleased) {
+        return cEv;
+      }
       if (isPlaceholderMacroValue(cEv.actual)) {
-        const titleKey = cEv.title.trim().toLowerCase();
+        const titleKey = normalizeCanonicalMacroTitleKey(cEv.title);
         const slotKey = `${titleKey}|${(cEv.date || '').slice(0, 13)}`;
-        const enriched = serverActualBySlot.get(slotKey) || serverActualByTitle.get(titleKey);
+        const dayKey = `${titleKey}|${(cEv.date || '').slice(0, 10)}`;
+        const enriched = serverActualBySlot.get(slotKey) || serverActualByDay.get(dayKey);
         if (enriched) {
           anyActualUpdated = true;
           const evalResult = evaluateSingleEventForGold(
@@ -315,7 +348,7 @@ export async function executeClientSideMacroAnalysis(
       }
       return cEv;
     });
-    analyzedSnapshot.calendarEvents = hydrateEventsWithOfflineArchive(mergedCal);
+    analyzedSnapshot.calendarEvents = hydrateEventsWithOfflineArchive(mergedCal, nowMs);
     if (anyActualUpdated) {
       const refreshed = analyzeMacroEvent({
         calendarEvents: analyzedSnapshot.calendarEvents,
@@ -355,13 +388,16 @@ export async function executeClientSideMacroAnalysis(
     }
   }
 
-  // Ensure VIX and GC=F positioning remain attached if server did not include them
+  // Ensure VIX, GC=F positioning, and EUR/USD remain attached if server did not include them
   if (analyzedSnapshot.intermarketPulse) {
     if (!analyzedSnapshot.intermarketPulse.vix?.isAvailable && vix.isAvailable) {
       analyzedSnapshot.intermarketPulse.vix = vix;
     }
     if (!analyzedSnapshot.intermarketPulse.goldPositioning?.isAvailable && goldPositioning.isAvailable) {
       analyzedSnapshot.intermarketPulse.goldPositioning = goldPositioning;
+    }
+    if (!analyzedSnapshot.intermarketPulse.eurUsd?.isAvailable && eurUsd?.isAvailable) {
+      analyzedSnapshot.intermarketPulse.eurUsd = eurUsd;
     }
   }
 
@@ -574,9 +610,9 @@ export async function executeClientSideFundamentalGoldAnalysis(options?: {
       headlines: [],
       health: [],
     })),
-    fetchClientExtendedFundamentalFeeds().catch(() => ({
-      externalEvents: [],
-    })),
+    fetchClientExtendedFundamentalFeeds().catch(
+      () => ({ externalEvents: [] } as import('./macroNewsEngine').FundamentalExtendedFeeds)
+    ),
   ]);
 
   if (rawCalendarEvents.length > 0) {
@@ -587,7 +623,15 @@ export async function executeClientSideFundamentalGoldAnalysis(options?: {
   if (breakingNews.length > 0) {
     recordBreakingNewsToMonthlyArchive(breakingNews);
   }
-  const intermarketPulse = { dxy, us02y, usoil, us10y, vix, goldPositioning };
+  const intermarketPulse = {
+    dxy,
+    us02y,
+    usoil,
+    us10y,
+    vix,
+    goldPositioning,
+    eurUsd: extendedFeeds?.eurUsd,
+  };
   const futuresBackupFedWatch = await fetchClientFedFundsFuturesBackup(us10y).catch(() =>
     createUnavailableFedWatchState()
   );

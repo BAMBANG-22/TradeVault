@@ -1706,6 +1706,25 @@ export const CycleConfluencePage: React.FC<CycleConfluencePageProps> = ({
               </span>
             </div>
 
+            {result.rawMacroContext.tacticalStatus &&
+              result.rawMacroContext.tacticalStatus !== 'NORMAL' &&
+              result.rawMacroContext.tacticalNoteId && (
+                <div
+                  data-testid="cycle-tactical-overlay-note"
+                  className={`pl-3 border-l-2 text-[11px] leading-relaxed ${
+                    result.rawMacroContext.tacticalStatus === 'COUNTER_RALLY_RISK'
+                      ? 'border-[#059669] dark:border-[#00A878] text-[#0F172A] dark:text-[#F2F4F7]'
+                      : result.rawMacroContext.tacticalStatus === 'COUNTER_DROP_RISK'
+                      ? 'border-[#E11D48] dark:border-[#E05260] text-[#0F172A] dark:text-[#F2F4F7]'
+                      : 'border-[#D97706] dark:border-[#F59E0B] text-[#526071] dark:text-[#929BA9]'
+                  }`}
+                >
+                  {isEn
+                    ? result.rawMacroContext.tacticalNoteEn || result.rawMacroContext.tacticalNoteId
+                    : result.rawMacroContext.tacticalNoteId}
+                </div>
+              )}
+
             <div
               data-testid="cycle-beginner-compass-strip"
               className="grid grid-cols-1 md:grid-cols-3 divide-y md:divide-y-0 md:divide-x divide-[#E4E4E7] dark:divide-[#20252D] border-y border-[#E4E4E7] dark:border-[#20252D] bg-white/60 dark:bg-[#101318]/60"

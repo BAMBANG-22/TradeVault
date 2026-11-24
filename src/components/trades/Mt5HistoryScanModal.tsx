@@ -19,22 +19,23 @@ import {
 import { Trade, TradeCloseType, TradingSession } from '../../types/trade';
 import { AppSettings } from '../../types/settings';
 import { useLanguage } from '../../utils/language';
-import { formatCurrency } from '../../utils/calculations';
+import { formatCurrency, formatRMultiple } from '../../utils/calculations';
 import { useGlobalCurrency } from '../../utils/currencyRate';
 import {
   auditMt5HistoryCandidate,
   buildClosedTradeFromMt5Candidate,
-  deduplicateBatchMt5Candidates,
+  computeMt5CandidateRiskPreview,
   Mt5AuditIssue,
   Mt5CandidateAuditResult,
   Mt5HistoryTradeCandidate,
   Mt5ScanExecutionMode,
   parseSignedMt5Number,
   prepareCrispMt5Screenshot,
-  recheckDuplicateMt5Candidate,
+  reconcileMt5BatchCandidates,
   scanBatchMt5HistoryScreenshots,
   scanSingleMt5HistoryScreenshot,
 } from '../../utils/tradeScreenshotScanner';
+import { prewarmOfflineTesseractWorker } from '../../utils/offlineMt5Ocr';
 
 const MT5_SCAN_MODE_STORAGE_KEY = 'tradevault_mt5_scan_mode';
 
@@ -239,6 +240,15 @@ export const Mt5HistoryScanModal: React.FC<Mt5HistoryScanModalProps> = ({
   const fmtMoney = (val: number) =>
     preferredCurrency === 'IDR' ? formatDynamic(val) : formatCurrency(val, settings);
 
+  // Pre-warm offline Tesseract WASM engine while user selects screenshots
+  useEffect(() => {
+    if (!isOpen) return;
+    const timer = window.setTimeout(() => {
+      prewarmOfflineTesseractWorker();
+    }, 150);
+    return () => window.clearTimeout(timer);
+  }, [isOpen]);
+
   // Reset modal state cleanly when closed
   useEffect(() => {
     if (!isOpen) {
@@ -284,7 +294,7 @@ export const Mt5HistoryScanModal: React.FC<Mt5HistoryScanModalProps> = ({
       const prepared = await Promise.all(
         imageFiles.map(async (file, i) => {
           const seqIndex = nextImageSeqRef.current++;
-          const dataUrl = await prepareCrispMt5Screenshot(file, 1600, 3200, 0.92);
+          const dataUrl = await prepareCrispMt5Screenshot(file, 1600, 4800, 0.92);
           return {
             id: `ss_${Date.now()}_${seqIndex}_${i}_${Math.random().toString(36).slice(2, 6)}`,
             sourceImageIndex: seqIndex,
@@ -344,7 +354,12 @@ export const Mt5HistoryScanModal: React.FC<Mt5HistoryScanModalProps> = ({
       );
 
       if (batchResult.trades.length > 0) {
-        setCandidates((prev) => deduplicateBatchMt5Candidates([...prev, ...batchResult.trades]));
+        setCandidates((prev) => {
+          const preserveSelectionForTempIds = new Set(prev.map((c) => c.tempId));
+          return reconcileMt5BatchCandidates([...prev, ...batchResult.trades], existingTrades, {
+            preserveSelectionForTempIds,
+          });
+        });
       } else if (firstFailureMsg) {
         setErrorMsg(firstFailureMsg);
       } else {
@@ -449,7 +464,14 @@ export const Mt5HistoryScanModal: React.FC<Mt5HistoryScanModalProps> = ({
           const withoutOldForImage = prev.filter(
             (c) => c.sourceImageIndex !== item.sourceImageIndex
           );
-          return deduplicateBatchMt5Candidates([...withoutOldForImage, ...result.trades]);
+          const preserveSelectionForTempIds = new Set(
+            withoutOldForImage.map((c) => c.tempId)
+          );
+          return reconcileMt5BatchCandidates(
+            [...withoutOldForImage, ...result.trades],
+            existingTrades,
+            { preserveSelectionForTempIds }
+          );
         });
       }
     } catch (err: any) {
@@ -467,32 +489,46 @@ export const Mt5HistoryScanModal: React.FC<Mt5HistoryScanModalProps> = ({
 
   const handleRemoveScreenshot = (item: UploadedScreenshotItem) => {
     setScreenshots((prev) => prev.filter((s) => s.id !== item.id));
-    setCandidates((prev) => prev.filter((c) => c.sourceImageIndex !== item.sourceImageIndex));
+    setCandidates((prev) => {
+      const remaining = prev.filter((c) => c.sourceImageIndex !== item.sourceImageIndex);
+      const preserveSelectionForTempIds = new Set(remaining.map((c) => c.tempId));
+      return reconcileMt5BatchCandidates(remaining, existingTrades, {
+        preserveSelectionForTempIds,
+      });
+    });
   };
 
   const patchCandidate = (
     tempId: string,
     patch: Partial<Mt5HistoryTradeCandidate>
   ) => {
-    setCandidates((prev) =>
-      prev.map((c) => {
+    const affectsDuplicate =
+      'instrument' in patch ||
+      'position' in patch ||
+      'lotSize' in patch ||
+      'entryPrice' in patch ||
+      'exitPrice' in patch ||
+      'netProfit' in patch ||
+      'closeDateTime' in patch ||
+      'ticketId' in patch;
+
+    setCandidates((prev) => {
+      const nextList = prev.map((c) => {
         if (c.tempId !== tempId) return c;
-        const updated: Mt5HistoryTradeCandidate = { ...c, ...patch };
-        if (
-          'instrument' in patch ||
-          'position' in patch ||
-          'lotSize' in patch ||
-          'entryPrice' in patch ||
-          'exitPrice' in patch ||
-          'netProfit' in patch ||
-          'closeDateTime' in patch ||
-          'ticketId' in patch
-        ) {
-          return recheckDuplicateMt5Candidate(updated, existingTrades);
-        }
-        return updated;
-      })
-    );
+        const normalizedPatch =
+          'closeDateTime' in patch
+            ? { ...patch, exactCloseDateTime: patch.closeDateTime || null }
+            : patch;
+        return { ...c, ...normalizedPatch };
+      });
+      if (!affectsDuplicate) return nextList;
+      const preserveSelectionForTempIds = new Set(
+        prev.filter((c) => c.tempId !== tempId).map((c) => c.tempId)
+      );
+      return reconcileMt5BatchCandidates(nextList, existingTrades, {
+        preserveSelectionForTempIds,
+      });
+    });
   };
 
   const updateCandidate = <K extends keyof Mt5HistoryTradeCandidate>(
@@ -515,7 +551,13 @@ export const Mt5HistoryScanModal: React.FC<Mt5HistoryScanModalProps> = ({
   };
 
   const removeCandidate = (tempId: string) => {
-    setCandidates((prev) => prev.filter((c) => c.tempId !== tempId));
+    setCandidates((prev) => {
+      const remaining = prev.filter((c) => c.tempId !== tempId);
+      const preserveSelectionForTempIds = new Set(remaining.map((c) => c.tempId));
+      return reconcileMt5BatchCandidates(remaining, existingTrades, {
+        preserveSelectionForTempIds,
+      });
+    });
   };
 
   const applyStrategyToAll = (nextStrategy: string) => {
@@ -552,6 +594,11 @@ export const Mt5HistoryScanModal: React.FC<Mt5HistoryScanModalProps> = ({
 
   const duplicateCount = useMemo(
     () => candidates.filter((c) => c.isDuplicate).length,
+    [candidates]
+  );
+
+  const doubleEntryCount = useMemo(
+    () => candidates.filter((c) => c.isDoubleEntry && !c.isDuplicate).length,
     [candidates]
   );
 
@@ -930,11 +977,19 @@ export const Mt5HistoryScanModal: React.FC<Mt5HistoryScanModalProps> = ({
                   <span className="font-semibold text-[#151D2A] dark:text-[#F2F4F7]">
                     {selectedCandidates.length} {tr('Dipilih', 'Selected')}
                   </span>
+                  {doubleEntryCount > 0 && (
+                    <>
+                      <span aria-hidden="true"> · </span>
+                      <span className="text-[#059669] dark:text-[#00A878] font-semibold">
+                        {doubleEntryCount} {tr('double entry', 'double entry')}
+                      </span>
+                    </>
+                  )}
                   {duplicateCount > 0 && (
                     <>
                       <span aria-hidden="true"> · </span>
                       <span className="text-[#D97706] dark:text-[#F59E0B] font-semibold">
-                        {duplicateCount} {tr('duplikat', 'duplicates')}
+                        {duplicateCount} {tr('duplikat/overlap', 'duplicates/overlap')}
                       </span>
                     </>
                   )}
@@ -992,6 +1047,15 @@ export const Mt5HistoryScanModal: React.FC<Mt5HistoryScanModalProps> = ({
                   >
                     {tr('Pilih Baru', 'Select New')}
                   </button>
+                  {duplicateCount > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => toggleSelectAll(false)}
+                      className="text-[#697586] dark:text-[#929BA9] hover:text-[#151D2A] dark:hover:text-[#F2F4F7] cursor-pointer whitespace-nowrap"
+                    >
+                      {tr('Pilih Semua', 'Select All')}
+                    </button>
+                  )}
                   <button
                     type="button"
                     onClick={() =>
@@ -1012,6 +1076,7 @@ export const Mt5HistoryScanModal: React.FC<Mt5HistoryScanModalProps> = ({
             const isWin = cand.netProfit >= 0.01;
             const isLoss = cand.netProfit <= -0.01;
             const audit = auditMap.get(cand.tempId);
+            const riskPreview = computeMt5CandidateRiskPreview(cand, settings);
 
             return (
               <div
@@ -1196,14 +1261,24 @@ export const Mt5HistoryScanModal: React.FC<Mt5HistoryScanModalProps> = ({
 
                   <span aria-hidden="true">·</span>
 
-                  <input
-                    type="datetime-local"
-                    value={cand.closeDateTime}
-                    onChange={(e) =>
-                      updateCandidate(cand.tempId, 'closeDateTime', e.target.value)
-                    }
-                    className="bg-transparent text-[11px] text-[#697586] dark:text-[#929BA9] focus:outline-none dark:[color-scheme:dark]"
-                  />
+                  <div className="inline-flex items-center gap-0.5">
+                    <input
+                      type="datetime-local"
+                      value={cand.closeDateTime}
+                      onChange={(e) =>
+                        updateCandidate(cand.tempId, 'closeDateTime', e.target.value)
+                      }
+                      className="bg-transparent text-[11px] text-[#697586] dark:text-[#929BA9] focus:outline-none dark:[color-scheme:dark]"
+                    />
+                    {cand.exactCloseDateTime && cand.exactCloseDateTime.length >= 19 && (
+                      <span
+                        title={tr('Detik eksekusi MT5', 'MT5 execution seconds')}
+                        className="text-[10px] font-semibold text-[#697586] dark:text-[#929BA9] tabular-nums"
+                      >
+                        :{cand.exactCloseDateTime.slice(17, 19)}
+                      </span>
+                    )}
+                  </div>
 
                   <span aria-hidden="true">·</span>
 
@@ -1234,16 +1309,96 @@ export const Mt5HistoryScanModal: React.FC<Mt5HistoryScanModalProps> = ({
                     </>
                   )}
 
+                  {cand.isDoubleEntry && !cand.isDuplicate && (
+                    <>
+                      <span aria-hidden="true">·</span>
+                      <span className="text-[10px] font-semibold text-[#059669] dark:text-[#00A878]">
+                        {tr('Double Entry', 'Double Entry')}
+                      </span>
+                    </>
+                  )}
+
                   {cand.isDuplicate && (
                     <>
                       <span aria-hidden="true">·</span>
                       <span className="text-[10px] font-semibold text-[#D97706] dark:text-[#F59E0B]">
-                        {tr(
-                          `Sudah ada (${cand.duplicateMatchId || 'Jurnal'})`,
-                          `Already logged (${cand.duplicateMatchId || 'Journal'})`
-                        )}
+                        {cand.duplicateReason === 'BATCH_OVERLAP'
+                          ? tr(
+                              `Kemungkinan overlap (${cand.duplicateMatchId || 'Foto Sebelumnya'}) — cek jika baru`,
+                              `Possible overlap (${cand.duplicateMatchId || 'Previous photo'}) — check if new`
+                            )
+                          : cand.duplicateReason === 'SIMILAR_JOURNAL_MATCH'
+                          ? tr(
+                              `Mirip dgn Jurnal (${cand.duplicateMatchId || 'Jurnal'}) — cek entry baru`,
+                              `Similar to Journal (${cand.duplicateMatchId || 'Journal'}) — verify if new`
+                            )
+                          : tr(
+                              `Sudah ada di Jurnal (${cand.duplicateMatchId || 'Jurnal'})`,
+                              `Already in Journal (${cand.duplicateMatchId || 'Journal'})`
+                            )}
                       </span>
                     </>
+                  )}
+                </div>
+
+                {/* Honest Risk & Realized R Preview Line (Unboxed Metadata) */}
+                <div className="mt-1 pl-7 flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-[10px] text-[#697586] dark:text-[#929BA9] tabular-nums">
+                  {riskPreview.hasValidSl && riskPreview.realizedR !== null ? (
+                    <>
+                      <span>SL {cand.stopLoss}</span>
+                      {cand.takeProfit && cand.takeProfit > 0 && (
+                        <>
+                          <span aria-hidden="true">·</span>
+                          <span>TP {cand.takeProfit}</span>
+                        </>
+                      )}
+                      <span aria-hidden="true">·</span>
+                      <span>
+                        {tr('Risiko', 'Risk')} {fmtMoney(riskPreview.riskAmount)}
+                      </span>
+                      <span aria-hidden="true">·</span>
+                      <span>
+                        Realized R{' '}
+                        <strong
+                          className={
+                            riskPreview.realizedR > 0
+                              ? 'text-[#059669] dark:text-[#00A878]'
+                              : riskPreview.realizedR < 0
+                              ? 'text-[#E11D48] dark:text-[#E05260]'
+                              : 'text-[#151D2A] dark:text-[#F2F4F7]'
+                          }
+                        >
+                          {formatRMultiple(riskPreview.realizedR, true)}
+                        </strong>
+                      </span>
+                    </>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setExpandedRowIds((prev) => ({
+                          ...prev,
+                          [cand.tempId]: true,
+                        }))
+                      }
+                      className="text-left text-[#697586] dark:text-[#929BA9] hover:text-[#151D2A] dark:hover:text-[#F2F4F7] transition-colors cursor-pointer"
+                    >
+                      {cand.takeProfit && cand.takeProfit > 0 && (
+                        <>
+                          <span>TP {cand.takeProfit}</span>
+                          <span aria-hidden="true"> · </span>
+                        </>
+                      )}
+                      <span>{tr('SL kosong · Realized R: N/A', 'No SL · Realized R: N/A')}</span>
+                      {!isExpanded && (
+                        <>
+                          <span aria-hidden="true"> · </span>
+                          <span className="underline underline-offset-2 font-semibold">
+                            {tr('Isi SL', 'Add SL')}
+                          </span>
+                        </>
+                      )}
+                    </button>
                   )}
                 </div>
 

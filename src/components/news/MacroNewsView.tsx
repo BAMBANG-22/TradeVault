@@ -502,9 +502,10 @@ export const MacroNewsView: React.FC<MacroNewsViewProps> = ({ isActive = true })
       });
 
       if (cached) {
+        const hydratedCachedCalendar = hydrateEventsWithOfflineArchive(cached.calendarEvents);
         setSnapshot({
           ...cached,
-          calendarEvents: hydrateEventsWithOfflineArchive(cached.calendarEvents),
+          calendarEvents: hydratedCachedCalendar,
         });
         if (cached.breakingNews && cached.breakingNews.length > 0) {
           setMonthlyNewsArchive(recordBreakingNewsToMonthlyArchive(cached.breakingNews));
@@ -514,9 +515,18 @@ export const MacroNewsView: React.FC<MacroNewsViewProps> = ({ isActive = true })
         // Immediately sync live Yahoo Finance Intermarket Pulse quotes even when macro snapshot is cached (< 15m)
         void syncLiveIntermarketPulse();
 
+        const checkNowMs = Date.now();
+        const hasRecentMissingActualInCache = hydratedCachedCalendar.some((ev) => {
+          if (!ev || (ev.impact !== 'High' && ev.impact !== 'Medium')) return false;
+          if (!isPlaceholderMacroValue(ev.actual)) return false;
+          if (ev.forecastNum === null && ev.previousNum === null) return false;
+          const evMs = new Date(ev.date).getTime();
+          return Number.isFinite(evMs) && evMs <= checkNowMs - 60 * 1000 && checkNowMs - evMs <= 72 * 60 * 60 * 1000;
+        });
+
         const initialLock = computePreNewsLockState(
-          cached.calendarEvents,
-          Date.now(),
+          hydratedCachedCalendar,
+          checkNowMs,
           selectedEventId
         );
         if (initialLock.isLockedT5M && initialLock.targetEvent) {
@@ -526,8 +536,8 @@ export const MacroNewsView: React.FC<MacroNewsViewProps> = ({ isActive = true })
           } else {
             t5FinalFetchedEventIdRef.current = initialLock.targetEvent.id;
           }
-        } else if (!isSnapshotFresh(cached, AUTO_REFRESH_TTL_MINUTES)) {
-          await runLiveAnalysis(false, cached);
+        } else if (!isSnapshotFresh(cached, AUTO_REFRESH_TTL_MINUTES) || hasRecentMissingActualInCache) {
+          await runLiveAnalysis(hasRecentMissingActualInCache, cached);
         }
       } else {
         await runLiveAnalysis(false, null);
@@ -678,7 +688,7 @@ export const MacroNewsView: React.FC<MacroNewsViewProps> = ({ isActive = true })
     return () => clearInterval(timer);
   }, [isActive, isOfflineMode, confluenceData.isMarketOpen, snapshot, selectedEventId, runLiveAnalysis]);
 
-  // Automatic T-5M Pre-News Lock Fetch, T-0..+10M Actual Sync & 45-Min Fallback Refresh (paused Offline/Weekend)
+  // Automatic T-5M Pre-News Lock Fetch, T-0..+15M Actual Sync (High + Medium Impact) & 45-Min Fallback Refresh (paused Offline/Weekend)
   useEffect(() => {
     if (isOfflineMode || !snapshot || !confluenceData.isMarketOpen) return;
 
@@ -710,11 +720,11 @@ export const MacroNewsView: React.FC<MacroNewsViewProps> = ({ isActive = true })
         return;
       }
 
-      // Sync Actual up to 3 times inside 0..+10m after release if still blank
+      // Sync Actual up to 3 times inside 0..+15m after release if still blank
       if (
         !hasAct &&
         elapsedAfterRelease >= 60 * 1000 &&
-        elapsedAfterRelease <= 10 * 60 * 1000 &&
+        elapsedAfterRelease <= 15 * 60 * 1000 &&
         !isRefreshingRef.current
       ) {
         const tracker = postReleaseSyncAttemptsRef.current[clusterKey] || { count: 0, lastAttemptMs: 0 };
@@ -724,6 +734,31 @@ export const MacroNewsView: React.FC<MacroNewsViewProps> = ({ isActive = true })
             lastAttemptMs: nowMs,
           };
           void runLiveAnalysis(false, snapshot, targetEv.id);
+          return;
+        }
+      }
+    }
+
+    // Also auto-sync any recently released Medium-Impact (or non-primary High-Impact) USD event inside 1..15m after release if actual is still blank
+    if (!isRefreshingRef.current && Array.isArray(snapshot.calendarEvents)) {
+      const recentMissingEv = snapshot.calendarEvents.find((ev) => {
+        if (!ev || (ev.impact !== 'High' && ev.impact !== 'Medium')) return false;
+        if (!isPlaceholderMacroValue(ev.actual)) return false;
+        if (ev.forecastNum === null && ev.previousNum === null) return false;
+        const evMs = new Date(ev.date).getTime();
+        if (!Number.isFinite(evMs)) return false;
+        const elapsed = nowMs - evMs;
+        return elapsed >= 60 * 1000 && elapsed <= 15 * 60 * 1000;
+      });
+      if (recentMissingEv) {
+        const mKey = `${recentMissingEv.title.trim().toLowerCase()}|${String(recentMissingEv.date || '').slice(0, 13)}`;
+        const tracker = postReleaseSyncAttemptsRef.current[mKey] || { count: 0, lastAttemptMs: 0 };
+        if (tracker.count < 3 && nowMs - tracker.lastAttemptMs >= 2 * 60 * 1000) {
+          postReleaseSyncAttemptsRef.current[mKey] = {
+            count: tracker.count + 1,
+            lastAttemptMs: nowMs,
+          };
+          void runLiveAnalysis(false, snapshot, selectedEventId);
           return;
         }
       }
@@ -997,8 +1032,8 @@ export const MacroNewsView: React.FC<MacroNewsViewProps> = ({ isActive = true })
 
   const preNewsTimelineClusters = useMemo(() => {
     if (preNewsUpcomingEvents.length === 0) return [];
-    return groupCalendarEventsBySlot(preNewsUpcomingEvents, nowMs, true);
-  }, [preNewsUpcomingEvents, nowMs]);
+    return groupCalendarEventsBySlot(preNewsUpcomingEvents, nowMs, !showFullCalendar);
+  }, [preNewsUpcomingEvents, nowMs, showFullCalendar]);
 
   // Tab 2 (Post-News): ALL cross-month released actuals + saved 2H Post-News archive (never reset monthly)
   const postNewsActualEvents = useMemo(() => {
@@ -3532,7 +3567,9 @@ export const MacroNewsView: React.FC<MacroNewsViewProps> = ({ isActive = true })
               const grpTimeMs = new Date(grp.releaseDateIso).getTime();
               const isPastGrp = Number.isFinite(grpTimeMs) && grpTimeMs <= nowMs;
               const isTargetGrp = grp.events.some((e) => clusterEvents.some((c) => c.id === e.id));
-              const hasActualInGrp = grp.events.some((e) => Boolean(e.actual && e.actual.trim() && e.actual.trim() !== '-'));
+              const hasActualInGrp =
+                isPastGrp &&
+                grp.events.some((e) => Boolean(e.actual && e.actual.trim() && e.actual.trim() !== '-'));
               const hasPrimaryInGrp = grp.events.some((e) => isPrimaryHighImpactEvent(e));
 
               const nodeColorClass = isTargetGrp
@@ -3600,13 +3637,16 @@ export const MacroNewsView: React.FC<MacroNewsViewProps> = ({ isActive = true })
 
                     <div className="space-y-1">
                       {grp.events.map((ev) => {
-                        const hasAct = Boolean(ev.actual && ev.actual.trim() && ev.actual.trim() !== '-');
-                        const isRelWithAct = hasAct && (isPastGrp || ev.actualNum !== null);
+                        const evMs = new Date(ev.date).getTime();
+                        const isPastEv = isPastGrp || (Number.isFinite(evMs) && evMs <= nowMs);
+                        const hasAct =
+                          isPastEv && Boolean(ev.actual && ev.actual.trim() && ev.actual.trim() !== '-');
+                        const isRelWithAct = hasAct;
                         const actColor = !isRelWithAct
                           ? 'text-[#0F172A] dark:text-[#F2F4F7]'
-                          : ev.eventBiasForGold === 'SELL'
-                          ? 'text-[#059669] dark:text-[#00A878]'
                           : ev.eventBiasForGold === 'BUY'
+                          ? 'text-[#059669] dark:text-[#00A878]'
+                          : ev.eventBiasForGold === 'SELL'
                           ? 'text-[#E11D48] dark:text-[#E05260]'
                           : 'text-[#0F172A] dark:text-[#F2F4F7]';
                         const preEval =
@@ -3664,35 +3704,41 @@ export const MacroNewsView: React.FC<MacroNewsViewProps> = ({ isActive = true })
               const isActiveTarget = clusterEvents.some((c) => c.id === ev.id);
               const evTimeMs = new Date(ev.date).getTime();
               const isPastItem = Number.isFinite(evTimeMs) && evTimeMs <= nowMs;
-              const hasActualItem = Boolean(
-                ev.actual && ev.actual.trim() && ev.actual.trim() !== '-'
-              );
-              const isReleasedWithActual = hasActualItem && (isPastItem || ev.actualNum !== null);
+              const hasActualItem =
+                isPastItem && Boolean(ev.actual && ev.actual.trim() && ev.actual.trim() !== '-');
+              const isReleasedWithActual = hasActualItem;
 
-              // MANDATORY COLOR RULES FOR ACTUAL:
-              // - Before release: White (#F2F4F7 dark / #0F172A light)
-              // - After release Good for USD (engine eventBiasForGold === 'SELL'): Green
-              // - After release Bad for USD (engine eventBiasForGold === 'BUY'): Red
-              // - After release Neutral / no conclusion (engine eventBiasForGold === 'MIXED'): White
+              // UNIFIED GOLD-CENTRIC COLOR RULES FOR ACTUAL & INTERPRETATION:
+              // - Before release: Neutral dark/light text
+              // - After release Bullish Gold / Bad for USD (eventBiasForGold === 'BUY'): Emerald Green
+              // - After release Bearish Gold / Good for USD (eventBiasForGold === 'SELL'): Rose Red
+              // - After release Neutral / no conclusion (eventBiasForGold === 'MIXED'): Neutral text
               const actualTextColorClass = !isReleasedWithActual
                 ? 'text-[#0F172A] dark:text-[#F2F4F7]'
-                : ev.eventBiasForGold === 'SELL'
-                ? 'text-[#059669] dark:text-[#00A878]'
                 : ev.eventBiasForGold === 'BUY'
+                ? 'text-[#059669] dark:text-[#00A878]'
+                : ev.eventBiasForGold === 'SELL'
                 ? 'text-[#E11D48] dark:text-[#E05260]'
                 : 'text-[#0F172A] dark:text-[#F2F4F7]';
 
+              const interpretationColorClass =
+                ev.eventBiasForGold === 'BUY'
+                  ? 'text-[#059669] dark:text-[#00A878]'
+                  : ev.eventBiasForGold === 'SELL'
+                  ? 'text-[#E11D48] dark:text-[#E05260]'
+                  : 'text-[#526071] dark:text-[#929BA9]';
+
               const usdInterpretationLabel = !isReleasedWithActual
                 ? ev.eventBiasForGold === 'SELL'
-                  ? tr('Pre-News: Pro USD (SELL XAU)', 'Pre-News: Pro USD (SELL XAU)')
+                  ? tr('Pre-News: SELL XAU/USD (Pro USD)', 'Pre-News: SELL XAU/USD (Pro USD)')
                   : ev.eventBiasForGold === 'BUY'
-                  ? tr('Pre-News: Lemah USD (BUY XAU)', 'Pre-News: Weak USD (BUY XAU)')
+                  ? tr('Pre-News: BUY XAU/USD (Lemah USD)', 'Pre-News: BUY XAU/USD (Weak USD)')
                   : tr('Pre-News: Netral', 'Pre-News: Neutral')
                 : ev.eventBiasForGold === 'SELL'
-                ? tr('Good for USD · SELL XAU/USD', 'Good for USD · SELL XAU/USD')
+                ? tr('SELL XAU/USD · Good for USD', 'SELL XAU/USD · Good for USD')
                 : ev.eventBiasForGold === 'BUY'
-                ? tr('Bad for USD · BUY XAU/USD', 'Bad for USD · BUY XAU/USD')
-                : tr('Netral · MIXED XAU/USD', 'Neutral · MIXED XAU/USD');
+                ? tr('BUY XAU/USD · Bad for USD', 'BUY XAU/USD · Bad for USD')
+                : tr('MIXED XAU/USD · Netral', 'MIXED XAU/USD · Neutral');
 
               const preNewsEval =
                 isReleasedWithActual && ev.forecastNum !== null && ev.previousNum !== null
@@ -3805,7 +3851,7 @@ export const MacroNewsView: React.FC<MacroNewsViewProps> = ({ isActive = true })
                   <div className="space-y-1 lg:col-span-7 lg:col-start-1 min-w-0">
                     <div className="flex flex-wrap items-center justify-between gap-2">
                       <div className="flex flex-wrap items-center gap-2 text-xs">
-                        <span className="font-medium text-[#526071] dark:text-[#929BA9]">
+                        <span className={`font-semibold ${interpretationColorClass}`}>
                           {usdInterpretationLabel}
                         </span>
                         {preNewsEval && (
@@ -4178,17 +4224,17 @@ export const MacroNewsView: React.FC<MacroNewsViewProps> = ({ isActive = true })
                     isPrimaryHighImpactEvent(ev) && snapshot.calendarEvents.some((c) => c.id === ev.id);
                   const isActiveTarget = clusterEvents.some((c) => c.id === ev.id);
                   const actualTextColorClass =
-                    ev.eventBiasForGold === 'SELL'
+                    ev.eventBiasForGold === 'BUY'
                       ? 'text-[#059669] dark:text-[#00A878]'
-                      : ev.eventBiasForGold === 'BUY'
+                      : ev.eventBiasForGold === 'SELL'
                       ? 'text-[#E11D48] dark:text-[#E05260]'
                       : 'text-[#0F172A] dark:text-[#F2F4F7]';
                   const usdInterpretationLabel =
                     ev.eventBiasForGold === 'SELL'
-                      ? tr('Good for USD · SELL XAU/USD', 'Good for USD · SELL XAU/USD')
+                      ? tr('SELL XAU/USD · Good for USD', 'SELL XAU/USD · Good for USD')
                       : ev.eventBiasForGold === 'BUY'
-                      ? tr('Bad for USD · BUY XAU/USD', 'Bad for USD · BUY XAU/USD')
-                      : tr('Netral · MIXED XAU/USD', 'Neutral · MIXED XAU/USD');
+                      ? tr('BUY XAU/USD · Bad for USD', 'BUY XAU/USD · Bad for USD')
+                      : tr('MIXED XAU/USD · Netral', 'MIXED XAU/USD · Neutral');
                   const preNewsEval =
                     ev.forecastNum !== null && ev.previousNum !== null
                       ? evaluateSingleEventForGold(ev.title, null, ev.forecastNum, ev.previousNum)
@@ -4253,7 +4299,7 @@ export const MacroNewsView: React.FC<MacroNewsViewProps> = ({ isActive = true })
                       <div className="space-y-1 lg:col-span-7 lg:col-start-1 min-w-0">
                         <div className="flex flex-wrap items-center justify-between gap-2">
                           <div className="flex flex-wrap items-center gap-2 text-xs">
-                            <span className="font-medium text-[#526071] dark:text-[#929BA9]">{usdInterpretationLabel}</span>
+                            <span className={`font-semibold ${actualTextColorClass}`}>{usdInterpretationLabel}</span>
                             {preNewsEval && (
                               <span className="font-mono-numbers tabular-nums text-[#526071] dark:text-[#929BA9]">
                                 · {`Pre ${preNewsEval.bias} → Post ${ev.eventBiasForGold}`}
@@ -4370,6 +4416,30 @@ export const MacroNewsView: React.FC<MacroNewsViewProps> = ({ isActive = true })
                     ? threeSystemState.system3LivePulse.offlinePillarSummaryEn
                     : threeSystemState.system3LivePulse.offlinePillarSummaryId}
                 </p>
+                {threeSystemState.system3LivePulse.tacticalOverlay &&
+                  threeSystemState.system3LivePulse.tacticalOverlay.status !== 'NORMAL' && (
+                    <div
+                      data-testid="system3-tactical-overlay-note"
+                      className={`mt-2 pl-3 border-l-2 space-y-0.5 ${
+                        threeSystemState.system3LivePulse.tacticalOverlay.status === 'COUNTER_RALLY_RISK'
+                          ? 'border-[#059669] dark:border-[#00A878]'
+                          : threeSystemState.system3LivePulse.tacticalOverlay.status === 'COUNTER_DROP_RISK'
+                          ? 'border-[#E11D48] dark:border-[#E05260]'
+                          : 'border-[#D97706] dark:border-[#F59E0B]'
+                      }`}
+                    >
+                      <div className="text-[10px] font-bold uppercase tracking-[0.06em] text-[#0F172A] dark:text-[#F2F4F7]">
+                        {isEn
+                          ? threeSystemState.system3LivePulse.tacticalOverlay.badgeEn
+                          : threeSystemState.system3LivePulse.tacticalOverlay.badgeId}
+                      </div>
+                      <p className="text-[11px] text-[#526071] dark:text-[#929BA9] leading-relaxed">
+                        {isEn
+                          ? threeSystemState.system3LivePulse.tacticalOverlay.detailEn
+                          : threeSystemState.system3LivePulse.tacticalOverlay.detailId}
+                      </p>
+                    </div>
+                  )}
               </div>
 
               {/* Compact Clickable Intermarket Strip inside Tab 3 */}

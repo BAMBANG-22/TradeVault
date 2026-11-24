@@ -39,6 +39,10 @@ import {
   FundamentalGoldSnapshot,
   extractExternalG10AndChinaCalendarEvents,
   computeFundamentalGoldSnapshot,
+  buildGoogleNewsRssQueryForMissingActual,
+  parseGoogleNewsRssItemsFromXml,
+  extractVerifiedActualFromWireHeadlines,
+  normalizeCanonicalMacroTitleKey,
 } from './src/utils/macroNewsEngine';
 import { isMarketDay } from './src/utils/date';
 
@@ -363,6 +367,7 @@ app.get('/api/proxy', async (req, res) => {
   try {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 9000);
+    const isTradingViewTarget = /tradingview\.com/i.test(targetUrl);
     const upstreamRes = await fetch(targetUrl, {
       cache: 'no-store',
       headers: {
@@ -371,6 +376,12 @@ app.get('/api/proxy', async (req, res) => {
         Accept: 'application/json, text/plain, text/xml, application/rss+xml, */*',
         'Cache-Control': 'no-cache, no-store, must-revalidate',
         Pragma: 'no-cache',
+        ...(isTradingViewTarget
+          ? {
+              Origin: 'https://www.tradingview.com',
+              Referer: 'https://www.tradingview.com/',
+            }
+          : {}),
       },
       signal: controller.signal,
     });
@@ -1126,25 +1137,27 @@ function normalizeMt5DateTimeOutput(raw: unknown): string | null {
   if (!raw || typeof raw !== 'string') return null;
   const s = raw.trim();
   if (!s) return null;
-  // Match MT5 formats: "2026.11.14 14:22:10", "2026-11-14 14:22", "2026/11/14 14:22", "2026-11-14T14:22"
-  const m = s.match(/(\d{4})[.\-\/](\d{1,2})[.\-\/](\d{1,2})[T\s]+(\d{1,2}):(\d{2})/);
+  // Match MT5 formats: "2026.11.14 14:22:10", "2026-11-14 14:22", "2026/11/14 14:22", "2026-11-14T14:22:10"
+  const m = s.match(/(\d{4})[.\-\/](\d{1,2})[.\-\/](\d{1,2})[T\s]+(\d{1,2}):(\d{2})(?::(\d{2}))?/);
   if (m) {
     const yyyy = m[1];
     const mm = m[2].padStart(2, '0');
     const dd = m[3].padStart(2, '0');
     const hh = m[4].padStart(2, '0');
     const min = m[5].padStart(2, '0');
-    return `${yyyy}-${mm}-${dd}T${hh}:${min}`;
+    const sec = m[6] ? `:${m[6].padStart(2, '0')}` : '';
+    return `${yyyy}-${mm}-${dd}T${hh}:${min}${sec}`;
   }
-  // Match EU/ID DD.MM.YYYY HH:mm or DD/MM/YYYY HH:mm
-  const eu = s.match(/\b(\d{1,2})[.\-\/](\d{1,2})[.\-\/](\d{4})[T\s]+(\d{1,2}):(\d{2})/);
+  // Match EU/ID DD.MM.YYYY HH:mm(:ss) or DD/MM/YYYY HH:mm(:ss)
+  const eu = s.match(/\b(\d{1,2})[.\-\/](\d{1,2})[.\-\/](\d{4})[T\s]+(\d{1,2}):(\d{2})(?::(\d{2}))?/);
   if (eu) {
     const dd = eu[1].padStart(2, '0');
     const mm = eu[2].padStart(2, '0');
     const yyyy = eu[3];
     const hh = eu[4].padStart(2, '0');
     const min = eu[5].padStart(2, '0');
-    return `${yyyy}-${mm}-${dd}T${hh}:${min}`;
+    const sec = eu[6] ? `:${eu[6].padStart(2, '0')}` : '';
+    return `${yyyy}-${mm}-${dd}T${hh}:${min}${sec}`;
   }
   const parsed = new Date(s);
   if (!isNaN(parsed.getTime())) {
@@ -1153,7 +1166,9 @@ function normalizeMt5DateTimeOutput(raw: unknown): string | null {
     const dd = String(parsed.getDate()).padStart(2, '0');
     const hh = String(parsed.getHours()).padStart(2, '0');
     const min = String(parsed.getMinutes()).padStart(2, '0');
-    return `${yyyy}-${mm}-${dd}T${hh}:${min}`;
+    const secNum = parsed.getSeconds();
+    const sec = secNum > 0 ? `:${String(secNum).padStart(2, '0')}` : '';
+    return `${yyyy}-${mm}-${dd}T${hh}:${min}${sec}`;
   }
   return null;
 }
@@ -1416,18 +1431,19 @@ Inspect ${
     } carefully from top to bottom and extract EVERY closed trade row visible (even if cropped and missing a header).
 
 STRICT EXTRACTION RULES:
-1. SUPPORTED SCREENSHOT VIEWS:
+1. SUPPORTED SCREENSHOT VIEWS & DOUBLE ENTRIES:
    - MT5 / MT4 Mobile "History -> Positions" (e.g. "XAUUSD, sell 0.10", "2615.40 -> 2602.10", timestamp, profit)
    - MT5 Mobile "History -> Deals" (rows showing symbol, buy/sell, "out" / "in/out", volume, price, profit — extract closing/profit deals as closed trades)
    - Indonesian MT5 locale ("beli" = BUY, "jual" = SELL) as well as English ("buy"/"long" = BUY, "sell"/"short" = SELL)
    - MT5 / MT4 Desktop Account History table
+   - CRITICAL DOUBLE-ENTRY RULE: Traders often open multiple rapid positions ("tap-tap" / layering) with IDENTICAL or near-identical symbol, lotSize, entryPrice, stopLoss, takeProfit, exitPrice, and netProfit! Extract EVERY visible trade row separately in top-to-bottom order — NEVER merge, collapse, or skip duplicate-looking rows within a screenshot or across screenshots!
    - IGNORE summary header lines ("Profit:", "Deposit:", "Balance:", "Credit:", "Withdrawal:") and non-trade ledger rows ("balance", "deposit", "credit", "withdrawal") and unfilled "canceled" pending orders.
 2. EXACT NUMERIC & SIGN FIDELITY (ZERO SILENT ERRORS):
    - Left: symbol + direction + lot, e.g. "XAUUSD, sell 0.10", "XAUUSDm, buy 0.05", "GOLD, beli 0.10"
    - Prices: "2615.40 -> 2602.10" -> entryPrice BEFORE "->", exitPrice AFTER "->". Copy EVERY digit and decimal accurately (never drop a digit or decimal!).
    - Profit Sign: Inspect BOTH the "-" / "−" prefix AND font color (red = negative loss, blue/green = positive profit). If a BUY exited lower than entry (or SELL exited higher than entry) and text is red/loss, netProfit MUST be negative (e.g. -45.20)!
-   - Top-right of row: timestamp like "2026.11.14 14:22:10" (closeDateTime)
-   - Expanded row details (if visible): "S / L:" -> stopLoss, "T / P:" -> takeProfit, "Open:" -> openDateTime, "Swap:" -> swap, "Commission:"/"Fee:" -> commission, "ID:"/"#12345" -> ticketId.
+   - Top-right of row: timestamp like "2026.11.14 14:22:10" (closeDateTime — ALWAYS include seconds ":ss" when visible!).
+   - Expanded row details (if visible): "S / L:" -> stopLoss, "T / P:" -> takeProfit, "Open:" -> openDateTime (include ":ss" if visible), "Swap:" -> swap, "Commission:"/"Fee:" -> commission, "ID:"/"#12345" -> ticketId.
 3. READING DESKTOP MT5 ACCOUNT HISTORY TABLE:
    - Map columns: Time (open), Position/Order/Ticket (ticketId), Symbol (instrument), Type (buy->BUY, sell->SELL), Volume (lotSize), Open Price (entryPrice), S/L (stopLoss), T/P (takeProfit), Close Time (closeDateTime), Close Price (exitPrice), Commission, Swap, Profit (netProfit).
 4. CLOSE TYPE DETECTION (TP / SL / Manual):
@@ -1437,7 +1453,7 @@ STRICT EXTRACTION RULES:
 5. FORMATTING${isBatch ? ' & IMAGE ATTRIBUTION' : ''}:
    - ${isBatch ? `Set "imageIndex" strictly to the integer 0..${resolvedImages.length - 1} matching the screenshot containing that trade row.` : 'Set "imageIndex" to 0.'}
    - Return empty string "" (NEVER literal "null") when ticketId, openDateTime, closeDateTime, or notes are not visible.
-   - Output openDateTime / closeDateTime in "YYYY-MM-DD HH:mm" if visible.
+   - Output openDateTime / closeDateTime in "YYYY-MM-DD HH:mm:ss" when seconds are visible (or "YYYY-MM-DD HH:mm" if seconds are not shown).
    - Never invent trades that are not visibly printed on screen.`;
 
     const contentParts: any[] = [];
@@ -1549,8 +1565,8 @@ STRICT EXTRACTION RULES:
                               commission: { type: Type.NUMBER, description: 'Commission fee amount if shown, else 0' },
                               swap: { type: Type.NUMBER, description: 'Swap amount if shown (signed), else 0' },
                               netProfit: { type: Type.NUMBER, description: 'Realized profit/loss on the row (negative if loss / red)' },
-                              openDateTime: { type: Type.STRING, description: 'Open timestamp YYYY-MM-DD HH:mm if visible, else empty string' },
-                              closeDateTime: { type: Type.STRING, description: 'Close timestamp YYYY-MM-DD HH:mm if visible, else empty string' },
+                              openDateTime: { type: Type.STRING, description: 'Open timestamp YYYY-MM-DD HH:mm:ss (or HH:mm if no seconds) if visible, else empty string' },
+                              closeDateTime: { type: Type.STRING, description: 'Close timestamp YYYY-MM-DD HH:mm:ss (or HH:mm if no seconds) if visible, else empty string' },
                               closeType: { type: Type.STRING, description: 'TP, SL, or Manual' },
                               notes: { type: Type.STRING, description: 'Optional visible row tag e.g. [tp], [sl], or empty string' },
                             },
@@ -2193,7 +2209,7 @@ function matchTradingViewActualForEvent(
   for (const tv of tvEvents) {
     if (tv.actual === null || tv.actual === undefined || !Number.isFinite(Number(tv.actual))) continue;
     const tvMs = new Date(String(tv.date || '')).getTime();
-    if (!Number.isFinite(tvMs) || Math.abs(tvMs - evMs) > 35 * 60 * 1000) continue;
+    if (!Number.isFinite(tvMs) || Math.abs(tvMs - evMs) > 90 * 60 * 1000) continue;
 
     const tvTitle = String(tv.title || '').toLowerCase();
     const tvInd = String(tv.indicator || '').toLowerCase();
@@ -2214,7 +2230,7 @@ function matchTradingViewActualForEvent(
     if (ffIsQoq && !tvIsQoq) continue;
 
     // Strict Core vs Headline distinction
-    const tvIsCore = /\bcore\b|ex\s*food|exfood|ex\s*autos/i.test(tvText);
+    const tvIsCore = /\bcore\b|ex\s*food|exfood|ex\s*autos|ex\s*transp/i.test(tvText);
     if (ffIsCore !== tvIsCore) continue;
 
     let score = 0;
@@ -2228,13 +2244,15 @@ function matchTradingViewActualForEvent(
       if (tvText.includes('pce') || tvText.includes('personal consumption')) score += 60;
     } else if (t.includes('unemployment claims') || t.includes('initial jobless claims')) {
       if (tvText.includes('continuing') || tvText.includes('4-week')) continue;
-      if (tvText.includes('initial jobless')) score += 70;
+      if (tvText.includes('initial jobless') || tvText.includes('unemployment claims')) score += 70;
+    } else if (t.includes('continuing claims') || t.includes('continuing jobless claims')) {
+      if (tvText.includes('continuing jobless')) score += 70;
     } else if (t.includes('non-farm employment change') || t === 'nfp') {
       if (tvText.includes('non farm payrolls') || tvText.includes('nonfarm')) score += 70;
     } else if (t.includes('adp weekly')) {
       if (tvText.includes('adp') && tvText.includes('weekly')) score += 65;
-    } else if (t.includes('adp non-farm')) {
-      if (!tvText.includes('weekly') && tvText.includes('adp employment')) score += 65;
+    } else if (t.includes('adp non-farm') || t.includes('adp employment')) {
+      if (!tvText.includes('weekly') && tvText.includes('adp')) score += 65;
     } else if (t.includes('unemployment rate')) {
       if (tvText.includes('unemployment rate')) score += 70;
     } else if (t.includes('average hourly earnings')) {
@@ -2247,12 +2265,52 @@ function matchTradingViewActualForEvent(
       if (tvText.includes('gdp growth')) score += 65;
     } else if (t.includes('ism manufacturing pmi')) {
       if (tvText.includes('ism manufacturing pmi')) score += 70;
-    } else if (t.includes('ism services pmi')) {
-      if (tvText.includes('ism services pmi')) score += 70;
+    } else if (t.includes('ism services pmi') || t.includes('ism non-manufacturing pmi')) {
+      if (tvText.includes('ism services pmi') || tvText.includes('ism non-manufacturing pmi')) score += 70;
+    } else if (t.includes('ism manufacturing prices')) {
+      if (tvText.includes('ism manufacturing prices')) score += 70;
+    } else if (t.includes('ism services prices')) {
+      if (tvText.includes('ism services prices')) score += 70;
+    } else if (t.includes('flash manufacturing pmi') || t.includes('s&p global manufacturing pmi')) {
+      if (!tvText.includes('ism') && tvText.includes('manufacturing') && tvText.includes('pmi')) score += 70;
+    } else if (t.includes('flash services pmi') || t.includes('s&p global services pmi')) {
+      if (!tvText.includes('ism') && tvText.includes('services') && tvText.includes('pmi')) score += 70;
+    } else if (t.includes('flash composite pmi') || t.includes('s&p global composite pmi')) {
+      if (!tvText.includes('ism') && tvText.includes('composite') && tvText.includes('pmi')) score += 70;
+    } else if (t.includes('chicago pmi')) {
+      if (tvText.includes('chicago pmi')) score += 70;
+    } else if (t.includes('philly fed') || t.includes('philadelphia fed')) {
+      if ((tvText.includes('philadelphia fed') || tvText.includes('philly fed')) && tvText.includes('manufacturing')) score += 70;
+    } else if (t.includes('empire state')) {
+      if (tvText.includes('empire state') && tvText.includes('manufacturing')) score += 70;
+    } else if (t.includes('richmond') && t.includes('manufacturing')) {
+      if (tvText.includes('richmond') && tvText.includes('manufacturing')) score += 70;
+    } else if (t.includes('cb consumer confidence') || t === 'consumer confidence') {
+      if (tvText.includes('consumer confidence')) score += 70;
+    } else if (t.includes('uom consumer sentiment') || t.includes('michigan consumer sentiment')) {
+      if (tvText.includes('michigan consumer sentiment') || tvText.includes('uom consumer sentiment')) score += 70;
+    } else if (t.includes('uom inflation expectations') || t.includes('michigan inflation expectations')) {
+      if (tvText.includes('michigan inflation') || tvText.includes('uom inflation')) score += 70;
+    } else if (t.includes('durable goods')) {
+      if (tvText.includes('durable goods')) score += 65;
+    } else if (t.includes('factory orders')) {
+      if (tvText.includes('factory orders')) score += 65;
     } else if (t.includes('existing home sales')) {
       if (tvText.includes('existing home sales')) score += 65;
     } else if (t.includes('new home sales')) {
       if (tvText.includes('new home sales')) score += 65;
+    } else if (t.includes('pending home sales')) {
+      if (tvText.includes('pending home sales')) score += 65;
+    } else if (t.includes('building permits')) {
+      if (tvText.includes('building permits')) score += 65;
+    } else if (t.includes('housing starts')) {
+      if (tvText.includes('housing starts')) score += 65;
+    } else if (t.includes('trade balance')) {
+      if (tvText.includes('balance of trade') || tvText.includes('trade balance')) score += 65;
+    } else if (t.includes('industrial production')) {
+      if (tvText.includes('industrial production')) score += 65;
+    } else if (t.includes('capacity utilization')) {
+      if (tvText.includes('capacity utilization')) score += 65;
     } else if (t.includes('federal budget balance')) {
       if (tvText.includes('monthly budget') || tvText.includes('federal budget')) score += 65;
     } else if (t.includes('crude oil inventories')) {
@@ -2266,7 +2324,7 @@ function matchTradingViewActualForEvent(
       const ffTokens = t.replace(/[^a-z0-9\s]/g, ' ').split(/\s+/).filter((w) => w.length > 2 && !stopWords.has(w));
       const overlap = ffTokens.filter((w) => tvText.includes(w)).length;
       if (ffTokens.length > 0 && overlap >= Math.min(2, ffTokens.length)) {
-        score += overlap * 20;
+        score += overlap * 26;
       }
     }
 
@@ -2299,6 +2357,80 @@ function matchTradingViewActualForEvent(
   return formatTradingViewActualString(Number(bestCandidate.actual), bestCandidate, ffUnit);
 }
 
+async function enrichMissingActualsViaServerGoogleNewsRss(
+  events: MacroCalendarEvent[]
+): Promise<MacroCalendarEvent[]> {
+  if (!events || events.length === 0) return events;
+  const nowMs = Date.now();
+  const missingWireTargets = events.filter((ev) => {
+    const evMs = new Date(ev.date).getTime();
+    return (
+      (ev.impact === 'High' || ev.impact === 'Medium') &&
+      !isFedSpeechEvent(ev.title) &&
+      (!ev.actual || !ev.actual.trim()) &&
+      (ev.forecastNum !== null || ev.previousNum !== null) &&
+      Number.isFinite(evMs) &&
+      evMs <= nowMs - 30 * 1000 &&
+      nowMs - evMs <= 72 * 60 * 60 * 1000
+    );
+  });
+
+  if (missingWireTargets.length === 0) return events;
+
+  const rssCacheByQuery = new Map<string, Array<{ title: string; pubDate: string; pubMs: number }>>();
+  for (const ev of missingWireTargets) {
+    const q = buildGoogleNewsRssQueryForMissingActual(ev.title);
+    if (!q || rssCacheByQuery.has(q)) continue;
+    try {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 5000);
+      const rssUrl = `https://news.google.com/rss/search?q=${encodeURIComponent(q)}&hl=en-US&gl=US&ceid=US:en`;
+      const res = await fetch(rssUrl, {
+        cache: 'no-store',
+        headers: {
+          'User-Agent':
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+          Accept: 'application/rss+xml, application/xml, text/xml',
+        },
+        signal: controller.signal,
+      });
+      clearTimeout(timeout);
+      if (res.ok) {
+        const xml = await res.text();
+        rssCacheByQuery.set(q, parseGoogleNewsRssItemsFromXml(xml));
+      } else {
+        rssCacheByQuery.set(q, []);
+      }
+    } catch {
+      rssCacheByQuery.set(q, []);
+    }
+  }
+
+  return events.map((ev) => {
+    if (ev.actual && ev.actual.trim()) return ev;
+    const q = buildGoogleNewsRssQueryForMissingActual(ev.title);
+    if (!q) return ev;
+    const headlines = rssCacheByQuery.get(q) || [];
+    const extracted = extractVerifiedActualFromWireHeadlines(headlines, ev, nowMs);
+    if (!extracted) return ev;
+    const evalResult = evaluateSingleEventForGold(
+      ev.title,
+      extracted.actualNum,
+      ev.forecastNum,
+      ev.previousNum
+    );
+    return {
+      ...ev,
+      actual: extracted.actual,
+      actualNum: extracted.actualNum,
+      eventBiasForGold: evalResult.bias,
+      biasReasonId: evalResult.reasonId,
+      biasReasonEn: evalResult.reasonEn,
+      actualSource: 'TV_ENRICH',
+    };
+  });
+}
+
 async function enrichEventsWithTradingViewActuals(events: MacroCalendarEvent[]): Promise<MacroCalendarEvent[]> {
   if (!events || events.length === 0) return events;
   const nowMs = Date.now();
@@ -2315,35 +2447,41 @@ async function enrichEventsWithTradingViewActuals(events: MacroCalendarEvent[]):
   const minMs = times.length > 0 ? Math.min(...times) : nowMs - 7 * 86400000;
   const maxMs = times.length > 0 ? Math.max(...times) : nowMs + 7 * 86400000;
   const tvEvents = await fetchTradingViewUsEventsWindow(minMs, maxMs);
-  if (tvEvents.length === 0) return events;
 
-  return events.map((ev) => {
-    if (ev.actual && ev.actual.trim()) return ev;
-    const matched = matchTradingViewActualForEvent(
-      ev.title,
-      ev.date,
-      ev.previousNum,
-      ev.unit,
-      tvEvents
-    );
-    if (!matched) return ev;
+  let tvEnriched = events;
+  if (tvEvents.length > 0) {
+    tvEnriched = events.map((ev) => {
+      const evMs = new Date(ev.date).getTime();
+      if (!Number.isFinite(evMs) || evMs > nowMs - 2 * 60 * 1000) return ev;
+      if (ev.actual && ev.actual.trim()) return ev;
+      const matched = matchTradingViewActualForEvent(
+        ev.title,
+        ev.date,
+        ev.previousNum,
+        ev.unit,
+        tvEvents
+      );
+      if (!matched) return ev;
 
-    const evalResult = evaluateSingleEventForGold(
-      ev.title,
-      matched.numericVal,
-      ev.forecastNum,
-      ev.previousNum
-    );
-    return {
-      ...ev,
-      actual: matched.formatted,
-      actualNum: matched.numericVal,
-      unit: matched.unit || ev.unit,
-      eventBiasForGold: evalResult.bias,
-      biasReasonId: evalResult.reasonId,
-      biasReasonEn: evalResult.reasonEn,
-    };
-  });
+      const evalResult = evaluateSingleEventForGold(
+        ev.title,
+        matched.numericVal,
+        ev.forecastNum,
+        ev.previousNum
+      );
+      return {
+        ...ev,
+        actual: matched.formatted,
+        actualNum: matched.numericVal,
+        unit: matched.unit || ev.unit,
+        eventBiasForGold: evalResult.bias,
+        biasReasonId: evalResult.reasonId,
+        biasReasonEn: evalResult.reasonEn,
+      };
+    });
+  }
+
+  return enrichMissingActualsViaServerGoogleNewsRss(tvEnriched);
 }
 
 async function fetchForexFactoryUsdCalendar(): Promise<MacroCalendarEvent[]> {
@@ -2371,6 +2509,8 @@ async function fetchForexFactoryUsdCalendar(): Promise<MacroCalendarEvent[]> {
           : [];
       if (tvEvents.length > 0) {
         combinedRaw = combinedRaw.map((item: any) => {
+          const evTs = new Date(item.date || 0).getTime();
+          if (!Number.isFinite(evTs) || evTs > nowTs - 2 * 60 * 1000) return item;
           const currentAct = String(item.actual ?? '').trim();
           if (currentAct) return item;
           const prevParsed = parseMacroNumeric(String(item.previous ?? item.prev ?? ''));
@@ -2393,7 +2533,9 @@ async function fetchForexFactoryUsdCalendar(): Promise<MacroCalendarEvent[]> {
       const act = String(item.actual ?? "").trim();
       const evTs = new Date(item.date || 0).getTime();
       const hasNums = String(item.forecast ?? "").trim() || String(item.previous ?? item.prev ?? "").trim();
-      return impact === "high" && !act && Boolean(hasNums) && !isFedSpeechEvent(String(item.title || "")) && !isNaN(evTs) && evTs < nowTs - 5 * 60 * 1000;
+      const isEligibleImpact =
+        impact === "high" || (impact === "medium" && Number.isFinite(evTs) && nowTs - evTs <= 48 * 60 * 60 * 1000);
+      return isEligibleImpact && !act && Boolean(hasNums) && !isFedSpeechEvent(String(item.title || "")) && !isNaN(evTs) && evTs < nowTs - 5 * 60 * 1000;
     });
 
     if (combinedRaw.length === 0) {
@@ -2403,17 +2545,29 @@ async function fetchForexFactoryUsdCalendar(): Promise<MacroCalendarEvent[]> {
       // Enrich past High-Impact releases whose actual values are still empty after TradingView
       const enrichedRaw = await fetchForexFactoryCalendarViaGoogleSearch();
       if (Array.isArray(enrichedRaw) && enrichedRaw.length > 0) {
-        const enrichedMap = new Map<string, string>();
+        const enrichedByDay = new Map<string, string>();
+        const enrichedPastByTitle = new Map<string, string>();
         for (const eItem of enrichedRaw) {
           const eAct = String(eItem.actual ?? "").trim();
-          if (eAct) {
-            enrichedMap.set(String(eItem.title || "").trim().toLowerCase(), eAct);
+          const eTs = new Date(eItem.date || 0).getTime();
+          if (eAct && (!Number.isFinite(eTs) || eTs <= nowTs)) {
+            const tKey = String(eItem.title || "").trim().toLowerCase();
+            const dKey = Number.isFinite(eTs) ? new Date(eTs).toISOString().slice(0, 10) : "";
+            if (dKey) enrichedByDay.set(`${tKey}|${dKey}`, eAct);
+            if (!enrichedPastByTitle.has(tKey)) enrichedPastByTitle.set(tKey, eAct);
           }
         }
         combinedRaw = combinedRaw.map((item: any) => {
+          const evTs = new Date(item.date || 0).getTime();
+          // Strictly forbid populating actuals on future events
+          if (!Number.isFinite(evTs) || evTs > nowTs - 60 * 1000) {
+            return item;
+          }
           const currentAct = String(item.actual ?? "").trim();
           if (!currentAct) {
-            const matchedAct = enrichedMap.get(String(item.title || "").trim().toLowerCase());
+            const tKey = String(item.title || "").trim().toLowerCase();
+            const dKey = new Date(evTs).toISOString().slice(0, 10);
+            const matchedAct = enrichedByDay.get(`${tKey}|${dKey}`) || enrichedPastByTitle.get(tKey);
             if (matchedAct) {
               return { ...item, actual: matchedAct };
             }
@@ -2457,7 +2611,7 @@ async function fetchForexFactoryUsdCalendar(): Promise<MacroCalendarEvent[]> {
       return (isNaN(ta) ? 0 : ta) - (isNaN(tb) ? 0 : tb);
     });
 
-    return dedupedRaw.slice(0, 90).map((item: any, idx: number) => {
+    const mappedResult: MacroCalendarEvent[] = dedupedRaw.slice(0, 90).map((item: any, idx: number) => {
       const title = String(item.title || '').trim();
       const previous = String(item.previous ?? item.prev ?? '').trim();
       const forecast = String(item.forecast ?? '').trim();
@@ -2466,13 +2620,6 @@ async function fetchForexFactoryUsdCalendar(): Promise<MacroCalendarEvent[]> {
       const prevParsed = parseMacroNumeric(previous);
       const fcstParsed = parseMacroNumeric(forecast);
       const actParsed = parseMacroNumeric(actual);
-
-      const evalResult = evaluateSingleEventForGold(
-        title,
-        actParsed.value,
-        fcstParsed.value,
-        prevParsed.value
-      );
 
       const rawImpact = String(item.impact || 'Medium').trim();
       const impact: 'High' | 'Medium' | 'Low' =
@@ -2490,6 +2637,18 @@ async function fetchForexFactoryUsdCalendar(): Promise<MacroCalendarEvent[]> {
         }
       }
 
+      const evMs = new Date(isoDate).getTime();
+      const isReleased = Number.isFinite(evMs) && evMs <= Date.now() + 2 * 60 * 1000;
+      const safeActual = isReleased ? actual : '';
+      const safeActualNum = isReleased ? actParsed.value : null;
+
+      const evalResult = evaluateSingleEventForGold(
+        title,
+        safeActualNum,
+        fcstParsed.value,
+        prevParsed.value
+      );
+
       const isPrimary = isPrimaryHighImpactEvent({
         title,
         impact,
@@ -2504,10 +2663,10 @@ async function fetchForexFactoryUsdCalendar(): Promise<MacroCalendarEvent[]> {
         impact,
         previous: previous || '—',
         forecast: forecast || '—',
-        actual: actual || '',
+        actual: safeActual || '',
         previousNum: prevParsed.value,
         forecastNum: fcstParsed.value,
-        actualNum: actParsed.value,
+        actualNum: safeActualNum,
         unit: fcstParsed.unit || prevParsed.unit || actParsed.unit || '',
         pillar: classifyFomcPillar(title),
         isInverseIndicator: isInverseUsdIndicator(title),
@@ -2518,6 +2677,8 @@ async function fetchForexFactoryUsdCalendar(): Promise<MacroCalendarEvent[]> {
         eventCategory: isPrimary ? 'PRIMARY_HIGH_IMPACT' : 'SUPPORTING_REFERENCE',
       };
     });
+
+    return enrichMissingActualsViaServerGoogleNewsRss(mappedResult);
   } catch {
     return [];
   }
@@ -3086,6 +3247,7 @@ function mergeIntermarketPulseSet(
     us10y: IntermarketAssetPulse;
     vix?: VixRiskPulse;
     goldPositioning?: GoldPositioningPulse;
+    eurUsd?: ExtendedMarketAssetPulse;
   },
   secondary?: {
     dxy?: IntermarketAssetPulse;
@@ -3094,6 +3256,7 @@ function mergeIntermarketPulseSet(
     us10y?: IntermarketAssetPulse;
     vix?: VixRiskPulse;
     goldPositioning?: GoldPositioningPulse;
+    eurUsd?: ExtendedMarketAssetPulse;
   } | null,
   tertiary?: {
     dxy?: IntermarketAssetPulse;
@@ -3102,6 +3265,7 @@ function mergeIntermarketPulseSet(
     us10y?: IntermarketAssetPulse;
     vix?: VixRiskPulse;
     goldPositioning?: GoldPositioningPulse;
+    eurUsd?: ExtendedMarketAssetPulse;
   } | null
 ): {
   dxy: IntermarketAssetPulse;
@@ -3110,6 +3274,7 @@ function mergeIntermarketPulseSet(
   us10y: IntermarketAssetPulse;
   vix?: VixRiskPulse;
   goldPositioning?: GoldPositioningPulse;
+  eurUsd?: ExtendedMarketAssetPulse;
 } {
   const pickAsset = <T extends IntermarketAssetPulse | undefined>(a: T, b?: IntermarketAssetPulse, c?: IntermarketAssetPulse): T => {
     if (isIntermarketAssetLive(a)) return a;
@@ -3130,6 +3295,7 @@ function mergeIntermarketPulseSet(
     us10y: pickAsset(primary.us10y, secondary?.us10y, tertiary?.us10y),
     vix: pickAvailable(primary.vix, secondary?.vix, tertiary?.vix),
     goldPositioning: pickAvailable(primary.goldPositioning, secondary?.goldPositioning, tertiary?.goldPositioning),
+    eurUsd: pickAvailable(primary.eurUsd, secondary?.eurUsd, tertiary?.eurUsd),
   };
 }
 
@@ -3145,7 +3311,7 @@ async function gatherMacroPublicFeeds(forceRefresh = false) {
 
   const prevFeeds = cachedMacroFeeds;
 
-  const [calendarEvents, dxy, us02y, usoil, us10y, vix, goldPositioning, rssBundle] = await Promise.all([
+  const [calendarEvents, dxy, us02y, usoil, us10y, vix, goldPositioning, eurUsd, rssBundle] = await Promise.all([
     fetchForexFactoryUsdCalendar(),
     fetchYahooAssetPulse('DXY', 'DX-Y.NYB', 'US Dollar Index (DXY)', 0, 0),
     fetchYahooAssetPulse('US02Y', '2YY=F', 'US 2Y Treasury Yield', 0, 0),
@@ -3153,6 +3319,7 @@ async function gatherMacroPublicFeeds(forceRefresh = false) {
     fetchYahooAssetPulse('US10Y', '^TNX', 'US 10Y Treasury Yield', 0, 0),
     fetchServerVixPulse(),
     fetchServerGoldPositioning(),
+    fetchServerExtendedYahooAsset({ symbol: 'EURUSD', yahooTicker: 'EURUSD=X', name: 'EUR/USD', category: 'FX_G10', bullishWhenUp: true }),
     fetchPublicBreakingHeadlines(),
   ]);
 
@@ -3160,7 +3327,7 @@ async function gatherMacroPublicFeeds(forceRefresh = false) {
   const rssFeedHealth = rssBundle.rssFeedHealth;
 
   const mergedPulse = mergeIntermarketPulseSet(
-    { dxy, us02y, usoil, us10y, vix, goldPositioning },
+    { dxy, us02y, usoil, us10y, vix, goldPositioning, eurUsd },
     prevFeeds?.intermarketPulse
   );
 
@@ -3228,17 +3395,18 @@ app.get('/api/macro-news/rss', async (_req, res) => {
 // Real-Time Intermarket Pulse endpoint (0 Gemini tokens, always bypasses feed cache)
 app.get('/api/macro-news/intermarket-live', async (_req, res) => {
   try {
-    const [dxy, us02y, usoil, us10y, vix, goldPositioning] = await Promise.all([
+    const [dxy, us02y, usoil, us10y, vix, goldPositioning, eurUsd] = await Promise.all([
       fetchYahooAssetPulse('DXY', 'DX-Y.NYB', 'US Dollar Index (DXY)', 0, 0),
       fetchYahooAssetPulse('US02Y', '2YY=F', 'US 2Y Treasury Yield', 0, 0),
       fetchYahooAssetPulse('USOIL', 'CL=F', 'US Oil WTI Crude', 0, 0),
       fetchYahooAssetPulse('US10Y', '^TNX', 'US 10Y Treasury Yield', 0, 0),
       fetchServerVixPulse(),
       fetchServerGoldPositioning(),
+      fetchServerExtendedYahooAsset({ symbol: 'EURUSD', yahooTicker: 'EURUSD=X', name: 'EUR/USD', category: 'FX_G10', bullishWhenUp: true }),
     ]);
 
     const mergedPulse = mergeIntermarketPulseSet(
-      { dxy, us02y, usoil, us10y, vix, goldPositioning },
+      { dxy, us02y, usoil, us10y, vix, goldPositioning, eurUsd },
       cachedMacroFeeds?.intermarketPulse
     );
 
@@ -3355,7 +3523,34 @@ app.get('/api/macro-news/history-backfill', async (req, res) => {
 
     const json = await tvRes.json();
     const rawList = Array.isArray(json?.result) ? json.result : [];
-    const mappedEvents = mapRawTradingViewEventsToCalendarEvents(rawList, nowMs);
+    const tvMappedEvents = mapRawTradingViewEventsToCalendarEvents(rawList, nowMs);
+
+    // Also include current-week released USD actuals (including S&P Global Flash PMI enriched via Google News RSS wire consensus)
+    let currentWeekReleased: MacroCalendarEvent[] = [];
+    try {
+      const liveCal =
+        cachedMacroFeeds?.calendarEvents && cachedMacroFeeds.calendarEvents.length > 0
+          ? await enrichMissingActualsViaServerGoogleNewsRss(cachedMacroFeeds.calendarEvents)
+          : await fetchForexFactoryUsdCalendar();
+      currentWeekReleased = liveCal.filter((ev) => {
+        const evMs = new Date(ev.date).getTime();
+        return Number.isFinite(evMs) && evMs <= nowMs && Boolean(ev.actual && ev.actual.trim());
+      });
+    } catch {
+      // ignore fallback error
+    }
+
+    const combinedByKey = new Map<string, MacroCalendarEvent>();
+    for (const ev of [...currentWeekReleased, ...tvMappedEvents]) {
+      const key = `${ev.title.trim().toLowerCase()}|${String(ev.date || '').slice(0, 10)}`;
+      if (!combinedByKey.has(key)) {
+        combinedByKey.set(key, ev);
+      }
+    }
+    const mappedEvents = Array.from(combinedByKey.values()).sort(
+      (a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()
+    );
+
     if (mappedEvents.length > 0) {
       cachedHistoryBackfill = {
         fetchedAt: Date.now(),
@@ -3456,6 +3651,7 @@ app.post('/api/macro-news/analyze', async (req, res) => {
           us10y: IntermarketAssetPulse;
           vix?: VixRiskPulse;
           goldPositioning?: GoldPositioningPulse;
+          eurUsd?: ExtendedMarketAssetPulse;
         };
         breakingNews?: BreakingNewsHeadline[];
         rssFeedHealth?: RssFeedHealthStatus;
@@ -3472,6 +3668,7 @@ app.post('/api/macro-news/analyze', async (req, res) => {
         us02y?: IntermarketAssetPulse;
         vix?: VixRiskPulse;
         goldPositioning?: GoldPositioningPulse;
+        eurUsd?: ExtendedMarketAssetPulse;
       };
       breakingNews: BreakingNewsHeadline[];
       rssFeedHealth?: RssFeedHealthStatus;
@@ -3486,11 +3683,81 @@ app.post('/api/macro-news/analyze', async (req, res) => {
         (e) => e.isLiveFeed === true && !String(e.id || '').startsWith('ff-usd-')
       );
 
+    // Wajib lengkapi actual rilis yang sudah lewat via Lapis 1 (TradingView) + Lapis 2 (Google News RSS Wire Consensus), lalu Lapis 3 (Google Search) jika masih ada High/Medium-Impact kosong
+    const enrichPastMissingActuals = async (events: MacroCalendarEvent[]): Promise<MacroCalendarEvent[]> => {
+      const tvEnriched = await enrichEventsWithTradingViewActuals(events);
+      const nowMs = Date.now();
+      const missing = tvEnriched.some((ev) => {
+        const evMs = new Date(ev.date).getTime();
+        const isEligibleImpact =
+          ev.impact === 'High' ||
+          (ev.impact === 'Medium' && Number.isFinite(evMs) && nowMs - evMs <= 72 * 60 * 60 * 1000);
+        return (
+          isEligibleImpact &&
+          !isFedSpeechEvent(ev.title) &&
+          (ev.forecastNum !== null || ev.previousNum !== null) &&
+          (!ev.actual || !ev.actual.trim()) &&
+          Number.isFinite(evMs) &&
+          evMs < nowMs - 5 * 60 * 1000
+        );
+      });
+      if (!missing) return tvEnriched;
+      try {
+        const searched = await fetchForexFactoryCalendarViaGoogleSearch();
+        if (!Array.isArray(searched) || searched.length === 0) return tvEnriched;
+        const mapByDay = new Map<string, string>();
+        const mapPastByTitle = new Map<string, string>();
+        for (const item of searched) {
+          const a = String(item.actual ?? '').trim();
+          const itemMs = new Date(item.date || 0).getTime();
+          if (a && (!Number.isFinite(itemMs) || itemMs <= nowMs)) {
+            const tKey = normalizeCanonicalMacroTitleKey(String(item.title || ''));
+            const dKey = Number.isFinite(itemMs) ? new Date(itemMs).toISOString().slice(0, 10) : '';
+            if (dKey) mapByDay.set(`${tKey}|${dKey}`, a);
+            if (!mapPastByTitle.has(tKey)) mapPastByTitle.set(tKey, a);
+          }
+        }
+        return tvEnriched.map((ev) => {
+          const evMs = new Date(ev.date).getTime();
+          if (!Number.isFinite(evMs) || evMs > nowMs - 60 * 1000) {
+            return ev;
+          }
+          if (!ev.actual || !ev.actual.trim()) {
+            const tKey = normalizeCanonicalMacroTitleKey(ev.title);
+            const dKey = new Date(evMs).toISOString().slice(0, 10);
+            const found = mapByDay.get(`${tKey}|${dKey}`) || mapPastByTitle.get(tKey);
+            if (found) {
+              const parsed = parseMacroNumeric(found);
+              const evalResult = evaluateSingleEventForGold(
+                ev.title,
+                parsed.value,
+                ev.forecastNum,
+                ev.previousNum
+              );
+              return {
+                ...ev,
+                actual: found,
+                actualNum: parsed.value,
+                unit: parsed.unit || ev.unit,
+                eventBiasForGold: evalResult.bias,
+                biasReasonId: evalResult.reasonId,
+                biasReasonEn: evalResult.reasonEn,
+              };
+            }
+          }
+          return ev;
+        });
+      } catch (err: any) {
+        console.warn('[MacroEnrich] Gagal enrich actual:', String(err?.message || err).replace(/\s+/g, ' ').slice(0, 180));
+        return tvEnriched;
+      }
+    };
+
     if (hasVerifiedClientLiveCalendar && isIntermarketAssetLive(clientFeeds?.intermarketPulse?.dxy) && !forceRefresh) {
       const needServerRss = !clientFeeds.breakingNews || clientFeeds.breakingNews.length === 0 || !clientFeeds.rssFeedHealth;
       const [serverFedWatch, enrichedClientCalendar, serverRssResult] = await Promise.all([
         fetchLiveCmeFedWatchWithGrounding(false, clientFeeds.intermarketPulse.us10y),
-        enrichEventsWithTradingViewActuals(clientFeeds.calendarEvents!),
+        enrichPastMissingActuals(clientFeeds.calendarEvents!),
         needServerRss ? fetchPublicBreakingHeadlines() : Promise.resolve(null),
       ]);
       const cmeFedWatch = serverFedWatch.isAvailable
@@ -3510,56 +3777,6 @@ app.post('/api/macro-news/analyze', async (req, res) => {
       };
     } else {
       const serverFeeds = await gatherMacroPublicFeeds(Boolean(forceRefresh));
-      // Wajib lengkapi actual rilis yang sudah lewat via TradingView terlebih dahulu, lalu Google Search jika masih ada High-Impact kosong
-      const enrichPastMissingActuals = async (events: MacroCalendarEvent[]): Promise<MacroCalendarEvent[]> => {
-        const tvEnriched = await enrichEventsWithTradingViewActuals(events);
-        const nowMs = Date.now();
-        const missing = tvEnriched.some(
-          (ev) =>
-            ev.impact === 'High' &&
-            !isFedSpeechEvent(ev.title) &&
-            (ev.forecastNum !== null || ev.previousNum !== null) &&
-            (!ev.actual || !ev.actual.trim()) &&
-            new Date(ev.date).getTime() < nowMs - 5 * 60 * 1000
-        );
-        if (!missing) return tvEnriched;
-        try {
-          const searched = await fetchForexFactoryCalendarViaGoogleSearch();
-          if (!Array.isArray(searched) || searched.length === 0) return tvEnriched;
-          const map = new Map<string, string>();
-          for (const item of searched) {
-            const a = String(item.actual ?? '').trim();
-            if (a) map.set(String(item.title || '').trim().toLowerCase(), a);
-          }
-          return tvEnriched.map((ev) => {
-            if (!ev.actual || !ev.actual.trim()) {
-              const found = map.get(ev.title.trim().toLowerCase());
-              if (found) {
-                const parsed = parseMacroNumeric(found);
-                const evalResult = evaluateSingleEventForGold(
-                  ev.title,
-                  parsed.value,
-                  ev.forecastNum,
-                  ev.previousNum
-                );
-                return {
-                  ...ev,
-                  actual: found,
-                  actualNum: parsed.value,
-                  unit: parsed.unit || ev.unit,
-                  eventBiasForGold: evalResult.bias,
-                  biasReasonId: evalResult.reasonId,
-                  biasReasonEn: evalResult.reasonEn,
-                };
-              }
-            }
-            return ev;
-          });
-        } catch (err: any) {
-          console.warn('[MacroEnrich] Gagal enrich actual:', String(err?.message || err).replace(/\s+/g, ' ').slice(0, 180));
-          return tvEnriched;
-        }
-      };
 
       const cmeFedWatch = serverFeeds.cmeFedWatch.isAvailable
         ? serverFeeds.cmeFedWatch
@@ -3613,6 +3830,10 @@ app.post('/api/macro-news/analyze', async (req, res) => {
       const actualMap = await fetchPastActualsViaGoogleSearch(pastMissing, resolvedNewsKey);
       if (Object.keys(actualMap).length > 0) {
         feeds.calendarEvents = feeds.calendarEvents.map((ev) => {
+          const evMs = new Date(ev.date).getTime();
+          if (!Number.isFinite(evMs) || evMs >= nowCutoffMs) {
+            return ev;
+          }
           if (!ev.actual || !ev.actual.trim()) {
             const found = actualMap[ev.title.trim().toLowerCase()];
             if (found) {
@@ -3755,8 +3976,10 @@ app.post('/api/macro-news/analyze', async (req, res) => {
         } : undefined,
         vix: feeds.intermarketPulse.vix?.isAvailable ? feeds.intermarketPulse.vix : undefined,
         goldPositioning: feeds.intermarketPulse.goldPositioning?.isAvailable ? feeds.intermarketPulse.goldPositioning : undefined,
+        eurUsd: feeds.intermarketPulse.eurUsd?.isAvailable ? { changePercent: feeds.intermarketPulse.eurUsd.changePercent } : undefined,
       },
       preNewsFlow: baselineSnapshot.scenarioMatrix.preNewsFlow,
+      tacticalOverlay: baselineSnapshot.threeSystemState?.system3LivePulse?.tacticalOverlay || null,
       breakingHeadlines: feeds.breakingNews.slice(0, 10).map((h) => ({
         title: h.title,
         keywords: h.matchedKeywords,
@@ -4308,6 +4531,7 @@ async function gatherServerFundamentalExtendedFeeds(
     copperFutures,
     usdCnh,
     usdJpy,
+    eurUsd,
     btcUsd,
     cotGold,
     externalEvents,
@@ -4324,6 +4548,7 @@ async function gatherServerFundamentalExtendedFeeds(
     fetchServerExtendedYahooAsset({ symbol: 'COPPER', yahooTicker: 'HG=F', name: 'Copper Futures', category: 'METALS_FLOW', bullishWhenUp: false }),
     fetchServerExtendedYahooAsset({ symbol: 'USDCNH', yahooTicker: 'USDCNH=X', name: 'USD/CNH Offshore Yuan', category: 'FX_G10', bullishWhenUp: false }),
     fetchServerExtendedYahooAsset({ symbol: 'USDJPY', yahooTicker: 'JPY=X', name: 'USD/JPY', category: 'FX_G10', bullishWhenUp: false }),
+    fetchServerExtendedYahooAsset({ symbol: 'EURUSD', yahooTicker: 'EURUSD=X', name: 'EUR/USD', category: 'FX_G10', bullishWhenUp: true }),
     fetchServerExtendedYahooAsset({ symbol: 'BTCUSD', yahooTicker: 'BTC-USD', name: 'Bitcoin USD', category: 'LIQUIDITY', bullishWhenUp: false }),
     fetchServerCftcCotGold(),
     fetchServerExternalG10ChinaEvents(),
@@ -4342,6 +4567,7 @@ async function gatherServerFundamentalExtendedFeeds(
     copperFutures,
     usdCnh,
     usdJpy,
+    eurUsd,
     btcUsd,
     cotGold,
     externalEvents,
@@ -4360,6 +4586,7 @@ app.get('/api/macro-news/fundamental-feeds', async (req, res) => {
     res.json({
       success: true,
       feeds,
+      extendedFeeds: feeds,
     });
   } catch (err: any) {
     res.status(500).json({
@@ -4486,6 +4713,7 @@ app.post('/api/macro-news/fundamental', async (req, res) => {
       regimeLabelEn: baselineSnapshot.regimeLabelEn,
       isDataUnchangedFromLastCheck: isUnchanged,
       changeDetection: baselineSnapshot.changeDetection,
+      tacticalOverlay: baselineSnapshot.tacticalOverlay || null,
       topDrivers: baselineSnapshot.drivers.slice(0, 7),
       evidenceSummary: baselineSnapshot.evidenceSummary,
       topHeadlines: Array.isArray(contextSummary?.topHeadlines)
@@ -4502,7 +4730,7 @@ CRITICAL RULES:
 2. Write in clean, authoritative, flowing editorial Indonesian (Id) and English (En) — like a Bloomberg / institutional morning desk note that stays effortless to grasp. Avoid stiff textbook phrasing, robotic translationese, or forced filler (e.g. do not force IPO mentions unless an actual major market event is present). Cite concrete numbers from evidenceSummary/topDrivers and immediately connect each indicator (DXY, US10Y, Real Yield, VIX, GLD, CFTC COT) to its direct impact on Gold.
 3. Preserve the mathematical probabilities computed in baselineSnapshot — explain WHY those probabilities lean Bullish, Bearish, or Neutral with causal clarity.
 4. HONESTY RULE: If isDataUnchangedFromLastCheck is true, explicitly open headline/dataStatusNote/sectionA stating honestly that core fundamental drivers have not shifted since the last check (zero manufactured drama).
-5. Connect the full A-to-Z macro picture seamlessly: (A) Macro Regime & what shifted, (B) Fed rates, Real Yields, US10Y & DXY opportunity-cost engine, (C) Cross-market capital flows (Wall Street risk appetite, VIX / Dash-for-Cash risk, GLD ETF, CFTC COT, Asia/China FX & oil), and (D) Clear 1-Day vs 1-Week vs 1-Month roadmap plus concrete invalidation triggers that would flip the thesis.`;
+5. Connect the full A-to-Z macro picture seamlessly: (A) Macro Regime & what shifted, (B) Fed rates, Real Yields, US10Y & DXY opportunity-cost engine (explicitly note if tacticalOverlay.dxyDistortionDetected is true so traders see EUR/USD weakness distorting DXY without yield support), (C) Cross-market capital flows (Wall Street risk appetite, VIX / Dash-for-Cash risk, GLD ETF, CFTC COT, Asia/China FX & oil), and (D) Clear 1-Day vs 1-Week vs 1-Month roadmap — explicitly distinguishing structural 1W/1M bias from any active intraday tacticalOverlay risk (e.g. 0-4h medium-impact surprises, oversold short-covering bounces, or two-way volatility) plus concrete invalidation triggers.`;
 
     let aiResponseText = '';
     let usedModel = '';

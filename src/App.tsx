@@ -14,6 +14,7 @@ import {
   saveStoredSettings,
   mergeWithExistingSettings,
   removeTradeFromLatestList,
+  removeTradesListFromLatestList,
 } from './utils/storage';
 import { calculatePerformance } from './utils/calculations';
 import { DEMO_TRADES, isDemoTrade } from './utils/demoData';
@@ -84,6 +85,19 @@ import { DashboardView } from './components/dashboard/DashboardView';
 import { TradeTable } from './components/trades/TradeTable';
 import { TradeForm } from './components/trades/TradeForm';
 
+const LAZY_RELOAD_GUARD_KEY = 'vlo_lazy_module_reload_ts_v1';
+
+function isDynamicImportFetchError(err: unknown): boolean {
+  const msg = String((err as { message?: unknown })?.message || err || '').toLowerCase();
+  return (
+    msg.includes('failed to fetch dynamically imported module') ||
+    msg.includes('importing a module script failed') ||
+    msg.includes('error loading dynamically imported module') ||
+    msg.includes('chunkloaderror') ||
+    msg.includes('loading chunk')
+  );
+}
+
 function lazyWithRetry<T extends React.ComponentType<any>>(
   factory: () => Promise<{ default: T }>
 ) {
@@ -99,6 +113,22 @@ function lazyWithRetry<T extends React.ComponentType<any>>(
         }
       }
     }
+
+    if (typeof window !== 'undefined' && isDynamicImportFetchError(lastError)) {
+      try {
+        const lastReloadRaw = window.sessionStorage.getItem(LAZY_RELOAD_GUARD_KEY);
+        const lastReloadTs = lastReloadRaw ? Number(lastReloadRaw) : 0;
+        const now = Date.now();
+        if (!Number.isFinite(lastReloadTs) || now - lastReloadTs > 15_000) {
+          window.sessionStorage.setItem(LAZY_RELOAD_GUARD_KEY, String(now));
+          window.location.reload();
+          return await new Promise<{ default: T }>(() => {});
+        }
+      } catch {
+        // Ignore sessionStorage restrictions in private contexts
+      }
+    }
+
     throw lastError;
   });
 }
@@ -142,7 +172,13 @@ class LazyViewErrorBoundary extends Component<
           <div className="flex items-center justify-center gap-2 pt-1">
             <button
               type="button"
-              onClick={() => this.setState({ hasError: false, errorMessage: '' })}
+              onClick={() => {
+                if (isDynamicImportFetchError(this.state.errorMessage)) {
+                  window.location.reload();
+                  return;
+                }
+                this.setState({ hasError: false, errorMessage: '' });
+              }}
               className="h-9 px-4 rounded-full border border-[#E4E4E7] dark:border-[#20252D] text-xs font-semibold text-[#0F172A] dark:text-[#F2F4F7] hover:bg-[#FAFAFA] dark:hover:bg-[#161A22] cursor-pointer"
             >
               {this.props.tr('Coba Lagi', 'Retry')}
@@ -189,6 +225,10 @@ const SettingsView = lazyWithRetry(() =>
 
 // Modals
 import { DeleteConfirmModal } from './components/trades/DeleteConfirmModal';
+import {
+  BatchDeleteDateModal,
+  type BatchDeleteDateRequest,
+} from './components/trades/BatchDeleteDateModal';
 import { TradeDetailModal } from './components/trades/TradeDetailModal';
 import { ScreenshotModal } from './components/trades/ScreenshotModal';
 import { LocalPrototypeModal } from './components/layout/LocalPrototypeModal';
@@ -268,6 +308,7 @@ export default function App() {
   const [isPlaybookModalOpen, setIsPlaybookModalOpen] = useState<boolean>(false);
   const [tradeForDetail, setTradeForDetail] = useState<Trade | null>(null);
   const [tradeForDelete, setTradeForDelete] = useState<Trade | null>(null);
+  const [batchDeleteRequest, setBatchDeleteRequest] = useState<BatchDeleteDateRequest | null>(null);
   const [screenshotModal, setScreenshotModal] = useState<{ url: string; title: string } | null>(null);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState<boolean>(false);
   const [appNotifications, setAppNotifications] = useState<AppNotificationItem[]>(() =>
@@ -1658,6 +1699,139 @@ export default function App() {
     }
   };
 
+  // Batch delete trades by date (supports Journal DateGroupCard and Dashboard/Analytics Calendar)
+  const handleConfirmBatchDeleteByDate = async () => {
+    if (
+      !batchDeleteRequest ||
+      !Array.isArray(batchDeleteRequest.trades) ||
+      batchDeleteRequest.trades.length === 0 ||
+      isDeletingTradeRef.current
+    ) {
+      return;
+    }
+
+    isDeletingTradeRef.current = true;
+    const requestSnapshot = batchDeleteRequest;
+    const targetTrades = requestSnapshot.trades;
+    const targetIds = new Set(targetTrades.map((t) => t.id));
+    const targetIdsLower = new Set(targetTrades.map((t) => t.id.toLowerCase()));
+    const realCloudTrades = targetTrades.filter((t) => !t.isDemo);
+    const dateLabel =
+      requestSnapshot.headerLabel && requestSnapshot.headerLabel !== requestSnapshot.dateKey
+        ? `${requestSnapshot.headerLabel} (${requestSnapshot.dateKey})`
+        : requestSnapshot.dateKey;
+
+    try {
+      const verifiedUserId = await resolveEffectiveCloudUserId();
+      let queuedDeleteOffline = Boolean(
+        verifiedUserId && realCloudTrades.length > 0 && !isBrowserOnline()
+      );
+
+      if (verifiedUserId && realCloudTrades.length > 0 && !queuedDeleteOffline) {
+        const remainingTrades = tradesRef.current.filter((t) => !targetIds.has(t.id));
+        const keepScreenshotPaths = new Set<string>();
+        for (const rem of remainingTrades) {
+          for (const pathItem of extractAllTradeStoragePaths(rem)) {
+            keepScreenshotPaths.add(pathItem);
+          }
+        }
+
+        setIsCloudSyncing(true);
+        const cloudDeleteRes = await deleteTradesListFromSupabase(
+          realCloudTrades,
+          verifiedUserId,
+          keepScreenshotPaths
+        );
+        setIsCloudSyncing(false);
+
+        if (!cloudDeleteRes.success) {
+          if (isLikelyOfflineOrNetworkError(cloudDeleteRes.error)) {
+            queuedDeleteOffline = true;
+          } else {
+            showToast(`Gagal menghapus dari VLO Cloud: ${cloudDeleteRes.error}`, 'error');
+            return;
+          }
+        } else {
+          // Prune any stale offline queue operations targeting these now-deleted trades
+          const existingQueue = loadOfflineSyncQueue(verifiedUserId);
+          if (existingQueue.length > 0) {
+            const cleanedQueue = existingQueue.filter((op) => {
+              if (op.kind === 'delete_trade') {
+                return !targetIdsLower.has(op.tradeId.toLowerCase());
+              }
+              if (op.kind === 'upsert_trade') {
+                const opCurr = op.trade.id.toLowerCase();
+                const opOrig = (op.originalId || op.trade.id).toLowerCase();
+                return !targetIdsLower.has(opCurr) && !targetIdsLower.has(opOrig);
+              }
+              return true;
+            });
+            if (cleanedQueue.length !== existingQueue.length) {
+              saveOfflineSyncQueue(verifiedUserId, cleanedQueue);
+            }
+          }
+        }
+      }
+
+      const previousLatest = tradesRef.current;
+      const filtered = removeTradesListFromLatestList(tradesRef, targetIds);
+      const saveResult = saveStoredTrades(filtered, verifiedUserId || currentUser?.id || null);
+      if (!saveResult.success) {
+        tradesRef.current = previousLatest;
+        showToast(saveResult.error || 'Gagal menghapus data lokal.', 'error');
+        return;
+      }
+
+      let queuedCount = 0;
+      if (verifiedUserId && queuedDeleteOffline) {
+        for (const item of realCloudTrades) {
+          const qRes = enqueueOfflineTradeDelete(
+            verifiedUserId,
+            item.id,
+            extractAllTradeStoragePaths(item)
+          );
+          queuedCount = qRes.queueLength;
+        }
+        setDataSource('local_fallback');
+      }
+
+      setTrades(filtered);
+      setBatchDeleteRequest(null);
+      if (tradeForDetail && targetIds.has(tradeForDetail.id)) {
+        setTradeForDetail(null);
+        if (activeTabRef.current === 'detail') {
+          handleNavigateTab('trades');
+        }
+      }
+
+      if (verifiedUserId && queuedDeleteOffline) {
+        showToast(
+          tr(
+            `${targetTrades.length} transaksi pada ${dateLabel} dihapus lokal (${queuedCount} antrean sinkronisasi Cloud).`,
+            `${targetTrades.length} trades on ${dateLabel} deleted locally (${queuedCount} queued for Cloud sync).`
+          )
+        );
+      } else if (verifiedUserId && realCloudTrades.length > 0) {
+        showToast(
+          tr(
+            `${targetTrades.length} transaksi pada ${dateLabel} berhasil dihapus dari VLO Cloud.`,
+            `${targetTrades.length} trades on ${dateLabel} deleted from VLO Cloud.`
+          )
+        );
+      } else {
+        showToast(
+          tr(
+            `${targetTrades.length} transaksi pada ${dateLabel} telah dihapus.`,
+            `${targetTrades.length} trades on ${dateLabel} have been deleted.`
+          )
+        );
+      }
+    } finally {
+      setIsCloudSyncing(false);
+      isDeletingTradeRef.current = false;
+    }
+  };
+
   // Manual trigger to upload local trades to Supabase cloud
   const handleSyncLocalToCloud = async () => {
     let verifiedUserId: string | null = null;
@@ -2687,6 +2861,7 @@ export default function App() {
                 }}
                 onViewTrade={handleOpenTradeDetail}
                 onClearDemoTrades={() => setIsClearDemoModalOpen(true)}
+                onDeleteTradesByDate={(req) => setBatchDeleteRequest(req)}
               />
             </div>
 
@@ -2701,6 +2876,7 @@ export default function App() {
                 }}
                 onEditTrade={handleOpenEdit}
                 onDeleteTrade={(t) => setTradeForDelete(t)}
+                onDeleteTradesByDate={(req) => setBatchDeleteRequest(req)}
                 onViewDetail={handleOpenTradeDetail}
                 onViewScreenshot={handleViewScreenshot}
                 onClearDemoTrades={() => setIsClearDemoModalOpen(true)}
@@ -2767,6 +2943,7 @@ export default function App() {
                     trades={scopedTrades}
                     settings={scopedSettings}
                     onViewTrade={handleOpenTradeDetail}
+                    onDeleteTradesByDate={(req) => setBatchDeleteRequest(req)}
                     userId={currentUser?.id || null}
                   />
                 </div>
@@ -2922,6 +3099,20 @@ export default function App() {
         onCancel={() => {
           if (!isCloudSyncing) {
             setTradeForDelete(null);
+          }
+        }}
+      />
+
+      {/* Batch Delete by Date Confirmation Modal */}
+      <BatchDeleteDateModal
+        request={batchDeleteRequest}
+        settings={scopedSettings}
+        isOpen={Boolean(batchDeleteRequest)}
+        isDeleting={isCloudSyncing}
+        onConfirm={handleConfirmBatchDeleteByDate}
+        onCancel={() => {
+          if (!isCloudSyncing) {
+            setBatchDeleteRequest(null);
           }
         }}
       />

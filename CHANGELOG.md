@@ -1,5 +1,8 @@
 # Changelog
 
+## v1.3.1 · #VLO-2611-MAC04 (2026-11-24)
+- Sinkronisasi Fundamental 3-Fitur & Real-Time Actual APK: Penyeragaman warna XAU/USD, ekstraksi actual PMI real-time, Intraday Tactical Overlay, dan dukungan native APK TradingView.
+
 ## v1.3.0 · #VLO-2611-PRO01 (2026-11-22)
 - Suite Trader Pro: Behavioral Analytics, Guardrail, Playbook, Review, Export, Multi-Account & PWA: Penambahan 10 fitur pro tanpa mengubah UI editorial VLO: Cost of Mistakes & tag emosi, Guardrail Risiko & Checklist SOP pra-eksekusi, Review Mingguan/Bulanan, konteks Macro News di detail trade, Export PDF & Shareable PNG Card, Playbook Setup A+, Pintasan Keyboard & Quick Command (Cmd+K), PWA Offline-First, Multi-Akun / Sub-Portofolio, serta pembersihan dependensi tidak terpakai.
 

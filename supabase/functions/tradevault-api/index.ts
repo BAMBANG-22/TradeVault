@@ -624,6 +624,7 @@ async function handleProxy(reqUrl: URL): Promise<Response> {
   try {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 9000);
+    const isTradingViewTarget = /tradingview\.com/i.test(targetUrl);
     const upstreamRes = await fetch(targetUrl, {
       cache: 'no-store',
       headers: {
@@ -632,6 +633,12 @@ async function handleProxy(reqUrl: URL): Promise<Response> {
         Accept: 'application/json, text/plain, text/xml, application/rss+xml, */*',
         'Cache-Control': 'no-cache, no-store, must-revalidate',
         Pragma: 'no-cache',
+        ...(isTradingViewTarget
+          ? {
+              Origin: 'https://www.tradingview.com',
+              Referer: 'https://www.tradingview.com/',
+            }
+          : {}),
       },
       signal: controller.signal,
     });
@@ -1012,23 +1019,25 @@ function normalizeMt5DateTimeOutput(raw: unknown): string | null {
   if (!raw || typeof raw !== 'string') return null;
   const s = raw.trim();
   if (!s) return null;
-  const m = s.match(/(\d{4})[.\-\/](\d{1,2})[.\-\/](\d{1,2})[T\s]+(\d{1,2}):(\d{2})/);
+  const m = s.match(/(\d{4})[.\-\/](\d{1,2})[.\-\/](\d{1,2})[T\s]+(\d{1,2}):(\d{2})(?::(\d{2}))?/);
   if (m) {
     const yyyy = m[1];
     const mm = m[2].padStart(2, '0');
     const dd = m[3].padStart(2, '0');
     const hh = m[4].padStart(2, '0');
     const min = m[5].padStart(2, '0');
-    return `${yyyy}-${mm}-${dd}T${hh}:${min}`;
+    const sec = m[6] ? `:${m[6].padStart(2, '0')}` : '';
+    return `${yyyy}-${mm}-${dd}T${hh}:${min}${sec}`;
   }
-  const eu = s.match(/\b(\d{1,2})[.\-\/](\d{1,2})[.\-\/](\d{4})[T\s]+(\d{1,2}):(\d{2})/);
+  const eu = s.match(/\b(\d{1,2})[.\-\/](\d{1,2})[.\-\/](\d{4})[T\s]+(\d{1,2}):(\d{2})(?::(\d{2}))?/);
   if (eu) {
     const dd = eu[1].padStart(2, '0');
     const mm = eu[2].padStart(2, '0');
     const yyyy = eu[3];
     const hh = eu[4].padStart(2, '0');
     const min = eu[5].padStart(2, '0');
-    return `${yyyy}-${mm}-${dd}T${hh}:${min}`;
+    const sec = eu[6] ? `:${eu[6].padStart(2, '0')}` : '';
+    return `${yyyy}-${mm}-${dd}T${hh}:${min}${sec}`;
   }
   const parsed = new Date(s);
   if (!isNaN(parsed.getTime())) {
@@ -1037,7 +1046,9 @@ function normalizeMt5DateTimeOutput(raw: unknown): string | null {
     const dd = String(parsed.getDate()).padStart(2, '0');
     const hh = String(parsed.getHours()).padStart(2, '0');
     const min = String(parsed.getMinutes()).padStart(2, '0');
-    return `${yyyy}-${mm}-${dd}T${hh}:${min}`;
+    const secNum = parsed.getSeconds();
+    const sec = secNum > 0 ? `:${String(secNum).padStart(2, '0')}` : '';
+    return `${yyyy}-${mm}-${dd}T${hh}:${min}${sec}`;
   }
   return null;
 }
@@ -1286,18 +1297,19 @@ Inspect ${
     } carefully from top to bottom and extract EVERY closed trade row visible (even if cropped and missing a header).
 
 STRICT EXTRACTION RULES:
-1. SUPPORTED SCREENSHOT VIEWS:
+1. SUPPORTED SCREENSHOT VIEWS & DOUBLE ENTRIES:
    - MT5 / MT4 Mobile "History -> Positions" (e.g. "XAUUSD, sell 0.10", "2615.40 -> 2602.10", timestamp, profit)
    - MT5 Mobile "History -> Deals" (rows showing symbol, buy/sell, "out" / "in/out", volume, price, profit — extract closing/profit deals as closed trades)
    - Indonesian MT5 locale ("beli" = BUY, "jual" = SELL) as well as English ("buy"/"long" = BUY, "sell"/"short" = SELL)
    - MT5 / MT4 Desktop Account History table
+   - CRITICAL DOUBLE-ENTRY RULE: Traders often open multiple rapid positions ("tap-tap" / layering) with IDENTICAL or near-identical symbol, lotSize, entryPrice, stopLoss, takeProfit, exitPrice, and netProfit! Extract EVERY visible trade row separately in top-to-bottom order — NEVER merge, collapse, or skip duplicate-looking rows within a screenshot or across screenshots!
    - IGNORE summary header lines ("Profit:", "Deposit:", "Balance:", "Credit:", "Withdrawal:") and non-trade ledger rows ("balance", "deposit", "credit", "withdrawal") and unfilled "canceled" pending orders.
 2. EXACT NUMERIC & SIGN FIDELITY (ZERO SILENT ERRORS):
    - Left: symbol + direction + lot, e.g. "XAUUSD, sell 0.10", "XAUUSDm, buy 0.05", "GOLD, beli 0.10"
    - Prices: "2615.40 -> 2602.10" -> entryPrice BEFORE "->", exitPrice AFTER "->". Copy EVERY digit and decimal accurately (never drop a digit or decimal!).
    - Profit Sign: Inspect BOTH the "-" / "−" prefix AND font color (red = negative loss, blue/green = positive profit). If a BUY exited lower than entry (or SELL exited higher than entry) and text is red/loss, netProfit MUST be negative (e.g. -45.20)!
-   - Top-right of row: timestamp like "2026.11.14 14:22:10" (closeDateTime)
-   - Expanded row details (if visible): "S / L:" -> stopLoss, "T / P:" -> takeProfit, "Open:" -> openDateTime, "Swap:" -> swap, "Commission:"/"Fee:" -> commission, "ID:"/"#12345" -> ticketId.
+   - Top-right of row: timestamp like "2026.11.14 14:22:10" (closeDateTime — ALWAYS include seconds ":ss" when visible!).
+   - Expanded row details (if visible): "S / L:" -> stopLoss, "T / P:" -> takeProfit, "Open:" -> openDateTime (include ":ss" if visible), "Swap:" -> swap, "Commission:"/"Fee:" -> commission, "ID:"/"#12345" -> ticketId.
 3. READING DESKTOP MT5 ACCOUNT HISTORY TABLE:
    - Map columns: Time (open), Position/Order/Ticket (ticketId), Symbol (instrument), Type (buy->BUY, sell->SELL), Volume (lotSize), Open Price (entryPrice), S/L (stopLoss), T/P (takeProfit), Close Time (closeDateTime), Close Price (exitPrice), Commission, Swap, Profit (netProfit).
 4. CLOSE TYPE DETECTION (TP / SL / Manual):
@@ -1307,7 +1319,7 @@ STRICT EXTRACTION RULES:
 5. FORMATTING${isBatch ? ' & IMAGE ATTRIBUTION' : ''}:
    - ${isBatch ? `Set "imageIndex" strictly to the integer 0..${resolvedImages.length - 1} matching the screenshot containing that trade row.` : 'Set "imageIndex" to 0.'}
    - Return empty string "" (NEVER literal "null") when ticketId, openDateTime, closeDateTime, or notes are not visible.
-   - Output openDateTime / closeDateTime in "YYYY-MM-DD HH:mm" if visible.
+   - Output openDateTime / closeDateTime in "YYYY-MM-DD HH:mm:ss" when seconds are visible (or "YYYY-MM-DD HH:mm" if seconds are not shown).
    - Never invent trades that are not visibly printed on screen.`;
 
     const contentParts: any[] = [];
@@ -1557,7 +1569,7 @@ function matchEdgeTradingViewActualForEvent(
   tvEvents: any[]
 ): { formatted: string; numericVal: number; unit: string } | null {
   const evMs = new Date(ffDateIso).getTime();
-  if (!Number.isFinite(evMs) || evMs > Date.now() - 2 * 60 * 1000) return null;
+  if (!Number.isFinite(evMs) || evMs > Date.now() - 30 * 1000) return null;
 
   const t = ffTitle.toLowerCase();
   if (/speech|speaks|press conference|minutes|statement|bank holiday|testimony/i.test(t)) {
@@ -1575,7 +1587,7 @@ function matchEdgeTradingViewActualForEvent(
   for (const tv of tvEvents) {
     if (tv.actual === null || tv.actual === undefined || !Number.isFinite(Number(tv.actual))) continue;
     const tvMs = new Date(String(tv.date || '')).getTime();
-    if (!Number.isFinite(tvMs) || Math.abs(tvMs - evMs) > 35 * 60 * 1000) continue;
+    if (!Number.isFinite(tvMs) || Math.abs(tvMs - evMs) > 90 * 60 * 1000) continue;
 
     const tvTitle = String(tv.title || '').toLowerCase();
     const tvInd = String(tv.indicator || '').toLowerCase();
@@ -1593,7 +1605,7 @@ function matchEdgeTradingViewActualForEvent(
     if (ffIsYoy && !tvIsYoy) continue;
     if (ffIsQoq && !tvIsQoq) continue;
 
-    const tvIsCore = /\bcore\b|ex\s*food|exfood|ex\s*autos/i.test(tvText);
+    const tvIsCore = /\bcore\b|ex\s*food|exfood|ex\s*autos|ex\s*transp/i.test(tvText);
     if (ffIsCore !== tvIsCore) continue;
 
     let score = 0;
@@ -1607,13 +1619,15 @@ function matchEdgeTradingViewActualForEvent(
       if (tvText.includes('pce') || tvText.includes('personal consumption')) score += 60;
     } else if (t.includes('unemployment claims') || t.includes('initial jobless claims')) {
       if (tvText.includes('continuing') || tvText.includes('4-week')) continue;
-      if (tvText.includes('initial jobless')) score += 70;
+      if (tvText.includes('initial jobless') || tvText.includes('unemployment claims')) score += 70;
+    } else if (t.includes('continuing claims') || t.includes('continuing jobless claims')) {
+      if (tvText.includes('continuing jobless')) score += 70;
     } else if (t.includes('non-farm employment change') || t === 'nfp') {
       if (tvText.includes('non farm payrolls') || tvText.includes('nonfarm')) score += 70;
     } else if (t.includes('adp weekly')) {
       if (tvText.includes('adp') && tvText.includes('weekly')) score += 65;
-    } else if (t.includes('adp non-farm')) {
-      if (!tvText.includes('weekly') && tvText.includes('adp employment')) score += 65;
+    } else if (t.includes('adp non-farm') || t.includes('adp employment')) {
+      if (!tvText.includes('weekly') && tvText.includes('adp')) score += 65;
     } else if (t.includes('unemployment rate')) {
       if (tvText.includes('unemployment rate')) score += 70;
     } else if (t.includes('average hourly earnings')) {
@@ -1626,8 +1640,52 @@ function matchEdgeTradingViewActualForEvent(
       if (tvText.includes('gdp growth')) score += 65;
     } else if (t.includes('ism manufacturing pmi')) {
       if (tvText.includes('ism manufacturing pmi')) score += 70;
-    } else if (t.includes('ism services pmi')) {
-      if (tvText.includes('ism services pmi')) score += 70;
+    } else if (t.includes('ism services pmi') || t.includes('ism non-manufacturing pmi')) {
+      if (tvText.includes('ism services pmi') || tvText.includes('ism non-manufacturing pmi')) score += 70;
+    } else if (t.includes('ism manufacturing prices')) {
+      if (tvText.includes('ism manufacturing prices')) score += 70;
+    } else if (t.includes('ism services prices')) {
+      if (tvText.includes('ism services prices')) score += 70;
+    } else if (t.includes('flash manufacturing pmi') || t.includes('s&p global manufacturing pmi')) {
+      if (!tvText.includes('ism') && tvText.includes('manufacturing') && tvText.includes('pmi')) score += 70;
+    } else if (t.includes('flash services pmi') || t.includes('s&p global services pmi')) {
+      if (!tvText.includes('ism') && tvText.includes('services') && tvText.includes('pmi')) score += 70;
+    } else if (t.includes('flash composite pmi') || t.includes('s&p global composite pmi')) {
+      if (!tvText.includes('ism') && tvText.includes('composite') && tvText.includes('pmi')) score += 70;
+    } else if (t.includes('chicago pmi')) {
+      if (tvText.includes('chicago pmi')) score += 70;
+    } else if (t.includes('philly fed') || t.includes('philadelphia fed')) {
+      if ((tvText.includes('philadelphia fed') || tvText.includes('philly fed')) && tvText.includes('manufacturing')) score += 70;
+    } else if (t.includes('empire state')) {
+      if (tvText.includes('empire state') && tvText.includes('manufacturing')) score += 70;
+    } else if (t.includes('richmond') && t.includes('manufacturing')) {
+      if (tvText.includes('richmond') && tvText.includes('manufacturing')) score += 70;
+    } else if (t.includes('cb consumer confidence') || t === 'consumer confidence') {
+      if (tvText.includes('consumer confidence')) score += 70;
+    } else if (t.includes('uom consumer sentiment') || t.includes('michigan consumer sentiment')) {
+      if (tvText.includes('michigan consumer sentiment') || tvText.includes('uom consumer sentiment')) score += 70;
+    } else if (t.includes('uom inflation expectations') || t.includes('michigan inflation expectations')) {
+      if (tvText.includes('michigan inflation') || tvText.includes('uom inflation')) score += 70;
+    } else if (t.includes('durable goods')) {
+      if (tvText.includes('durable goods')) score += 65;
+    } else if (t.includes('factory orders')) {
+      if (tvText.includes('factory orders')) score += 65;
+    } else if (t.includes('existing home sales')) {
+      if (tvText.includes('existing home sales')) score += 65;
+    } else if (t.includes('new home sales')) {
+      if (tvText.includes('new home sales')) score += 65;
+    } else if (t.includes('pending home sales')) {
+      if (tvText.includes('pending home sales')) score += 65;
+    } else if (t.includes('building permits')) {
+      if (tvText.includes('building permits')) score += 65;
+    } else if (t.includes('housing starts')) {
+      if (tvText.includes('housing starts')) score += 65;
+    } else if (t.includes('trade balance')) {
+      if (tvText.includes('balance of trade') || tvText.includes('trade balance')) score += 65;
+    } else if (t.includes('industrial production')) {
+      if (tvText.includes('industrial production')) score += 65;
+    } else if (t.includes('capacity utilization')) {
+      if (tvText.includes('capacity utilization')) score += 65;
     } else if (t.includes('jolts job openings')) {
       if (tvText.includes('jolts job openings')) score += 65;
     } else {
@@ -1635,7 +1693,7 @@ function matchEdgeTradingViewActualForEvent(
       const ffTokens = t.replace(/[^a-z0-9\s]/g, ' ').split(/\s+/).filter((w) => w.length > 2 && !stopWords.has(w));
       const overlap = ffTokens.filter((w) => tvText.includes(w)).length;
       if (ffTokens.length > 0 && overlap >= Math.min(2, ffTokens.length)) {
-        score += overlap * 20;
+        score += overlap * 26;
       }
     }
 
@@ -1675,29 +1733,100 @@ async function enrichEdgeEventsWithTradingViewActuals(calendarEvents: any[]): Pr
     .filter((t) => Number.isFinite(t));
   if (times.length === 0) return calendarEvents;
   const tvEvents = await fetchEdgeTradingViewUsEventsWindow(Math.min(...times), Math.max(...times));
-  if (!tvEvents || tvEvents.length === 0) return calendarEvents;
 
-  return calendarEvents.map((ev) => {
+  let tvEnriched = calendarEvents;
+  if (tvEvents && tvEvents.length > 0) {
+    tvEnriched = calendarEvents.map((ev) => {
+      const evMs = new Date(ev.date).getTime();
+      const hasAct = Boolean(ev.actual && String(ev.actual).trim() && !/menunggu|pending|-|—/i.test(String(ev.actual).trim()));
+      if (hasAct || !Number.isFinite(evMs) || evMs > nowMs - 30 * 1000) return ev;
+
+      const matched = matchEdgeTradingViewActualForEvent(
+        String(ev.title || ''),
+        String(ev.date || ''),
+        ev.previousNum ?? null,
+        String(ev.unit || ''),
+        tvEvents
+      );
+      if (!matched) return ev;
+      return {
+        ...ev,
+        actual: matched.formatted,
+        actualNum: matched.numericVal,
+        unit: matched.unit || ev.unit,
+        actualSource: 'TV_ENRICH',
+      };
+    });
+  }
+
+  // Secondary 0-token enrichment: Google News RSS wire consensus for S&P Global Flash PMI / indicators where TradingView JSON leaves actual: null
+  const missingPmiEvents = tvEnriched.filter((ev) => {
     const evMs = new Date(ev.date).getTime();
     const hasAct = Boolean(ev.actual && String(ev.actual).trim() && !/menunggu|pending|-|—/i.test(String(ev.actual).trim()));
-    if (hasAct || !Number.isFinite(evMs) || evMs > nowMs - 2 * 60 * 1000) return ev;
-
-    const matched = matchEdgeTradingViewActualForEvent(
-      String(ev.title || ''),
-      String(ev.date || ''),
-      ev.previousNum ?? null,
-      String(ev.unit || ''),
-      tvEvents
+    const t = String(ev.title || '').toLowerCase();
+    return (
+      !hasAct &&
+      t.includes('pmi') &&
+      Number.isFinite(evMs) &&
+      evMs <= nowMs - 30 * 1000 &&
+      nowMs - evMs <= 72 * 60 * 60 * 1000
     );
-    if (!matched) return ev;
-    return {
-      ...ev,
-      actual: matched.formatted,
-      actualNum: matched.numericVal,
-      unit: matched.unit || ev.unit,
-      actualSource: 'TV_ENRICH',
-    };
   });
+
+  if (missingPmiEvents.length > 0) {
+    try {
+      const q = '"Flash Manufacturing PMI" OR "S&P Global Manufacturing PMI" OR "Flash Services PMI" OR "Services PMI" US';
+      const rssUrl = `https://news.google.com/rss/search?q=${encodeURIComponent(q)}&hl=en-US&gl=US&ceid=US:en`;
+      const res = await fetch(rssUrl, { headers: { 'User-Agent': 'Mozilla/5.0' } });
+      if (res.ok) {
+        const xml = await res.text();
+        const items = [...xml.matchAll(/<item>[\s\S]*?<title>([\s\S]*?)<\/title>[\s\S]*?<pubDate>([\s\S]*?)<\/pubDate>[\s\S]*?<\/item>/gi)].map(
+          (m) => ({
+            title: m[1].replace(/&amp;/g, '&').replace(/\s+/g, ' ').trim(),
+            pubMs: new Date(m[2].trim()).getTime(),
+          })
+        );
+        tvEnriched = tvEnriched.map((ev) => {
+          const hasAct = Boolean(ev.actual && String(ev.actual).trim() && !/menunggu|pending|-|—/i.test(String(ev.actual).trim()));
+          if (hasAct) return ev;
+          const evMs = new Date(ev.date).getTime();
+          if (!Number.isFinite(evMs) || evMs > nowMs - 30 * 1000) return ev;
+          const t = String(ev.title || '').toLowerCase();
+          if (!t.includes('pmi')) return ev;
+          const isMfg = t.includes('manufacturing');
+          const isSvc = t.includes('services');
+          if (!isMfg && !isSvc) return ev;
+          const hits: number[] = [];
+          for (const item of items) {
+            if (!Number.isFinite(item.pubMs) || item.pubMs < evMs - 5 * 60_000 || item.pubMs > evMs + 48 * 3600_000) continue;
+            if (/\b(germany|german|uk|united kingdom|eurozone|france|australia|japan|canada)\b/i.test(item.title)) continue;
+            const rx = isMfg
+              ? /manufacturing\s+pmi(?:\s+flash)?\s+(?:at|to|of|is|retreats\s+to|falls\s+to|drops\s+to|slips\s+to|declines\s+to|eases\s+to|rises\s+to|climbs\s+to|comes\s+in\s+at|hits|reaches)?\s*(\d{2}(?:\.\d{1,2})?)/i
+              : /services\s+pmi(?:\s+flash)?\s+(?:at|to|of|is|retreats\s+to|falls\s+to|drops\s+to|slips\s+to|declines\s+to|eases\s+to|rises\s+to|climbs\s+to|comes\s+in\s+at|hits|reaches)?\s*(\d{2}(?:\.\d{1,2})?)/i;
+            const m = item.title.match(rx);
+            if (m && m[1]) {
+              const v = Number(m[1]);
+              if (v >= 25 && v <= 80) hits.push(v);
+            }
+          }
+          if (hits.length > 0) {
+            const best = hits[0];
+            return {
+              ...ev,
+              actual: Number.isInteger(best) ? best.toFixed(1) : String(best),
+              actualNum: best,
+              actualSource: 'TV_ENRICH',
+            };
+          }
+          return ev;
+        });
+      }
+    } catch {
+      // ignore RSS fallback error
+    }
+  }
+
+  return tvEnriched;
 }
 
 async function fetchPastActualsViaGoogleSearch(
@@ -1975,7 +2104,7 @@ async function handleMacroNewsAnalyze(req: Request): Promise<Response> {
       : [];
 
     // Enrich missing past actuals from TradingView (0 Gemini tokens) before fingerprint cache check
-    const nowCutoffMs = Date.now() - 5 * 60 * 1000;
+    const nowCutoffMs = Date.now() - 30 * 1000;
     const hasPastMissing = calendarEvents.some(
       (ev: any) =>
         (!ev.actual || !String(ev.actual).trim() || /menunggu|pending|-|—/i.test(String(ev.actual).trim())) &&
@@ -2035,19 +2164,29 @@ async function handleMacroNewsAnalyze(req: Request): Promise<Response> {
       Boolean(forceRefresh)
     );
 
-    const stillMissing = enrichedCalendar.filter(
-      (ev: any) =>
+    const stillMissing = enrichedCalendar.filter((ev: any) => {
+      const evMs = new Date(ev.date).getTime();
+      const isEligibleImpact =
+        ev.impact === 'High' ||
+        (ev.impact === 'Medium' && Number.isFinite(evMs) && nowCutoffMs - evMs <= 48 * 60 * 60 * 1000);
+      return (
         (!ev.actual || !String(ev.actual).trim() || /menunggu|pending|-|—/i.test(String(ev.actual).trim())) &&
         !/speech|speaks|testimony|fomc\s+press|beige\s+book/i.test(String(ev.title || '')) &&
-        ev.impact === 'High' &&
+        isEligibleImpact &&
         (ev.forecastNum !== null || ev.previousNum !== null) &&
-        new Date(ev.date).getTime() < nowCutoffMs
-    );
+        Number.isFinite(evMs) &&
+        evMs < nowCutoffMs
+      );
+    });
 
     if (stillMissing.length > 0) {
       const searchActuals = await fetchPastActualsViaGoogleSearch(stillMissing, ai);
       if (Object.keys(searchActuals).length > 0) {
         enrichedCalendar = enrichedCalendar.map((ev: any) => {
+          const evMs = new Date(ev.date).getTime();
+          if (!Number.isFinite(evMs) || evMs >= nowCutoffMs) {
+            return ev;
+          }
           if (!ev.actual || !String(ev.actual).trim()) {
             const found = searchActuals[String(ev.title || '').trim().toLowerCase()];
             if (found) return { ...ev, actual: found, actualSource: 'GOOGLE_GROUNDING' };
@@ -2477,6 +2616,7 @@ async function handleFundamentalGoldAnalyze(req: Request): Promise<Response> {
       regimeLabelEn: baselineSnapshot.regimeLabelEn,
       isDataUnchangedFromLastCheck: isUnchanged,
       changeDetection: baselineSnapshot.changeDetection,
+      tacticalOverlay: baselineSnapshot.tacticalOverlay || null,
       topDrivers: Array.isArray(baselineSnapshot.drivers)
         ? baselineSnapshot.drivers.slice(0, 7)
         : [],
@@ -2495,7 +2635,7 @@ CRITICAL RULES:
 2. Write in clean, authoritative, flowing editorial Indonesian (Id) and English (En) — like a Bloomberg / institutional morning desk note that stays effortless to grasp. Avoid stiff textbook phrasing, robotic translationese, or forced filler (e.g. do not force IPO mentions unless an actual major market event is present). Cite concrete numbers from evidenceSummary/topDrivers and immediately connect each indicator (DXY, US10Y, Real Yield, VIX, GLD, CFTC COT) to its direct impact on Gold.
 3. Preserve the mathematical probabilities computed in baselineSnapshot — explain WHY those probabilities lean Bullish, Bearish, or Neutral with causal clarity.
 4. HONESTY RULE: If isDataUnchangedFromLastCheck is true, explicitly open headline/dataStatusNote/sectionA stating honestly that core fundamental drivers have not shifted since the last check (zero manufactured drama).
-5. Connect the full A-to-Z macro picture seamlessly: (A) Macro Regime & what shifted, (B) Fed rates, Real Yields, US10Y & DXY opportunity-cost engine, (C) Cross-market capital flows (Wall Street risk appetite, VIX / Dash-for-Cash risk, GLD ETF, CFTC COT, Asia/China FX & oil), and (D) Clear 1-Day vs 1-Week vs 1-Month roadmap plus concrete invalidation triggers that would flip the thesis.`;
+5. Connect the full A-to-Z macro picture seamlessly: (A) Macro Regime & what shifted, (B) Fed rates, Real Yields, US10Y & DXY opportunity-cost engine (note if tacticalOverlay.dxyDistortionDetected is true), (C) Cross-market capital flows (Wall Street risk appetite, VIX / Dash-for-Cash risk, GLD ETF, CFTC COT, Asia/China FX & oil), and (D) Clear 1-Day vs 1-Week vs 1-Month roadmap — separating structural 1W/1M trend from any active intraday tacticalOverlay catalyst (medium-impact surprises or short-covering bounce risk) plus concrete invalidation triggers.`;
 
     let aiResponseText = '';
     let usedModel = '';

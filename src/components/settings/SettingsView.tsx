@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import {
   Sun,
   Moon,
@@ -42,11 +42,14 @@ import { AppSettings } from '../../types/settings';
 import { Trade } from '../../types/trade';
 import {
   resolveConfiguredAccounts,
+  resolveAccountScopedSettings,
+  filterTradesByAccount,
   getActivePlaybooks,
   getActiveChecklist,
 } from '../../utils/journalExtras';
 import { PWAInstallButton } from '../layout/PWAInstallButton';
-import { formatCurrency } from '../../utils/calculations';
+import { formatCurrency, calculatePerformance } from '../../utils/calculations';
+import { calculateCapitalGrowthBreakdown } from '../../utils/currencyRate';
 import { isDemoTrade, DEMO_TRADES } from '../../utils/demoData';
 import { mergeTradesDatasets } from '../../utils/supabaseSync';
 import {
@@ -167,6 +170,22 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   const effectiveAccounts = resolveConfiguredAccounts(settings);
   const effectivePlaybooks = getActivePlaybooks(settings);
   const effectiveChecklist = getActiveChecklist(settings);
+  const activeAccountId = settings.activeAccountId || 'ALL';
+
+  const scopedSettings = useMemo(
+    () => resolveAccountScopedSettings(settings, activeAccountId),
+    [settings, activeAccountId]
+  );
+
+  const scopedTrades = useMemo(
+    () => filterTradesByAccount(trades, activeAccountId),
+    [trades, activeAccountId]
+  );
+
+  const capitalBreakdown = useMemo(() => {
+    const { metrics } = calculatePerformance(scopedTrades, scopedSettings);
+    return calculateCapitalGrowthBreakdown(scopedSettings, metrics.totalNetProfit || 0);
+  }, [scopedTrades, scopedSettings]);
 
   const handleToggleChecklistEnabled = (itemId: string) => {
     const next = effectiveChecklist.map((item) =>
@@ -910,7 +929,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
           {tr('Parameter Trading & Modal', 'Trading & Capital Parameters')}
         </span>
         <div className={cardClass}>
-          {/* Saldo Awal */}
+          {/* Saldo Awal & Sinkronisasi MT5 */}
           <button
             type="button"
             onClick={() => setActivePrefModal('balance')}
@@ -920,17 +939,26 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
               <Wallet className={`${iconClass} mt-0.5`} />
               <div className="min-w-0">
                 <span className="text-xs font-semibold text-[#0F172A] dark:text-[#F2F4F7] block">
-                  {tr('Modal Awal Akun', 'Initial Account Capital')}
+                  {tr('Modal Awal & Saldo MT5', 'Initial Capital & MT5 Balance')}
                 </span>
                 <span className="text-[11px] text-[#526071] dark:text-[#929BA9] block mt-0.5">
-                  {tr('Basis perhitungan pertumbuhan ekuitas & batas risiko', 'Baseline for equity growth & risk sizing')}
+                  {tr(
+                    'Atur saldo awal manual atau selaraskan otomatis dengan saldo MT5',
+                    'Set starting balance manually or auto-align with current MT5 balance'
+                  )}
                 </span>
               </div>
             </div>
             <div className="flex items-center gap-2 shrink-0">
-              <span className="text-xs font-bold font-mono-numbers tabular-nums text-[#0F172A] dark:text-[#F2F4F7]">
-                {formatCurrency(settings.startingBalance, settings)}
-              </span>
+              <div className="text-right">
+                <span className="text-xs font-bold font-mono-numbers tabular-nums text-[#0F172A] dark:text-[#F2F4F7] block">
+                  {formatCurrency(scopedSettings.startingBalance, scopedSettings)}
+                </span>
+                <span className="text-[11px] font-mono-numbers tabular-nums text-[#526071] dark:text-[#929BA9] block mt-0.5">
+                  {tr('Ekuitas:', 'Equity:')}{' '}
+                  {formatCurrency(capitalBreakdown.currentBalance, scopedSettings)}
+                </span>
+              </div>
               <ChevronRight className={chevronClass} />
             </div>
           </button>
@@ -1668,6 +1696,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
         onClose={() => setActivePrefModal(null)}
         category={activePrefModal || 'balance'}
         settings={settings}
+        trades={trades}
         onSave={handleSavePreferences}
       />
 

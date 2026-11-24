@@ -74,7 +74,8 @@ export const FundamentalGoldView: React.FC<FundamentalGoldViewProps> = ({ isActi
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [showSupportingData, setShowSupportingData] = useState<boolean>(false);
   const [isOfflineMode, setIsOfflineMode] = useState<boolean>(() => isNewsCycleOfflineMode());
-  const hasAutoLoadedRef = useRef<boolean>(false);
+  const isRunningCheckRef = useRef<boolean>(false);
+  const lastSyncedMacroAnalyzedAtRef = useRef<string | null>(null);
 
   const syncCrossModuleFeeds = useCallback(() => {
     setMacroSnapshot(loadLocalCachedMacroSnapshotSync());
@@ -83,6 +84,8 @@ export const FundamentalGoldView: React.FC<FundamentalGoldViewProps> = ({ isActi
 
   const runCheck = useCallback(
     async (opts?: { forceRefresh?: boolean; forceRewriteAi?: boolean }) => {
+      if (isRunningCheckRef.current && !opts?.forceRefresh) return;
+      isRunningCheckRef.current = true;
       setIsLoading(true);
       try {
         const next = await executeClientSideFundamentalGoldAnalysis({
@@ -90,6 +93,10 @@ export const FundamentalGoldView: React.FC<FundamentalGoldViewProps> = ({ isActi
           forceRewriteAi: Boolean(opts?.forceRewriteAi),
         });
         setSnapshot(next);
+        const latestMacro = loadLocalCachedMacroSnapshotSync();
+        if (latestMacro?.analyzedAt) {
+          lastSyncedMacroAnalyzedAtRef.current = latestMacro.analyzedAt;
+        }
         syncCrossModuleFeeds();
       } catch {
         const cached = loadLocalCachedFundamentalGoldSnapshotSync();
@@ -98,6 +105,7 @@ export const FundamentalGoldView: React.FC<FundamentalGoldViewProps> = ({ isActi
         }
         syncCrossModuleFeeds();
       } finally {
+        isRunningCheckRef.current = false;
         setIsLoading(false);
       }
     },
@@ -106,6 +114,22 @@ export const FundamentalGoldView: React.FC<FundamentalGoldViewProps> = ({ isActi
 
   useEffect(() => {
     const syncOfflineFlag = () => setIsOfflineMode(isNewsCycleOfflineMode());
+    const handleMacroSync = () => {
+      syncCrossModuleFeeds();
+      if (!isActive || isNewsCycleOfflineMode()) return;
+      const latestMacro = loadLocalCachedMacroSnapshotSync();
+      const cachedFg = loadLocalCachedFundamentalGoldSnapshotSync();
+      const macroMs = latestMacro?.analyzedAt ? new Date(latestMacro.analyzedAt).getTime() : 0;
+      const fgMs = cachedFg?.analyzedAt ? new Date(cachedFg.analyzedAt).getTime() : 0;
+      if (
+        Number.isFinite(macroMs) &&
+        macroMs > fgMs + 15_000 &&
+        latestMacro?.analyzedAt !== lastSyncedMacroAnalyzedAtRef.current
+      ) {
+        lastSyncedMacroAnalyzedAtRef.current = latestMacro?.analyzedAt || null;
+        runCheck({ forceRefresh: false });
+      }
+    };
     const handleStorage = (e: StorageEvent) => {
       if (e.key === NEWS_CYCLE_OFFLINE_MODE_STORAGE_KEY) {
         syncOfflineFlag();
@@ -115,32 +139,52 @@ export const FundamentalGoldView: React.FC<FundamentalGoldViewProps> = ({ isActi
         e.key === CME_FEDWATCH_LOCAL_STORAGE_KEY ||
         e.key === SMC_OFFLINE_SIGNALS_STORAGE_KEY
       ) {
-        syncCrossModuleFeeds();
+        handleMacroSync();
       }
     };
     window.addEventListener(NEWS_CYCLE_OFFLINE_MODE_CHANGE_EVENT, syncOfflineFlag);
-    window.addEventListener(MACRO_LOCAL_SYNC_EVENT, syncCrossModuleFeeds);
+    window.addEventListener(MACRO_LOCAL_SYNC_EVENT, handleMacroSync);
     window.addEventListener('storage', handleStorage);
     return () => {
       window.removeEventListener(NEWS_CYCLE_OFFLINE_MODE_CHANGE_EVENT, syncOfflineFlag);
-      window.removeEventListener(MACRO_LOCAL_SYNC_EVENT, syncCrossModuleFeeds);
+      window.removeEventListener(MACRO_LOCAL_SYNC_EVENT, handleMacroSync);
       window.removeEventListener('storage', handleStorage);
     };
-  }, [syncCrossModuleFeeds]);
+  }, [isActive, runCheck, syncCrossModuleFeeds]);
 
   useEffect(() => {
     if (!isActive) return;
     syncCrossModuleFeeds();
 
-    if (hasAutoLoadedRef.current) return;
-    hasAutoLoadedRef.current = true;
-
     const cached = loadLocalCachedFundamentalGoldSnapshotSync();
+    const latestMacro = loadLocalCachedMacroSnapshotSync();
     if (cached) {
       setSnapshot(cached);
       const analyzedMs = new Date(cached.analyzedAt).getTime();
-      const isStale = !Number.isFinite(analyzedMs) || Date.now() - analyzedMs > AUTO_REFRESH_TTL_MS;
-      if (isStale && !isNewsCycleOfflineMode()) {
+      const macroMs = latestMacro?.analyzedAt ? new Date(latestMacro.analyzedAt).getTime() : 0;
+      const nowMs = Date.now();
+      const isStale = !Number.isFinite(analyzedMs) || nowMs - analyzedMs > AUTO_REFRESH_TTL_MS;
+      const isMacroNewer =
+        Number.isFinite(macroMs) &&
+        macroMs > analyzedMs + 15_000 &&
+        latestMacro?.analyzedAt !== lastSyncedMacroAnalyzedAtRef.current;
+      const hasRecentMissingActual = Boolean(
+        latestMacro?.calendarEvents?.some((ev) => {
+          const evMs = new Date(ev.date).getTime();
+          return (
+            Number.isFinite(evMs) &&
+            evMs <= nowMs - 60_000 &&
+            nowMs - evMs <= 72 * 60 * 60 * 1000 &&
+            (ev.impact === 'High' || ev.impact === 'Medium') &&
+            (ev.forecastNum !== null || ev.previousNum !== null) &&
+            (!ev.actual || !ev.actual.trim())
+          );
+        })
+      );
+      if ((isStale || isMacroNewer || hasRecentMissingActual) && !isNewsCycleOfflineMode()) {
+        if (latestMacro?.analyzedAt) {
+          lastSyncedMacroAnalyzedAtRef.current = latestMacro.analyzedAt;
+        }
         runCheck({ forceRefresh: false });
       }
     } else {
@@ -506,6 +550,26 @@ export const FundamentalGoldView: React.FC<FundamentalGoldViewProps> = ({ isActi
                 );
               })}
             </div>
+
+            {snapshot.tacticalOverlay && snapshot.tacticalOverlay.status !== 'NORMAL' && (
+              <div
+                data-testid="fundamental-tactical-overlay-note"
+                className={`pl-3 border-l-2 space-y-0.5 ${
+                  snapshot.tacticalOverlay.status === 'COUNTER_RALLY_RISK'
+                    ? 'border-[#059669] dark:border-[#00A878]'
+                    : snapshot.tacticalOverlay.status === 'COUNTER_DROP_RISK'
+                    ? 'border-[#E11D48] dark:border-[#E05260]'
+                    : 'border-[#D97706] dark:border-[#F59E0B]'
+                }`}
+              >
+                <div className="text-[10px] font-bold uppercase tracking-[0.08em] text-[#0F172A] dark:text-[#F2F4F7]">
+                  {isEn ? snapshot.tacticalOverlay.badgeEn : snapshot.tacticalOverlay.badgeId}
+                </div>
+                <p className="text-xs text-[#526071] dark:text-[#929BA9] leading-relaxed text-editorial-justify">
+                  {isEn ? snapshot.tacticalOverlay.detailEn : snapshot.tacticalOverlay.detailId}
+                </p>
+              </div>
+            )}
           </section>
 
           {/* SECTION 02 — XAU/USD SMART HEATMAP (HAIRLINE OPEN-CANVAS MATRIX) */}
