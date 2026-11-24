@@ -36,6 +36,7 @@ import {
   OfflineOcrLine,
   OfflineOcrWordBox,
   preparePrecisionOcrVariant,
+  prewarmOfflineTesseractWorker,
   runOfflineTesseractOcr,
 } from './offlineMt5Ocr';
 
