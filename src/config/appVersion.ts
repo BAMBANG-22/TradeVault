@@ -13,11 +13,20 @@ export interface AppVersionEntry {
   summaryEn: string;
 }
 
-export const APP_VERSION = '1.3.3';
-export const APP_CHANGE_CODE = 'VLO-2611-SCN06';
+export const APP_VERSION = '1.3.4';
+export const APP_CHANGE_CODE = 'VLO-2611-SCN07';
 export const APP_RELEASE_DATE = '2026-11-24';
 
 export const APP_VERSION_HISTORY: AppVersionEntry[] = [
+  {
+    version: '1.3.4',
+    changeCode: 'VLO-2611-SCN07',
+    date: '2026-11-24',
+    titleId: "Fix APK Offline OCR eng.traineddata tanpa .gz & anti-hang guard",
+    titleEn: "Fix APK Offline OCR eng.traineddata tanpa .gz & anti-hang guard",
+    summaryId: "Gunakan eng.traineddata tidak terkompresi (gzip: false) agar kompatibel dengan Android AAPT2 serta tambah errorHandler dan timeout guard Tesseract",
+    summaryEn: "Gunakan eng.traineddata tidak terkompresi (gzip: false) agar kompatibel dengan Android AAPT2 serta tambah errorHandler dan timeout guard Tesseract",
+  },
   {
     version: '1.3.3',
     changeCode: 'VLO-2611-SCN06',

@@ -1,5 +1,8 @@
 # Changelog
 
+## v1.3.4 · #VLO-2611-SCN07 (2026-11-24)
+- Fix APK Offline OCR eng.traineddata tanpa .gz & anti-hang guard: Gunakan eng.traineddata tidak terkompresi (gzip: false) agar kompatibel dengan Android AAPT2 serta tambah errorHandler dan timeout guard Tesseract
+
 ## v1.3.3 · #VLO-2611-SCN06 (2026-11-24)
 - Purge SW cache APK & akselerasi SIMD + Parallel OCR: Hapus jebakan cache Service Worker lama di APK, aktifkan WebAssembly SIMD, Blob zero-split, dan eksekusi OCR paralel
 

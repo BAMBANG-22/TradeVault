@@ -22,7 +22,7 @@ export default defineConfig(() => {
           'ocr/tesseract-core-lstm.wasm.js',
           'ocr/tesseract-core-simd-lstm.wasm.js',
           'ocr/tesseract-core-relaxedsimd-lstm.wasm.js',
-          'ocr/eng.traineddata.gz',
+          'ocr/eng.traineddata',
         ],
         manifest: {
           id: '/',

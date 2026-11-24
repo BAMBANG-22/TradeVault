@@ -53,32 +53,58 @@ async function createOfflineTesseractWorker(): Promise<Worker> {
   const { createWorker, OEM, PSM } = tesseractMod;
   lastPsmApplied = null;
 
-  if (isBrowserLikeEnv()) {
-    const worker = await createWorker('eng', OEM.LSTM_ONLY, {
-      workerPath: resolveBrowserAssetUrl('ocr/worker.min.js'),
-      corePath: resolveBrowserAssetUrl('ocr'),
-      langPath: resolveBrowserAssetUrl('ocr'),
-      workerBlobURL: false,
-      cacheMethod: 'none',
-      gzip: true,
-    });
-    await worker.setParameters({
-      tessedit_pageseg_mode: PSM.SINGLE_BLOCK,
-      preserve_interword_spaces: '1',
-      user_defined_dpi: '300',
-    });
-    lastPsmApplied = String(PSM.SINGLE_BLOCK);
-    return worker;
-  }
+  const isBrowser = isBrowserLikeEnv();
+  const baseOptions: Record<string, any> = isBrowser
+    ? {
+        workerPath: resolveBrowserAssetUrl('ocr/worker.min.js'),
+        corePath: resolveBrowserAssetUrl('ocr'),
+        langPath: resolveBrowserAssetUrl('ocr'),
+        workerBlobURL: false,
+        cacheMethod: 'none',
+        // Android Gradle AAPT2 auto-decompresses *.gz assets and strips the .gz suffix inside APKs,
+        // so we bundle uncompressed `public/ocr/eng.traineddata` with `gzip: false` for 100% parity.
+        gzip: false,
+      }
+    : {
+        langPath: `${(
+          typeof process !== 'undefined' && typeof process.cwd === 'function' ? process.cwd() : '.'
+        ).replace(/[\\/]+$/, '')}/public/ocr`,
+        cacheMethod: 'none',
+        gzip: false,
+      };
 
-  // Node.js execution path (used in automated verification scripts)
-  const cwd = typeof process !== 'undefined' && typeof process.cwd === 'function' ? process.cwd() : '.';
-  const localLangDir = `${cwd.replace(/[\\/]+$/, '')}/public/ocr`;
-  const worker = await createWorker('eng', OEM.LSTM_ONLY, {
-    langPath: localLangDir,
-    cacheMethod: 'none',
-    gzip: true,
+  // tesseract.js swallows loadLanguage/initialize rejections inside `.catch(() => {})` without
+  // rejecting the createWorker Promise. Passing `errorHandler` + an init timeout guarantees fast,
+  // deterministic failure instead of infinite loading if any worker step fails.
+  const worker = await new Promise<Worker>((resolve, reject) => {
+    let settled = false;
+    const finishResolve = (w: Worker) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(initTimer);
+      resolve(w);
+    };
+    const finishReject = (err: unknown) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(initTimer);
+      reject(err instanceof Error ? err : new Error(String(err || 'Tesseract worker init failed')));
+    };
+
+    const initTimer = setTimeout(() => {
+      finishReject(new Error('Inisialisasi mesin OCR offline timeout (20s).'));
+    }, 20_000);
+
+    createWorker('eng', OEM.LSTM_ONLY, {
+      ...baseOptions,
+      errorHandler: (err: unknown) => {
+        finishReject(err);
+      },
+    })
+      .then(finishResolve)
+      .catch(finishReject);
   });
+
   await worker.setParameters({
     tessedit_pageseg_mode: PSM.SINGLE_BLOCK,
     preserve_interword_spaces: '1',
@@ -467,11 +493,17 @@ export async function runOfflineTesseractOcr(
       }
 
       const recognizeTarget = fastDataUrlToRecognizeInput(imageInput);
-      const recognized = await worker.recognize(
-        recognizeTarget as any,
-        {},
-        { text: true, blocks: true }
-      );
+      let recognizeTimer: ReturnType<typeof setTimeout> | null = null;
+      const recognized = await Promise.race([
+        worker.recognize(recognizeTarget as any, {}, { text: true, blocks: true }),
+        new Promise<never>((_, reject) => {
+          recognizeTimer = setTimeout(() => {
+            reject(new Error('Proses OCR offline melebihi batas waktu (25s).'));
+          }, 25_000);
+        }),
+      ]).finally(() => {
+        if (recognizeTimer !== null) clearTimeout(recognizeTimer);
+      });
       const words = collectWordsFromTesseractData(recognized?.data);
       const reconstructed = reconstructStructuredLinesFromWords(words);
       const rawText = String(recognized?.data?.text || '');
@@ -487,9 +519,8 @@ export async function runOfflineTesseractOcr(
         confidence: Number(recognized?.data?.confidence || 0),
       });
     } catch (err) {
-      // Reset cached worker if WASM threw so subsequent offline scans recover cleanly
-      cachedWorkerPromise = null;
-      lastPsmApplied = null;
+      // Terminate & reset cached worker if WASM threw or timed out so subsequent offline scans recover cleanly
+      await terminateOfflineTesseractWorker().catch(() => {});
       resultReject(err);
     }
   });
