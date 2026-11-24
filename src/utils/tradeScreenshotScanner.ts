@@ -1875,7 +1875,7 @@ export async function scanTradeScreenshotOrUrl(inputSource: string): Promise<Ext
     : getApiEndpointCandidates('/api/extract-trade-screenshot');
   let lastServerError = '';
   for (const endpoint of scanEndpoints) {
-    const serverRes = await nativeAwarePostJson(endpoint, payload, 55000);
+    const serverRes = await nativeAwarePostJson(endpoint, payload, 24000);
 
     if (serverRes.ok && serverRes.json?.success && serverRes.json?.data) {
       const normalized = normalizeGeminiScanResponse(
@@ -1909,7 +1909,8 @@ export async function scanTradeScreenshotOrUrl(inputSource: string): Promise<Ext
   }
   if (dataUrlToAnalyze && !ocr.fullText.trim()) {
     try {
-      const localOcr = await runOfflineTesseractOcr(dataUrlToAnalyze, { psm: '11' });
+      const precisionDataUrl = await preparePrecisionOcrVariant(dataUrlToAnalyze, 'chromatic_sharp');
+      const localOcr = await runOfflineTesseractOcr(precisionDataUrl, { psm: '11' });
       ocr = {
         fullText: localOcr.fullText,
         lines: localOcr.lines,
@@ -2849,16 +2850,16 @@ function countActionableSlTpLabels(ocrText: string): { slLabels: number; tpLabel
     /(?:^|[\s|])(?:S\s*[\/|\\!l1I.]\s*[L1]\s*[:=]?|5\s*[\/|\\!lI]\s*L\s*[:=]?|(?:SL|S\s+L)\s*[:=]|Stop\s*Loss\s*[:=]?)\s*([^\n]*)/gi;
   const tpRe =
     /(?:^|[\s|])(?:[T7]\s*[\/|\\!l1I.]\s*P\s*[:=]?|(?:TP|T\s+P)\s*[:=]|Take\s*Profit\s*[:=]?)\s*([^\n]*)/gi;
-  const unsetDashOnly = /^[-—–]+(?:\s+(?:Swap|Commission|Charges|Fee|Taxes|Open|Close|ID)\b.*)?$/i;
+  const actionablePositivePriceRe = /^(?:[1-9]\d*(?:[.,]\d+)?|0[.,]\d*[1-9]\d*)\b/;
 
   for (const line of lines) {
     for (const m of line.matchAll(slRe)) {
       const tail = (m[1] || '').trim();
-      if (!unsetDashOnly.test(tail)) slLabels++;
+      if (actionablePositivePriceRe.test(tail)) slLabels++;
     }
     for (const m of line.matchAll(tpRe)) {
       const tail = (m[1] || '').trim();
-      if (!unsetDashOnly.test(tail)) tpLabels++;
+      if (actionablePositivePriceRe.test(tail)) tpLabels++;
     }
   }
   return { slLabels, tpLabels };
@@ -2869,7 +2870,7 @@ function isOcrPassCompleteEnough(
   ocrText: string,
   confidence: number
 ): boolean {
-  if (rows.length === 0 || confidence < 55) return false;
+  if (rows.length === 0 || confidence < 28) return false;
   const allHaveDistinctPrices = rows.every(
     (r) =>
       r.entryPrice > 0 &&
@@ -2933,8 +2934,8 @@ async function runMt5HistoryOcrFallback(imageDataUrl: string): Promise<RawNormal
     await runPass(primaryImg, '3');
   }
 
-  // Pass 3 (Lazy soft_luma fallback ONLY when primary passes were still incomplete)
-  if (!isComplete) {
+  // Pass 3 (Lazy soft_luma fallback ONLY when primary passes found 0 rows)
+  if (!isComplete && bestRows.length === 0) {
     const softImg = await preparePrecisionOcrVariant(imageDataUrl, 'soft_luma');
     if (softImg !== primaryImg) {
       await runPass(softImg, '6');
@@ -3105,6 +3106,7 @@ export async function scanBatchMt5HistoryScreenshots(
       }
     }
   } else {
+    prewarmOfflineTesseractWorker();
     const endpoints = getApiEndpointCandidates('/api/extract-mt5-history');
     const CHUNK_SIZE = 4;
 
@@ -3120,7 +3122,7 @@ export async function scanBatchMt5HistoryScreenshots(
       let chunkQuotaExhausted = false;
 
       for (const endpoint of endpoints) {
-        const res = await nativeAwarePostJson(endpoint, payload, chunk.length > 1 ? 58000 : 48000);
+        const res = await nativeAwarePostJson(endpoint, payload, chunk.length > 1 ? 28000 : 22000);
         if (res.ok && res.json?.success && res.json?.data) {
           const rawTrades: any[] = Array.isArray(res.json.data.trades) ? res.json.data.trades : [];
           lastModelUsed = String(res.json.data.modelUsed || 'gemini-3.1-flash-lite');

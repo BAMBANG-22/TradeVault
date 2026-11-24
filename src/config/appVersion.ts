@@ -13,11 +13,20 @@ export interface AppVersionEntry {
   summaryEn: string;
 }
 
-export const APP_VERSION = '1.3.1';
-export const APP_CHANGE_CODE = 'VLO-2611-MAC04';
+export const APP_VERSION = '1.3.2';
+export const APP_CHANGE_CODE = 'VLO-2611-SCN05';
 export const APP_RELEASE_DATE = '2026-11-24';
 
 export const APP_VERSION_HISTORY: AppVersionEntry[] = [
+  {
+    version: '1.3.2',
+    changeCode: 'VLO-2611-SCN05',
+    date: '2026-11-24',
+    titleId: "Optimasi kecepatan Scan APK (Offline & Online)",
+    titleEn: "Optimasi kecepatan Scan APK (Offline & Online)",
+    summaryId: "Mempercepat OCR Offline 4-5x di HP (2.1MP single-pass early exit, non-IndexedDB worker init) dan mempercepat fallback Online Scan",
+    summaryEn: "Mempercepat OCR Offline 4-5x di HP (2.1MP single-pass early exit, non-IndexedDB worker init) dan mempercepat fallback Online Scan",
+  },
   {
     version: '1.3.1',
     changeCode: 'VLO-2611-MAC04',

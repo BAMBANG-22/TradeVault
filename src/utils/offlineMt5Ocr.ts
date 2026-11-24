@@ -58,7 +58,7 @@ async function createOfflineTesseractWorker(): Promise<Worker> {
       workerPath: resolveBrowserAssetUrl('ocr/worker.min.js'),
       corePath: resolveBrowserAssetUrl('ocr/tesseract-core-lstm.wasm.js'),
       langPath: resolveBrowserAssetUrl('ocr'),
-      cacheMethod: 'write',
+      cacheMethod: 'none',
       gzip: true,
     });
     await worker.setParameters({
@@ -224,11 +224,11 @@ function renderCanvasOcrVariant(
   const srcH = img.height;
   if (!srcW || !srcH) return fallbackUrl;
 
-  // Target optimal Tesseract LSTM character height (~22-32px) within a fast ~4.8MP budget
-  let scale = srcW < 1050 ? Math.min(1.85, 1450 / srcW) : srcW < 1450 ? 1.15 : 1;
-  const maxPixelBudget = 4_800_000;
+  // Target optimal Tesseract LSTM character height (~20-28px) within a mobile-fast ~2.1MP budget
+  let scale = srcW < 960 ? Math.min(1.5, 1120 / srcW) : 1;
+  const maxPixelBudget = 2_100_000;
   if (srcW * scale * (srcH * scale) > maxPixelBudget) {
-    scale = Math.max(0.85, Math.sqrt(maxPixelBudget / (srcW * srcH)));
+    scale = Math.max(0.65, Math.sqrt(maxPixelBudget / (srcW * srcH)));
   }
   const innerW = Math.round(srcW * scale);
   const innerH = Math.round(srcH * scale);
@@ -311,8 +311,8 @@ function renderCanvasOcrVariant(
   }
 
   ctx.putImageData(imgData, pad, pad);
-  // WebP q=0.94 compresses several times faster than PNG on multi-megapixel screenshots
-  let url = canvas.toDataURL('image/webp', 0.94);
+  // WebP q=0.88 compresses several times faster than PNG on multi-megapixel screenshots
+  let url = canvas.toDataURL('image/webp', 0.88);
   if (!url.startsWith('data:image/webp')) {
     url = canvas.toDataURL('image/png');
   }

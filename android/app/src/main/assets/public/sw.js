@@ -90,7 +90,7 @@ define(['./workbox-afac4cd2'], (function (workbox) { 'use strict';
     "revision": "623698d5ba2f873f3c33f0f10ce4be7b"
   }, {
     "url": "index.html",
-    "revision": "f3f3126c9586da63fdf30795b8427983"
+    "revision": "6a326e023b37652ca1d56d9726e5771a"
   }, {
     "url": "favicon.svg",
     "revision": "38551c27c08537582c7a3112f1577d36"
@@ -107,22 +107,22 @@ define(['./workbox-afac4cd2'], (function (workbox) { 'use strict';
     "url": "ocr/eng.traineddata.gz",
     "revision": "fc3fd803ea042eed89dbb5f96dad14f7"
   }, {
-    "url": "assets/xauusdSeasonality-CYh5l6kt.js",
+    "url": "assets/xauusdSeasonality-C1LcdJuR.js",
     "revision": null
   }, {
     "url": "assets/wifi-Cu9kKePx.js",
     "revision": null
   }, {
-    "url": "assets/web-CouwYDjh.js",
+    "url": "assets/web-DFerm0pS.js",
     "revision": null
   }, {
-    "url": "assets/web-CUPhTobn.js",
+    "url": "assets/web-D3YBuxI0.js",
     "revision": null
   }, {
-    "url": "assets/web-BobIU-0R.js",
+    "url": "assets/web-CGGCrziT.js",
     "revision": null
   }, {
-    "url": "assets/useCycleConfluenceData-JF05E8iq.js",
+    "url": "assets/useCycleConfluenceData-CA7FHsde.js",
     "revision": null
   }, {
     "url": "assets/trending-down-D7L6Z-PA.js",
@@ -173,37 +173,37 @@ define(['./workbox-afac4cd2'], (function (workbox) { 'use strict';
     "url": "assets/inter-cyrillic-ext-wght-normal-BOeWTOD4.woff2",
     "revision": null
   }, {
-    "url": "assets/index-CVNaTHnY.js",
-    "revision": null
-  }, {
     "url": "assets/index-Bgv1F5_D.css",
     "revision": null
   }, {
-    "url": "assets/clientSideMacroAnalyzer-Ib5PIFzZ.js",
+    "url": "assets/index--PRR3xra.js",
+    "revision": null
+  }, {
+    "url": "assets/clientSideMacroAnalyzer-CmTgtotj.js",
     "revision": null
   }, {
     "url": "assets/circle-question-mark-B3nOWk_M.js",
     "revision": null
   }, {
-    "url": "assets/SmcSignalPage-Bqiki_PI.js",
+    "url": "assets/SmcSignalPage-DgFm3peF.js",
     "revision": null
   }, {
-    "url": "assets/SettingsView-CAb6oUnq.js",
+    "url": "assets/SettingsView-DTwn56DE.js",
     "revision": null
   }, {
-    "url": "assets/RiskCalculatorView-FpqR50MC.js",
+    "url": "assets/RiskCalculatorView-CY_q_tOr.js",
     "revision": null
   }, {
-    "url": "assets/MacroNewsView-PuaO4tVP.js",
+    "url": "assets/MacroNewsView-HuwejKht.js",
     "revision": null
   }, {
-    "url": "assets/FundamentalGoldView-C2hl4xi2.js",
+    "url": "assets/FundamentalGoldView-B_o3k3yv.js",
     "revision": null
   }, {
-    "url": "assets/CycleConfluencePage-DH6_vt29.js",
+    "url": "assets/CycleConfluencePage-Ko6yCDhq.js",
     "revision": null
   }, {
-    "url": "assets/AnalyticsView-Cgo0cVvd.js",
+    "url": "assets/AnalyticsView-DvMVvHJ4.js",
     "revision": null
   }, {
     "url": "apple-touch-icon.png",

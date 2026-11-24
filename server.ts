@@ -679,7 +679,7 @@ function parseAiJsonResponse(text: string): Record<string, any> {
 
 const quotaCooldownUntilByModel = new Map<
   string,
-  { code: 'QUOTA_429' | 'MODEL_404'; until: number }
+  { code: 'QUOTA_429' | 'MODEL_404' | 'SERVER_503'; until: number }
 >();
 
 function buildScannerGeometryHintBlock(canvasHints?: ExtractScreenshotRequest['canvasHints']): string {
@@ -854,18 +854,10 @@ ${geometryHintBlock}
     let responseText = '';
     let usedModel = '';
     const scanCascadeStartMs = Date.now();
-    const MAX_SCAN_WALL_MS = 45_000;
+    const MAX_SCAN_WALL_MS = 20_000;
     const scanFailures: Array<{ model: string; code: string; summary: string }> = [];
 
-    for (let pass = 0; pass < 2; pass++) {
-      if (pass > 0) {
-        const shouldRetryTransient = scanFailures.some(
-          (f) => f.code === 'SERVER_503' || f.code === 'TIMEOUT'
-        );
-        const remainingBeforePass = MAX_SCAN_WALL_MS - (Date.now() - scanCascadeStartMs);
-        if (!shouldRetryTransient || remainingBeforePass < 5000) break;
-        await new Promise((r) => setTimeout(r, 1200));
-      }
+    for (let pass = 0; pass < 1; pass++) {
 
       for (const model of candidateModels) {
         if (MAX_SCAN_WALL_MS - (Date.now() - scanCascadeStartMs) < 2500) break;
@@ -938,7 +930,7 @@ ${geometryHintBlock}
                     },
                   },
                 }),
-              Math.min(18_000, remainingWallMs),
+              Math.min(12_000, remainingWallMs),
               `Scan Kilat (${model})`
             );
 
@@ -955,6 +947,11 @@ ${geometryHintBlock}
               quotaCooldownUntilByModel.set(cooldownKey, {
                 code: classified.code,
                 until: Date.now() + 20 * 60 * 1000,
+              });
+            } else if (classified.code === 'SERVER_503') {
+              quotaCooldownUntilByModel.set(cooldownKey, {
+                code: 'SERVER_503',
+                until: Date.now() + 25 * 1000,
               });
             }
           }
@@ -1482,18 +1479,10 @@ STRICT EXTRACTION RULES:
     let usedModel = '';
     let confirmedEmptyModel = '';
     const mt5CascadeStartMs = Date.now();
-    const MAX_MT5_WALL_MS = 45_000;
+    const MAX_MT5_WALL_MS = 24_000;
     const mt5Failures: Array<{ model: string; code: string; summary: string }> = [];
 
-    for (let pass = 0; pass < 2; pass++) {
-      if (pass > 0) {
-        const shouldRetryTransient = mt5Failures.some(
-          (f) => f.code === 'SERVER_503' || f.code === 'TIMEOUT'
-        );
-        const remainingBeforePass = MAX_MT5_WALL_MS - (Date.now() - mt5CascadeStartMs);
-        if (!shouldRetryTransient || remainingBeforePass < 5000) break;
-        await new Promise((r) => setTimeout(r, 900));
-      }
+    for (let pass = 0; pass < 1; pass++) {
 
       for (const model of candidateModels) {
         if (MAX_MT5_WALL_MS - (Date.now() - mt5CascadeStartMs) < 2500) break;
@@ -1578,7 +1567,7 @@ STRICT EXTRACTION RULES:
                     },
                   },
                 }),
-              Math.min(isBatch ? 22_000 : 15_000, remainingWallMs),
+              Math.min(isBatch ? 18_000 : 12_000, remainingWallMs),
               `MT5 Scan (${model})`
             );
 
@@ -1610,6 +1599,11 @@ STRICT EXTRACTION RULES:
               quotaCooldownUntilByModel.set(cooldownKey, {
                 code: classified.code,
                 until: Date.now() + 20 * 60 * 1000,
+              });
+            } else if (classified.code === 'SERVER_503') {
+              quotaCooldownUntilByModel.set(cooldownKey, {
+                code: 'SERVER_503',
+                until: Date.now() + 25 * 1000,
               });
             }
           }

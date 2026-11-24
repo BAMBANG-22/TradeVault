@@ -94,8 +94,27 @@ function isDynamicImportFetchError(err: unknown): boolean {
     msg.includes('importing a module script failed') ||
     msg.includes('error loading dynamically imported module') ||
     msg.includes('chunkloaderror') ||
-    msg.includes('loading chunk')
+    msg.includes('loading chunk') ||
+    msg.includes('invalid hook call') ||
+    msg.includes("cannot read properties of null (reading 'use")
   );
+}
+
+function tryGuardedReloadForStaleModule(): boolean {
+  if (typeof window === 'undefined') return false;
+  try {
+    const lastReloadRaw = window.sessionStorage.getItem(LAZY_RELOAD_GUARD_KEY);
+    const lastReloadTs = lastReloadRaw ? Number(lastReloadRaw) : 0;
+    const now = Date.now();
+    if (!Number.isFinite(lastReloadTs) || now - lastReloadTs > 15_000) {
+      window.sessionStorage.setItem(LAZY_RELOAD_GUARD_KEY, String(now));
+      window.location.reload();
+      return true;
+    }
+  } catch {
+    // Ignore sessionStorage restrictions in private contexts
+  }
+  return false;
 }
 
 function lazyWithRetry<T extends React.ComponentType<any>>(
@@ -114,19 +133,8 @@ function lazyWithRetry<T extends React.ComponentType<any>>(
       }
     }
 
-    if (typeof window !== 'undefined' && isDynamicImportFetchError(lastError)) {
-      try {
-        const lastReloadRaw = window.sessionStorage.getItem(LAZY_RELOAD_GUARD_KEY);
-        const lastReloadTs = lastReloadRaw ? Number(lastReloadRaw) : 0;
-        const now = Date.now();
-        if (!Number.isFinite(lastReloadTs) || now - lastReloadTs > 15_000) {
-          window.sessionStorage.setItem(LAZY_RELOAD_GUARD_KEY, String(now));
-          window.location.reload();
-          return await new Promise<{ default: T }>(() => {});
-        }
-      } catch {
-        // Ignore sessionStorage restrictions in private contexts
-      }
+    if (isDynamicImportFetchError(lastError) && tryGuardedReloadForStaleModule()) {
+      return await new Promise<{ default: T }>(() => {});
     }
 
     throw lastError;
@@ -148,6 +156,9 @@ class LazyViewErrorBoundary extends Component<
 
   componentDidCatch(error: Error, info: ErrorInfo) {
     console.error('[LazyViewErrorBoundary]', error, info);
+    if (isDynamicImportFetchError(error)) {
+      tryGuardedReloadForStaleModule();
+    }
   }
 
   componentDidUpdate(prevProps: { resetKey: string }) {

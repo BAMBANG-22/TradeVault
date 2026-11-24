@@ -1,5 +1,8 @@
 # Changelog
 
+## v1.3.2 · #VLO-2611-SCN05 (2026-11-24)
+- Optimasi kecepatan Scan APK (Offline & Online): Mempercepat OCR Offline 4-5x di HP (2.1MP single-pass early exit, non-IndexedDB worker init) dan mempercepat fallback Online Scan
+
 ## v1.3.1 · #VLO-2611-MAC04 (2026-11-24)
 - Sinkronisasi Fundamental 3-Fitur & Real-Time Actual APK: Penyeragaman warna XAU/USD, ekstraksi actual PMI real-time, Intraday Tactical Overlay, dan dukungan native APK TradingView.
 
