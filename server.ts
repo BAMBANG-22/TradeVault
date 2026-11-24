@@ -679,7 +679,7 @@ function parseAiJsonResponse(text: string): Record<string, any> {
 
 const quotaCooldownUntilByModel = new Map<
   string,
-  { code: 'QUOTA_429' | 'MODEL_404' | 'SERVER_503'; until: number }
+  { code: 'QUOTA_429' | 'MODEL_404' | 'SERVER_503' | 'TIMEOUT'; until: number }
 >();
 
 function buildScannerGeometryHintBlock(canvasHints?: ExtractScreenshotRequest['canvasHints']): string {
@@ -930,7 +930,7 @@ ${geometryHintBlock}
                     },
                   },
                 }),
-              Math.min(12_000, remainingWallMs),
+              Math.min(7_500, remainingWallMs),
               `Scan Kilat (${model})`
             );
 
@@ -948,11 +948,14 @@ ${geometryHintBlock}
                 code: classified.code,
                 until: Date.now() + 20 * 60 * 1000,
               });
-            } else if (classified.code === 'SERVER_503') {
-              quotaCooldownUntilByModel.set(cooldownKey, {
-                code: 'SERVER_503',
-                until: Date.now() + 25 * 1000,
-              });
+            } else if (classified.code === 'SERVER_503' || classified.code === 'TIMEOUT') {
+              for (let k = 0; k < scannerApiKeys.length; k++) {
+                quotaCooldownUntilByModel.set(`${k}:${model}`, {
+                  code: classified.code,
+                  until: Date.now() + 30 * 1000,
+                });
+              }
+              break;
             }
           }
         }
@@ -1567,7 +1570,7 @@ STRICT EXTRACTION RULES:
                     },
                   },
                 }),
-              Math.min(isBatch ? 18_000 : 12_000, remainingWallMs),
+              Math.min(isBatch ? 12_000 : 7_500, remainingWallMs),
               `MT5 Scan (${model})`
             );
 
@@ -1600,11 +1603,14 @@ STRICT EXTRACTION RULES:
                 code: classified.code,
                 until: Date.now() + 20 * 60 * 1000,
               });
-            } else if (classified.code === 'SERVER_503') {
-              quotaCooldownUntilByModel.set(cooldownKey, {
-                code: 'SERVER_503',
-                until: Date.now() + 25 * 1000,
-              });
+            } else if (classified.code === 'SERVER_503' || classified.code === 'TIMEOUT') {
+              for (let k = 0; k < scannerApiKeys.length; k++) {
+                quotaCooldownUntilByModel.set(`${k}:${model}`, {
+                  code: classified.code,
+                  until: Date.now() + 30 * 1000,
+                });
+              }
+              break;
             }
           }
         }

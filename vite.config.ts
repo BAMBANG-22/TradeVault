@@ -10,6 +10,7 @@ export default defineConfig(() => {
       react(),
       tailwindcss(),
       VitePWA({
+        selfDestroying: true,
         registerType: 'autoUpdate',
         includeAssets: [
           'favicon.svg',
@@ -19,6 +20,8 @@ export default defineConfig(() => {
           'pwa-maskable-512x512.png',
           'ocr/worker.min.js',
           'ocr/tesseract-core-lstm.wasm.js',
+          'ocr/tesseract-core-simd-lstm.wasm.js',
+          'ocr/tesseract-core-relaxedsimd-lstm.wasm.js',
           'ocr/eng.traineddata.gz',
         ],
         manifest: {

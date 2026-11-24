@@ -13,11 +13,20 @@ export interface AppVersionEntry {
   summaryEn: string;
 }
 
-export const APP_VERSION = '1.3.2';
-export const APP_CHANGE_CODE = 'VLO-2611-SCN05';
+export const APP_VERSION = '1.3.3';
+export const APP_CHANGE_CODE = 'VLO-2611-SCN06';
 export const APP_RELEASE_DATE = '2026-11-24';
 
 export const APP_VERSION_HISTORY: AppVersionEntry[] = [
+  {
+    version: '1.3.3',
+    changeCode: 'VLO-2611-SCN06',
+    date: '2026-11-24',
+    titleId: "Purge SW cache APK & akselerasi SIMD + Parallel OCR",
+    titleEn: "Purge SW cache APK & akselerasi SIMD + Parallel OCR",
+    summaryId: "Hapus jebakan cache Service Worker lama di APK, aktifkan WebAssembly SIMD, Blob zero-split, dan eksekusi OCR paralel",
+    summaryEn: "Hapus jebakan cache Service Worker lama di APK, aktifkan WebAssembly SIMD, Blob zero-split, dan eksekusi OCR paralel",
+  },
   {
     version: '1.3.2',
     changeCode: 'VLO-2611-SCN05',

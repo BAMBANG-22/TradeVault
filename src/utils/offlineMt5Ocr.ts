@@ -56,8 +56,9 @@ async function createOfflineTesseractWorker(): Promise<Worker> {
   if (isBrowserLikeEnv()) {
     const worker = await createWorker('eng', OEM.LSTM_ONLY, {
       workerPath: resolveBrowserAssetUrl('ocr/worker.min.js'),
-      corePath: resolveBrowserAssetUrl('ocr/tesseract-core-lstm.wasm.js'),
+      corePath: resolveBrowserAssetUrl('ocr'),
       langPath: resolveBrowserAssetUrl('ocr'),
+      workerBlobURL: false,
       cacheMethod: 'none',
       gzip: true,
     });
@@ -224,15 +225,16 @@ function renderCanvasOcrVariant(
   const srcH = img.height;
   if (!srcW || !srcH) return fallbackUrl;
 
-  // Target optimal Tesseract LSTM character height (~20-28px) within a mobile-fast ~2.1MP budget
-  let scale = srcW < 960 ? Math.min(1.5, 1120 / srcW) : 1;
-  const maxPixelBudget = 2_100_000;
+  // Target optimal Tesseract LSTM character height (~20-28px) within an ultra-fast ~1.15MP mobile budget
+  const maxOcrWidth = 860;
+  let scale = srcW < 720 ? Math.min(1.35, maxOcrWidth / srcW) : srcW > maxOcrWidth ? maxOcrWidth / srcW : 1;
+  const maxPixelBudget = 1_150_000;
   if (srcW * scale * (srcH * scale) > maxPixelBudget) {
-    scale = Math.max(0.65, Math.sqrt(maxPixelBudget / (srcW * srcH)));
+    scale = Math.max(0.45, Math.sqrt(maxPixelBudget / (srcW * srcH)));
   }
   const innerW = Math.round(srcW * scale);
   const innerH = Math.round(srcH * scale);
-  const pad = 20;
+  const pad = 16;
   const outW = innerW + pad * 2;
   const outH = innerH + pad * 2;
 
@@ -405,6 +407,34 @@ function collectWordsFromTesseractData(data: any): OfflineOcrWordBox[] {
   return words;
 }
 
+function fastDataUrlToRecognizeInput(input: string | Buffer): string | Buffer | Blob {
+  if (
+    typeof input !== 'string' ||
+    !input.startsWith('data:image/') ||
+    !isBrowserLikeEnv() ||
+    typeof Blob === 'undefined' ||
+    typeof atob !== 'function'
+  ) {
+    return input;
+  }
+  try {
+    const commaIdx = input.indexOf(',');
+    if (commaIdx === -1) return input;
+    const header = input.slice(0, commaIdx);
+    const mimeMatch = header.match(/^data:([^;]+)/i);
+    const mime = mimeMatch ? mimeMatch[1] : 'image/webp';
+    const binStr = atob(input.slice(commaIdx + 1));
+    const len = binStr.length;
+    const bytes = new Uint8Array(len);
+    for (let i = 0; i < len; i++) {
+      bytes[i] = binStr.charCodeAt(i);
+    }
+    return new Blob([bytes], { type: mime });
+  } catch {
+    return input;
+  }
+}
+
 /**
  * Runs 100% offline on-device OCR on an image Data URL / Buffer / image source.
  * Serialized through `workerQueuePromise` so concurrent callers safely share one lightweight WASM worker.
@@ -436,8 +466,9 @@ export async function runOfflineTesseractOcr(
         lastPsmApplied = String(targetPsm);
       }
 
+      const recognizeTarget = fastDataUrlToRecognizeInput(imageInput);
       const recognized = await worker.recognize(
-        imageInput,
+        recognizeTarget as any,
         {},
         { text: true, blocks: true }
       );

@@ -1308,7 +1308,7 @@ async function runOcrSpaceOnDataUrl(
     formData.append('isOverlayRequired', 'true');
 
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 9500);
+    const timer = setTimeout(() => controller.abort(), 5000);
     const res = await fetch('https://api.ocr.space/parse/image', {
       method: 'POST',
       body: formData,
@@ -1874,9 +1874,17 @@ export async function scanTradeScreenshotOrUrl(inputSource: string): Promise<Ext
   const scanEndpoints = isNavigatorOffline
     ? []
     : getApiEndpointCandidates('/api/extract-trade-screenshot');
+  const parallelOcrSpacePromise: Promise<OcrExtractionResult> =
+    dataUrlToAnalyze && !isNavigatorOffline
+      ? runOcrSpaceOnDataUrl(dataUrlToAnalyze)
+      : Promise.resolve({ fullText: '', lines: [], words: [] });
+  if (dataUrlToAnalyze) {
+    prewarmOfflineTesseractWorker();
+  }
+
   let lastServerError = '';
   for (const endpoint of scanEndpoints) {
-    const serverRes = await nativeAwarePostJson(endpoint, payload, 24000);
+    const serverRes = await nativeAwarePostJson(endpoint, payload, 10000);
 
     if (serverRes.ok && serverRes.json?.success && serverRes.json?.data) {
       const normalized = normalizeGeminiScanResponse(
@@ -1903,11 +1911,8 @@ export async function scanTradeScreenshotOrUrl(inputSource: string): Promise<Ext
     }
   }
 
-  // PRIORITY 3: Real-Badge OCR (Online OCR.space -> Local On-Device Tesseract Offline OCR) + 2D Canvas Geometry
-  let ocr: OcrExtractionResult = { fullText: '', lines: [], words: [] };
-  if (dataUrlToAnalyze && !isNavigatorOffline) {
-    ocr = await runOcrSpaceOnDataUrl(dataUrlToAnalyze);
-  }
+  // PRIORITY 3: Real-Badge OCR (Parallel Online OCR.space -> Local On-Device Tesseract Offline OCR) + 2D Canvas Geometry
+  let ocr: OcrExtractionResult = await parallelOcrSpacePromise;
   if (dataUrlToAnalyze && !ocr.fullText.trim()) {
     try {
       const precisionDataUrl = await preparePrecisionOcrVariant(dataUrlToAnalyze, 'chromatic_sharp');
@@ -2919,7 +2924,11 @@ async function runMt5HistoryOcrFallback(imageDataUrl: string): Promise<RawNormal
         bestScore = score;
         bestRows = parsed;
       }
-      if (isOcrPassCompleteEnough(bestRows, ocr.fullText, ocr.confidence)) {
+      if (
+        (bestRows.length > 0 &&
+          bestRows.every((r) => r.entryPrice > 0 && r.exitPrice > 0)) ||
+        isOcrPassCompleteEnough(bestRows, ocr.fullText, ocr.confidence)
+      ) {
         isComplete = true;
       }
     } catch {
@@ -2930,8 +2939,8 @@ async function runMt5HistoryOcrFallback(imageDataUrl: string): Promise<RawNormal
   // Pass 1 (Fastest & avoids column-splitting): SINGLE_BLOCK on chromatic_sharp
   await runPass(primaryImg, '6');
 
-  // Pass 2 (Only if Pass 1 missed rows or failed to pair visible SL/TP/Entry-Exit): AUTO on primary
-  if (!isComplete) {
+  // Pass 2 (Only if Pass 1 found 0 rows or incomplete entry/exit prices): AUTO on primary
+  if (!isComplete && bestRows.length === 0) {
     await runPass(primaryImg, '3');
   }
 
@@ -3122,8 +3131,34 @@ export async function scanBatchMt5HistoryScreenshots(
       let lastChunkError = 'Gagal menghubungi layanan AI Scan Kilat MT5.';
       let chunkQuotaExhausted = false;
 
+      // Start local on-device OCR in parallel so if Gemini is busy (503) or slow,
+      // fallback results are already computed with 0ms additional waiting.
+      const parallelOcrByIndexPromise: Promise<RawNormalizedMt5Row[][]> = Promise.all(
+        chunk.map((entry) => runMt5HistoryOcrFallback(entry.item.imageDataUrl))
+      );
+
       for (const endpoint of endpoints) {
-        const res = await nativeAwarePostJson(endpoint, payload, chunk.length > 1 ? 28000 : 22000);
+        const networkPromise = nativeAwarePostJson(
+          endpoint,
+          payload,
+          chunk.length > 1 ? 14000 : 9500
+        );
+        const earlyOcrCutoffPromise = parallelOcrByIndexPromise.then(async (ocrLists) => {
+          const allHaveRows = ocrLists.every((rows) => rows.length > 0);
+          if (allHaveRows) {
+            // Give Gemini a brief 1.5s grace window after local OCR finishes; if still waiting, cut off and use local OCR immediately
+            await new Promise((r) => setTimeout(r, 1500));
+            return {
+              ok: false,
+              json: null,
+              status: 503,
+              errorMessage: 'Beralih cepat ke hasil OCR lokal yang sudah siap.',
+            };
+          }
+          return networkPromise;
+        });
+
+        const res = await Promise.race([networkPromise, earlyOcrCutoffPromise]);
         if (res.ok && res.json?.success && res.json?.data) {
           const rawTrades: any[] = Array.isArray(res.json.data.trades) ? res.json.data.trades : [];
           lastModelUsed = String(res.json.data.modelUsed || 'gemini-3.1-flash-lite');
@@ -3187,10 +3222,12 @@ export async function scanBatchMt5HistoryScreenshots(
         }
       }
 
-      // On-Device Offline OCR Fallback when backend AI failed/timed out/exhausted
+      // Use parallel On-Device Offline OCR result when backend AI failed/timed out/exhausted
       if (!chunkHandled) {
-        for (const entry of chunk) {
-          const ocrRows = await runMt5HistoryOcrFallback(entry.item.imageDataUrl);
+        const parallelOcrResults = await parallelOcrByIndexPromise;
+        for (let ci = 0; ci < chunk.length; ci++) {
+          const entry = chunk[ci];
+          const ocrRows = parallelOcrResults[ci] || [];
           if (ocrRows.length > 0) {
             lastModelUsed = lastModelUsed || 'offline-ocr-tesseract';
             lastSource = 'MT5_HISTORY_OFFLINE';

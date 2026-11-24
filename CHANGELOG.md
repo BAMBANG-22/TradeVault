@@ -1,5 +1,8 @@
 # Changelog
 
+## v1.3.3 · #VLO-2611-SCN06 (2026-11-24)
+- Purge SW cache APK & akselerasi SIMD + Parallel OCR: Hapus jebakan cache Service Worker lama di APK, aktifkan WebAssembly SIMD, Blob zero-split, dan eksekusi OCR paralel
+
 ## v1.3.2 · #VLO-2611-SCN05 (2026-11-24)
 - Optimasi kecepatan Scan APK (Offline & Online): Mempercepat OCR Offline 4-5x di HP (2.1MP single-pass early exit, non-IndexedDB worker init) dan mempercepat fallback Online Scan
 

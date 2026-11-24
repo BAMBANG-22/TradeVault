@@ -294,7 +294,7 @@ export const Mt5HistoryScanModal: React.FC<Mt5HistoryScanModalProps> = ({
       const prepared = await Promise.all(
         imageFiles.map(async (file, i) => {
           const seqIndex = nextImageSeqRef.current++;
-          const dataUrl = await prepareCrispMt5Screenshot(file, 1280, 3200, 0.86);
+          const dataUrl = await prepareCrispMt5Screenshot(file, 1000, 2200, 0.84);
           return {
             id: `ss_${Date.now()}_${seqIndex}_${i}_${Math.random().toString(36).slice(2, 6)}`,
             sourceImageIndex: seqIndex,
