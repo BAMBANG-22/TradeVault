@@ -37,6 +37,8 @@ import {
   BookOpen,
   ClipboardCheck,
   Plus,
+  Terminal,
+  Copy,
 } from 'lucide-react';
 import { AppSettings } from '../../types/settings';
 import { Trade } from '../../types/trade';
@@ -86,7 +88,16 @@ import {
   APP_VERSION,
   APP_RELEASE_DATE,
   APP_VERSION_HISTORY,
+  BUILD_GIT_SHA,
+  getAppBuildIdentity,
 } from '../../config/appVersion';
+import {
+  clearMt5OcrScanDiagnostics,
+  getRecentMt5OcrScanDiagnostics,
+  Mt5OcrScanDiagnostic,
+  OfflineOcrRuntimeProbe,
+  probeOfflineOcrRuntimeEnvironment,
+} from '../../utils/offlineMt5Ocr';
 
 interface SettingsViewProps {
   settings: AppSettings;
@@ -164,8 +175,42 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   const [isNewsCycleOffline, setIsNewsCycleOffline] = useState(() => isNewsCycleOfflineMode());
   const [devTapCount, setDevTapCount] = useState(0);
   const [showVersionHistory, setShowVersionHistory] = useState(false);
+  const [showOcrDiagnostics, setShowOcrDiagnostics] = useState(false);
+  const [ocrRuntimeProbe, setOcrRuntimeProbe] = useState<OfflineOcrRuntimeProbe | null>(null);
+  const [isProbingOcr, setIsProbingOcr] = useState(false);
+  const [ocrScanHistory, setOcrScanHistory] = useState<Mt5OcrScanDiagnostic[]>(() =>
+    getRecentMt5OcrScanDiagnostics()
+  );
+  const [copiedOcrReport, setCopiedOcrReport] = useState(false);
+  const appBuildIdentity = useMemo(() => getAppBuildIdentity(), []);
   const [isChecklistEditorOpen, setIsChecklistEditorOpen] = useState(false);
   const [newChecklistLabel, setNewChecklistLabel] = useState('');
+
+  const handleRunOcrRuntimeProbe = async () => {
+    setIsProbingOcr(true);
+    try {
+      const probe = await probeOfflineOcrRuntimeEnvironment();
+      setOcrRuntimeProbe(probe);
+      setOcrScanHistory(getRecentMt5OcrScanDiagnostics());
+    } finally {
+      setIsProbingOcr(false);
+    }
+  };
+
+  const handleCopyFullOcrDiagnostics = async () => {
+    const payload = {
+      build: appBuildIdentity,
+      runtimeProbe: ocrRuntimeProbe,
+      recentScans: ocrScanHistory,
+    };
+    try {
+      await navigator.clipboard.writeText(JSON.stringify(payload, null, 2));
+      setCopiedOcrReport(true);
+      window.setTimeout(() => setCopiedOcrReport(false), 1800);
+    } catch {
+      // ignore clipboard errors on restricted WebViews
+    }
+  };
 
   const effectiveAccounts = resolveConfiguredAccounts(settings);
   const effectivePlaybooks = getActivePlaybooks(settings);
@@ -1615,22 +1660,42 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
         </div>
       </section>
 
-      {/* Minimalist App Version & Change Code Footer (5-tap unlocks Developer Mode) */}
+      {/* Minimalist App Version & Build Identity Footer (5-tap unlocks Developer Mode) */}
       <div className="pt-2 space-y-2.5">
         <div className="flex flex-wrap items-center justify-between gap-2 px-1 text-[11px] text-[#526071] dark:text-[#929BA9]">
-          <button
-            type="button"
-            onClick={() => setShowVersionHistory((v) => !v)}
-            className="inline-flex items-center gap-1.5 hover:text-[#0F172A] dark:hover:text-[#F2F4F7] transition-colors cursor-pointer"
-          >
-            <span>{tr('Vlo Journal', 'Vlo Journal')}</span>
+          <div className="inline-flex items-center gap-1.5 flex-wrap">
+            <button
+              type="button"
+              onClick={() => setShowVersionHistory((v) => !v)}
+              className="inline-flex items-center gap-1.5 hover:text-[#0F172A] dark:hover:text-[#F2F4F7] transition-colors cursor-pointer"
+            >
+              <span>{tr('Vlo Journal', 'Vlo Journal')}</span>
+              <span className="text-[#929BA9] dark:text-[#64748B]">·</span>
+              <span className="underline underline-offset-2 decoration-[#E4E4E7] dark:decoration-[#20252D]">
+                {showVersionHistory
+                  ? tr('Tutup Riwayat Versi', 'Hide Version Log')
+                  : tr('Riwayat Perubahan', 'Changelog')}
+              </span>
+            </button>
             <span className="text-[#929BA9] dark:text-[#64748B]">·</span>
-            <span className="underline underline-offset-2 decoration-[#E4E4E7] dark:decoration-[#20252D]">
-              {showVersionHistory
-                ? tr('Tutup Riwayat Versi', 'Hide Version Log')
-                : tr('Riwayat Perubahan', 'Changelog')}
-            </span>
-          </button>
+            <button
+              type="button"
+              onClick={() => {
+                setOcrScanHistory(getRecentMt5OcrScanDiagnostics());
+                setShowOcrDiagnostics((v) => {
+                  const next = !v;
+                  if (next && !ocrRuntimeProbe) {
+                    void handleRunOcrRuntimeProbe();
+                  }
+                  return next;
+                });
+              }}
+              className="inline-flex items-center gap-1 underline underline-offset-2 decoration-[#E4E4E7] dark:decoration-[#20252D] hover:text-[#0F172A] dark:hover:text-[#F2F4F7] transition-colors cursor-pointer"
+            >
+              <Terminal className="h-3 w-3" />
+              <span>{tr('Diagnostik OCR', 'OCR Diagnostics')}</span>
+            </button>
+          </div>
           <button
             type="button"
             onClick={() => {
@@ -1645,11 +1710,185 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
               }
             }}
             className="font-mono-numbers tabular-nums hover:text-[#0F172A] dark:hover:text-[#F2F4F7] transition-colors cursor-default"
-            title={`${tr('Versi', 'Version')} v${APP_VERSION} (${APP_RELEASE_DATE})`}
+            title={`${tr('Versi', 'Version')} v${APP_VERSION} · ${BUILD_GIT_SHA} (${APP_RELEASE_DATE})`}
           >
-            v{APP_VERSION}
+            v{APP_VERSION} · {BUILD_GIT_SHA}
           </button>
         </div>
+
+        {(showOcrDiagnostics || isDeveloperMode) && (
+          <div className="rounded-2xl bg-white dark:bg-[#101318] border border-[#E4E4E7] dark:border-[#20252D] p-4 space-y-3 text-[11px]">
+            <div className="flex flex-wrap items-center justify-between gap-2 pb-2.5 border-b border-[#E4E4E7] dark:border-[#20252D]">
+              <div className="flex items-center gap-1.5">
+                <Terminal className="h-3.5 w-3.5 text-[#0F172A] dark:text-[#F2F4F7]" />
+                <span className="text-xs font-semibold uppercase tracking-wider text-[#0F172A] dark:text-[#F2F4F7]">
+                  {tr('Diagnostik Build & Offline OCR', 'Build Identity & Offline OCR Diagnostics')}
+                </span>
+              </div>
+              <div className="flex items-center gap-1.5">
+                <button
+                  type="button"
+                  disabled={isProbingOcr}
+                  onClick={() => void handleRunOcrRuntimeProbe()}
+                  className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full border border-[#E4E4E7] dark:border-[#20252D] text-[10px] font-semibold text-[#0F172A] dark:text-[#F2F4F7] hover:bg-[#FAFAFA] dark:hover:bg-[#161A22] cursor-pointer disabled:opacity-50"
+                >
+                  <RefreshCw className={`h-2.5 w-2.5 ${isProbingOcr ? 'animate-spin' : ''}`} />
+                  <span>{isProbingOcr ? tr('Menguji...', 'Probing...') : tr('Uji Aset OCR', 'Probe Runtime')}</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void handleCopyFullOcrDiagnostics()}
+                  className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full border border-[#E4E4E7] dark:border-[#20252D] text-[10px] font-semibold text-[#0F172A] dark:text-[#F2F4F7] hover:bg-[#FAFAFA] dark:hover:bg-[#161A22] cursor-pointer"
+                >
+                  {copiedOcrReport ? <Check className="h-2.5 w-2.5" /> : <Copy className="h-2.5 w-2.5" />}
+                  <span>{copiedOcrReport ? tr('Disalin', 'Copied') : 'Copy JSON'}</span>
+                </button>
+              </div>
+            </div>
+
+            {/* Deterministic Build Identity */}
+            <div className="p-3 rounded-xl bg-[#FAFAFA] dark:bg-[#0B0E13] border border-[#E4E4E7] dark:border-[#20252D] font-mono text-[10px] grid grid-cols-1 sm:grid-cols-2 gap-1.5 text-[#526071] dark:text-[#929BA9] select-text">
+              <div>
+                <span className="text-[#94A3B8]">App Version: </span>
+                <span className="text-[#0F172A] dark:text-[#F2F4F7] font-semibold">
+                  v{appBuildIdentity.appVersion} ({appBuildIdentity.changeCode})
+                </span>
+              </div>
+              <div>
+                <span className="text-[#94A3B8]">Git Commit: </span>
+                <span className="text-[#0F172A] dark:text-[#F2F4F7] font-semibold">
+                  {appBuildIdentity.gitCommitSha} · run #{appBuildIdentity.ciRunNumber}
+                </span>
+              </div>
+              <div className="sm:col-span-2 break-all">
+                <span className="text-[#94A3B8]">Build Timestamp: </span>
+                <span className="text-[#0F172A] dark:text-[#F2F4F7]">{appBuildIdentity.buildTimestamp}</span>
+              </div>
+              <div>
+                <span className="text-[#94A3B8]">OCR Engine: </span>
+                <span className="text-[#0F172A] dark:text-[#F2F4F7]">
+                  {appBuildIdentity.ocrEngine} {appBuildIdentity.ocrEngineVersion}
+                </span>
+              </div>
+              <div>
+                <span className="text-[#94A3B8]">OCR Pipeline: </span>
+                <span className="text-[#0F172A] dark:text-[#F2F4F7]">{appBuildIdentity.ocrPipelineVersion}</span>
+              </div>
+            </div>
+
+            {/* Live Runtime & Bundled OCR Assets Probe */}
+            {ocrRuntimeProbe && (
+              <div className="p-3 rounded-xl bg-[#FAFAFA] dark:bg-[#0B0E13] border border-[#E4E4E7] dark:border-[#20252D] font-mono text-[10px] space-y-2 select-text">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-1 text-[#526071] dark:text-[#929BA9]">
+                  <div>
+                    <span className="text-[#94A3B8]">Runtime: </span>
+                    <span className="text-[#0F172A] dark:text-[#F2F4F7]">
+                      {ocrRuntimeProbe.isNativeCapacitor
+                        ? `Capacitor (${ocrRuntimeProbe.capacitorPlatform})`
+                        : `Web (${ocrRuntimeProbe.capacitorPlatform})`}
+                    </span>
+                  </div>
+                  <div className="break-all">
+                    <span className="text-[#94A3B8]">Origin: </span>
+                    <span className="text-[#0F172A] dark:text-[#F2F4F7]">{ocrRuntimeProbe.origin}</span>
+                  </div>
+                  <div>
+                    <span className="text-[#94A3B8]">Service Workers: </span>
+                    <span className="text-[#0F172A] dark:text-[#F2F4F7]">
+                      {ocrRuntimeProbe.serviceWorkerCount} (ctrl:{ocrRuntimeProbe.hasServiceWorkerController ? 'YES' : 'no'})
+                    </span>
+                  </div>
+                  <div className="break-all">
+                    <span className="text-[#94A3B8]">CacheStorage: </span>
+                    <span className="text-[#0F172A] dark:text-[#F2F4F7]">
+                      {ocrRuntimeProbe.cacheBucketNames.length > 0
+                        ? ocrRuntimeProbe.cacheBucketNames.join(', ')
+                        : '(empty)'}
+                    </span>
+                  </div>
+                </div>
+                <div className="space-y-1 pt-1.5 border-t border-[#E4E4E7] dark:border-[#20252D]">
+                  <div className="text-[#94A3B8] uppercase">Bundled Offline OCR Assets</div>
+                  {ocrRuntimeProbe.assetChecks.map((a) => (
+                    <div key={a.name} className="flex items-center justify-between gap-2 text-[10px]">
+                      <span className="truncate text-[#0F172A] dark:text-[#F2F4F7]">{a.name}</span>
+                      <span
+                        className={`shrink-0 ${
+                          a.ok
+                            ? 'text-[#059669] dark:text-[#34D399]'
+                            : 'text-[#E11D48] dark:text-[#E05260]'
+                        }`}
+                      >
+                        {a.ok
+                          ? `OK (${a.status}) · ${a.bytes !== null ? `${(a.bytes / 1024).toFixed(0)} KB` : '?'}`
+                          : `FAIL (${a.status}${a.error ? `: ${a.error}` : ''})`}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Recorded Offline OCR Scans */}
+            <div className="space-y-1.5">
+              <div className="flex items-center justify-between">
+                <span className="text-[10px] font-semibold uppercase tracking-wider text-[#526071] dark:text-[#929BA9]">
+                  {tr('Riwayat Scan OCR Sesi Ini', 'Session OCR Scan Telemetry')} ({ocrScanHistory.length})
+                </span>
+                {ocrScanHistory.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      clearMt5OcrScanDiagnostics();
+                      setOcrScanHistory([]);
+                    }}
+                    className="text-[10px] text-[#526071] dark:text-[#929BA9] hover:text-[#E11D48] cursor-pointer"
+                  >
+                    {tr('Bersihkan', 'Clear')}
+                  </button>
+                )}
+              </div>
+              {ocrScanHistory.length === 0 ? (
+                <p className="text-[11px] text-[#697586] dark:text-[#929BA9]">
+                  {tr(
+                    'Belum ada scan offline di sesi ini. Lakukan scan MT5 mode Offline lalu buka panel ini untuk memeriksa hasil mentah.',
+                    'No offline scans recorded in this session yet. Run an Offline MT5 scan then open this panel to inspect raw telemetry.'
+                  )}
+                </p>
+              ) : (
+                <div className="space-y-2">
+                  {ocrScanHistory.slice(0, 3).map((rec) => (
+                    <div
+                      key={rec.id}
+                      className="p-2.5 rounded-xl bg-[#FAFAFA] dark:bg-[#0B0E13] border border-[#E4E4E7] dark:border-[#20252D] font-mono text-[10px] space-y-1 select-text"
+                    >
+                      <div className="flex flex-wrap items-center justify-between gap-2 text-[#0F172A] dark:text-[#F2F4F7]">
+                        <span className="font-semibold">
+                          {rec.resolvedEngine} · {rec.parserOutputSummary.length} trades · {rec.totalDurationMs}ms
+                        </span>
+                        <span className="text-[#526071] dark:text-[#929BA9]">
+                          conf {rec.finalConfidence}% · {rec.finalWordBoxCount} words
+                        </span>
+                      </div>
+                      <div className="text-[#526071] dark:text-[#929BA9]">
+                        input:{' '}
+                        {rec.inputDimensions
+                          ? `${rec.inputDimensions.width}x${rec.inputDimensions.height}`
+                          : 'n/a'}{' '}
+                        · passes: {rec.passes.length} · fallback: {rec.invokedFallback ? 'YES' : 'no'}
+                      </div>
+                      {rec.validationFailures.length > 0 && (
+                        <div className="text-[#E11D48] dark:text-[#E05260]">
+                          validation issues: {rec.validationFailures.length}
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        )}
 
         {showVersionHistory && (
           <div className="rounded-2xl bg-white dark:bg-[#101318] border border-[#E4E4E7] dark:border-[#20252D] p-4 space-y-3">
@@ -1658,8 +1897,17 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                 {tr('Riwayat Versi', 'Version History')}
               </span>
               <span className="text-[11px] font-mono-numbers tabular-nums text-[#526071] dark:text-[#929BA9]">
-                v{APP_VERSION}
+                v{APP_VERSION} · {BUILD_GIT_SHA}
               </span>
+            </div>
+            <div className="p-2.5 rounded-xl bg-[#FAFAFA] dark:bg-[#0B0E13] border border-[#E4E4E7] dark:border-[#20252D] font-mono text-[10px] text-[#526071] dark:text-[#929BA9] space-y-0.5 select-text">
+              <div>
+                Build: v{appBuildIdentity.appVersion} · #{appBuildIdentity.changeCode} · git {appBuildIdentity.gitCommitSha} · run #{appBuildIdentity.ciRunNumber}
+              </div>
+              <div className="break-all">Built: {appBuildIdentity.buildTimestamp}</div>
+              <div>
+                OCR: {appBuildIdentity.ocrEngine} {appBuildIdentity.ocrEngineVersion} ({appBuildIdentity.ocrPipelineVersion})
+              </div>
             </div>
             <div className="space-y-2.5">
               {APP_VERSION_HISTORY.map((entry) => (

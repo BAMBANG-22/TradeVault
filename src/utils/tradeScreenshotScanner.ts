@@ -33,12 +33,19 @@ import {
   validateSlTpDirection,
 } from './riskCalculator';
 import {
+  Mt5OcrScanDiagnostic,
+  OcrPassDiagnostic,
   OfflineOcrLine,
   OfflineOcrWordBox,
+  PrecisionOcrVariantMode,
+  getRuntimePlatformSnapshot,
   preparePrecisionOcrVariant,
+  preparePrecisionOcrVariantWithTelemetry,
   prewarmOfflineTesseractWorker,
+  recordMt5OcrScanDiagnostic,
   runOfflineTesseractOcr,
 } from './offlineMt5Ocr';
+import { getAppBuildIdentity, OCR_PIPELINE_VERSION } from '../config/appVersion';
 
 export interface ExtractedTradeScanData {
   detected: boolean;
@@ -2101,11 +2108,17 @@ async function computeImageContentHash(dataUrl: string): Promise<string> {
 
 function getCachedMt5ScanResult(
   hash: string,
-  options?: { allowOfflineCache?: boolean }
+  options?: { allowOfflineCache?: boolean; strictOfflineOnly?: boolean }
 ): Mt5CacheEntry | null {
   const now = Date.now();
   const allowOfflineCache = options?.allowOfflineCache ?? false;
-  const candidateKeys = allowOfflineCache ? [`ai:${hash}`, `offline:${hash}`, hash] : [`ai:${hash}`, hash];
+  const strictOfflineOnly = options?.strictOfflineOnly ?? false;
+  const offlineKey = `offline:${OCR_PIPELINE_VERSION}:${hash}`;
+  const candidateKeys = strictOfflineOnly
+    ? [offlineKey]
+    : allowOfflineCache
+    ? [`ai:${hash}`, offlineKey]
+    : [`ai:${hash}`, hash];
 
   const disk = readMt5SessionCache();
   for (const key of candidateKeys) {
@@ -2127,7 +2140,7 @@ function setCachedMt5ScanResult(
   tier: 'ai' | 'offline',
   entry: Mt5CacheEntry
 ): void {
-  const key = `${tier}:${hash}`;
+  const key = tier === 'offline' ? `offline:${OCR_PIPELINE_VERSION}:${hash}` : `ai:${hash}`;
   mt5MemoryScanCache.set(key, entry);
   if (mt5MemoryScanCache.size > MT5_SCAN_CACHE_MAX_ENTRIES) {
     const oldestKey = mt5MemoryScanCache.keys().next().value;
@@ -2898,18 +2911,65 @@ function isOcrPassCompleteEnough(
   return extractedSl >= slLabels && extractedTp >= tpLabels;
 }
 
-async function runMt5HistoryOcrFallback(imageDataUrl: string): Promise<RawNormalizedMt5Row[]> {
-  if (!imageDataUrl.startsWith('data:image/')) return [];
+interface Mt5OcrFallbackExecutionResult {
+  rows: RawNormalizedMt5Row[];
+  passes: OcrPassDiagnostic[];
+  inputDimensions: { width: number; height: number } | null;
+  finalRawText: string;
+  finalConfidence: number;
+  finalWordBoxCount: number;
+  invokedFallbackPass: boolean;
+  durationMs: number;
+  error?: string;
+}
+
+async function runMt5HistoryOcrFallback(
+  imageDataUrl: string
+): Promise<Mt5OcrFallbackExecutionResult> {
+  const totalStart = Date.now();
+  if (!imageDataUrl.startsWith('data:image/')) {
+    return {
+      rows: [],
+      passes: [],
+      inputDimensions: null,
+      finalRawText: '',
+      finalConfidence: 0,
+      finalWordBoxCount: 0,
+      invokedFallbackPass: false,
+      durationMs: Date.now() - totalStart,
+      error: 'Input is not a valid image Data URL.',
+    };
+  }
 
   // Render ONLY primary chromatic variant up front; generate soft_luma lazily only if needed
-  const primaryImg = await preparePrecisionOcrVariant(imageDataUrl, 'chromatic_sharp');
+  const primaryVariant = await preparePrecisionOcrVariantWithTelemetry(
+    imageDataUrl,
+    'chromatic_sharp'
+  );
+  const inputDimensions = primaryVariant.telemetry
+    ? {
+        width: primaryVariant.telemetry.sourceWidth,
+        height: primaryVariant.telemetry.sourceHeight,
+      }
+    : null;
 
   let bestRows: ParsedOcrMt5Row[] = [];
   let bestScore = -1;
+  let bestRawText = '';
+  let bestConfidence = 0;
+  let bestWordBoxCount = 0;
   const allEqualCountCandidates: ParsedOcrMt5Row[][] = [];
+  const passDiagnostics: OcrPassDiagnostic[] = [];
   let isComplete = false;
+  let lastError: string | undefined;
 
-  const runPass = async (img: string, psm: '3' | '6') => {
+  const runPass = async (
+    passIndex: number,
+    variantMode: PrecisionOcrVariantMode,
+    img: string,
+    preprocess: OcrPassDiagnostic['preprocess'],
+    psm: '3' | '6'
+  ) => {
     try {
       const ocr = await runOfflineTesseractOcr(img, { psm });
       const parsed = parseMt5HistoryRowsFromOcrText(ocr.fullText, {
@@ -2917,38 +2977,80 @@ async function runMt5HistoryOcrFallback(imageDataUrl: string): Promise<RawNormal
         words: ocr.words,
       });
       const score = scoreMt5OcrParsedRows(parsed);
+      passDiagnostics.push({
+        passIndex,
+        variantMode,
+        psm,
+        preprocess,
+        workerInitMs: ocr.telemetry?.workerInitMs ?? 0,
+        workerReused: ocr.telemetry?.workerReused ?? false,
+        recognizeMs: ocr.telemetry?.recognizeMs ?? 0,
+        confidence: Number.isFinite(ocr.confidence) ? Number(ocr.confidence.toFixed(1)) : 0,
+        wordBoxCount: ocr.words.length,
+        lineCount: ocr.lines.length,
+        parsedRowsCount: parsed.length,
+        score,
+        rawText: ocr.fullText.slice(0, 4000),
+        sampleBoxes: ocr.words.slice(0, 24).map((w) => ({
+          text: w.text,
+          left: Math.round(w.left),
+          top: Math.round(w.top),
+          width: Math.round(w.width),
+          height: Math.round(w.height),
+        })),
+      });
       if (parsed.length > 0) {
         allEqualCountCandidates.push(parsed);
       }
-      if (score > bestScore) {
+      if (score > bestScore || (bestScore < 0 && !bestRawText)) {
         bestScore = score;
         bestRows = parsed;
+        bestRawText = ocr.fullText;
+        bestConfidence = ocr.confidence;
+        bestWordBoxCount = ocr.words.length;
       }
-      if (
-        (bestRows.length > 0 &&
-          bestRows.every((r) => r.entryPrice > 0 && r.exitPrice > 0)) ||
-        isOcrPassCompleteEnough(bestRows, ocr.fullText, ocr.confidence)
-      ) {
+      // Strict completeness gate: only skip Pass 2 when every row has distinct Entry/Exit,
+      // non-zero Profit/Loss (for moved trades), all visible S/L & T/P labels, and confidence >= 28.
+      if (isOcrPassCompleteEnough(bestRows, ocr.fullText, ocr.confidence)) {
         isComplete = true;
       }
-    } catch {
-      // Try next fallback pass
+    } catch (err: any) {
+      const errMsg = err?.message ? String(err.message) : 'Offline OCR pass failed';
+      lastError = errMsg;
+      passDiagnostics.push({
+        passIndex,
+        variantMode,
+        psm,
+        preprocess,
+        workerInitMs: 0,
+        workerReused: false,
+        recognizeMs: 0,
+        confidence: 0,
+        wordBoxCount: 0,
+        lineCount: 0,
+        parsedRowsCount: 0,
+        score: -1,
+        rawText: '',
+        sampleBoxes: [],
+        error: errMsg,
+      });
     }
   };
 
   // Pass 1 (Fastest & avoids column-splitting): SINGLE_BLOCK on chromatic_sharp
-  await runPass(primaryImg, '6');
+  await runPass(1, 'chromatic_sharp', primaryVariant.dataUrl, primaryVariant.telemetry, '6');
 
-  // Pass 2 (Only if Pass 1 found 0 rows or incomplete entry/exit prices): AUTO on primary
-  if (!isComplete && bestRows.length === 0) {
-    await runPass(primaryImg, '3');
+  // Pass 2 (Run whenever Pass 1 was incomplete — missing profit, S/L, T/P, low confidence, or 0 rows):
+  // AUTO layout segmentation on chromatic_sharp, then merged with Pass 1 via mergeComplementaryMt5OcrRows
+  if (!isComplete) {
+    await runPass(2, 'chromatic_sharp', primaryVariant.dataUrl, primaryVariant.telemetry, '3');
   }
 
-  // Pass 3 (Lazy soft_luma fallback ONLY when primary passes found 0 rows)
+  // Pass 3 (Lazy soft_luma fallback ONLY when both primary passes found 0 rows)
   if (!isComplete && bestRows.length === 0) {
-    const softImg = await preparePrecisionOcrVariant(imageDataUrl, 'soft_luma');
-    if (softImg !== primaryImg) {
-      await runPass(softImg, '6');
+    const softVariant = await preparePrecisionOcrVariantWithTelemetry(imageDataUrl, 'soft_luma');
+    if (softVariant.dataUrl !== primaryVariant.dataUrl) {
+      await runPass(3, 'soft_luma', softVariant.dataUrl, softVariant.telemetry, '6');
     }
   }
 
@@ -2956,7 +3058,7 @@ async function runMt5HistoryOcrFallback(imageDataUrl: string): Promise<RawNormal
     bestRows = mergeComplementaryMt5OcrRows(bestRows, cand);
   }
 
-  return bestRows.map((r) => ({
+  const normalizedRows: RawNormalizedMt5Row[] = bestRows.map((r) => ({
     ticketId: r.ticketId,
     instrument: r.instrument,
     position: r.position,
@@ -2974,6 +3076,74 @@ async function runMt5HistoryOcrFallback(imageDataUrl: string): Promise<RawNormal
     notes: r.notes,
     ocrSignRecovered: r.ocrSignRecovered,
   }));
+
+  return {
+    rows: normalizedRows,
+    passes: passDiagnostics,
+    inputDimensions,
+    finalRawText: bestRawText.slice(0, 5000),
+    finalConfidence: Number.isFinite(bestConfidence) ? Number(bestConfidence.toFixed(1)) : 0,
+    finalWordBoxCount: bestWordBoxCount,
+    invokedFallbackPass: passDiagnostics.length > 1,
+    durationMs: Date.now() - totalStart,
+    error: normalizedRows.length === 0 ? lastError : undefined,
+  };
+}
+
+function buildMt5OcrDiagnosticRecord(params: {
+  requestedMode: 'auto' | 'offline';
+  resolvedEngine: 'gemini' | 'offline-ocr' | 'cache' | 'error';
+  invokedFallback: boolean;
+  fallbackReason?: string;
+  imageIndex: number;
+  ocrExec?: Mt5OcrFallbackExecutionResult | null;
+  mappedCandidates: Mt5HistoryTradeCandidate[];
+  totalDurationMs?: number;
+  error?: string;
+}): Mt5OcrScanDiagnostic {
+  const validationFailures: string[] = [];
+  for (const cand of params.mappedCandidates) {
+    const audit = auditMt5HistoryCandidate(cand);
+    for (const issue of audit.issues) {
+      if (issue.severity === 'error' || issue.severity === 'warning') {
+        validationFailures.push(
+          `[${issue.severity.toUpperCase()}] ${cand.instrument} (${cand.position}): ${issue.code} - ${issue.messageEn}`
+        );
+      }
+    }
+  }
+  return {
+    id: `ocr_diag_${Date.now()}_${params.imageIndex}_${Math.random().toString(36).slice(2, 6)}`,
+    timestampIso: new Date().toISOString(),
+    build: getAppBuildIdentity(),
+    platform: getRuntimePlatformSnapshot(),
+    requestedMode: params.requestedMode,
+    resolvedEngine: params.resolvedEngine,
+    invokedFallback: params.invokedFallback,
+    fallbackReason: params.fallbackReason,
+    imageIndex: params.imageIndex,
+    inputDimensions: params.ocrExec?.inputDimensions ?? null,
+    totalDurationMs: params.totalDurationMs ?? params.ocrExec?.durationMs ?? 0,
+    passes: params.ocrExec?.passes ?? [],
+    finalRawText: params.ocrExec?.finalRawText ?? '',
+    finalConfidence: params.ocrExec?.finalConfidence ?? 0,
+    finalWordBoxCount: params.ocrExec?.finalWordBoxCount ?? 0,
+    parserOutputSummary: params.mappedCandidates.map((c) => ({
+      instrument: c.instrument,
+      position: c.position,
+      lotSize: c.lotSize,
+      entryPrice: c.entryPrice,
+      exitPrice: c.exitPrice,
+      stopLoss: c.stopLoss,
+      takeProfit: c.takeProfit,
+      netProfit: c.netProfit,
+      closeType: c.closeType,
+      closeDateTime: c.closeDateTime || null,
+      ocrSignRecovered: c.ocrSignRecovered,
+    })),
+    validationFailures,
+    error: params.error || params.ocrExec?.error,
+  };
 }
 
 export type Mt5ScanExecutionMode = 'auto' | 'offline';
@@ -3046,7 +3216,10 @@ export async function scanBatchMt5HistoryScreenshots(
 
     const hash = await computeImageContentHash(trimmed);
     const cached = !forceRefresh
-      ? getCachedMt5ScanResult(hash, { allowOfflineCache: runOfflineOnly })
+      ? getCachedMt5ScanResult(hash, {
+          allowOfflineCache: runOfflineOnly,
+          strictOfflineOnly: requestedMode === 'offline',
+        })
       : null;
     if (cached) {
       cacheHitsCount++;
@@ -3058,6 +3231,19 @@ export async function scanBatchMt5HistoryScreenshots(
           fallbackNow,
         })
       );
+      if (runOfflineOnly) {
+        recordMt5OcrScanDiagnostic(
+          buildMt5OcrDiagnosticRecord({
+            requestedMode,
+            resolvedEngine: 'cache',
+            invokedFallback: false,
+            fallbackReason: `Served from sessionStorage offline cache (${cached.modelUsed})`,
+            imageIndex: item.sourceImageIndex,
+            mappedCandidates: mapped,
+            totalDurationMs: 1,
+          })
+        );
+      }
       outcomesMap.set(item.sourceImageIndex, {
         sourceImageIndex: item.sourceImageIndex,
         status: 'done',
@@ -3076,7 +3262,8 @@ export async function scanBatchMt5HistoryScreenshots(
 
   if (runOfflineOnly) {
     for (const entry of uncached) {
-      const ocrRows = await runMt5HistoryOcrFallback(entry.item.imageDataUrl);
+      const ocrExec = await runMt5HistoryOcrFallback(entry.item.imageDataUrl);
+      const ocrRows = ocrExec.rows;
       if (ocrRows.length > 0) {
         lastModelUsed = 'offline-ocr-tesseract';
         lastSource = 'MT5_HISTORY_OFFLINE';
@@ -3094,6 +3281,19 @@ export async function scanBatchMt5HistoryScreenshots(
             fallbackNow,
           })
         );
+        recordMt5OcrScanDiagnostic(
+          buildMt5OcrDiagnosticRecord({
+            requestedMode,
+            resolvedEngine: 'offline-ocr',
+            invokedFallback: ocrExec.invokedFallbackPass,
+            fallbackReason: ocrExec.invokedFallbackPass
+              ? `Multi-pass OCR executed (${ocrExec.passes.length} passes)`
+              : undefined,
+            imageIndex: entry.item.sourceImageIndex,
+            ocrExec,
+            mappedCandidates: mapped,
+          })
+        );
         outcomesMap.set(entry.item.sourceImageIndex, {
           sourceImageIndex: entry.item.sourceImageIndex,
           status: 'done',
@@ -3103,6 +3303,23 @@ export async function scanBatchMt5HistoryScreenshots(
           modelUsed: 'offline-ocr-tesseract',
         });
       } else {
+        const errText =
+          ocrExec.error ||
+          'Tidak ada baris transaksi MT5/MT4 yang terbaca secara offline. Pastikan teks posisi (contoh: XAUUSD, buy 0.10 dan 2640.00 -> 2650.00) terlihat tajam & penuh.';
+        recordMt5OcrScanDiagnostic(
+          buildMt5OcrDiagnosticRecord({
+            requestedMode,
+            resolvedEngine: 'error',
+            invokedFallback: ocrExec.invokedFallbackPass,
+            fallbackReason: ocrExec.invokedFallbackPass
+              ? `All ${ocrExec.passes.length} offline OCR passes returned 0 trade rows`
+              : 'Primary offline OCR pass returned 0 trade rows',
+            imageIndex: entry.item.sourceImageIndex,
+            ocrExec,
+            mappedCandidates: [],
+            error: errText,
+          })
+        );
         outcomesMap.set(entry.item.sourceImageIndex, {
           sourceImageIndex: entry.item.sourceImageIndex,
           status: 'error',
@@ -3110,8 +3327,7 @@ export async function scanBatchMt5HistoryScreenshots(
           fromCache: false,
           scanEngine: 'error',
           modelUsed: 'offline-ocr-tesseract',
-          error:
-            'Tidak ada baris transaksi MT5/MT4 yang terbaca secara offline. Pastikan teks posisi (contoh: XAUUSD, buy 0.10 dan 2640.00 -> 2650.00) terlihat tajam & penuh.',
+          error: errText,
         });
       }
     }
@@ -3133,7 +3349,7 @@ export async function scanBatchMt5HistoryScreenshots(
 
       // Start local on-device OCR in parallel so if Gemini is busy (503) or slow,
       // fallback results are already computed with 0ms additional waiting.
-      const parallelOcrByIndexPromise: Promise<RawNormalizedMt5Row[][]> = Promise.all(
+      const parallelOcrByIndexPromise: Promise<Mt5OcrFallbackExecutionResult[]> = Promise.all(
         chunk.map((entry) => runMt5HistoryOcrFallback(entry.item.imageDataUrl))
       );
 
@@ -3143,8 +3359,8 @@ export async function scanBatchMt5HistoryScreenshots(
           payload,
           chunk.length > 1 ? 14000 : 9500
         );
-        const earlyOcrCutoffPromise = parallelOcrByIndexPromise.then(async (ocrLists) => {
-          const allHaveRows = ocrLists.every((rows) => rows.length > 0);
+        const earlyOcrCutoffPromise = parallelOcrByIndexPromise.then(async (ocrExecs) => {
+          const allHaveRows = ocrExecs.every((exec) => exec.rows.length > 0);
           if (allHaveRows) {
             // Give Gemini a brief 1.5s grace window after local OCR finishes; if still waiting, cut off and use local OCR immediately
             await new Promise((r) => setTimeout(r, 1500));
@@ -3227,7 +3443,8 @@ export async function scanBatchMt5HistoryScreenshots(
         const parallelOcrResults = await parallelOcrByIndexPromise;
         for (let ci = 0; ci < chunk.length; ci++) {
           const entry = chunk[ci];
-          const ocrRows = parallelOcrResults[ci] || [];
+          const ocrExec = parallelOcrResults[ci];
+          const ocrRows = ocrExec?.rows || [];
           if (ocrRows.length > 0) {
             lastModelUsed = lastModelUsed || 'offline-ocr-tesseract';
             lastSource = 'MT5_HISTORY_OFFLINE';
@@ -3245,6 +3462,17 @@ export async function scanBatchMt5HistoryScreenshots(
                 fallbackNow,
               })
             );
+            recordMt5OcrScanDiagnostic(
+              buildMt5OcrDiagnosticRecord({
+                requestedMode,
+                resolvedEngine: 'offline-ocr',
+                invokedFallback: true,
+                fallbackReason: `Auto mode fallback to Offline OCR: ${lastChunkError}`,
+                imageIndex: entry.item.sourceImageIndex,
+                ocrExec,
+                mappedCandidates: mapped,
+              })
+            );
             outcomesMap.set(entry.item.sourceImageIndex, {
               sourceImageIndex: entry.item.sourceImageIndex,
               status: 'done',
@@ -3254,6 +3482,18 @@ export async function scanBatchMt5HistoryScreenshots(
               modelUsed: 'offline-ocr-tesseract',
             });
           } else {
+            recordMt5OcrScanDiagnostic(
+              buildMt5OcrDiagnosticRecord({
+                requestedMode,
+                resolvedEngine: 'error',
+                invokedFallback: true,
+                fallbackReason: `Auto mode AI + Offline OCR fallback failed: ${lastChunkError}`,
+                imageIndex: entry.item.sourceImageIndex,
+                ocrExec,
+                mappedCandidates: [],
+                error: lastChunkError,
+              })
+            );
             outcomesMap.set(entry.item.sourceImageIndex, {
               sourceImageIndex: entry.item.sourceImageIndex,
               status: 'error',

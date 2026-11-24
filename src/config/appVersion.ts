@@ -13,11 +13,73 @@ export interface AppVersionEntry {
   summaryEn: string;
 }
 
-export const APP_VERSION = '1.3.4';
-export const APP_CHANGE_CODE = 'VLO-2611-SCN07';
+declare const __BUILD_GIT_SHA__: string | undefined;
+declare const __BUILD_TIMESTAMP__: string | undefined;
+declare const __BUILD_RUN_NUMBER__: string | undefined;
+declare const __TESSERACT_VERSION__: string | undefined;
+declare const __TESSERACT_CORE_VERSION__: string | undefined;
+
+export const APP_VERSION = '1.3.5';
+export const APP_CHANGE_CODE = 'VLO-2611-AUD08';
 export const APP_RELEASE_DATE = '2026-11-24';
+export const OCR_PIPELINE_VERSION = 'offline-mt5-ocr-v3.2-lossless-png';
+
+export const BUILD_GIT_SHA: string =
+  typeof __BUILD_GIT_SHA__ !== 'undefined' && __BUILD_GIT_SHA__ ? __BUILD_GIT_SHA__ : 'dev-local';
+export const BUILD_TIMESTAMP: string =
+  typeof __BUILD_TIMESTAMP__ !== 'undefined' && __BUILD_TIMESTAMP__
+    ? __BUILD_TIMESTAMP__
+    : APP_RELEASE_DATE;
+export const BUILD_RUN_NUMBER: string =
+  typeof __BUILD_RUN_NUMBER__ !== 'undefined' && __BUILD_RUN_NUMBER__
+    ? __BUILD_RUN_NUMBER__
+    : 'local';
+export const OCR_ENGINE_NAME = 'tesseract.js (Local WASM LSTM)';
+export const OCR_ENGINE_VERSION: string =
+  typeof __TESSERACT_VERSION__ !== 'undefined' && __TESSERACT_VERSION__
+    ? `${__TESSERACT_VERSION__} (core ${
+        typeof __TESSERACT_CORE_VERSION__ !== 'undefined' && __TESSERACT_CORE_VERSION__
+          ? __TESSERACT_CORE_VERSION__
+          : '7.0.0'
+      })`
+    : '7.0.0 (core 7.0.0)';
+
+export interface AppBuildIdentity {
+  appVersion: string;
+  changeCode: string;
+  releaseDate: string;
+  gitCommitSha: string;
+  buildTimestamp: string;
+  ciRunNumber: string;
+  ocrEngine: string;
+  ocrEngineVersion: string;
+  ocrPipelineVersion: string;
+}
+
+export function getAppBuildIdentity(): AppBuildIdentity {
+  return {
+    appVersion: APP_VERSION,
+    changeCode: APP_CHANGE_CODE,
+    releaseDate: APP_RELEASE_DATE,
+    gitCommitSha: BUILD_GIT_SHA,
+    buildTimestamp: BUILD_TIMESTAMP,
+    ciRunNumber: BUILD_RUN_NUMBER,
+    ocrEngine: OCR_ENGINE_NAME,
+    ocrEngineVersion: OCR_ENGINE_VERSION,
+    ocrPipelineVersion: OCR_PIPELINE_VERSION,
+  };
+}
 
 export const APP_VERSION_HISTORY: AppVersionEntry[] = [
+  {
+    version: '1.3.5',
+    changeCode: 'VLO-2611-AUD08',
+    date: '2026-11-24',
+    titleId: "Forensic Offline OCR diagnostics, build identity & Android high-res lossless pipeline",
+    titleEn: "Forensic Offline OCR diagnostics, build identity & Android high-res lossless pipeline",
+    summaryId: "Added deterministic build identity (Git SHA, timestamp, CI run, OCR pipeline version), forensic OCR diagnostics inspector, full legacy Service Worker & OCR CacheStorage purge with forced reload on upgrade, lossless high-res PNG preprocessing for tall Android MT5 screenshots, and restored multi-pass completeness gate.",
+    summaryEn: "Added deterministic build identity (Git SHA, timestamp, CI run, OCR pipeline version), forensic OCR diagnostics inspector, full legacy Service Worker & OCR CacheStorage purge with forced reload on upgrade, lossless high-res PNG preprocessing for tall Android MT5 screenshots, and restored multi-pass completeness gate.",
+  },
   {
     version: '1.3.4',
     changeCode: 'VLO-2611-SCN07',

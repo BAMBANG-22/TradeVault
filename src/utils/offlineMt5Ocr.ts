@@ -6,6 +6,8 @@
  */
 
 import type { Worker, Word } from 'tesseract.js';
+import { Capacitor } from '@capacitor/core';
+import { getAppBuildIdentity, AppBuildIdentity } from '../config/appVersion';
 
 export interface OfflineOcrWordBox {
   text: string;
@@ -29,11 +31,169 @@ export interface OfflineOcrResult {
   lines: OfflineOcrLine[];
   words: OfflineOcrWordBox[];
   confidence: number;
+  telemetry?: {
+    workerInitMs: number;
+    workerReused: boolean;
+    recognizeMs: number;
+    psm: string;
+    inputType: string;
+    resolvedAssets: {
+      workerPath: string;
+      corePath: string;
+      langPath: string;
+      gzip: boolean;
+    };
+  };
+}
+
+export interface OcrPreprocessTelemetry {
+  mode: PrecisionOcrVariantMode;
+  sourceWidth: number;
+  sourceHeight: number;
+  outputWidth: number;
+  outputHeight: number;
+  scaleApplied: number;
+  paddingPx: number;
+  detectedBackground: 'dark' | 'light' | 'unknown';
+  backgroundLuma: number;
+  encoding: string;
+  preprocessMs: number;
+  stepsExecuted: string[];
+}
+
+export interface OcrPassDiagnostic {
+  passIndex: number;
+  variantMode: PrecisionOcrVariantMode;
+  psm: '3' | '6' | '11';
+  preprocess: OcrPreprocessTelemetry | null;
+  workerInitMs: number;
+  workerReused: boolean;
+  recognizeMs: number;
+  confidence: number;
+  wordBoxCount: number;
+  lineCount: number;
+  parsedRowsCount: number;
+  score: number;
+  rawText: string;
+  sampleBoxes: Array<{ text: string; left: number; top: number; width: number; height: number }>;
+  error?: string;
+}
+
+export interface Mt5OcrScanDiagnostic {
+  id: string;
+  timestampIso: string;
+  build: AppBuildIdentity;
+  platform: {
+    isNativeCapacitor: boolean;
+    capacitorPlatform: string;
+    origin: string;
+    navigatorOnline: boolean;
+    hasServiceWorkerController: boolean;
+    userAgent: string;
+  };
+  requestedMode: 'auto' | 'offline';
+  resolvedEngine: 'gemini' | 'offline-ocr' | 'cache' | 'error';
+  invokedFallback: boolean;
+  fallbackReason?: string;
+  imageIndex: number;
+  inputDimensions: { width: number; height: number } | null;
+  totalDurationMs: number;
+  passes: OcrPassDiagnostic[];
+  finalRawText: string;
+  finalConfidence: number;
+  finalWordBoxCount: number;
+  parserOutputSummary: Array<{
+    instrument: string;
+    position: string;
+    lotSize: number;
+    entryPrice: number;
+    exitPrice: number;
+    stopLoss: number | null;
+    takeProfit: number | null;
+    netProfit: number;
+    closeType: string;
+    closeDateTime: string | null;
+    ocrSignRecovered?: boolean;
+  }>;
+  validationFailures: string[];
+  error?: string;
+}
+
+export interface OfflineOcrRuntimeProbe {
+  build: AppBuildIdentity;
+  isNativeCapacitor: boolean;
+  capacitorPlatform: string;
+  origin: string;
+  href: string;
+  hasServiceWorkerController: boolean;
+  serviceWorkerCount: number;
+  cacheBucketNames: string[];
+  resolvedUrls: {
+    workerPath: string;
+    corePath: string;
+    langPath: string;
+    trainedDataUrl: string;
+  };
+  assetChecks: Array<{
+    name: string;
+    url: string;
+    ok: boolean;
+    status: number;
+    bytes: number | null;
+    contentType: string;
+    error?: string;
+  }>;
+}
+
+const MAX_DIAGNOSTIC_HISTORY = 10;
+const recentMt5OcrDiagnostics: Mt5OcrScanDiagnostic[] = [];
+
+export function recordMt5OcrScanDiagnostic(entry: Mt5OcrScanDiagnostic): void {
+  recentMt5OcrDiagnostics.unshift(entry);
+  if (recentMt5OcrDiagnostics.length > MAX_DIAGNOSTIC_HISTORY) {
+    recentMt5OcrDiagnostics.length = MAX_DIAGNOSTIC_HISTORY;
+  }
+}
+
+export function getRecentMt5OcrScanDiagnostics(): Mt5OcrScanDiagnostic[] {
+  return [...recentMt5OcrDiagnostics];
+}
+
+export function clearMt5OcrScanDiagnostics(): void {
+  recentMt5OcrDiagnostics.length = 0;
+}
+
+export function getRuntimePlatformSnapshot() {
+  let isNative = false;
+  let capPlatform = 'web';
+  try {
+    isNative = typeof Capacitor !== 'undefined' && Capacitor.isNativePlatform();
+    capPlatform = typeof Capacitor !== 'undefined' ? Capacitor.getPlatform() : 'web';
+  } catch {
+    isNative = false;
+    capPlatform = 'web';
+  }
+  return {
+    isNativeCapacitor: isNative,
+    capacitorPlatform: capPlatform,
+    origin: typeof window !== 'undefined' ? window.location.origin : 'node',
+    navigatorOnline: typeof navigator !== 'undefined' ? navigator.onLine !== false : true,
+    hasServiceWorkerController:
+      typeof navigator !== 'undefined' && Boolean(navigator.serviceWorker?.controller),
+    userAgent: typeof navigator !== 'undefined' ? navigator.userAgent : 'node',
+  };
 }
 
 let cachedWorkerPromise: Promise<Worker> | null = null;
 let workerQueuePromise: Promise<void> = Promise.resolve();
 let lastPsmApplied: string | null = null;
+let lastWorkerInitMs = 0;
+let lastResolvedAssets = {
+  workerPath: '',
+  corePath: '',
+  langPath: '',
+  gzip: false,
+};
 
 function isBrowserLikeEnv(): boolean {
   return typeof window !== 'undefined' && typeof document !== 'undefined';
@@ -42,23 +202,135 @@ function isBrowserLikeEnv(): boolean {
 function resolveBrowserAssetUrl(relativePath: string): string {
   const clean = relativePath.replace(/^\/+/, '');
   try {
-    return new URL(clean, window.location.href).href;
+    const base =
+      typeof window !== 'undefined' && window.location.origin && window.location.origin !== 'null'
+        ? `${window.location.origin}/`
+        : window.location.href;
+    return new URL(clean, base).href;
   } catch {
     return `/${clean}`;
   }
 }
 
+export async function probeOfflineOcrRuntimeEnvironment(): Promise<OfflineOcrRuntimeProbe> {
+  const snap = getRuntimePlatformSnapshot();
+  const build = getAppBuildIdentity();
+  const workerPath = isBrowserLikeEnv() ? resolveBrowserAssetUrl('ocr/worker.min.js') : 'public/ocr/worker.min.js';
+  const corePath = isBrowserLikeEnv() ? resolveBrowserAssetUrl('ocr') : 'public/ocr';
+  const langPath = isBrowserLikeEnv() ? resolveBrowserAssetUrl('ocr') : 'public/ocr';
+  const trainedDataUrl = isBrowserLikeEnv()
+    ? resolveBrowserAssetUrl('ocr/eng.traineddata')
+    : 'public/ocr/eng.traineddata';
+
+  let serviceWorkerCount = 0;
+  let cacheBucketNames: string[] = [];
+  if (typeof navigator !== 'undefined' && 'serviceWorker' in navigator) {
+    try {
+      const regs = await navigator.serviceWorker.getRegistrations();
+      serviceWorkerCount = regs.length;
+    } catch {}
+  }
+  if (typeof window !== 'undefined' && 'caches' in window) {
+    try {
+      cacheBucketNames = await window.caches.keys();
+    } catch {}
+  }
+
+  const assetsToProbe = [
+    { name: 'worker.min.js', url: workerPath },
+    { name: 'eng.traineddata', url: trainedDataUrl },
+    { name: 'tesseract-core-simd-lstm.wasm.js', url: resolveBrowserAssetUrl('ocr/tesseract-core-simd-lstm.wasm.js') },
+    {
+      name: 'tesseract-core-relaxedsimd-lstm.wasm.js',
+      url: resolveBrowserAssetUrl('ocr/tesseract-core-relaxedsimd-lstm.wasm.js'),
+    },
+    { name: 'tesseract-core-lstm.wasm.js', url: resolveBrowserAssetUrl('ocr/tesseract-core-lstm.wasm.js') },
+  ];
+
+  const assetChecks = await Promise.all(
+    assetsToProbe.map(async (asset) => {
+      if (!isBrowserLikeEnv() || typeof fetch !== 'function') {
+        return {
+          name: asset.name,
+          url: asset.url,
+          ok: false,
+          status: 0,
+          bytes: null,
+          contentType: '',
+          error: 'Non-browser environment',
+        };
+      }
+      try {
+        const res = await fetch(asset.url, { cache: 'no-store' });
+        const buf = res.ok ? await res.arrayBuffer() : null;
+        return {
+          name: asset.name,
+          url: asset.url,
+          ok: res.ok && (buf ? buf.byteLength > 0 : false),
+          status: res.status,
+          bytes: buf ? buf.byteLength : null,
+          contentType: res.headers.get('content-type') || '',
+        };
+      } catch (err: any) {
+        return {
+          name: asset.name,
+          url: asset.url,
+          ok: false,
+          status: 0,
+          bytes: null,
+          contentType: '',
+          error: String(err?.message || err || 'Fetch failed'),
+        };
+      }
+    })
+  );
+
+  return {
+    build,
+    isNativeCapacitor: snap.isNativeCapacitor,
+    capacitorPlatform: snap.capacitorPlatform,
+    origin: snap.origin,
+    href: typeof window !== 'undefined' ? window.location.href : 'node',
+    hasServiceWorkerController: snap.hasServiceWorkerController,
+    serviceWorkerCount,
+    cacheBucketNames,
+    resolvedUrls: {
+      workerPath,
+      corePath,
+      langPath,
+      trainedDataUrl,
+    },
+    assetChecks,
+  };
+}
+
 async function createOfflineTesseractWorker(): Promise<Worker> {
+  const initStart = Date.now();
   const tesseractMod = await import('tesseract.js');
   const { createWorker, OEM, PSM } = tesseractMod;
   lastPsmApplied = null;
 
   const isBrowser = isBrowserLikeEnv();
+  const resolvedWorkerPath = isBrowser ? resolveBrowserAssetUrl('ocr/worker.min.js') : 'node-default';
+  const resolvedCorePath = isBrowser ? resolveBrowserAssetUrl('ocr') : 'node-default';
+  const resolvedLangPath = isBrowser
+    ? resolveBrowserAssetUrl('ocr')
+    : `${(
+        typeof process !== 'undefined' && typeof process.cwd === 'function' ? process.cwd() : '.'
+      ).replace(/[\\/]+$/, '')}/public/ocr`;
+
+  lastResolvedAssets = {
+    workerPath: resolvedWorkerPath,
+    corePath: resolvedCorePath,
+    langPath: resolvedLangPath,
+    gzip: false,
+  };
+
   const baseOptions: Record<string, any> = isBrowser
     ? {
-        workerPath: resolveBrowserAssetUrl('ocr/worker.min.js'),
-        corePath: resolveBrowserAssetUrl('ocr'),
-        langPath: resolveBrowserAssetUrl('ocr'),
+        workerPath: resolvedWorkerPath,
+        corePath: resolvedCorePath,
+        langPath: resolvedLangPath,
         workerBlobURL: false,
         cacheMethod: 'none',
         // Android Gradle AAPT2 auto-decompresses *.gz assets and strips the .gz suffix inside APKs,
@@ -66,9 +338,7 @@ async function createOfflineTesseractWorker(): Promise<Worker> {
         gzip: false,
       }
     : {
-        langPath: `${(
-          typeof process !== 'undefined' && typeof process.cwd === 'function' ? process.cwd() : '.'
-        ).replace(/[\\/]+$/, '')}/public/ocr`,
+        langPath: resolvedLangPath,
         cacheMethod: 'none',
         gzip: false,
       };
@@ -111,10 +381,12 @@ async function createOfflineTesseractWorker(): Promise<Worker> {
     user_defined_dpi: '300',
   });
   lastPsmApplied = String(PSM.SINGLE_BLOCK);
+  lastWorkerInitMs = Date.now() - initStart;
   return worker;
 }
 
-async function getOfflineWorker(): Promise<Worker> {
+async function getOfflineWorker(): Promise<{ worker: Worker; reused: boolean; initMs: number }> {
+  const wasCached = Boolean(cachedWorkerPromise);
   if (!cachedWorkerPromise) {
     cachedWorkerPromise = createOfflineTesseractWorker().catch((err) => {
       cachedWorkerPromise = null;
@@ -122,7 +394,13 @@ async function getOfflineWorker(): Promise<Worker> {
       throw err;
     });
   }
-  return cachedWorkerPromise;
+  const start = Date.now();
+  const worker = await cachedWorkerPromise;
+  return {
+    worker,
+    reused: wasCached,
+    initMs: wasCached ? Date.now() - start : lastWorkerInitMs,
+  };
 }
 
 /**
@@ -242,33 +520,80 @@ export function reconstructStructuredLinesFromWords(
  */
 export type PrecisionOcrVariantMode = 'chromatic_sharp' | 'soft_luma';
 
-function renderCanvasOcrVariant(
+function renderCanvasOcrVariantWithTelemetry(
   img: HTMLImageElement,
   mode: PrecisionOcrVariantMode,
   fallbackUrl: string
-): string {
+): { dataUrl: string; telemetry: OcrPreprocessTelemetry } {
+  const startMs = Date.now();
   const srcW = img.width;
   const srcH = img.height;
-  if (!srcW || !srcH) return fallbackUrl;
+  const stepsExecuted: string[] = [];
+  if (!srcW || !srcH) {
+    return {
+      dataUrl: fallbackUrl,
+      telemetry: {
+        mode,
+        sourceWidth: srcW,
+        sourceHeight: srcH,
+        outputWidth: srcW,
+        outputHeight: srcH,
+        scaleApplied: 1,
+        paddingPx: 0,
+        detectedBackground: 'unknown',
+        backgroundLuma: 0,
+        encoding: 'passthrough',
+        preprocessMs: Date.now() - startMs,
+        stepsExecuted: ['invalid-source-passthrough'],
+      },
+    };
+  }
 
-  // Target optimal Tesseract LSTM character height (~20-28px) within an ultra-fast ~1.15MP mobile budget
-  const maxOcrWidth = 860;
-  let scale = srcW < 720 ? Math.min(1.35, maxOcrWidth / srcW) : srcW > maxOcrWidth ? maxOcrWidth / srcW : 1;
-  const maxPixelBudget = 1_150_000;
+  // Preserve crisp glyph height (~22-30px) on full-screen Android portrait screenshots (e.g. 1080x2400)
+  // while keeping pixel count bounded to 2.2MP for fast SIMD WASM execution.
+  const maxOcrWidth = 1080;
+  let scale =
+    srcW < 760
+      ? Math.min(1.5, maxOcrWidth / srcW)
+      : srcW > maxOcrWidth
+      ? maxOcrWidth / srcW
+      : 1;
+  const maxPixelBudget = 2_200_000;
   if (srcW * scale * (srcH * scale) > maxPixelBudget) {
-    scale = Math.max(0.45, Math.sqrt(maxPixelBudget / (srcW * srcH)));
+    scale = Math.max(0.55, Math.sqrt(maxPixelBudget / (srcW * srcH)));
   }
   const innerW = Math.round(srcW * scale);
   const innerH = Math.round(srcH * scale);
-  const pad = 16;
+  const pad = 20;
   const outW = innerW + pad * 2;
   const outH = innerH + pad * 2;
+  stepsExecuted.push(
+    `resize(${srcW}x${srcH}->${innerW}x${innerH},scale=${scale.toFixed(2)},pad=${pad}px)`
+  );
 
   const canvas = document.createElement('canvas');
   canvas.width = outW;
   canvas.height = outH;
   const ctx = canvas.getContext('2d', { willReadFrequently: true });
-  if (!ctx) return fallbackUrl;
+  if (!ctx) {
+    return {
+      dataUrl: fallbackUrl,
+      telemetry: {
+        mode,
+        sourceWidth: srcW,
+        sourceHeight: srcH,
+        outputWidth: srcW,
+        outputHeight: srcH,
+        scaleApplied: 1,
+        paddingPx: 0,
+        detectedBackground: 'unknown',
+        backgroundLuma: 0,
+        encoding: 'passthrough-no-ctx',
+        preprocessMs: Date.now() - startMs,
+        stepsExecuted: ['canvas-2d-unavailable'],
+      },
+    };
+  }
 
   ctx.fillStyle = '#ffffff';
   ctx.fillRect(0, 0, outW, outH);
@@ -298,6 +623,9 @@ function renderCanvasOcrVariant(
   const bgB = bSamples[mid] ?? 28;
   const bgLum = 0.299 * bgR + 0.587 * bgG + 0.114 * bgB;
   const isDarkBg = bgLum < 128;
+  stepsExecuted.push(
+    `bg-median-detect(${isDarkBg ? 'dark' : 'light'},luma=${Math.round(bgLum)})`
+  );
 
   // Precomputed LUT for fast branchless-style intensity mapping on millions of pixels
   if (mode === 'chromatic_sharp') {
@@ -326,6 +654,7 @@ function renderCanvasOcrVariant(
       pixels[i + 2] = v;
       pixels[i + 3] = 255;
     }
+    stepsExecuted.push('chromatic-channel-max-lut(gamma=0.62)');
   } else {
     for (let i = 0; i < pixels.length; i += 4) {
       let lum = 0.299 * pixels[i] + 0.587 * pixels[i + 1] + 0.114 * pixels[i + 2];
@@ -336,17 +665,59 @@ function renderCanvasOcrVariant(
       pixels[i + 2] = stretched;
       pixels[i + 3] = 255;
     }
+    stepsExecuted.push('soft-luma-contrast-stretch(1.55x)');
   }
 
   ctx.putImageData(imgData, pad, pad);
-  // WebP q=0.88 compresses several times faster than PNG on multi-megapixel screenshots
-  let url = canvas.toDataURL('image/webp', 0.88);
-  if (!url.startsWith('data:image/webp')) {
-    url = canvas.toDataURL('image/png');
-  }
+  // Encode preprocessed Black-on-White text as lossless PNG so thin 1px '-' minus signs and '.' decimals
+  // never suffer lossy WebP mosquito artifacts.
+  const url = canvas.toDataURL('image/png');
+  stepsExecuted.push('encode-lossless-png');
   canvas.width = 0;
   canvas.height = 0;
-  return url;
+
+  return {
+    dataUrl: url,
+    telemetry: {
+      mode,
+      sourceWidth: srcW,
+      sourceHeight: srcH,
+      outputWidth: outW,
+      outputHeight: outH,
+      scaleApplied: Number(scale.toFixed(3)),
+      paddingPx: pad,
+      detectedBackground: isDarkBg ? 'dark' : 'light',
+      backgroundLuma: Math.round(bgLum),
+      encoding: 'image/png',
+      preprocessMs: Date.now() - startMs,
+      stepsExecuted,
+    },
+  };
+}
+
+/**
+ * Generates a single Black-on-White OCR image variant on demand along with full preprocessing telemetry.
+ */
+export async function preparePrecisionOcrVariantWithTelemetry(
+  dataUrl: string,
+  mode: PrecisionOcrVariantMode = 'chromatic_sharp'
+): Promise<{ dataUrl: string; telemetry: OcrPreprocessTelemetry | null }> {
+  if (!isBrowserLikeEnv() || typeof Image === 'undefined') {
+    return { dataUrl, telemetry: null };
+  }
+
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.onerror = () => resolve({ dataUrl, telemetry: null });
+    img.onload = () => {
+      try {
+        resolve(renderCanvasOcrVariantWithTelemetry(img, mode, dataUrl));
+      } catch {
+        resolve({ dataUrl, telemetry: null });
+      }
+    };
+    img.src = dataUrl;
+  });
 }
 
 /**
@@ -356,22 +727,8 @@ export async function preparePrecisionOcrVariant(
   dataUrl: string,
   mode: PrecisionOcrVariantMode = 'chromatic_sharp'
 ): Promise<string> {
-  if (!isBrowserLikeEnv() || typeof Image === 'undefined') {
-    return dataUrl;
-  }
-
-  return new Promise((resolve) => {
-    const img = new Image();
-    img.onerror = () => resolve(dataUrl);
-    img.onload = () => {
-      try {
-        resolve(renderCanvasOcrVariant(img, mode, dataUrl));
-      } catch {
-        resolve(dataUrl);
-      }
-    };
-    img.src = dataUrl;
-  });
+  const { dataUrl: out } = await preparePrecisionOcrVariantWithTelemetry(dataUrl, mode);
+  return out;
 }
 
 /**
@@ -387,8 +744,8 @@ export async function preparePrecisionOcrVariants(dataUrl: string): Promise<stri
     img.onerror = () => resolve([dataUrl]);
     img.onload = () => {
       try {
-        const primary = renderCanvasOcrVariant(img, 'chromatic_sharp', dataUrl);
-        const soft = renderCanvasOcrVariant(img, 'soft_luma', dataUrl);
+        const primary = renderCanvasOcrVariantWithTelemetry(img, 'chromatic_sharp', dataUrl).dataUrl;
+        const soft = renderCanvasOcrVariantWithTelemetry(img, 'soft_luma', dataUrl).dataUrl;
         resolve(primary === soft ? [primary] : [primary, soft]);
       } catch {
         resolve([dataUrl]);
@@ -479,7 +836,7 @@ export async function runOfflineTesseractOcr(
   workerQueuePromise = workerQueuePromise.then(async () => {
     try {
       const { PSM } = await import('tesseract.js');
-      const worker = await getOfflineWorker();
+      const { worker, reused, initMs } = await getOfflineWorker();
       const targetPsm = options?.psm
         ? (options.psm as unknown as typeof PSM.SINGLE_BLOCK)
         : PSM.SINGLE_BLOCK;
@@ -493,6 +850,14 @@ export async function runOfflineTesseractOcr(
       }
 
       const recognizeTarget = fastDataUrlToRecognizeInput(imageInput);
+      const inputType =
+        typeof Blob !== 'undefined' && recognizeTarget instanceof Blob
+          ? `Blob(${recognizeTarget.type || 'bin'},${recognizeTarget.size}B)`
+          : typeof Buffer !== 'undefined' && Buffer.isBuffer(recognizeTarget)
+          ? `Buffer(${recognizeTarget.length}B)`
+          : 'string';
+
+      const recognizeStart = Date.now();
       let recognizeTimer: ReturnType<typeof setTimeout> | null = null;
       const recognized = await Promise.race([
         worker.recognize(recognizeTarget as any, {}, { text: true, blocks: true }),
@@ -504,6 +869,7 @@ export async function runOfflineTesseractOcr(
       ]).finally(() => {
         if (recognizeTimer !== null) clearTimeout(recognizeTimer);
       });
+      const recognizeMs = Date.now() - recognizeStart;
       const words = collectWordsFromTesseractData(recognized?.data);
       const reconstructed = reconstructStructuredLinesFromWords(words);
       const rawText = String(recognized?.data?.text || '');
@@ -517,6 +883,14 @@ export async function runOfflineTesseractOcr(
         lines: reconstructed,
         words,
         confidence: Number(recognized?.data?.confidence || 0),
+        telemetry: {
+          workerInitMs: initMs,
+          workerReused: reused,
+          recognizeMs,
+          psm: String(targetPsm),
+          inputType,
+          resolvedAssets: { ...lastResolvedAssets },
+        },
       });
     } catch (err) {
       // Terminate & reset cached worker if WASM threw or timed out so subsequent offline scans recover cleanly

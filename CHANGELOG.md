@@ -1,5 +1,8 @@
 # Changelog
 
+## v1.3.5 · #VLO-2611-AUD08 (2026-11-24)
+- Forensic Offline OCR diagnostics, build identity & Android high-res lossless pipeline: Added deterministic build identity (Git SHA, timestamp, CI run, OCR pipeline version), forensic OCR diagnostics inspector, full legacy Service Worker & OCR CacheStorage purge with forced reload on upgrade, lossless high-res PNG preprocessing for tall Android MT5 screenshots, and restored multi-pass completeness gate.
+
 ## v1.3.4 · #VLO-2611-SCN07 (2026-11-24)
 - Fix APK Offline OCR eng.traineddata tanpa .gz & anti-hang guard: Gunakan eng.traineddata tidak terkompresi (gzip: false) agar kompatibel dengan Android AAPT2 serta tambah errorHandler dan timeout guard Tesseract
 
