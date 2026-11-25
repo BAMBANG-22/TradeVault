@@ -451,9 +451,48 @@ function buildScanFailureResponse(
 
 const scanQuotaCooldownByKeyModel = new Map<
   string,
-  { code: 'QUOTA_429' | 'MODEL_404' | 'SERVER_503'; until: number }
+  { code: 'QUOTA_429' | 'MODEL_404' | 'SERVER_503' | 'TIMEOUT'; until: number }
 >();
 const newsQuotaCooldownByModel = new Map<string, number>();
+// Separate cooldown map for googleSearch grounding calls so grounding 429s never block generateContent synthesis
+const newsGroundingQuotaCooldownByModel = new Map<string, number>();
+
+type SanitizedNewsAiErrorCode =
+  | 'NO_API_KEY'
+  | 'KEY_INVALID'
+  | 'QUOTA_429'
+  | 'MODEL_404'
+  | 'TIMEOUT'
+  | 'SERVER_503'
+  | 'BAD_REQUEST_400'
+  | 'INVALID_JSON'
+  | 'EMPTY_RESPONSE'
+  | 'COOLDOWN_ACTIVE'
+  | 'INTERNAL_ERROR'
+  | 'UNKNOWN';
+
+function resolveNewsAiErrorCode(
+  failures: Array<{ model: string; code: string }>,
+  skippedByCooldownCount: number
+): SanitizedNewsAiErrorCode {
+  if (failures.length === 0) {
+    return skippedByCooldownCount > 0 ? 'COOLDOWN_ACTIVE' : 'EMPTY_RESPONSE';
+  }
+  const priority: SanitizedNewsAiErrorCode[] = [
+    'KEY_INVALID',
+    'QUOTA_429',
+    'MODEL_404',
+    'TIMEOUT',
+    'SERVER_503',
+    'BAD_REQUEST_400',
+    'INVALID_JSON',
+    'EMPTY_RESPONSE',
+  ];
+  for (const code of priority) {
+    if (failures.some((f) => f.code === code)) return code;
+  }
+  return 'UNKNOWN';
+}
 
 let cachedEdgeFedWatch: { fetchedAt: number; data: any } | null = null;
 let cachedEdgeTradingViewEvents: { fetchedAt: number; events: any[] } | null = null;
@@ -1846,7 +1885,7 @@ async function fetchPastActualsViaGoogleSearch(
   const prompt = `Search the web for the official released ACTUAL economic data values for these US USD economic indicators that have already been published:\n${listDesc}\n\nReturn ONLY a raw JSON object mapping the exact event title to its released actual value string (for example: {"Core CPI m/m": "0.3%", "CPI m/m": "0.2%"}). If an event has genuinely not been released yet, omit it. Do not include markdown fences or explanation.`;
 
   for (const model of NEWS_MODEL_CASCADE) {
-    const cooldownUntil = newsQuotaCooldownByModel.get(model) || 0;
+    const cooldownUntil = newsGroundingQuotaCooldownByModel.get(model) || 0;
     if (Date.now() < cooldownUntil) continue;
     try {
       const response = await withTimeoutAbort(
@@ -1874,7 +1913,7 @@ async function fetchPastActualsViaGoogleSearch(
       if (Object.keys(out).length > 0) return out;
     } catch (err: any) {
       if (isGeminiQuotaError(err) || isGeminiModelUnavailableError(err)) {
-        newsQuotaCooldownByModel.set(model, Date.now() + 30 * 60 * 1000);
+        newsGroundingQuotaCooldownByModel.set(model, Date.now() + 30 * 60 * 1000);
       }
       continue;
     }
@@ -1949,7 +1988,7 @@ Return ONLY a valid JSON object (no markdown fences) with these exact fields:
 CRITICAL RULE: Do not invent numbers. If search results do not contain exact figures, set "isAvailable": false.`;
 
   for (const model of NEWS_MODEL_CASCADE) {
-    const cooldownUntil = newsQuotaCooldownByModel.get(model) || 0;
+    const cooldownUntil = newsGroundingQuotaCooldownByModel.get(model) || 0;
     if (Date.now() < cooldownUntil) continue;
     try {
       const response = await withTimeoutAbort(
@@ -2021,7 +2060,7 @@ CRITICAL RULE: Do not invent numbers. If search results do not contain exact fig
       }
     } catch (err: any) {
       if (isGeminiQuotaError(err) || isGeminiModelUnavailableError(err)) {
-        newsQuotaCooldownByModel.set(model, Date.now() + 30 * 60 * 1000);
+        newsGroundingQuotaCooldownByModel.set(model, Date.now() + 30 * 60 * 1000);
       }
       continue;
     }
@@ -2071,6 +2110,8 @@ function selectEdgeSupportingContextEvents(events: any[], primaryEventId?: strin
 
 async function handleMacroNewsAnalyze(req: Request): Promise<Response> {
   let baselineSnapshot: any = null;
+  let enrichedCalendar: any[] = [];
+  let groundedFedWatch: any = null;
   try {
     const body = await req.json();
     const {
@@ -2080,6 +2121,7 @@ async function handleMacroNewsAnalyze(req: Request): Promise<Response> {
       baselineSnapshot: clientBaseline,
     } = body || {};
     baselineSnapshot = clientBaseline || null;
+    groundedFedWatch = clientFeeds?.cmeFedWatch || baselineSnapshot?.cmeFedWatch || null;
 
     if (!baselineSnapshot || !baselineSnapshot.scenarioMatrix) {
       return jsonResponse(
@@ -2112,7 +2154,7 @@ async function handleMacroNewsAnalyze(req: Request): Promise<Response> {
         (ev.forecastNum !== null || ev.previousNum !== null) &&
         new Date(ev.date).getTime() < nowCutoffMs
     );
-    let enrichedCalendar = hasPastMissing
+    enrichedCalendar = hasPastMissing
       ? await enrichEdgeEventsWithTradingViewActuals(calendarEvents)
       : calendarEvents;
 
@@ -2121,17 +2163,24 @@ async function handleMacroNewsAnalyze(req: Request): Promise<Response> {
       !forceRefresh &&
       lastEdgeMacroSnapshot &&
       Date.now() - lastEdgeMacroSnapshot.fetchedAt < 30 * 60 * 1000 &&
+      lastEdgeMacroSnapshot.snapshot?.sourceMode === 'GEMINI_AI' &&
       lastEdgeMacroSnapshot.snapshot?.dataFingerprint === baselineSnapshot.dataFingerprint &&
       (!selectedEventId ||
         lastEdgeMacroSnapshot.snapshot?.scenarioMatrix?.primaryEvent?.id === selectedEventId)
     ) {
+      const cachedFedWatch = lastEdgeMacroSnapshot.snapshot?.cmeFedWatch || groundedFedWatch;
       return jsonResponse({
         success: true,
         cached: true,
+        fallbackUsed: false,
+        sourceMode: 'GEMINI_AI',
+        modelUsed: lastEdgeMacroSnapshot.snapshot.modelUsed,
+        cmeFedWatch: cachedFedWatch,
         snapshot: {
           ...lastEdgeMacroSnapshot.snapshot,
           intermarketPulse,
           calendarEvents: enrichedCalendar,
+          cmeFedWatch: cachedFedWatch,
           rssFeedHealth: clientFeeds?.rssFeedHealth || lastEdgeMacroSnapshot.snapshot.rssFeedHealth,
         },
       });
@@ -2141,12 +2190,20 @@ async function handleMacroNewsAnalyze(req: Request): Promise<Response> {
     const newsApiKey = getNewsGeminiApiKeys()[0] || '';
 
     if (!newsApiKey) {
-      const updatedBaseline = { ...baselineSnapshot, calendarEvents: enrichedCalendar };
-      lastEdgeMacroSnapshot = { fetchedAt: Date.now(), snapshot: updatedBaseline };
+      const fallbackSnapshot = {
+        ...baselineSnapshot,
+        sourceMode: 'RULE_BASED_FALLBACK',
+        modelUsed: 'deterministic-playbook-v1',
+        calendarEvents: enrichedCalendar,
+        cmeFedWatch: groundedFedWatch,
+      };
       return jsonResponse({
         success: true,
         fallbackUsed: true,
-        snapshot: updatedBaseline,
+        sourceMode: 'CLIENT_FALLBACK',
+        aiErrorCode: 'NO_API_KEY',
+        cmeFedWatch: groundedFedWatch,
+        snapshot: fallbackSnapshot,
       });
     }
 
@@ -2158,9 +2215,9 @@ async function handleMacroNewsAnalyze(req: Request): Promise<Response> {
       },
     });
 
-    const groundedFedWatch = await fetchCmeFedWatchWithGrounding(
+    groundedFedWatch = await fetchCmeFedWatchWithGrounding(
       ai,
-      clientFeeds?.cmeFedWatch || baselineSnapshot.cmeFedWatch,
+      groundedFedWatch,
       Boolean(forceRefresh)
     );
 
@@ -2275,10 +2332,15 @@ async function handleMacroNewsAnalyze(req: Request): Promise<Response> {
 
     let aiResponseText = '';
     let usedModel = '';
+    const modelFailures: Array<{ model: string; code: string }> = [];
+    let skippedByCooldownCount = 0;
 
     for (const model of NEWS_MODEL_CASCADE) {
       const cooldownUntil = newsQuotaCooldownByModel.get(model) || 0;
-      if (Date.now() < cooldownUntil) continue;
+      if (Date.now() < cooldownUntil) {
+        skippedByCooldownCount += 1;
+        continue;
+      }
       try {
         const response = await withTimeoutAbort(
           (abortSignal) =>
@@ -2332,12 +2394,20 @@ async function handleMacroNewsAnalyze(req: Request): Promise<Response> {
           16_000,
           `Macro AI (${model})`
         );
-        if (response && response.text) {
-          aiResponseText = response.text;
-          usedModel = model;
-          break;
+        if (response && response.text && response.text.trim()) {
+          const candidateParsed = parseAiJsonResponse(response.text);
+          if (Object.keys(candidateParsed).length > 0) {
+            aiResponseText = response.text;
+            usedModel = model;
+            break;
+          }
+          modelFailures.push({ model, code: 'INVALID_JSON' });
+          continue;
         }
+        modelFailures.push({ model, code: 'EMPTY_RESPONSE' });
       } catch (err: any) {
+        const classified = classifyGeminiFailure(err);
+        modelFailures.push({ model, code: classified.code });
         if (isGeminiQuotaError(err) || isGeminiModelUnavailableError(err)) {
           newsQuotaCooldownByModel.set(model, Date.now() + 30 * 60 * 1000);
         }
@@ -2345,12 +2415,18 @@ async function handleMacroNewsAnalyze(req: Request): Promise<Response> {
       }
     }
 
-    if (!aiResponseText) {
+    if (!aiResponseText || !usedModel) {
+      const aiErrorCode = resolveNewsAiErrorCode(modelFailures, skippedByCooldownCount);
       return jsonResponse({
         success: true,
         fallbackUsed: true,
+        sourceMode: 'CLIENT_FALLBACK',
+        aiErrorCode,
+        cmeFedWatch: groundedFedWatch,
         snapshot: {
           ...baselineSnapshot,
+          sourceMode: 'RULE_BASED_FALLBACK',
+          modelUsed: 'deterministic-playbook-v1',
           calendarEvents: enrichedCalendar,
           cmeFedWatch: groundedFedWatch,
         },
@@ -2433,7 +2509,7 @@ async function handleMacroNewsAnalyze(req: Request): Promise<Response> {
       ...baselineSnapshot,
       analyzedAt: new Date().toISOString(),
       sourceMode: 'GEMINI_AI',
-      modelUsed: usedModel || 'gemini-4-hydrogen',
+      modelUsed: usedModel,
       impactLevel,
       dominantBias,
       calendarEvents: enrichedCalendar,
@@ -2476,6 +2552,9 @@ async function handleMacroNewsAnalyze(req: Request): Promise<Response> {
     return jsonResponse({
       success: true,
       fallbackUsed: false,
+      sourceMode: 'GEMINI_AI',
+      modelUsed: usedModel,
+      cmeFedWatch: groundedFedWatch,
       snapshot: enrichedSnapshot,
     });
   } catch {
@@ -2483,7 +2562,17 @@ async function handleMacroNewsAnalyze(req: Request): Promise<Response> {
       return jsonResponse({
         success: true,
         fallbackUsed: true,
-        snapshot: baselineSnapshot,
+        sourceMode: 'CLIENT_FALLBACK',
+        aiErrorCode: 'INTERNAL_ERROR',
+        cmeFedWatch: groundedFedWatch,
+        snapshot: {
+          ...baselineSnapshot,
+          sourceMode: 'RULE_BASED_FALLBACK',
+          modelUsed: 'deterministic-playbook-v1',
+          calendarEvents:
+            enrichedCalendar.length > 0 ? enrichedCalendar : baselineSnapshot.calendarEvents,
+          cmeFedWatch: groundedFedWatch || baselineSnapshot.cmeFedWatch,
+        },
       });
     }
     return jsonResponse({ success: false, error: 'Gagal memproses analisis makro.' }, 500);
@@ -2505,6 +2594,7 @@ function sanitizeNoBuySellEdge(text: string): string {
 
 async function handleFundamentalGoldAnalyze(req: Request): Promise<Response> {
   let baselineSnapshot: any = null;
+  let resolvedFedWatch: any = null;
   try {
     const body = await req.json();
     const {
@@ -2515,6 +2605,7 @@ async function handleFundamentalGoldAnalyze(req: Request): Promise<Response> {
       contextSummary,
     } = body || {};
     baselineSnapshot = clientBaseline || null;
+    resolvedFedWatch = clientFedWatch || null;
 
     if (!baselineSnapshot || !baselineSnapshot.horizons || !baselineSnapshot.narrative) {
       return jsonResponse(
@@ -2527,7 +2618,6 @@ async function handleFundamentalGoldAnalyze(req: Request): Promise<Response> {
     }
 
     const newsApiKey = getNewsGeminiApiKeys()[0] || '';
-    let resolvedFedWatch: any = clientFedWatch || null;
     let edgeAiClient: GoogleGenAI | null = null;
 
     if (newsApiKey) {
@@ -2576,6 +2666,9 @@ async function handleFundamentalGoldAnalyze(req: Request): Promise<Response> {
       return jsonResponse({
         success: true,
         cached: true,
+        fallbackUsed: false,
+        sourceMode: 'GEMINI_AI',
+        modelUsed: lastEdgeFundamentalSnapshot.snapshot.modelUsed,
         cmeFedWatch: resolvedFedWatch,
         snapshot: {
           ...baselineSnapshot,
@@ -2587,12 +2680,18 @@ async function handleFundamentalGoldAnalyze(req: Request): Promise<Response> {
     }
 
     if (!edgeAiClient) {
-      lastEdgeFundamentalSnapshot = { fetchedAt: Date.now(), snapshot: baselineSnapshot };
+      const fallbackSnapshot = {
+        ...baselineSnapshot,
+        sourceMode: 'DETERMINISTIC_FALLBACK',
+        modelUsed: 'deterministic-fundamental-v1',
+      };
       return jsonResponse({
         success: true,
         fallbackUsed: true,
+        sourceMode: 'CLIENT_FALLBACK',
+        aiErrorCode: 'NO_API_KEY',
         cmeFedWatch: resolvedFedWatch,
-        snapshot: baselineSnapshot,
+        snapshot: fallbackSnapshot,
       });
     }
 
@@ -2639,10 +2738,15 @@ CRITICAL RULES:
 
     let aiResponseText = '';
     let usedModel = '';
+    const modelFailures: Array<{ model: string; code: string }> = [];
+    let skippedByCooldownCount = 0;
 
     for (const model of NEWS_MODEL_CASCADE) {
-      const cooldownUntil = newsQuotaCooldownUntilByModel.get(model) || 0;
-      if (Date.now() < cooldownUntil) continue;
+      const cooldownUntil = newsQuotaCooldownByModel.get(model) || 0;
+      if (Date.now() < cooldownUntil) {
+        skippedByCooldownCount += 1;
+        continue;
+      }
       try {
         const response = await withTimeoutAbort(
           (abortSignal) =>
@@ -2691,25 +2795,40 @@ CRITICAL RULES:
           20_000,
           `Fundamental Gold Edge AI (${model})`
         );
-        if (response && response.text) {
-          aiResponseText = response.text;
-          usedModel = model;
-          break;
+        if (response && response.text && response.text.trim()) {
+          const candidateParsed = parseAiJsonResponse(response.text);
+          if (Object.keys(candidateParsed).length > 0) {
+            aiResponseText = response.text;
+            usedModel = model;
+            break;
+          }
+          modelFailures.push({ model, code: 'INVALID_JSON' });
+          continue;
         }
+        modelFailures.push({ model, code: 'EMPTY_RESPONSE' });
       } catch (err: any) {
+        const classified = classifyGeminiFailure(err);
+        modelFailures.push({ model, code: classified.code });
         if (isGeminiQuotaError(err) || isGeminiModelUnavailableError(err)) {
-          newsQuotaCooldownUntilByModel.set(model, Date.now() + 30 * 60 * 1000);
+          newsQuotaCooldownByModel.set(model, Date.now() + 30 * 60 * 1000);
         }
         continue;
       }
     }
 
-    if (!aiResponseText) {
+    if (!aiResponseText || !usedModel) {
+      const aiErrorCode = resolveNewsAiErrorCode(modelFailures, skippedByCooldownCount);
       return jsonResponse({
         success: true,
         fallbackUsed: true,
+        sourceMode: 'CLIENT_FALLBACK',
+        aiErrorCode,
         cmeFedWatch: resolvedFedWatch,
-        snapshot: baselineSnapshot,
+        snapshot: {
+          ...baselineSnapshot,
+          sourceMode: 'DETERMINISTIC_FALLBACK',
+          modelUsed: 'deterministic-fundamental-v1',
+        },
       });
     }
 
@@ -2718,7 +2837,7 @@ CRITICAL RULES:
       ...baselineSnapshot,
       analyzedAt: new Date().toISOString(),
       sourceMode: 'GEMINI_AI',
-      modelUsed: usedModel || 'gemini-4-hydrogen',
+      modelUsed: usedModel,
       narrative: {
         id: {
           headlineSummary: sanitizeNoBuySellEdge(
@@ -2773,6 +2892,8 @@ CRITICAL RULES:
     return jsonResponse({
       success: true,
       fallbackUsed: false,
+      sourceMode: 'GEMINI_AI',
+      modelUsed: usedModel,
       cmeFedWatch: resolvedFedWatch,
       snapshot: enrichedSnapshot,
     });
@@ -2781,7 +2902,14 @@ CRITICAL RULES:
       return jsonResponse({
         success: true,
         fallbackUsed: true,
-        snapshot: baselineSnapshot,
+        sourceMode: 'CLIENT_FALLBACK',
+        aiErrorCode: 'INTERNAL_ERROR',
+        cmeFedWatch: resolvedFedWatch,
+        snapshot: {
+          ...baselineSnapshot,
+          sourceMode: 'DETERMINISTIC_FALLBACK',
+          modelUsed: 'deterministic-fundamental-v1',
+        },
       });
     }
     return jsonResponse({ success: false, error: 'Gagal memproses Fundamental Gold.' }, 500);
