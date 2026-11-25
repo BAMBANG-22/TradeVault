@@ -24,6 +24,7 @@ import {
 } from '../utils/macroFeedFetcher';
 import { isMarketDay } from '../utils/date';
 import {
+  buildBackendAuthHeaders,
   getApiEndpointCandidates,
   isNativeAndroidOrIos,
   isNewsCycleOfflineMode,
@@ -63,6 +64,7 @@ export type TwelveDataStatus =
   | 'preview_sample';
 export type ConfluenceCandleSource =
   | 'twelvedata'
+  | 'yahoo_futures'
   | 'binance'
   | 'cached'
   | 'sample'
@@ -321,7 +323,8 @@ export function parseTwelveDataCandles(values: any[], decimals: number = XAU_PAI
 async function fetchWithTimeout(
   url: string,
   timeoutMs: number,
-  parentSignal?: AbortSignal
+  parentSignal?: AbortSignal,
+  headers?: Record<string, string>
 ): Promise<Response> {
   const localController = new AbortController();
   const onParentAbort = () => localController.abort();
@@ -334,7 +337,10 @@ async function fetchWithTimeout(
   }
   const timer = setTimeout(() => localController.abort(), timeoutMs);
   try {
-    return await fetch(url, { signal: localController.signal });
+    return await fetch(url, {
+      ...(headers ? { headers } : {}),
+      signal: localController.signal,
+    });
   } finally {
     clearTimeout(timer);
     if (parentSignal) {
@@ -370,7 +376,22 @@ async function fetchWithProxyFallback(
   const encoded = encodeURIComponent(targetUrl);
   for (const proxyBase of proxyCandidates) {
     try {
-      const res = await fetchWithTimeout(`${proxyBase}?url=${encoded}`, 7000, signal);
+      const proxyUrl = `${proxyBase}?url=${encoded}`;
+      if (isNativeAndroidOrIos() && /^https?:\/\//i.test(proxyUrl)) {
+        const nativeProxyText = await nativeHttpGetText(proxyUrl, 7000, 'application/json');
+        if (nativeProxyText) {
+          return new Response(nativeProxyText, {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          });
+        }
+      }
+      const res = await fetchWithTimeout(
+        proxyUrl,
+        7000,
+        signal,
+        buildBackendAuthHeaders(proxyUrl)
+      );
       if (res.ok) return res;
     } catch (err: any) {
       if (signal?.aborted) throw err;
@@ -1376,8 +1397,10 @@ export function useCycleConfluenceData(
         }
 
         // Determine active candle source & Twelve Data banner state clearly
-        if (twelveDataSuccessCount > 0 || usedYahooWeekdayFallback) {
+        if (twelveDataSuccessCount > 0) {
           setCandleSource('twelvedata');
+        } else if (usedYahooWeekdayFallback) {
+          setCandleSource('yahoo_futures');
         } else if (usedCacheFallback || Object.keys(nextMap).length > 0) {
           setCandleSource('cached');
         } else {

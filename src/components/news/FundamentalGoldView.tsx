@@ -32,6 +32,7 @@ import {
 import { executeClientSideFundamentalGoldAnalysis } from '../../utils/clientSideMacroAnalyzer';
 import { SMC_OFFLINE_SIGNALS_STORAGE_KEY } from '../../utils/xauSmartHeatmap';
 import { XauSmartHeatmapCard } from './XauSmartHeatmapCard';
+import { PolymarketMacroSentimentPanel } from './PolymarketMacroSentimentPanel';
 
 interface FundamentalGoldViewProps {
   isActive?: boolean;
@@ -595,18 +596,29 @@ export const FundamentalGoldView: React.FC<FundamentalGoldViewProps> = ({ isActi
                   </h2>
                 </div>
                 <span className="text-[11px] text-[#526071] dark:text-[#929BA9]">
-                  {snapshot.sourceMode === 'GEMINI_AI'
+                  {snapshot.isOfflineCached || isOfflineMode
+                    ? snapshot.sourceMode === 'GEMINI_AI'
+                      ? tr('Cache Offline · Sintesis AI Tersimpan', 'Offline Cache · Saved AI Synthesis')
+                      : tr('Cache Offline · Kalkulasi Struktural', 'Offline Cache · Structural Engine')
+                    : snapshot.sourceMode === 'GEMINI_AI' && !snapshot.fallbackUsed
                     ? tr('Sintesis AI', 'AI Synthesis')
-                    : tr('Kalkulasi Struktural', 'Structural Engine')}
+                    : tr('Kalkulasi Struktural (Fallback)', 'Structural Engine (Fallback)')}
                 </span>
               </div>
 
-              {(langBlock.dataStatusNote || snapshot.changeDetection.statusDetailId) && (
+              {(langBlock.dataStatusNote || snapshot.changeDetection.statusDetailId || (snapshot.fallbackUsed && snapshot.aiErrorCode)) && (
                 <p className="text-xs text-[#526071] dark:text-[#929BA9] pl-3 border-l-2 border-[#E4E4E7] dark:border-[#20252D] leading-relaxed text-editorial-justify">
-                  {langBlock.dataStatusNote ||
-                    (isEn
+                  {snapshot.isOfflineCached
+                    ? isEn
                       ? snapshot.changeDetection.statusDetailEn
-                      : snapshot.changeDetection.statusDetailId)}
+                      : snapshot.changeDetection.statusDetailId
+                    : langBlock.dataStatusNote ||
+                      (isEn
+                        ? snapshot.changeDetection.statusDetailEn
+                        : snapshot.changeDetection.statusDetailId)}
+                  {!snapshot.isOfflineCached && snapshot.fallbackUsed && snapshot.aiErrorCode
+                    ? ` (${tr('Fallback AI', 'AI Fallback')}: ${snapshot.aiErrorCode})`
+                    : ''}
                 </p>
               )}
 
@@ -769,6 +781,9 @@ export const FundamentalGoldView: React.FC<FundamentalGoldViewProps> = ({ isActi
           </section>
         </>
       )}
+
+      {/* ISOLATED EXTERNAL PREDICTION MARKET SENTIMENT (READ-ONLY, NON-RULE) */}
+      <PolymarketMacroSentimentPanel isOfflineMode={isOfflineMode} />
     </div>
   );
 };

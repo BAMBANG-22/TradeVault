@@ -342,6 +342,8 @@ const ALLOWED_PROXY_DOMAINS = [
   'stooq.com',
   'stlouisfed.org',
   'treasury.gov',
+  'cftc.gov',
+  'gamma-api.polymarket.com',
 ];
 
 function isAllowedProxyTargetUrl(rawUrl: string): boolean {
@@ -373,7 +375,7 @@ app.get('/api/proxy', async (req, res) => {
       headers: {
         'User-Agent':
           'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
-        Accept: 'application/json, text/plain, text/xml, application/rss+xml, */*',
+        Accept: 'application/json, text/plain, text/xml, application/rss+xml, image/*, */*',
         'Cache-Control': 'no-cache, no-store, must-revalidate',
         Pragma: 'no-cache',
         ...(isTradingViewTarget
@@ -386,9 +388,14 @@ app.get('/api/proxy', async (req, res) => {
       signal: controller.signal,
     });
     clearTimeout(timeout);
-    const text = await upstreamRes.text();
-    res.setHeader('Content-Type', upstreamRes.headers.get('content-type') || 'application/json');
+    const contentType = upstreamRes.headers.get('content-type') || 'application/json';
+    res.setHeader('Content-Type', contentType);
     res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
+    if (/^image\//i.test(contentType)) {
+      const buf = Buffer.from(await upstreamRes.arrayBuffer());
+      return res.status(upstreamRes.status).send(buf);
+    }
+    const text = await upstreamRes.text();
     return res.status(upstreamRes.status).send(text);
   } catch (err: any) {
     return res.status(502).json({ error: err?.message || 'Proxy fetch failed' });

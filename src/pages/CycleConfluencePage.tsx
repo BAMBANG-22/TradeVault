@@ -1291,6 +1291,9 @@ export const CycleConfluencePage: React.FC<CycleConfluencePageProps> = ({
                       twelveDataError ||
                       tr('Data candlestick XAU/USD (Senin–Jumat) sedang disinkronkan.', 'Synchronizing XAU/USD candlestick data (Mon–Fri).')}
                   {!isOfflineMode &&
+                    candleSource === 'yahoo_futures' &&
+                    tr(' · Cadangan feed Yahoo Gold Futures (GC=F) aktif.', ' · Yahoo Gold Futures (GC=F) fallback feed active.')}
+                  {!isOfflineMode &&
                     candleSource === 'binance' &&
                     tr(' · Cadangan feed pasar XAU/USD (Senin–Jumat) aktif.', ' · XAU/USD fallback market feed (Mon–Fri) active.')}
                   {!isOfflineMode &&

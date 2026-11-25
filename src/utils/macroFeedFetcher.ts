@@ -32,6 +32,7 @@ import {
 } from './macroNewsEngine';
 import { isMarketDay } from './date';
 import {
+  buildBackendAuthHeaders,
   getApiEndpointCandidates,
   isNativeAndroidOrIos,
   nativeHttpGetText,
@@ -56,13 +57,10 @@ function isValidFeedPayload(text: string): boolean {
 }
 
 /**
- * Multi-layered real-time CORS proxy fetcher for ForexFactory & public feeds.
- * Tries in sequential/race fallback order:
- * 1) https://api.codetabs.com/v1/proxy?quest= + encodeURIComponent(url)
- * 2) https://corsproxy.io/?url= + encodeURIComponent(url)
- * 3) https://api.allorigins.win/get?url= + encodeURIComponent(url) (parsing JSON `.contents`)
- * 4) TradeVault backend proxy endpoints (/api/proxy?url= on local & Cloud Run for Android APK/Web)
- * 5) Direct fetch
+ * Multi-layered real-time fetcher for ForexFactory & public financial feeds:
+ * 1) Native Android/iOS HTTP via CapacitorHttp (zero CORS, direct device request)
+ * 2) Configured TradeVault backend proxy (/api/proxy?url= on Edge Function or Express server)
+ * 3) Direct fetch fallback (works for CORS-enabled public APIs & SSR/Node)
  */
 export async function fetchWithCorsProxy(
   targetUrl: string,
@@ -85,16 +83,17 @@ export async function fetchWithCorsProxy(
     try {
       const proxyFullUrl = `${proxyBase}?url=${encodedUrl}`;
       if (isNativeAndroidOrIos() && /^https?:\/\//i.test(proxyFullUrl)) {
-        const nativeProxyText = await nativeHttpGetText(proxyFullUrl, Math.min(4500, timeoutMs), acceptHeader);
+        const nativeProxyText = await nativeHttpGetText(proxyFullUrl, Math.min(5500, timeoutMs), acceptHeader);
         if (nativeProxyText && isValidFeedPayload(nativeProxyText)) {
           return nativeProxyText;
         }
       } else {
         const controller = new AbortController();
-        const timer = setTimeout(() => controller.abort(), Math.min(3500, timeoutMs));
+        const timer = setTimeout(() => controller.abort(), Math.min(5500, timeoutMs));
+        const authHeaders = buildBackendAuthHeaders(proxyFullUrl);
         const res = await fetch(proxyFullUrl, {
           cache: 'no-store',
-          headers: { Accept: acceptHeader, 'Cache-Control': 'no-cache' },
+          headers: { Accept: acceptHeader, 'Cache-Control': 'no-cache', ...authHeaders },
           signal: controller.signal,
         });
         clearTimeout(timer);
@@ -110,95 +109,7 @@ export async function fetchWithCorsProxy(
     }
   }
 
-  // Proxy 1: CodeTabs Proxy
-  try {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), Math.min(4500, timeoutMs));
-    const proxyUrl = `https://api.codetabs.com/v1/proxy?quest=${encodedUrl}`;
-    const res = await fetch(proxyUrl, {
-      cache: 'no-store',
-      headers: { Accept: acceptHeader },
-      signal: controller.signal,
-    });
-    clearTimeout(timer);
-    if (res.ok) {
-      const text = await res.text();
-      if (isValidFeedPayload(text)) {
-        return text;
-      }
-    }
-  } catch {
-    // Try Proxy 2
-  }
-
-  // Proxy 2: CorsProxy.io (?url= format)
-  try {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), Math.min(4500, timeoutMs));
-    const proxyUrl = `https://corsproxy.io/?url=${encodedUrl}`;
-    const res = await fetch(proxyUrl, {
-      cache: 'no-store',
-      headers: { Accept: acceptHeader },
-      signal: controller.signal,
-    });
-    clearTimeout(timer);
-    if (res.ok) {
-      const text = await res.text();
-      if (isValidFeedPayload(text)) {
-        return text;
-      }
-    }
-  } catch {
-    // Try Proxy 3
-  }
-
-  // Proxy 3: AllOrigins JSON wrapper (/get?url= -> parse `.contents`)
-  try {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), Math.min(5000, timeoutMs));
-    const proxyUrl = `https://api.allorigins.win/get?url=${encodedUrl}`;
-    const res = await fetch(proxyUrl, {
-      cache: 'no-store',
-      headers: { Accept: 'application/json' },
-      signal: controller.signal,
-    });
-    clearTimeout(timer);
-    if (res.ok) {
-      const wrapperJson = await res.json();
-      const contents =
-        wrapperJson && typeof wrapperJson.contents === 'string'
-          ? wrapperJson.contents
-          : '';
-      if (isValidFeedPayload(contents)) {
-        return contents;
-      }
-    }
-  } catch {
-    // Try AllOrigins raw & direct fetch
-  }
-
-  // Proxy 3b: AllOrigins raw endpoint
-  try {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), Math.min(4000, timeoutMs));
-    const proxyUrl = `https://api.allorigins.win/raw?url=${encodedUrl}`;
-    const res = await fetch(proxyUrl, {
-      cache: 'no-store',
-      headers: { Accept: acceptHeader },
-      signal: controller.signal,
-    });
-    clearTimeout(timer);
-    if (res.ok) {
-      const text = await res.text();
-      if (isValidFeedPayload(text)) {
-        return text;
-      }
-    }
-  } catch {
-    // Try Direct Fetch
-  }
-
-  // Strategy 5: Direct fetch (works in Node/SSR & native Capacitor HTTP)
+  // Strategy 3: Direct fetch (works for CORS-enabled endpoints, Node/SSR, and local network)
   try {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), Math.min(4000, timeoutMs));

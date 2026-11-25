@@ -6,7 +6,14 @@ import {
 } from '../types/trade';
 import { AppSettings, DEFAULT_SETTINGS } from '../types/settings';
 import { CHART_PREFS_STORAGE_KEY } from '../components/chart/MarketChartView';
-import { getApiEndpointCandidates, nativeAwarePostJson } from './apiConfig';
+import {
+  buildBackendAuthHeaders,
+  getApiEndpointCandidates,
+  isNativeAndroidOrIos,
+  nativeAwarePostJson,
+  nativeHttpGetImageDataUrl,
+  nativeHttpGetText,
+} from './apiConfig';
 import {
   classifyNetProfitOutcome,
   computeGrossFromNet,
@@ -454,8 +461,44 @@ async function safeFetchApiJson(
   }
 }
 
+async function fetchPageHtmlViaNativeOrProxy(pageUrl: string, timeoutMs = 5500): Promise<string> {
+  if (isNativeAndroidOrIos()) {
+    const nativeHtml = await nativeHttpGetText(pageUrl, timeoutMs, 'text/html,application/xhtml+xml,*/*');
+    if (nativeHtml) return nativeHtml;
+  }
+
+  const proxyCandidates = getApiEndpointCandidates('/api/proxy');
+  const encoded = encodeURIComponent(pageUrl);
+  for (const proxyBase of proxyCandidates) {
+    try {
+      const proxyUrl = `${proxyBase}?url=${encoded}`;
+      if (isNativeAndroidOrIos() && /^https?:\/\//i.test(proxyUrl)) {
+        const raw = await nativeHttpGetText(proxyUrl, timeoutMs, 'text/html,*/*');
+        if (raw) return raw;
+      } else {
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), timeoutMs);
+        const res = await fetch(proxyUrl, {
+          method: 'GET',
+          headers: { Accept: 'text/html,*/*', ...buildBackendAuthHeaders(proxyUrl) },
+          signal: controller.signal,
+        });
+        clearTimeout(timer);
+        if (res.ok) {
+          const text = await res.text();
+          if (text) return text;
+        }
+      }
+    } catch {
+      // Try next proxy
+    }
+  }
+  return '';
+}
+
 /**
  * Fetches an external image URL (including TradingView S3 snapshots) into a base64 Data URL.
+ * Uses native CapacitorHttp on Android/iOS APK and configured TradeVault /api/proxy (no dead public proxies).
  */
 async function fetchImageUrlAsDataUrl(imageUrl: string): Promise<{
   dataUrl: string | null;
@@ -469,10 +512,8 @@ async function fetchImageUrlAsDataUrl(imageUrl: string): Promise<{
 
   if (tvResolved.isTradingViewUrl && !tvResolved.snapshotId && !targetImgUrl.match(/\.(png|jpg|jpeg|webp)(\?|$)/i)) {
     try {
-      const proxyUrl = `https://api.allorigins.win/get?url=${encodeURIComponent(imageUrl)}`;
-      const proxyRes = await safeFetchApiJson(proxyUrl, { method: 'GET' }, 6500);
-      const html = proxyRes.json?.contents || '';
-      if (typeof html === 'string' && html.length > 0) {
+      const html = await fetchPageHtmlViaNativeOrProxy(imageUrl, 6000);
+      if (html.length > 0) {
         const titleMatch = html.match(/<title[^>]*>([^<]+)<\/title>/i);
         if (titleMatch?.[1]) pageTitle = titleMatch[1].trim();
         const descMatch =
@@ -493,10 +534,8 @@ async function fetchImageUrlAsDataUrl(imageUrl: string): Promise<{
   } else if (tvResolved.isTradingViewUrl && tvResolved.snapshotId) {
     try {
       const pageUrl = `https://www.tradingview.com/x/${tvResolved.snapshotId}/`;
-      const proxyUrl = `https://api.allorigins.win/get?url=${encodeURIComponent(pageUrl)}`;
-      const proxyRes = await safeFetchApiJson(proxyUrl, { method: 'GET' }, 4500);
-      const html = proxyRes.json?.contents || '';
-      if (typeof html === 'string' && html.length > 0) {
+      const html = await fetchPageHtmlViaNativeOrProxy(pageUrl, 4500);
+      if (html.length > 0) {
         const titleMatch = html.match(/<title[^>]*>([^<]+)<\/title>/i);
         if (titleMatch?.[1]) pageTitle = titleMatch[1].trim();
         const descMatch =
@@ -509,21 +548,37 @@ async function fetchImageUrlAsDataUrl(imageUrl: string): Promise<{
     }
   }
 
-  const candidateUrls = [
-    targetImgUrl,
-    `https://corsproxy.io/?${encodeURIComponent(targetImgUrl)}`,
-    `https://api.allorigins.win/raw?url=${encodeURIComponent(targetImgUrl)}`,
-  ];
+  // Fast path on native Android/iOS APK: CORS-free binary download via CapacitorHttp
+  if (isNativeAndroidOrIos()) {
+    const nativeDataUrl = await nativeHttpGetImageDataUrl(targetImgUrl, 8500);
+    if (nativeDataUrl) {
+      return { dataUrl: nativeDataUrl, pageTitle, pageDescription };
+    }
+  }
+
+  const proxyCandidates = getApiEndpointCandidates('/api/proxy').map(
+    (proxyBase) => `${proxyBase}?url=${encodeURIComponent(targetImgUrl)}`
+  );
+  const candidateUrls = [targetImgUrl, ...proxyCandidates];
 
   for (const candidate of candidateUrls) {
     try {
+      if (isNativeAndroidOrIos() && /^https?:\/\//i.test(candidate) && candidate !== targetImgUrl) {
+        const nativeProxiedDataUrl = await nativeHttpGetImageDataUrl(candidate, 8000);
+        if (nativeProxiedDataUrl) {
+          return { dataUrl: nativeProxiedDataUrl, pageTitle, pageDescription };
+        }
+      }
       const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), 7500);
-      const res = await fetch(candidate, { signal: controller.signal });
+      const timer = setTimeout(() => controller.abort(), 8000);
+      const res = await fetch(candidate, {
+        headers: buildBackendAuthHeaders(candidate),
+        signal: controller.signal,
+      });
       clearTimeout(timer);
       if (!res.ok) continue;
       const cType = (res.headers.get('content-type') || '').toLowerCase();
-      if (cType.includes('text/html')) continue;
+      if (cType.includes('text/html') || cType.includes('application/json')) continue;
       const blob = await res.blob();
       if (blob.size < 200) continue;
 
@@ -1891,7 +1946,7 @@ export async function scanTradeScreenshotOrUrl(inputSource: string): Promise<Ext
 
   let lastServerError = '';
   for (const endpoint of scanEndpoints) {
-    const serverRes = await nativeAwarePostJson(endpoint, payload, 10000);
+    const serverRes = await nativeAwarePostJson(endpoint, payload, 22000);
 
     if (serverRes.ok && serverRes.json?.success && serverRes.json?.data) {
       const normalized = normalizeGeminiScanResponse(
@@ -3354,27 +3409,7 @@ export async function scanBatchMt5HistoryScreenshots(
       );
 
       for (const endpoint of endpoints) {
-        const networkPromise = nativeAwarePostJson(
-          endpoint,
-          payload,
-          chunk.length > 1 ? 14000 : 9500
-        );
-        const earlyOcrCutoffPromise = parallelOcrByIndexPromise.then(async (ocrExecs) => {
-          const allHaveRows = ocrExecs.every((exec) => exec.rows.length > 0);
-          if (allHaveRows) {
-            // Give Gemini a brief 1.5s grace window after local OCR finishes; if still waiting, cut off and use local OCR immediately
-            await new Promise((r) => setTimeout(r, 1500));
-            return {
-              ok: false,
-              json: null,
-              status: 503,
-              errorMessage: 'Beralih cepat ke hasil OCR lokal yang sudah siap.',
-            };
-          }
-          return networkPromise;
-        });
-
-        const res = await Promise.race([networkPromise, earlyOcrCutoffPromise]);
+        const res = await nativeAwarePostJson(endpoint, payload, 22000);
         if (res.ok && res.json?.success && res.json?.data) {
           const rawTrades: any[] = Array.isArray(res.json.data.trades) ? res.json.data.trades : [];
           lastModelUsed = String(res.json.data.modelUsed || 'gemini-3.1-flash-lite');

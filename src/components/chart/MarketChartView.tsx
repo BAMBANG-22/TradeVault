@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo, lazy, Suspense } from 'react';
 import {
   createChart,
   ColorType,
@@ -53,6 +53,7 @@ import {
   Ruler,
   ChevronsRight,
   Clock,
+  Sparkles,
 } from 'lucide-react';
 import { getSupabase } from '../../utils/supabaseClient';
 import type { Trade } from '../../types/trade';
@@ -70,6 +71,8 @@ import {
   formatSessionSummaryLine,
   computeMarketSessionSegments,
 } from '../../utils/marketSessionEngine';
+
+const VelaBetaChartView = lazy(() => import('./VelaBetaChartView'));
 
 interface MarketChartViewProps {
   isActive?: boolean;
@@ -1796,7 +1799,7 @@ export const CHART_SHOW_FAV_TOOLBAR_STORAGE_KEY = 'tradevault_lw_chart_show_fav_
 export const CHART_ENGINE_MODE_STORAGE_KEY = 'tradevault_chart_engine_mode_v2';
 export const TWELVE_DATA_API_KEY_STORAGE_KEY = 'tradevault_twelve_data_api_key_v1';
 
-export type ChartEngineMode = 'live_oanda' | 'replay_studio';
+export type ChartEngineMode = 'live_oanda' | 'replay_studio' | 'vela_beta';
 
 export const DEFAULT_TWELVE_DATA_API_KEY =
   (typeof import.meta !== 'undefined' && import.meta.env?.VITE_TWELVE_DATA_API_KEY) ||
@@ -1829,7 +1832,7 @@ export function loadStoredChartEngineMode(): ChartEngineMode {
   if (typeof window === 'undefined') return 'replay_studio';
   try {
     const raw = window.localStorage.getItem(CHART_ENGINE_MODE_STORAGE_KEY);
-    if (raw === 'live_oanda' || raw === 'replay_studio') return raw;
+    if (raw === 'live_oanda' || raw === 'replay_studio' || raw === 'vela_beta') return raw;
     return 'replay_studio';
   } catch {
     return 'replay_studio';
@@ -3212,9 +3215,10 @@ export const MarketChartView: React.FC<MarketChartViewProps> = ({
   const isSelectingCutPoint = replayPhase === 'selecting_cut';
   const isReplayActive = replayPhase === 'active';
 
-  // BAGIAN 1 & 2: Explicit separation between Live Mode (TradingView Advance) & Replay Mode (Lightweight Charts)
+  // BAGIAN 1 & 2: Explicit separation between Live Mode (TradingView Advance), Replay Mode (Lightweight Charts), & Vela Beta (LuxAlgo Vela)
   const isLiveMode = chartEngineMode === 'live_oanda' && replayPhase === 'off';
-  const isReplayMode = !isLiveMode;
+  const isVelaBetaMode = chartEngineMode === 'vela_beta' && replayPhase === 'off';
+  const isReplayMode = !isLiveMode && !isVelaBetaMode;
   const [showLiveDrawingTools, setShowLiveDrawingTools] = useState<boolean>(false);
   const [isLiveCleanView, setIsLiveCleanView] = useState<boolean>(false);
   const [hideTopSubBar, setHideTopSubBar] = useState<boolean>(false);
@@ -6537,7 +6541,7 @@ export const MarketChartView: React.FC<MarketChartViewProps> = ({
                 data-testid="engine-mode-replay-studio-btn"
                 onClick={() => handleSetChartEngineMode('replay_studio')}
                 title="Light Chart & Replay Studio (Data Candle Twelve Data)"
-                className={`inline-flex items-center gap-1 px-2.5 py-1 rounded text-[10px] font-semibold tracking-tight transition-colors cursor-pointer touch-manipulation ${
+                className={`inline-flex items-center gap-1 px-2 sm:px-2.5 py-1 rounded text-[10px] font-semibold tracking-tight transition-colors cursor-pointer touch-manipulation ${
                   isReplayMode
                     ? 'bg-[#2A2E39] text-white'
                     : 'text-[#787B86] hover:text-[#D1D4DC]'
@@ -6545,6 +6549,33 @@ export const MarketChartView: React.FC<MarketChartViewProps> = ({
               >
                 <Scissors className="h-3 w-3" />
                 <span>Replay</span>
+              </button>
+
+              <button
+                type="button"
+                data-testid="engine-mode-vela-beta-btn"
+                onClick={() => {
+                  if (replayPhase !== 'off') {
+                    handleExitReplayMode();
+                  }
+                  setShowDrawingToolbar(false);
+                  setIsIndicatorsOpen(false);
+                  setIsMoreMenuOpen(false);
+                  setActiveDrawingTool('cursor');
+                  handleSetChartEngineMode('vela_beta');
+                }}
+                title={tr(
+                  'Vela Beta (LuxAlgo Vela Open-Source · Multi-Chart & 70+ Indikator)',
+                  'Vela Beta (LuxAlgo Vela Open-Source · Multi-Chart & 70+ Indicators)'
+                )}
+                className={`inline-flex items-center gap-1 px-2 sm:px-2.5 py-1 rounded text-[10px] font-semibold tracking-tight transition-colors cursor-pointer touch-manipulation ${
+                  isVelaBetaMode
+                    ? 'bg-indigo-500/25 text-indigo-200 border border-indigo-400/30'
+                    : 'text-[#787B86] hover:text-[#D1D4DC]'
+                }`}
+              >
+                <Sparkles className="h-3 w-3" />
+                <span>Vela</span>
               </button>
             </div>
           </div>
@@ -6559,11 +6590,13 @@ export const MarketChartView: React.FC<MarketChartViewProps> = ({
           flex: '1 1 0%',
           minHeight: 0,
           minWidth: 0,
-          touchAction: 'none',
+          touchAction: isVelaBetaMode ? 'auto' : 'none',
           WebkitOverflowScrolling: 'touch',
           pointerEvents: 'auto',
         }}
-        className="relative flex-1 flex flex-col w-full h-full min-h-0 min-w-0 overflow-hidden bg-white dark:bg-black touch-none"
+        className={`relative flex-1 flex flex-col w-full h-full min-h-0 min-w-0 overflow-hidden bg-white dark:bg-black ${
+          isVelaBetaMode ? 'touch-auto' : 'touch-none'
+        }`}
       >
         {/* SECTION A.1 & A.5: Persistent Single-Iframe Live Advanced Chart Container
             Pinned to 100% absolute bounds of market-chart-viewport. Never collapsed to 0x0 on mode switch. */}
@@ -6599,13 +6632,36 @@ export const MarketChartView: React.FC<MarketChartViewProps> = ({
           />
         </div>
 
-        {/* Lightweight Charts Mount Host (Hidden & isolated from DOM layout when in Live Mode) */}
+        {/* OPTIONAL EXPERIMENTAL MODE: Lazy-loaded LuxAlgo Vela Workspace (0 KB until selected) */}
+        {isVelaBetaMode && (
+          <Suspense
+            fallback={
+              <div
+                data-testid="vela-beta-loading"
+                className="absolute inset-0 z-15 flex flex-col items-center justify-center gap-2 bg-[#0B0E14] text-[#9CA3AF] text-xs"
+              >
+                <Sparkles className="h-5 w-5 text-indigo-400 animate-pulse" />
+                <span>{tr('Memuat Vela Beta Workspace...', 'Loading Vela Beta Workspace...')}</span>
+              </div>
+            }
+          >
+            <VelaBetaChartView
+              symbol={prefs.symbol}
+              interval={prefs.interval}
+              isDark={isDark}
+              isEn={isEn}
+              onExitBeta={() => handleSetChartEngineMode('replay_studio')}
+            />
+          </Suspense>
+        )}
+
+        {/* Lightweight Charts Mount Host (Hidden & isolated from DOM layout when in Live or Vela Beta Mode) */}
         <div
           ref={chartContainerRef}
           data-testid="tradingview-widget-host"
           onClick={(e) => handleEmptyChartTapOrClick(e.target as HTMLElement | null)}
           className={
-            isLiveMode
+            isLiveMode || isVelaBetaMode
               ? 'hidden pointer-events-none'
               : 'relative flex-1 w-full h-full min-h-0 min-w-0 overflow-hidden bg-white dark:bg-black overscroll-none transform-gpu'
           }
@@ -9968,6 +10024,7 @@ export const MarketChartView: React.FC<MarketChartViewProps> = ({
             * In LIVE Mode: Drawing Tools toggle (Pencil), Focus / Full View toggle, More Menu ('...')
             * In REPLAY Mode: Full Replay & Drawing Studio controls (Pencil, Scissors, Activity, More, Undo, Redo)
           ===================================================================== */}
+      {!isVelaBetaMode && (
       <div
         data-testid="market-chart-footer-bar"
         className={`${
@@ -10381,6 +10438,7 @@ export const MarketChartView: React.FC<MarketChartViewProps> = ({
           )}
         </div>
       </div>
+      )}
     </section>
   );
 };

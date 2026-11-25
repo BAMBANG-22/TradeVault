@@ -120,23 +120,53 @@ export async function analyzeMacroWithGeminiClient(params: {
     },
   };
 
-  // 1b. If News & Cycle Offline Mode is active, NEVER call Gemini API
-  if (isNewsCycleOfflineMode()) {
+  // 1b. If News & Cycle Offline Mode is active or device is offline, NEVER call Gemini API
+  const isDeviceOffline = typeof navigator !== 'undefined' && navigator.onLine === false;
+  if (isNewsCycleOfflineMode() || isDeviceOffline) {
     return baselineSnapshot;
   }
 
   // 2. Call standalone server Gemini proxy (configured via VITE_API_BASE_URL or Supabase Edge for APK)
   const endpoints = getApiEndpointCandidates('/api/macro-news/analyze');
+  let bestFallbackSnapshot: MacroNewsSnapshot | null = null;
   for (const endpoint of endpoints) {
     const res = await nativeAwarePostJson(endpoint, requestPayload, 45000);
 
     if (res.ok && res.json?.success && res.json?.snapshot) {
-      return res.json.snapshot as MacroNewsSnapshot;
+      const candidate = res.json.snapshot as MacroNewsSnapshot;
+      const fallbackUsed =
+        typeof res.json.fallbackUsed === 'boolean'
+          ? res.json.fallbackUsed
+          : candidate.sourceMode !== 'GEMINI_AI';
+      const aiErrorCode =
+        typeof res.json.aiErrorCode === 'string' && res.json.aiErrorCode.trim()
+          ? res.json.aiErrorCode.trim()
+          : undefined;
+      const enriched: MacroNewsSnapshot = {
+        ...candidate,
+        fallbackUsed,
+        aiErrorCode,
+        isOfflineCached: false,
+      };
+      if (!fallbackUsed && enriched.sourceMode === 'GEMINI_AI') {
+        return enriched;
+      }
+      if (!bestFallbackSnapshot) {
+        bestFallbackSnapshot = enriched;
+      }
     }
   }
 
+  if (bestFallbackSnapshot) {
+    return bestFallbackSnapshot;
+  }
+
   // 3. Resilient fallback to deterministic Master Playbook rules if server is unreachable
-  return baselineSnapshot;
+  return {
+    ...baselineSnapshot,
+    fallbackUsed: true,
+    aiErrorCode: 'BACKEND_UNREACHABLE',
+  };
 }
 
 /**
@@ -157,7 +187,8 @@ export async function syncHistoricalActualsArchive(force = false): Promise<{
   syncedLiveCount: number;
 }> {
   const seeded = ensureHistoricalActualsArchiveSeeded();
-  if (isNewsCycleOfflineMode()) {
+  const isDeviceOffline = typeof navigator !== 'undefined' && navigator.onLine === false;
+  if (isNewsCycleOfflineMode() || isDeviceOffline) {
     return { totalRecords: seeded.length, syncedLiveCount: 0 };
   }
 
@@ -205,18 +236,70 @@ export async function executeClientSideMacroAnalysis(
 }> {
   ensureHistoricalActualsArchiveSeeded();
 
-  if (isNewsCycleOfflineMode()) {
+  const isManualOffline = isNewsCycleOfflineMode();
+  const isDeviceOffline = typeof navigator !== 'undefined' && navigator.onLine === false;
+
+  if (isManualOffline || isDeviceOffline) {
     const cachedSnap = loadLocalCachedMacroSnapshotSync();
     if (cachedSnap) {
       return {
         snapshot: {
           ...cachedSnap,
           calendarEvents: hydrateEventsWithOfflineArchive(cachedSnap.calendarEvents),
+          isOfflineCached: true,
         },
         supabaseResult: { success: false, remoteSaved: false },
       };
     }
-    throw new Error('Mode Offline aktif dan belum ada cache lokal Trade News tersimpan.');
+    if (isManualOffline) {
+      throw new Error('Mode Offline aktif dan belum ada cache lokal Trade News tersimpan.');
+    }
+    const offlineUnavailable = (
+      symbol: 'DXY' | 'USOIL' | 'US10Y' | 'US02Y',
+      yahooTicker: string,
+      name: string
+    ) => ({
+      symbol,
+      yahooTicker,
+      name,
+      price: 0,
+      previousClose: 0,
+      change: 0,
+      changePercent: 0,
+      direction: 'FLAT' as const,
+      goldCorrelationEffect: 'NEUTRAL' as const,
+      summaryId: `${name} sementara tidak tersedia (Offline)`,
+      summaryEn: `${name} unavailable (Offline)`,
+      updatedAt: new Date().toISOString(),
+      isAvailable: false,
+    });
+    const offlineSnapshot: MacroNewsSnapshot = {
+      ...analyzeMacroEvent({
+        calendarEvents: hydrateEventsWithOfflineArchive([]),
+        intermarketPulse: {
+          dxy: offlineUnavailable('DXY', 'DX-Y.NYB', 'US Dollar Index (DXY)'),
+          us02y: offlineUnavailable('US02Y', '2YY=F', 'US 2Y Treasury Yield'),
+          usoil: offlineUnavailable('USOIL', 'CL=F', 'US Oil WTI Crude'),
+          us10y: offlineUnavailable('US10Y', '^TNX', 'US 10Y Treasury Yield'),
+        },
+        breakingNews: [],
+        cmeFedWatch: resolveSyncedCmeFedWatchState({
+          futuresBackup: createUnavailableFedWatchState(),
+          forceRefresh: false,
+        }),
+        selectedEventId,
+        sourceMode: 'RULE_BASED_FALLBACK',
+        modelUsed: 'rule-based-offline',
+        priorCalendarEvents,
+      }),
+      fallbackUsed: true,
+      aiErrorCode: 'DEVICE_OFFLINE',
+      isOfflineCached: true,
+    };
+    return {
+      snapshot: offlineSnapshot,
+      supabaseResult: { success: false, remoteSaved: false },
+    };
   }
 
   // Step 1: Pull all live public feeds + throttled 90-day 0-token historical backfill in parallel
@@ -538,7 +621,8 @@ export async function executeClientSideFundamentalGoldAnalysis(options?: {
     if (previousSnapshot) {
       const updatedOffline: FundamentalGoldSnapshot = {
         ...previousSnapshot,
-        analyzedAt: new Date().toISOString(),
+        analyzedAt: previousSnapshot.analyzedAt,
+        isOfflineCached: true,
         cadenceSchedule: computeFundamentalGoldCadenceSlot(),
         changeDetection: {
           ...previousSnapshot.changeDetection,
@@ -704,6 +788,7 @@ export async function executeClientSideFundamentalGoldAnalysis(options?: {
     },
   };
 
+  let bestFallbackFundamental: FundamentalGoldSnapshot | null = null;
   for (const endpoint of endpoints) {
     try {
       const res = await nativeAwarePostJson(endpoint, payload, 40000);
@@ -720,17 +805,47 @@ export async function executeClientSideFundamentalGoldAnalysis(options?: {
         candidate.narrative?.id &&
         candidate.narrative?.en
       ) {
-        saveFundamentalGoldSnapshotToLocal(candidate);
-        return candidate;
+        const fallbackUsed =
+          typeof res.json.fallbackUsed === 'boolean'
+            ? res.json.fallbackUsed
+            : candidate.sourceMode !== 'GEMINI_AI';
+        const aiErrorCode =
+          typeof res.json.aiErrorCode === 'string' && res.json.aiErrorCode.trim()
+            ? res.json.aiErrorCode.trim()
+            : undefined;
+        const enriched: FundamentalGoldSnapshot = {
+          ...candidate,
+          fallbackUsed,
+          aiErrorCode,
+          isOfflineCached: false,
+        };
+        if (!fallbackUsed && enriched.sourceMode === 'GEMINI_AI') {
+          saveFundamentalGoldSnapshotToLocal(enriched);
+          return enriched;
+        }
+        if (!bestFallbackFundamental) {
+          bestFallbackFundamental = enriched;
+        }
       }
     } catch {
       // Fallback cleanly to next candidate or local deterministic engine
     }
   }
 
+  if (bestFallbackFundamental) {
+    saveFundamentalGoldSnapshotToLocal(bestFallbackFundamental);
+    return bestFallbackFundamental;
+  }
+
   // Resilient deterministic fallback if backend or quota is unavailable
-  saveFundamentalGoldSnapshotToLocal(deterministicSnapshot);
-  return deterministicSnapshot;
+  const localFallback: FundamentalGoldSnapshot = {
+    ...deterministicSnapshot,
+    fallbackUsed: true,
+    aiErrorCode: 'BACKEND_UNREACHABLE',
+    isOfflineCached: false,
+  };
+  saveFundamentalGoldSnapshotToLocal(localFallback);
+  return localFallback;
 }
 
 

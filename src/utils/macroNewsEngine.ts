@@ -489,6 +489,9 @@ export interface MacroNewsSnapshot {
   isCalendarLiveFeed?: boolean;
   rssFeedHealth?: RssFeedHealthStatus;
   threeSystemState?: MacroThreeSystemState;
+  fallbackUsed?: boolean;
+  aiErrorCode?: string;
+  isOfflineCached?: boolean;
 }
 
 export const MACRO_SNAPSHOT_LOCAL_STORAGE_KEY = 'tradevault_macro_news_snapshot_v1';
@@ -504,14 +507,24 @@ export const MACRO_LOCAL_SYNC_EVENT = 'tradevault:macro-local-sync';
 export const POST_NEWS_ACTIVE_WINDOW_MS = 2 * 60 * 60 * 1000; // 2 hours
 export const SNAPSHOT_TTL_MINUTES = 30;
 
+let macroLocalSyncDispatchPending = false;
+
 export function dispatchMacroLocalSyncEvent(): void {
-  if (typeof window !== 'undefined' && typeof window.dispatchEvent === 'function') {
+  if (typeof window === 'undefined' || typeof window.dispatchEvent !== 'function') {
+    return;
+  }
+  if (macroLocalSyncDispatchPending) {
+    return;
+  }
+  macroLocalSyncDispatchPending = true;
+  window.setTimeout(() => {
+    macroLocalSyncDispatchPending = false;
     try {
       window.dispatchEvent(new CustomEvent(MACRO_LOCAL_SYNC_EVENT));
     } catch {
       // ignore event dispatch errors in restricted contexts
     }
-  }
+  }, 0);
 }
 
 export function loadLocalCachedCmeFedWatchSync(maxAgeMs = 12 * 60 * 60 * 1000): CmeFedWatchState | null {
@@ -2417,12 +2430,12 @@ export function computeDualHorizonAnalysis(params: {
 
   if (isOversold3d) {
     initialCatalystBias = 'BUY';
-    initialCatalystReasonId = `GC=F 3D Oversold (${gold3d.toFixed(2)}%) + RSS ${rssBullish}B/${rssBearish}S → Rawan lonjakan short-covering BULLISH SPIKE AWAL.`;
-    initialCatalystReasonEn = `GC=F 3D Oversold (${gold3d.toFixed(2)}%) + RSS ${rssBullish}B/${rssBearish}S → Prone to initial upward BUY short-covering spike.`;
+    initialCatalystReasonId = `GC=F 3D Oversold (${gold3d.toFixed(2)}%) + RSS ${rssBullish}B/${rssBearish}S → Rawan dorongan short-covering ke ATAS (BUY awal).`;
+    initialCatalystReasonEn = `GC=F 3D Oversold (${gold3d.toFixed(2)}%) + RSS ${rssBullish}B/${rssBearish}S → Prone to initial upward BUY short-covering push.`;
   } else if (isOverbought3d) {
     initialCatalystBias = 'SELL';
-    initialCatalystReasonId = `GC=F 3D Overbought (+${gold3d.toFixed(2)}%) + RSS ${rssBullish}B/${rssBearish}S → Rawan tekanan profit-taking BEARISH SPIKE AWAL.`;
-    initialCatalystReasonEn = `GC=F 3D Overbought (+${gold3d.toFixed(2)}%) + RSS ${rssBullish}B/${rssBearish}S → Prone to initial downward SELL profit-taking spike.`;
+    initialCatalystReasonId = `GC=F 3D Overbought (+${gold3d.toFixed(2)}%) + RSS ${rssBullish}B/${rssBearish}S → Rawan tekanan profit-taking ke BAWAH (SELL awal).`;
+    initialCatalystReasonEn = `GC=F 3D Overbought (+${gold3d.toFixed(2)}%) + RSS ${rssBullish}B/${rssBearish}S → Prone to initial downward SELL profit-taking push.`;
   } else if (isRssNetBullish && topBullHeadline) {
     initialCatalystBias = 'BUY';
     const driverId =
@@ -2477,15 +2490,15 @@ export function computeDualHorizonAnalysis(params: {
 
   const initialCatalystLabelId =
     initialCatalystBias === 'BUY'
-      ? 'BULLISH SPIKE AWAL'
+      ? 'TEKANAN AWAL NAIK (BUY)'
       : initialCatalystBias === 'SELL'
-      ? 'BEARISH SPIKE AWAL'
+      ? 'TEKANAN AWAL TURUN (SELL)'
       : 'NETRAL / SEIMBANG';
   const initialCatalystLabelEn =
     initialCatalystBias === 'BUY'
-      ? 'BULLISH INITIAL SPIKE'
+      ? 'INITIAL PUSH UP (BUY)'
       : initialCatalystBias === 'SELL'
-      ? 'BEARISH INITIAL SPIKE'
+      ? 'INITIAL PUSH DOWN (SELL)'
       : 'NEUTRAL / BALANCED';
 
   // 2. Evaluate Session Primary Bias (Hard Macro Data: CME FedWatch, US10Y/US02Y, DXY, Actual vs Forecast)
@@ -2755,10 +2768,10 @@ export function computeDualHorizonAnalysis(params: {
 
   const movementSummaryId = isOneWayEarlyStrike
     ? 'Seluruh sinyal intermarket (DXY & US02Y/US10Y), katalis data, dan bias sesi selaras tanpa konflik jadwal pidato maupun kejenuhan harga 6 jam — mendukung ekspansi langsung 1 arah (Direct Expansion).'
-    : `Terdeteksi ${spikeTriggerReasonsId.length} pemicu otomatis [2 ARAH — SWEEP FIRST] — tahan eksekusi detik ke-0 dan tunggu sapuan likuiditas sesi selesai.`;
+    : `Terdeteksi ${spikeTriggerReasonsId.length} pemicu otomatis [2 ARAH — SWEEP FIRST] — tahan eksekusi detik ke-0 dan jangan entry melawan Bias Utama (${sessionPrimaryBias}); perlakukan potensi sapuan hanya sebagai zona tunggu konfirmasi.`;
   const movementSummaryEn = isOneWayEarlyStrike
     ? 'All intermarket signals (DXY & US02Y/US10Y), data catalyst, and session bias align with no speech schedule conflicts or 6H priced-in exhaustion — supports 1-Way Direct Expansion.'
-    : `${spikeTriggerReasonsEn.length} automatic [2-WAY — SWEEP FIRST] trigger(s) active — hold 0-second market orders and wait for the session liquidity sweep to complete.`;
+    : `${spikeTriggerReasonsEn.length} automatic [2-WAY — SWEEP FIRST] trigger(s) active — hold 0-second orders and never trade against Main Bias (${sessionPrimaryBias}); treat any sweep zone strictly as a confirmation wait area.`;
 
   // 4. Construct 2-Phase Manipulation & Expansion Scenario:
   //    - Fase 1 (Menit 0–5 Rilis)
@@ -2823,20 +2836,34 @@ export function computeDualHorizonAnalysis(params: {
       phase2Minute15PlusEn = `Follow-through expansion tracks the M15 candle close outside the session range (${poiRangeLabel}) confirmed by DXY & US02Y.`;
     }
   } else {
-    // 2 ARAH (SWEEP FIRST)
+    // 2 ARAH (SWEEP FIRST) — align narrative strictly with initialCatalystBias + sessionPrimaryBias
     if (sessionPrimaryBias === 'SELL') {
-      phase1Minute0to5Id = `Potensi sapuan likuiditas atas (Judas Swing BUY) menyapu ${bslLabel} dan menguji zona Supply Intraday ${poiRangeLabel} (Cap 1.8x ATR 1H) untuk menjebak breakout buyer awal.${warningSuffixId}`;
-      phase1Minute0to5En = `Potential upside liquidity sweep (Judas Swing BUY) clearing ${bslLabel} into Intraday Supply ${poiRangeLabel} (1.8x 1H ATR Cap) to trap early breakout buyers.${warningSuffixEn}`;
-      phase2Minute15PlusId = `Setelah likuiditas atas tersapu & muncul wick rejection / CHoCH M5–M15 di ${poiRangeLabel}, ekspansi utama berbalik turun (SELL ${sessionPrimaryProbability}%) menargetkan ${sslLabel}.`;
-      phase2Minute15PlusEn = `Once upside liquidity is swept and M5–M15 rejection / CHoCH prints at ${poiRangeLabel}, primary expansion reverses lower (SELL ${sessionPrimaryProbability}%) targeting ${sslLabel}.`;
+      if (initialCatalystBias === 'SELL') {
+        phase1Minute0to5Id = `Katalis awal & Bias Utama sama-sama BEARISH — harga berpeluang langsung menekan ${sslLabel} sejak detik awal; namun karena pemicu 2-arah aktif, waspadai pantulan/sapuan semu ke atas menuju ${bslLabel} / Supply ${poiRangeLabel} (BUKAN sinyal BUY, hanya area tunggu SELL).${warningSuffixId}`;
+        phase1Minute0to5En = `Both Initial Catalyst and Main Bias are BEARISH — price may drop straight toward ${sslLabel} from second 0; however, with 2-way triggers active, watch for a false upside bounce/sweep into ${bslLabel} / Supply ${poiRangeLabel} (NOT a BUY signal — wait-for-SELL zone only).${warningSuffixEn}`;
+        phase2Minute15PlusId = `Fokus HANYA cari SELL (${sessionPrimaryProbability}%): ikuti kelanjutan turun lewat pullback M5–M15 jika langsung jebol ${sslLabel}, atau tunggu wick rejection / CHoCH di ${poiRangeLabel} bila sempat terjadi sapuan ke atas.`;
+        phase2Minute15PlusEn = `Focus ONLY on SELL (${sessionPrimaryProbability}%): join continuation via M5–M15 pullback if ${sslLabel} breaks immediately, or wait for wick rejection / CHoCH at ${poiRangeLabel} if an upside sweep occurs.`;
+      } else {
+        phase1Minute0to5Id = `Waspadai jebakan naik sesaat (sapuan likuiditas atas) menyapu ${bslLabel} ke Supply Intraday ${poiRangeLabel} (Cap 1.8x ATR 1H) — BUKAN sinyal BUY detik ke-0; hindari entry melawan Bias Utama SELL.${warningSuffixId}`;
+        phase1Minute0to5En = `Watch for a temporary upside liquidity sweep clearing ${bslLabel} into Intraday Supply ${poiRangeLabel} (1.8x 1H ATR Cap) — NOT a 0-second BUY signal; avoid trading against the Main SELL Bias.${warningSuffixEn}`;
+        phase2Minute15PlusId = `Fokus HANYA cari SELL (${sessionPrimaryProbability}%): tunggu sapuan atas mereda & muncul wick rejection / CHoCH M5–M15 di ${poiRangeLabel} (atau manfaatkan retest jika harga langsung turun), menargetkan ${sslLabel}.`;
+        phase2Minute15PlusEn = `Focus ONLY on SELL (${sessionPrimaryProbability}%): wait for the upside sweep to stall with M5–M15 wick rejection / CHoCH at ${poiRangeLabel} (or use a pullback retest if price drops immediately), targeting ${sslLabel}.`;
+      }
     } else if (sessionPrimaryBias === 'BUY') {
-      phase1Minute0to5Id = `Potensi sapuan likuiditas bawah (Judas Swing SELL) menyapu ${sslLabel} dan menguji zona Demand Intraday ${poiRangeLabel} (Cap 1.8x ATR 1H) untuk memicu stop-loss buyer awal.${warningSuffixId}`;
-      phase1Minute0to5En = `Potential downside liquidity sweep (Judas Swing SELL) clearing ${sslLabel} into Intraday Demand ${poiRangeLabel} (1.8x 1H ATR Cap) to flush early buyer stops.${warningSuffixEn}`;
-      phase2Minute15PlusId = `Setelah likuiditas bawah tersapu & muncul penolakan / CHoCH M5–M15 di ${poiRangeLabel}, ekspansi utama berbalik naik (BUY ${sessionPrimaryProbability}%) menargetkan ${bslLabel}.`;
-      phase2Minute15PlusEn = `Once downside liquidity is swept and M5–M15 rejection / CHoCH prints at ${poiRangeLabel}, primary expansion reverses higher (BUY ${sessionPrimaryProbability}%) targeting ${bslLabel}.`;
+      if (initialCatalystBias === 'BUY') {
+        phase1Minute0to5Id = `Katalis awal & Bias Utama sama-sama BULLISH — harga berpeluang langsung menembus ${bslLabel} sejak detik awal; namun karena pemicu 2-arah aktif, waspadai koreksi/sapuan semu ke bawah menuju ${sslLabel} / Demand ${poiRangeLabel} (BUKAN sinyal SELL, hanya area tunggu BUY).${warningSuffixId}`;
+        phase1Minute0to5En = `Both Initial Catalyst and Main Bias are BULLISH — price may break straight toward ${bslLabel} from second 0; however, with 2-way triggers active, watch for a false downside dip/sweep into ${sslLabel} / Demand ${poiRangeLabel} (NOT a SELL signal — wait-for-BUY zone only).${warningSuffixEn}`;
+        phase2Minute15PlusId = `Fokus HANYA cari BUY (${sessionPrimaryProbability}%): ikuti kelanjutan naik lewat pullback M5–M15 jika langsung tembus ${bslLabel}, atau tunggu penolakan / CHoCH di ${poiRangeLabel} bila sempat terjadi sapuan ke bawah.`;
+        phase2Minute15PlusEn = `Focus ONLY on BUY (${sessionPrimaryProbability}%): join continuation via M5–M15 pullback if ${bslLabel} breaks immediately, or wait for rejection / CHoCH at ${poiRangeLabel} if a downside sweep occurs.`;
+      } else {
+        phase1Minute0to5Id = `Waspadai jebakan turun sesaat (sapuan likuiditas bawah) menyapu ${sslLabel} ke Demand Intraday ${poiRangeLabel} (Cap 1.8x ATR 1H) — BUKAN sinyal SELL detik ke-0; hindari entry melawan Bias Utama BUY.${warningSuffixId}`;
+        phase1Minute0to5En = `Watch for a temporary downside liquidity sweep clearing ${sslLabel} into Intraday Demand ${poiRangeLabel} (1.8x 1H ATR Cap) — NOT a 0-second SELL signal; avoid trading against the Main BUY Bias.${warningSuffixEn}`;
+        phase2Minute15PlusId = `Fokus HANYA cari BUY (${sessionPrimaryProbability}%): tunggu sapuan bawah mereda & muncul penolakan / CHoCH M5–M15 di ${poiRangeLabel} (atau manfaatkan retest jika harga langsung naik), menargetkan ${bslLabel}.`;
+        phase2Minute15PlusEn = `Focus ONLY on BUY (${sessionPrimaryProbability}%): wait for the downside sweep to stall with M5–M15 rejection / CHoCH at ${poiRangeLabel} (or use a pullback retest if price rallies immediately), targeting ${bslLabel}.`;
+      }
     } else {
-      phase1Minute0to5Id = `Potensi whipsaw 2-arah menyapu batas likuiditas sesi terdekat (${bslLabel} atau ${sslLabel}) hingga area ${poiRangeLabel}.${warningSuffixId}`;
-      phase1Minute0to5En = `Potential 2-way whipsaw sweeping nearest session liquidity (${bslLabel} or ${sslLabel}) into ${poiRangeLabel}.${warningSuffixEn}`;
+      phase1Minute0to5Id = `Potensi whipsaw 2-arah menyapu batas likuiditas sesi terdekat (${bslLabel} atau ${sslLabel}) hingga area ${poiRangeLabel} — tahan entry detik ke-0.${warningSuffixId}`;
+      phase1Minute0to5En = `Potential 2-way whipsaw sweeping nearest session liquidity (${bslLabel} or ${sslLabel}) into ${poiRangeLabel} — hold 0-second entries.${warningSuffixEn}`;
       phase2Minute15PlusId = `Tunggu sapuan selesai pada menit 15+; eksekusi hanya setelah struktur M15 menunjukkan CHoCH valid yang didukung keselarasan DXY & US02Y.`;
       phase2Minute15PlusEn = `Wait for the sweep to settle at minute 15+; execute only after M15 structure prints a valid CHoCH backed by DXY & US02Y alignment.`;
     }
@@ -5180,6 +5207,283 @@ export async function loadMacroBiasHistory(
   }
 
   return sorted.slice(-limit);
+}
+
+// ============================================================================
+// PER-EVENT PRE-RELEASE FREEZE ARCHIVE (IMMUTABLE ONCE RELEASED, LIVE WHILE UPCOMING)
+// ============================================================================
+
+export const MACRO_PRERELEASE_FROZEN_ARCHIVE_KEY = 'tradevault_macro_prerelease_frozen_v1';
+
+export interface FrozenPreReleaseSpikeLevels {
+  hasValidData: boolean;
+  bslPrice: number;
+  sslPrice: number;
+  poiLow: number;
+  poiHigh: number;
+  macro4hPdZone: string;
+}
+
+export interface FrozenPreReleaseRecord {
+  eventKey: string;
+  eventId: string;
+  eventTitle: string;
+  releaseDateIso: string;
+  capturedAtIso: string;
+  isFinalT5Lock: boolean;
+  source: 'LOCAL_PRE_RELEASE' | 'SUPABASE_PRE_RELEASE';
+  dominantBias: MacroBiasDirection;
+  buyProbability: number;
+  sellProbability: number;
+  mixedProbability: number;
+  dualHorizon: DualHorizonAnalysis;
+  preNewsFlow?: MacroNewsSnapshot['scenarioMatrix']['preNewsFlow'];
+  spikeLevels?: FrozenPreReleaseSpikeLevels;
+}
+
+let inMemoryFrozenPreReleaseMap: Record<string, FrozenPreReleaseRecord> | null = null;
+
+export function getPreReleaseFreezeEventKey(
+  ev: Pick<MacroCalendarEvent, 'title' | 'date'> | null | undefined
+): string {
+  if (!ev || !ev.title || !ev.date) return '';
+  const canonicalTitle = normalizeCanonicalMacroTitleKey(ev.title) || ev.title.trim().toLowerCase();
+  const dt = new Date(ev.date);
+  const slot = Number.isFinite(dt.getTime())
+    ? dt.toISOString().slice(0, 16)
+    : String(ev.date).trim().slice(0, 16);
+  return `${canonicalTitle}|${slot}`;
+}
+
+function readFrozenPreReleaseMap(): Record<string, FrozenPreReleaseRecord> {
+  if (inMemoryFrozenPreReleaseMap) {
+    return inMemoryFrozenPreReleaseMap;
+  }
+  const map: Record<string, FrozenPreReleaseRecord> = {};
+  if (typeof window !== 'undefined' && typeof localStorage !== 'undefined') {
+    try {
+      const raw = localStorage.getItem(MACRO_PRERELEASE_FROZEN_ARCHIVE_KEY);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+          for (const [k, v] of Object.entries(parsed)) {
+            if (
+              v &&
+              typeof v === 'object' &&
+              typeof (v as any).eventKey === 'string' &&
+              typeof (v as any).releaseDateIso === 'string' &&
+              typeof (v as any).capturedAtIso === 'string' &&
+              (v as any).dualHorizon
+            ) {
+              map[k] = v as FrozenPreReleaseRecord;
+            }
+          }
+        }
+      }
+    } catch {
+      // ignore corrupted storage
+    }
+  }
+  inMemoryFrozenPreReleaseMap = map;
+  return map;
+}
+
+function writeFrozenPreReleaseMap(map: Record<string, FrozenPreReleaseRecord>): void {
+  // Prune to the 60 most recently scheduled events so localStorage stays compact
+  const entries = Object.entries(map);
+  let targetMap = map;
+  if (entries.length > 60) {
+    entries.sort(
+      (a, b) =>
+        new Date(b[1].releaseDateIso).getTime() - new Date(a[1].releaseDateIso).getTime()
+    );
+    targetMap = Object.fromEntries(entries.slice(0, 60));
+  }
+  inMemoryFrozenPreReleaseMap = targetMap;
+  if (typeof window !== 'undefined' && typeof localStorage !== 'undefined') {
+    try {
+      localStorage.setItem(MACRO_PRERELEASE_FROZEN_ARCHIVE_KEY, JSON.stringify(targetMap));
+    } catch {
+      // ignore quota error
+    }
+  }
+}
+
+/**
+ * Loads the frozen Pre-Release record for a specific calendar event if it was genuinely
+ * captured strictly BEFORE the scheduled release time.
+ */
+export function loadFrozenPreReleaseRecord(
+  ev: Pick<MacroCalendarEvent, 'title' | 'date'> | null | undefined
+): FrozenPreReleaseRecord | null {
+  const key = getPreReleaseFreezeEventKey(ev);
+  if (!key) return null;
+  const map = readFrozenPreReleaseMap();
+  const candidate = map[key];
+  if (!candidate) return null;
+
+  const releaseMs = new Date(candidate.releaseDateIso).getTime();
+  const capturedMs = new Date(candidate.capturedAtIso).getTime();
+  if (!Number.isFinite(releaseMs) || !Number.isFinite(capturedMs) || capturedMs >= releaseMs) {
+    return null;
+  }
+  return candidate;
+}
+
+/**
+ * Records/updates a Pre-Release snapshot for an UPCOMING event.
+ * Strict immutability guarantee:
+ * - For LOCAL_PRE_RELEASE writes, strictly REFUSES to write once `nowMs >= releaseMs`
+ *   or `capturedMs >= releaseMs`, ensuring already-released news NEVER gets overwritten
+ *   by live post-release data.
+ * - For SUPABASE_PRE_RELEASE historical recovery, accepts only records whose `capturedAtIso`
+ *   is strictly earlier than `releaseDateIso` and does not overwrite an existing local lock.
+ */
+export function saveFrozenPreReleaseRecord(
+  record: FrozenPreReleaseRecord,
+  nowMs = Date.now()
+): boolean {
+  if (!record || !record.eventKey || !record.releaseDateIso || !record.capturedAtIso) {
+    return false;
+  }
+  const releaseMs = new Date(record.releaseDateIso).getTime();
+  const capturedMs = new Date(record.capturedAtIso).getTime();
+  if (!Number.isFinite(releaseMs) || !Number.isFinite(capturedMs)) {
+    return false;
+  }
+  // Never store a record captured at or after the release timestamp
+  if (capturedMs >= releaseMs) {
+    return false;
+  }
+
+  const map = { ...readFrozenPreReleaseMap() };
+  const existing = map[record.eventKey];
+
+  if (record.source === 'LOCAL_PRE_RELEASE') {
+    // Once the scheduled release time has arrived or passed, refuse any live mutation
+    if (nowMs >= releaseMs) {
+      return false;
+    }
+    map[record.eventKey] = record;
+    writeFrozenPreReleaseMap(map);
+    return true;
+  }
+
+  // Historical recovery from Supabase: never overwrite an already stored local pre-release lock
+  if (existing && existing.source === 'LOCAL_PRE_RELEASE') {
+    return false;
+  }
+  map[record.eventKey] = record;
+  writeFrozenPreReleaseMap(map);
+  return true;
+}
+
+/**
+ * Attempts to recover an authentic Pre-Release snapshot for an already-released event
+ * from Supabase `macro_news_snapshots` (strictly `analyzed_at < ev.date`, within 24h before release).
+ * Returns null honestly if no pre-release snapshot was ever recorded before the event released.
+ */
+export async function loadFrozenPreReleaseFromSupabase(
+  ev: MacroCalendarEvent | null | undefined
+): Promise<FrozenPreReleaseRecord | null> {
+  if (!ev || !ev.title || !ev.date) return null;
+  const existing = loadFrozenPreReleaseRecord(ev);
+  if (existing) return existing;
+
+  const releaseMs = new Date(ev.date).getTime();
+  if (!Number.isFinite(releaseMs)) return null;
+  if (!isSupabaseConfigured()) return null;
+
+  const client = getSupabase();
+  if (!client) return null;
+
+  const eventKey = getPreReleaseFreezeEventKey(ev);
+  const TWENTY_FOUR_HOURS_MS = 24 * 60 * 60 * 1000;
+  const earliestAllowedIso = new Date(releaseMs - TWENTY_FOUR_HOURS_MS).toISOString();
+
+  try {
+    const { data, error } = await client
+      .from('macro_news_snapshots')
+      .select('analyzed_at, snapshot_payload')
+      .eq('instrument', 'XAUUSD')
+      .lt('analyzed_at', ev.date)
+      .gte('analyzed_at', earliestAllowedIso)
+      .order('analyzed_at', { ascending: false })
+      .limit(6);
+
+    if (error || !Array.isArray(data) || data.length === 0) {
+      return null;
+    }
+
+    for (const row of data) {
+      const snap = row?.snapshot_payload as MacroNewsSnapshot | undefined;
+      const analyzedAtIso = String(row?.analyzed_at || snap?.analyzedAt || '');
+      const analyzedMs = new Date(analyzedAtIso).getTime();
+      if (!snap || !isVerifiedLiveCalendarSnapshot(snap)) continue;
+      if (!Number.isFinite(analyzedMs) || analyzedMs >= releaseMs) continue;
+
+      // Match event inside the historical pre-release snapshot
+      const matchedEv =
+        (snap.calendarEvents || []).find(
+          (c) => getPreReleaseFreezeEventKey(c) === eventKey
+        ) || ev;
+
+      const historicalSnap = analyzeMacroEvent({
+        calendarEvents: snap.calendarEvents,
+        intermarketPulse: snap.intermarketPulse,
+        breakingNews: snap.breakingNews,
+        cmeFedWatch: snap.cmeFedWatch || snap.scenarioMatrix?.cmeFedWatch,
+        selectedEventId: matchedEv.id,
+        sourceMode: snap.sourceMode,
+        modelUsed: snap.modelUsed,
+      });
+
+      const histMatrix = historicalSnap.scenarioMatrix;
+      const histDualHorizon =
+        histMatrix.dualHorizon ||
+        computeDualHorizonAnalysis({
+          breakingNews: snap.breakingNews || [],
+          goldPositioning:
+            histMatrix.preNewsFlow?.goldPositioning || snap.intermarketPulse?.goldPositioning,
+          dominantBias: histMatrix.dominantBias,
+          buyProbability: histMatrix.buyProbability,
+          sellProbability: histMatrix.sellProbability,
+          mixedProbability: histMatrix.mixedProbability,
+          cmeFedWatch:
+            histMatrix.cmeFedWatch || snap.cmeFedWatch || createUnavailableFedWatchState(),
+          dxy: snap.intermarketPulse.dxy,
+          us02y: snap.intermarketPulse.us02y,
+          us10y: snap.intermarketPulse.us10y,
+          primaryEvent: histMatrix.primaryEvent,
+          isSimultaneousRelease: histMatrix.isSimultaneousRelease,
+          simultaneousAlignment: histMatrix.simultaneousAlignment,
+          calendarEvents: snap.calendarEvents,
+        });
+
+      const recovered: FrozenPreReleaseRecord = {
+        eventKey,
+        eventId: ev.id,
+        eventTitle: ev.title,
+        releaseDateIso: ev.date,
+        capturedAtIso: analyzedAtIso,
+        isFinalT5Lock: releaseMs - analyzedMs <= 6 * 60 * 1000,
+        source: 'SUPABASE_PRE_RELEASE',
+        dominantBias: histMatrix.dominantBias,
+        buyProbability: histMatrix.buyProbability,
+        sellProbability: histMatrix.sellProbability,
+        mixedProbability: histMatrix.mixedProbability,
+        dualHorizon: histDualHorizon,
+        preNewsFlow: histMatrix.preNewsFlow,
+      };
+
+      saveFrozenPreReleaseRecord(recovered);
+      return recovered;
+    }
+  } catch {
+    // Graceful failure — return null so UI stays honest
+  }
+
+  return null;
 }
 
 // ============================================================================
@@ -7952,6 +8256,9 @@ export interface FundamentalGoldSnapshot {
   analyzedAt: string;
   sourceMode: 'GEMINI_AI' | 'DETERMINISTIC_FALLBACK';
   modelUsed: string;
+  fallbackUsed?: boolean;
+  aiErrorCode?: string;
+  isOfflineCached?: boolean;
   overallBias: FundamentalDirectionBias;
   bullishProbability: number;
   bearishProbability: number;

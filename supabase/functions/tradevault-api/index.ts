@@ -639,6 +639,8 @@ const ALLOWED_PROXY_DOMAINS = [
   'stooq.com',
   'stlouisfed.org',
   'treasury.gov',
+  'cftc.gov',
+  'gamma-api.polymarket.com',
 ];
 
 function isAllowedProxyTargetUrl(rawUrl: string): boolean {
@@ -669,7 +671,7 @@ async function handleProxy(reqUrl: URL): Promise<Response> {
       headers: {
         'User-Agent':
           'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
-        Accept: 'application/json, text/plain, text/xml, application/rss+xml, */*',
+        Accept: 'application/json, text/plain, text/xml, application/rss+xml, image/*, */*',
         'Cache-Control': 'no-cache, no-store, must-revalidate',
         Pragma: 'no-cache',
         ...(isTradingViewTarget
@@ -682,12 +684,24 @@ async function handleProxy(reqUrl: URL): Promise<Response> {
       signal: controller.signal,
     });
     clearTimeout(timer);
+    const contentType = upstreamRes.headers.get('content-type') || 'application/json';
+    if (/^image\//i.test(contentType)) {
+      const bytes = await upstreamRes.arrayBuffer();
+      return new Response(bytes, {
+        status: upstreamRes.status,
+        headers: {
+          ...CORS_HEADERS,
+          'Content-Type': contentType,
+          'Cache-Control': 'no-store, no-cache, must-revalidate',
+        },
+      });
+    }
     const text = await upstreamRes.text();
     return new Response(text, {
       status: upstreamRes.status,
       headers: {
         ...CORS_HEADERS,
-        'Content-Type': upstreamRes.headers.get('content-type') || 'application/json',
+        'Content-Type': contentType,
         'Cache-Control': 'no-store, no-cache, must-revalidate',
       },
     });
