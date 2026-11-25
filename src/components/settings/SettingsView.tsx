@@ -98,6 +98,10 @@ import {
   OfflineOcrRuntimeProbe,
   probeOfflineOcrRuntimeEnvironment,
 } from '../../utils/offlineMt5Ocr';
+import {
+  runFullApkSystemProbe,
+  type FullApkSystemProbeResult,
+} from '../../utils/apkDiagnostics';
 
 interface SettingsViewProps {
   settings: AppSettings;
@@ -177,6 +181,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   const [showVersionHistory, setShowVersionHistory] = useState(false);
   const [showOcrDiagnostics, setShowOcrDiagnostics] = useState(false);
   const [ocrRuntimeProbe, setOcrRuntimeProbe] = useState<OfflineOcrRuntimeProbe | null>(null);
+  const [apkSystemProbe, setApkSystemProbe] = useState<FullApkSystemProbeResult | null>(null);
   const [isProbingOcr, setIsProbingOcr] = useState(false);
   const [ocrScanHistory, setOcrScanHistory] = useState<Mt5OcrScanDiagnostic[]>(() =>
     getRecentMt5OcrScanDiagnostics()
@@ -189,8 +194,12 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   const handleRunOcrRuntimeProbe = async () => {
     setIsProbingOcr(true);
     try {
-      const probe = await probeOfflineOcrRuntimeEnvironment();
+      const [probe, apkProbe] = await Promise.all([
+        probeOfflineOcrRuntimeEnvironment(),
+        runFullApkSystemProbe(),
+      ]);
       setOcrRuntimeProbe(probe);
+      setApkSystemProbe(apkProbe);
       setOcrScanHistory(getRecentMt5OcrScanDiagnostics());
     } finally {
       setIsProbingOcr(false);
@@ -200,6 +209,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   const handleCopyFullOcrDiagnostics = async () => {
     const payload = {
       build: appBuildIdentity,
+      apkSystemProbe,
       runtimeProbe: ocrRuntimeProbe,
       recentScans: ocrScanHistory,
     };
@@ -1693,7 +1703,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
               className="inline-flex items-center gap-1 underline underline-offset-2 decoration-[#E4E4E7] dark:decoration-[#20252D] hover:text-[#0F172A] dark:hover:text-[#F2F4F7] transition-colors cursor-pointer"
             >
               <Terminal className="h-3 w-3" />
-              <span>{tr('Diagnostik OCR', 'OCR Diagnostics')}</span>
+              <span>{tr('Diagnostik APK & OCR', 'APK & OCR Diagnostics')}</span>
             </button>
           </div>
           <button
@@ -1722,7 +1732,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
               <div className="flex items-center gap-1.5">
                 <Terminal className="h-3.5 w-3.5 text-[#0F172A] dark:text-[#F2F4F7]" />
                 <span className="text-xs font-semibold uppercase tracking-wider text-[#0F172A] dark:text-[#F2F4F7]">
-                  {tr('Diagnostik Build & Offline OCR', 'Build Identity & Offline OCR Diagnostics')}
+                  {tr('Diagnostik Sistem APK, AI & Offline', 'APK System, AI & Offline Diagnostics')}
                 </span>
               </div>
               <div className="flex items-center gap-1.5">
@@ -1733,7 +1743,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                   className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full border border-[#E4E4E7] dark:border-[#20252D] text-[10px] font-semibold text-[#0F172A] dark:text-[#F2F4F7] hover:bg-[#FAFAFA] dark:hover:bg-[#161A22] cursor-pointer disabled:opacity-50"
                 >
                   <RefreshCw className={`h-2.5 w-2.5 ${isProbingOcr ? 'animate-spin' : ''}`} />
-                  <span>{isProbingOcr ? tr('Menguji...', 'Probing...') : tr('Uji Aset OCR', 'Probe Runtime')}</span>
+                  <span>{isProbingOcr ? tr('Menguji...', 'Probing...') : tr('Uji Lengkap APK', 'Probe All')}</span>
                 </button>
                 <button
                   type="button"
@@ -1825,6 +1835,128 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                       </span>
                     </div>
                   ))}
+                </div>
+              </div>
+            )}
+
+            {/* Full APK Live Feeds, AI Backend & 3-Feature Macro Sync Audit */}
+            {apkSystemProbe && (
+              <div className="p-3 rounded-xl bg-[#FAFAFA] dark:bg-[#0B0E13] border border-[#E4E4E7] dark:border-[#20252D] font-mono text-[10px] space-y-2 select-text">
+                <div className="text-[#94A3B8] uppercase">
+                  {tr('Status Subsistem APK, AI & Sinkronisasi', 'APK Subsystems, AI & Sync Status')}
+                </div>
+                <div className="space-y-1.5">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-[#526071] dark:text-[#929BA9]">Native APK / Cache Purge</span>
+                    <span
+                      className={
+                        apkSystemProbe.cachePurgeMatchesBuild
+                          ? 'text-[#059669] dark:text-[#34D399]'
+                          : 'text-[#E11D48] dark:text-[#E05260]'
+                      }
+                    >
+                      {apkSystemProbe.nativeApp.available
+                        ? `v${apkSystemProbe.nativeApp.versionName} (code ${apkSystemProbe.nativeApp.versionCode}) · WebViewPurged:${
+                            apkSystemProbe.nativeApp.webViewCacheClearedOnBoot ? 'YES' : 'cached-ok'
+                          }`
+                        : `Web · SW-Code:${apkSystemProbe.swPurgedChangeCode || 'none'}`}
+                    </span>
+                  </div>
+
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-[#526071] dark:text-[#929BA9]">AI Backend & Proxy</span>
+                    <span
+                      className={
+                        apkSystemProbe.backend.status === 'ok'
+                          ? 'text-[#059669] dark:text-[#34D399]'
+                          : apkSystemProbe.backend.status === 'degraded' ||
+                            apkSystemProbe.backend.status === 'offline_skipped'
+                          ? 'text-[#B45309] dark:text-[#FBBF24]'
+                          : 'text-[#E11D48] dark:text-[#E05260]'
+                      }
+                    >
+                      {apkSystemProbe.backend.status === 'offline_skipped'
+                        ? 'SKIP (Offline Mode)'
+                        : `${apkSystemProbe.backend.status.toUpperCase()} · ScanAI:${
+                            apkSystemProbe.backend.scannerGeminiConfigured ? 'ON' : 'OFF'
+                          } · NewsAI:${
+                            apkSystemProbe.backend.newsGeminiConfigured ? 'ON' : 'OFF'
+                          } · ${apkSystemProbe.backend.latencyMs}ms`}
+                    </span>
+                  </div>
+                  {apkSystemProbe.backend.note && (
+                    <div className="text-[9.5px] text-[#64748B] dark:text-[#929BA9] pl-2 border-l border-[#E4E4E7] dark:border-[#20252D]">
+                      {apkSystemProbe.backend.note}
+                      {apkSystemProbe.backend.proxyCapabilities
+                        ? ` · Proxy[Poly:${apkSystemProbe.backend.proxyCapabilities.polymarket ? 'OK' : 'NO'}, CFTC:${
+                            apkSystemProbe.backend.proxyCapabilities.cftc ? 'OK' : 'NO'
+                          }, TD:${apkSystemProbe.backend.proxyCapabilities.twelvedata ? 'OK' : 'NO'}, BIN:${
+                            apkSystemProbe.backend.proxyCapabilities.binance ? 'OK' : 'NO'
+                          }]`
+                        : ''}
+                    </div>
+                  )}
+
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-[#526071] dark:text-[#929BA9]">Vela Chart Feed (XAU H1)</span>
+                    <span
+                      className={
+                        apkSystemProbe.velaChartFeed.status === 'ok'
+                          ? 'text-[#059669] dark:text-[#34D399]'
+                          : apkSystemProbe.velaChartFeed.status === 'cache' ||
+                            apkSystemProbe.velaChartFeed.status === 'offline_skipped'
+                          ? 'text-[#B45309] dark:text-[#FBBF24]'
+                          : 'text-[#E11D48] dark:text-[#E05260]'
+                      }
+                    >
+                      {apkSystemProbe.velaChartFeed.source.toUpperCase()} · {apkSystemProbe.velaChartFeed.count} bars ·{' '}
+                      {apkSystemProbe.velaChartFeed.latencyMs}ms
+                    </span>
+                  </div>
+
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-[#526071] dark:text-[#929BA9]">Polymarket Macro Feed</span>
+                    <span
+                      className={
+                        apkSystemProbe.polymarketFeed.status === 'ok'
+                          ? 'text-[#059669] dark:text-[#34D399]'
+                          : apkSystemProbe.polymarketFeed.status === 'cache' ||
+                            apkSystemProbe.polymarketFeed.status === 'offline_skipped'
+                          ? 'text-[#B45309] dark:text-[#FBBF24]'
+                          : 'text-[#E11D48] dark:text-[#E05260]'
+                      }
+                    >
+                      {apkSystemProbe.polymarketFeed.source} · {apkSystemProbe.polymarketFeed.count} events ·{' '}
+                      {apkSystemProbe.polymarketFeed.latencyMs}ms
+                    </span>
+                  </div>
+
+                  <div className="pt-1.5 border-t border-[#E4E4E7] dark:border-[#20252D] space-y-1">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-[#526071] dark:text-[#929BA9]">Sync Makro · Fundamental · Cycle</span>
+                      <span
+                        className={
+                          apkSystemProbe.macroSync.status === 'aligned'
+                            ? 'text-[#059669] dark:text-[#34D399]'
+                            : apkSystemProbe.macroSync.status === 'drift'
+                            ? 'text-[#E11D48] dark:text-[#E05260]'
+                            : 'text-[#526071] dark:text-[#929BA9]'
+                        }
+                      >
+                        {apkSystemProbe.macroSync.status.toUpperCase()} (News:{apkSystemProbe.macroSync.macroBias} / Fund:
+                        {apkSystemProbe.macroSync.fundamentalBias})
+                      </span>
+                    </div>
+                    <div className="text-[9.5px] text-[#64748B] dark:text-[#929BA9]">
+                      {tr(apkSystemProbe.macroSync.noteId, apkSystemProbe.macroSync.noteEn)}
+                    </div>
+                    <div className="text-[9.5px] text-[#64748B] dark:text-[#929BA9]">
+                      Offline Caches: Actuals({apkSystemProbe.macroSync.offlineActualsCount}) · Candles(
+                      {apkSystemProbe.macroSync.localCandleBuckets}) · Polymarket(
+                      {apkSystemProbe.macroSync.polymarketCachedCount}) · FedWatch(
+                      {apkSystemProbe.macroSync.fedWatchDominant || 'none'})
+                    </div>
+                  </div>
                 </div>
               </div>
             )}

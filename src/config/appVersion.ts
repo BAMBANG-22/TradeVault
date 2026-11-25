@@ -19,9 +19,9 @@ declare const __BUILD_RUN_NUMBER__: string | undefined;
 declare const __TESSERACT_VERSION__: string | undefined;
 declare const __TESSERACT_CORE_VERSION__: string | undefined;
 
-export const APP_VERSION = '1.3.5';
-export const APP_CHANGE_CODE = 'VLO-2611-AUD08';
-export const APP_RELEASE_DATE = '2026-11-24';
+export const APP_VERSION = '1.3.6';
+export const APP_CHANGE_CODE = 'VLO-2611-APK09';
+export const APP_RELEASE_DATE = '2026-11-25';
 export const OCR_PIPELINE_VERSION = 'offline-mt5-ocr-v3.2-lossless-png';
 
 export const BUILD_GIT_SHA: string =
@@ -71,6 +71,17 @@ export function getAppBuildIdentity(): AppBuildIdentity {
 }
 
 export const APP_VERSION_HISTORY: AppVersionEntry[] = [
+  {
+    version: '1.3.6',
+    changeCode: 'VLO-2611-APK09',
+    date: '2026-11-25',
+    titleId: 'Vela Replay Chart, Auto-Fullscreen, APK Cache-Purge Native & Diagnostik Lengkap',
+    titleEn: 'Vela Replay Chart, Auto-Fullscreen, Native APK Cache-Purge & Full Diagnostics',
+    summaryId:
+      'Menghapus Light Chart dan menjadikan Vela Replay (Twelve Data + Binance fallback + Bar Replay + Sesi Kustom + Auto-Fullscreen) sebagai chart kedua, menambahkan pembersihan HTTP cache WebView native saat upgrade APK, proxy fallback Binance/TwelveData, sinkronisasi 3-modul Makro/Fundamental/Cycle, serta panel Diagnostik Sistem APK di Pengaturan.',
+    summaryEn:
+      'Removed Light Chart in favor of Vela Replay (Twelve Data + Binance proxy fallback + Bar Replay + customizable Sessions + Auto-Fullscreen), added native Android WebView HTTP cache purge on APK upgrade, 3-module Macro/Fundamental/Cycle synchronization, and full APK System Diagnostics in Settings.',
+  },
   {
     version: '1.3.5',
     changeCode: 'VLO-2611-AUD08',

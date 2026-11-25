@@ -57,6 +57,9 @@ import {
   recordBreakingNewsToMonthlyArchive,
   getWibMonthKey,
   MACRO_SNAPSHOT_LOCAL_STORAGE_KEY,
+  MACRO_LOCAL_SYNC_EVENT,
+  CME_FEDWATCH_LOCAL_STORAGE_KEY,
+  loadLocalCachedCmeFedWatchSync,
   dispatchMacroLocalSyncEvent,
   mergeBreakingHeadlinesForPulse,
   ensureHistoricalActualsArchiveSeeded,
@@ -177,15 +180,42 @@ export const MacroNewsView: React.FC<MacroNewsViewProps> = ({ isActive = true })
 
   useEffect(() => {
     const syncOffline = () => setIsOfflineMode(isNewsCycleOfflineMode());
+    const syncCrossModuleArchive = () => {
+      const latestFedWatch = loadLocalCachedCmeFedWatchSync();
+      setSnapshot((prev) => {
+        if (!prev) return prev;
+        const hydratedEvents = hydrateEventsWithOfflineArchive(prev.calendarEvents);
+        const eventsChanged = hydratedEvents.some(
+          (ev, idx) => ev.actual !== prev.calendarEvents[idx]?.actual
+        );
+        const prevFedMs = prev.cmeFedWatch?.updatedAt ? Date.parse(prev.cmeFedWatch.updatedAt) : 0;
+        const nextFedMs = latestFedWatch?.updatedAt ? Date.parse(latestFedWatch.updatedAt) : 0;
+        const fedWatchNewer = Boolean(
+          latestFedWatch?.isAvailable &&
+            (!prev.cmeFedWatch?.isAvailable ||
+              (Number.isFinite(nextFedMs) && nextFedMs > (Number.isFinite(prevFedMs) ? prevFedMs : 0)))
+        );
+        if (!eventsChanged && !fedWatchNewer) return prev;
+        return {
+          ...prev,
+          calendarEvents: eventsChanged ? hydratedEvents : prev.calendarEvents,
+          cmeFedWatch: fedWatchNewer && latestFedWatch ? latestFedWatch : prev.cmeFedWatch,
+        };
+      });
+    };
     const handleStorage = (e: StorageEvent) => {
       if (e.key === NEWS_CYCLE_OFFLINE_MODE_STORAGE_KEY) {
         syncOffline();
+      } else if (e.key === CME_FEDWATCH_LOCAL_STORAGE_KEY) {
+        syncCrossModuleArchive();
       }
     };
     window.addEventListener(NEWS_CYCLE_OFFLINE_MODE_CHANGE_EVENT, syncOffline);
+    window.addEventListener(MACRO_LOCAL_SYNC_EVENT, syncCrossModuleArchive);
     window.addEventListener('storage', handleStorage);
     return () => {
       window.removeEventListener(NEWS_CYCLE_OFFLINE_MODE_CHANGE_EVENT, syncOffline);
+      window.removeEventListener(MACRO_LOCAL_SYNC_EVENT, syncCrossModuleArchive);
       window.removeEventListener('storage', handleStorage);
     };
   }, []);

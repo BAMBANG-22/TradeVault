@@ -311,6 +311,14 @@ app.get('/api/health', (_req, res) => {
     newsGeminiConfigured: newsKeys.length > 0,
     apiKeysStrictlySeparated: true,
     scannerModelCascade: SCANNER_MODEL_CASCADE,
+    proxyCapabilities: {
+      polymarket: ALLOWED_PROXY_DOMAINS.includes('gamma-api.polymarket.com'),
+      cftc: ALLOWED_PROXY_DOMAINS.includes('cftc.gov'),
+      twelvedata: ALLOWED_PROXY_DOMAINS.includes('twelvedata.com'),
+      binance:
+        ALLOWED_PROXY_DOMAINS.includes('binance.com') ||
+        ALLOWED_PROXY_DOMAINS.includes('binance.vision'),
+    },
     isMarketOpen: isMarketOpenToday(),
     timestamp: new Date().toISOString(),
   });
@@ -344,6 +352,8 @@ const ALLOWED_PROXY_DOMAINS = [
   'treasury.gov',
   'cftc.gov',
   'gamma-api.polymarket.com',
+  'binance.com',
+  'binance.vision',
 ];
 
 function isAllowedProxyTargetUrl(rawUrl: string): boolean {

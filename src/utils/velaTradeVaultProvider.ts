@@ -11,9 +11,16 @@ import type {
   SymbolDescriptor,
   SymbolInfo,
 } from '@luxalgo/vela';
-import { isNativeAndroidOrIos, nativeHttpGetText } from './apiConfig';
+import {
+  buildBackendAuthHeaders,
+  getApiEndpointCandidates,
+  isNativeAndroidOrIos,
+  isNewsCycleOfflineMode,
+  nativeHttpGetText,
+} from './apiConfig';
 
 export type VelaFeedSourceKind = 'binance' | 'twelvedata' | 'cache' | 'unavailable';
+export type VelaFeedPreference = 'twelvedata' | 'binance';
 
 export interface VelaFeedStatus {
   source: VelaFeedSourceKind;
@@ -38,7 +45,7 @@ interface TradeVaultVelaSymbolMeta {
 export const TRADEVAULT_VELA_SYMBOLS: readonly TradeVaultVelaSymbolMeta[] = [
   {
     ticker: 'XAUUSD',
-    description: 'Gold / US Dollar (Spot / PAXG Feed)',
+    description: 'Gold / US Dollar (Twelve Data Spot / PAXG Fallback)',
     type: 'commodity',
     tradeVaultSymbol: 'OANDA:XAUUSD',
     binanceSymbol: 'PAXGUSDT',
@@ -48,7 +55,7 @@ export const TRADEVAULT_VELA_SYMBOLS: readonly TradeVaultVelaSymbolMeta[] = [
   },
   {
     ticker: 'BTCUSD',
-    description: 'Bitcoin / US Dollar (Binance Spot)',
+    description: 'Bitcoin / US Dollar (Binance / Twelve Data)',
     type: 'crypto',
     tradeVaultSymbol: 'BINANCE:BTCUSDT',
     binanceSymbol: 'BTCUSDT',
@@ -58,7 +65,7 @@ export const TRADEVAULT_VELA_SYMBOLS: readonly TradeVaultVelaSymbolMeta[] = [
   },
   {
     ticker: 'ETHUSD',
-    description: 'Ethereum / US Dollar (Binance Spot)',
+    description: 'Ethereum / US Dollar (Binance / Twelve Data)',
     type: 'crypto',
     tradeVaultSymbol: 'BINANCE:ETHUSDT',
     binanceSymbol: 'ETHUSDT',
@@ -68,7 +75,7 @@ export const TRADEVAULT_VELA_SYMBOLS: readonly TradeVaultVelaSymbolMeta[] = [
   },
   {
     ticker: 'EURUSD',
-    description: 'Euro / US Dollar (Spot)',
+    description: 'Euro / US Dollar (Twelve Data Spot)',
     type: 'forex',
     tradeVaultSymbol: 'OANDA:EURUSD',
     binanceSymbol: 'EURUSDT',
@@ -78,7 +85,7 @@ export const TRADEVAULT_VELA_SYMBOLS: readonly TradeVaultVelaSymbolMeta[] = [
   },
   {
     ticker: 'GBPUSD',
-    description: 'British Pound / US Dollar (Spot)',
+    description: 'British Pound / US Dollar (Twelve Data Spot)',
     type: 'forex',
     tradeVaultSymbol: 'OANDA:GBPUSD',
     binanceSymbol: 'GBPUSDT',
@@ -88,7 +95,7 @@ export const TRADEVAULT_VELA_SYMBOLS: readonly TradeVaultVelaSymbolMeta[] = [
   },
   {
     ticker: 'USDIDR',
-    description: 'US Dollar / Indonesian Rupiah (Spot)',
+    description: 'US Dollar / Indonesian Rupiah (Twelve Data Spot)',
     type: 'forex',
     tradeVaultSymbol: 'FX_IDC:USDIDR',
     binanceSymbol: null,
@@ -102,6 +109,14 @@ const SUPPORTED_VELA_TIMEFRAMES = ['1', '3', '5', '15', '30', '60', '240', '1D']
 
 const TWELVE_DATA_KEY_STORAGE = 'tradevault_twelve_data_api_key_v1';
 const CANDLE_CACHE_PREFIX = 'tradevault_candle_cache_v5_';
+const MEMORY_CACHE_TTL_MS = 45_000;
+
+interface MemoryBarsEntry {
+  bars: OHLCV[];
+  source: 'binance' | 'twelvedata';
+  savedAt: number;
+  note?: string;
+}
 
 function getTwelveDataKey(): string {
   const envKey =
@@ -258,32 +273,63 @@ function sanitizeVelaBars(bars: OHLCV[], is24x7: boolean, range?: BarRange): OHL
 }
 
 async function fetchJsonNativeSafe<T>(url: string, timeoutMs = 8000): Promise<T | null> {
+  const proxyCandidates = getApiEndpointCandidates('/api/proxy').map(
+    (base) => `${base}?url=${encodeURIComponent(url)}`
+  );
+
+  // 1. Native Android/iOS APK: direct CapacitorHttp first (zero CORS), then /api/proxy fallback
+  //    (bypasses ISP DNS blocks on api.binance.com or flaky mobile carrier routes).
   if (isNativeAndroidOrIos()) {
-    const text = await nativeHttpGetText(url, timeoutMs, 'application/json, */*');
-    if (text) {
+    const directText = await nativeHttpGetText(url, timeoutMs, 'application/json, */*');
+    if (directText) {
       try {
-        return JSON.parse(text) as T;
+        return JSON.parse(directText) as T;
       } catch {
-        return null;
+        // fall through to proxy candidates
       }
     }
+
+    for (const proxyUrl of proxyCandidates) {
+      const proxyText = await nativeHttpGetText(proxyUrl, timeoutMs, 'application/json, */*');
+      if (!proxyText) continue;
+      try {
+        return JSON.parse(proxyText) as T;
+      } catch {
+        // try next candidate
+      }
+    }
+    return null;
   }
 
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
-  try {
-    const res = await fetch(url, {
-      method: 'GET',
-      headers: { Accept: 'application/json' },
-      signal: controller.signal,
-    });
-    if (!res.ok) return null;
-    return (await res.json()) as T;
-  } catch {
-    return null;
-  } finally {
-    clearTimeout(timer);
+  // 2. Web browser: try direct fetch first, then backend /api/proxy fallback
+  const tryWebFetch = async (target: string, headers?: Record<string, string>): Promise<T | null> => {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      const res = await fetch(target, {
+        method: 'GET',
+        cache: 'no-store',
+        headers: { Accept: 'application/json', ...(headers || {}) },
+        signal: controller.signal,
+      });
+      if (!res.ok) return null;
+      return (await res.json()) as T;
+    } catch {
+      return null;
+    } finally {
+      clearTimeout(timer);
+    }
+  };
+
+  const directJson = await tryWebFetch(url);
+  if (directJson !== null) return directJson;
+
+  for (const proxyUrl of proxyCandidates) {
+    const proxyJson = await tryWebFetch(proxyUrl, buildBackendAuthHeaders(proxyUrl));
+    if (proxyJson !== null) return proxyJson;
   }
+
+  return null;
 }
 
 function readTradeVaultCandleCache(meta: TradeVaultVelaSymbolMeta, cacheInterval: string): OHLCV[] {
@@ -343,15 +389,24 @@ function writeTradeVaultCandleCache(
 
 export class TradeVaultVelaProvider implements DataProvider {
   private readonly onStatus?: (status: VelaFeedStatus) => void;
+  private readonly preferredFeed: VelaFeedPreference;
+  private readonly memoryCache = new Map<string, MemoryBarsEntry>();
 
-  constructor(opts?: { onStatus?: (status: VelaFeedStatus) => void }) {
+  constructor(opts?: {
+    preferredFeed?: VelaFeedPreference;
+    onStatus?: (status: VelaFeedStatus) => void;
+  }) {
+    this.preferredFeed = opts?.preferredFeed ?? 'twelvedata';
     this.onStatus = opts?.onStatus;
   }
 
   info(): ProviderInfo {
     return {
       name: 'tradevault',
-      displayName: 'TradeVault Feed',
+      displayName:
+        this.preferredFeed === 'twelvedata'
+          ? 'TradeVault (Twelve Data)'
+          : 'TradeVault (Binance)',
       supportedTimeframes: [...SUPPORTED_VELA_TIMEFRAMES],
       capabilities: {
         enumerate: true,
@@ -386,120 +441,227 @@ export class TradeVaultVelaProvider implements DataProvider {
     };
   }
 
+  private async fetchFromTwelveData(
+    meta: TradeVaultVelaSymbolMeta,
+    tf: ReturnType<typeof normalizeVelaTimeframe>,
+    limit: number,
+    range: BarRange
+  ): Promise<{ bars: OHLCV[]; errorNote?: string }> {
+    if (!meta.twelveDataSymbol) return { bars: [] };
+    const apiKey = getTwelveDataKey();
+    if (apiKey.length <= 5) return { bars: [], errorNote: 'TwelveData API key kosong' };
+
+    const qs = new URLSearchParams({
+      symbol: meta.twelveDataSymbol,
+      interval: tf.twelveDataInterval,
+      outputsize: String(Math.min(limit, 1000)),
+      timezone: 'UTC',
+      apikey: apiKey,
+    });
+    if (range?.to !== undefined && Number.isFinite(range.to)) {
+      const dt = new Date(range.to).toISOString().replace('T', ' ').slice(0, 19);
+      qs.set('end_date', dt);
+    }
+
+    const twelveUrl = `https://api.twelvedata.com/time_series?${qs.toString()}`;
+    const data = await fetchJsonNativeSafe<any>(twelveUrl, 9000);
+    if (!data) {
+      return { bars: [], errorNote: 'TwelveData timeout / offline' };
+    }
+    if (data.status === 'error') {
+      const msg = String(data.message || 'TwelveData limit/error');
+      const isRateLimit = data.code === 429 || /credit|limit|minute/i.test(msg);
+      return {
+        bars: [],
+        errorNote: isRateLimit ? 'Kuota TwelveData penuh — fallback aktif' : msg.slice(0, 80),
+      };
+    }
+    if (data.status === 'ok' && Array.isArray(data.values) && data.values.length > 0) {
+      const mapped: OHLCV[] = data.values
+        .slice()
+        .reverse()
+        .map((row: any) => {
+          const rawDt = String(row.datetime || '');
+          const iso = rawDt.includes(' ')
+            ? `${rawDt.replace(' ', 'T')}Z`
+            : rawDt.length === 10
+              ? `${rawDt}T00:00:00Z`
+              : rawDt;
+          const timeMs = new Date(iso).getTime();
+          const vol = row.volume !== undefined ? parseFloat(row.volume) : NaN;
+          return {
+            time: timeMs,
+            open: Number(parseFloat(row.open).toFixed(meta.decimals)),
+            high: Number(parseFloat(row.high).toFixed(meta.decimals)),
+            low: Number(parseFloat(row.low).toFixed(meta.decimals)),
+            close: Number(parseFloat(row.close).toFixed(meta.decimals)),
+            volume: Number.isFinite(vol) ? vol : undefined,
+          };
+        });
+
+      return { bars: sanitizeVelaBars(mapped, meta.is24x7, range) };
+    }
+
+    return { bars: [] };
+  }
+
+  private async fetchFromBinance(
+    meta: TradeVaultVelaSymbolMeta,
+    tf: ReturnType<typeof normalizeVelaTimeframe>,
+    limit: number,
+    range: BarRange
+  ): Promise<OHLCV[]> {
+    if (!meta.binanceSymbol) return [];
+    const qs = new URLSearchParams({
+      symbol: meta.binanceSymbol,
+      interval: tf.binanceInterval,
+      limit: String(limit),
+    });
+    if (range?.to !== undefined && Number.isFinite(range.to)) {
+      qs.set('endTime', String(Math.floor(range.to)));
+    }
+    if (range?.from !== undefined && Number.isFinite(range.from)) {
+      qs.set('startTime', String(Math.floor(range.from)));
+    }
+
+    const endpoints = [
+      `https://data-api.binance.vision/api/v3/klines?${qs.toString()}`,
+      `https://api.binance.com/api/v3/klines?${qs.toString()}`,
+    ];
+
+    for (const url of endpoints) {
+      const raw = await fetchJsonNativeSafe<any[]>(url, 8000);
+      if (Array.isArray(raw) && raw.length > 0) {
+        const mapped: OHLCV[] = raw.map((row: any[]) => ({
+          time: Math.floor(Number(row[0])),
+          open: Number(parseFloat(row[1]).toFixed(meta.decimals)),
+          high: Number(parseFloat(row[2]).toFixed(meta.decimals)),
+          low: Number(parseFloat(row[3]).toFixed(meta.decimals)),
+          close: Number(parseFloat(row[4]).toFixed(meta.decimals)),
+          volume: Number.isFinite(parseFloat(row[5])) ? parseFloat(row[5]) : undefined,
+        }));
+        const sanitized = sanitizeVelaBars(mapped, meta.is24x7, range);
+        if (sanitized.length > 0) return sanitized;
+      }
+    }
+    return [];
+  }
+
   async getBars(ticker: string, timeframe: string, range: BarRange): Promise<OHLCV[]> {
     const meta = findSymbolMeta(ticker);
     const tf = normalizeVelaTimeframe(timeframe);
     const limit = Math.min(Math.max(Number(range?.limit) || 600, 50), 1000);
 
-    // 1. Primary live REST feed via Binance (APK-safe CapacitorHttp + Web fetch)
-    if (meta.binanceSymbol) {
-      const qs = new URLSearchParams({
-        symbol: meta.binanceSymbol,
-        interval: tf.binanceInterval,
-        limit: String(limit),
-      });
-      if (range?.to !== undefined && Number.isFinite(range.to)) {
-        qs.set('endTime', String(Math.floor(range.to)));
-      }
-      if (range?.from !== undefined && Number.isFinite(range.from)) {
-        qs.set('startTime', String(Math.floor(range.from)));
-      }
-
-      const endpoints = [
-        `https://data-api.binance.vision/api/v3/klines?${qs.toString()}`,
-        `https://api.binance.com/api/v3/klines?${qs.toString()}`,
-      ];
-
-      for (const url of endpoints) {
-        const raw = await fetchJsonNativeSafe<any[]>(url, 8000);
-        if (Array.isArray(raw) && raw.length > 0) {
-          const mapped: OHLCV[] = raw.map((row: any[]) => ({
-            time: Math.floor(Number(row[0])),
-            open: Number(parseFloat(row[1]).toFixed(meta.decimals)),
-            high: Number(parseFloat(row[2]).toFixed(meta.decimals)),
-            low: Number(parseFloat(row[3]).toFixed(meta.decimals)),
-            close: Number(parseFloat(row[4]).toFixed(meta.decimals)),
-            volume: Number.isFinite(parseFloat(row[5])) ? parseFloat(row[5]) : undefined,
-          }));
-
-          const sanitized = sanitizeVelaBars(mapped, meta.is24x7, range);
-          if (sanitized.length > 0) {
-            if (!range?.to) {
-              writeTradeVaultCandleCache(meta, tf.cacheInterval, sanitized);
-            }
-            this.onStatus?.({
-              source: 'binance',
-              ticker: meta.ticker,
-              timeframe: tf.velaTf,
-              barCount: sanitized.length,
-              updatedAt: Date.now(),
-            });
-            return sanitized;
-          }
-        }
-      }
-    }
-
-    // 2. Twelve Data REST feed (primary for USDIDR & fallback for FX/Gold)
-    if (meta.twelveDataSymbol) {
-      const apiKey = getTwelveDataKey();
-      if (apiKey.length > 5) {
-        const qs = new URLSearchParams({
-          symbol: meta.twelveDataSymbol,
-          interval: tf.twelveDataInterval,
-          outputsize: String(limit),
-          timezone: 'UTC',
-          apikey: apiKey,
+    // Strictly respect Offline Mode & offline device state — never hang on network timeouts
+    const isOffline =
+      isNewsCycleOfflineMode() || (typeof navigator !== 'undefined' && navigator.onLine === false);
+    if (isOffline) {
+      const cachedOffline = sanitizeVelaBars(
+        readTradeVaultCandleCache(meta, tf.cacheInterval),
+        meta.is24x7,
+        range
+      );
+      if (cachedOffline.length > 0) {
+        this.onStatus?.({
+          source: 'cache',
+          ticker: meta.ticker,
+          timeframe: tf.velaTf,
+          barCount: cachedOffline.length,
+          updatedAt: Date.now(),
+          note: isNewsCycleOfflineMode()
+            ? 'Mode Offline aktif — menampilkan cache candle lokal'
+            : 'Perangkat offline — menampilkan cache candle lokal',
         });
-        if (range?.to !== undefined && Number.isFinite(range.to)) {
-          const dt = new Date(range.to).toISOString().replace('T', ' ').slice(0, 19);
-          qs.set('end_date', dt);
-        }
+        return cachedOffline;
+      }
+      this.onStatus?.({
+        source: 'unavailable',
+        ticker: meta.ticker,
+        timeframe: tf.velaTf,
+        barCount: 0,
+        updatedAt: Date.now(),
+        note: 'Mode Offline aktif & belum ada cache candle lokal untuk pair ini',
+      });
+      return [];
+    }
 
-        const twelveUrl = `https://api.twelvedata.com/time_series?${qs.toString()}`;
-        const data = await fetchJsonNativeSafe<any>(twelveUrl, 9000);
-        if (data && data.status === 'ok' && Array.isArray(data.values) && data.values.length > 0) {
-          const mapped: OHLCV[] = data.values
-            .slice()
-            .reverse()
-            .map((row: any) => {
-              const rawDt = String(row.datetime || '');
-              const iso = rawDt.includes(' ')
-                ? `${rawDt.replace(' ', 'T')}Z`
-                : rawDt.length === 10
-                  ? `${rawDt}T00:00:00Z`
-                  : rawDt;
-              const timeMs = new Date(iso).getTime();
-              const vol = row.volume !== undefined ? parseFloat(row.volume) : NaN;
-              return {
-                time: timeMs,
-                open: Number(parseFloat(row.open).toFixed(meta.decimals)),
-                high: Number(parseFloat(row.high).toFixed(meta.decimals)),
-                low: Number(parseFloat(row.low).toFixed(meta.decimals)),
-                close: Number(parseFloat(row.close).toFixed(meta.decimals)),
-                volume: Number.isFinite(vol) ? vol : undefined,
-              };
-            });
+    // Short in-memory cache prevents burning Twelve Data 8 req/min free quota on redundant refreshes
+    const memKey = `${this.preferredFeed}|${meta.ticker}|${tf.velaTf}|${range?.from ?? ''}|${range?.to ?? ''}|${limit}`;
+    const memHit = this.memoryCache.get(memKey);
+    if (memHit && Date.now() - memHit.savedAt < MEMORY_CACHE_TTL_MS) {
+      this.onStatus?.({
+        source: memHit.source,
+        ticker: meta.ticker,
+        timeframe: tf.velaTf,
+        barCount: memHit.bars.length,
+        updatedAt: memHit.savedAt,
+        note: memHit.note,
+      });
+      return memHit.bars;
+    }
 
-          const sanitized = sanitizeVelaBars(mapped, meta.is24x7, range);
-          if (sanitized.length > 0) {
-            if (!range?.to) {
-              writeTradeVaultCandleCache(meta, tf.cacheInterval, sanitized);
-            }
-            this.onStatus?.({
-              source: 'twelvedata',
-              ticker: meta.ticker,
-              timeframe: tf.velaTf,
-              barCount: sanitized.length,
-              updatedAt: Date.now(),
-            });
-            return sanitized;
+    // Order live feeds according to user preference (default: Twelve Data primary for FX/Gold)
+    const order: Array<'twelvedata' | 'binance'> =
+      this.preferredFeed === 'twelvedata'
+        ? ['twelvedata', 'binance']
+        : ['binance', 'twelvedata'];
+
+    let fallbackNote: string | undefined;
+
+    for (const providerKind of order) {
+      if (providerKind === 'twelvedata') {
+        const td = await this.fetchFromTwelveData(meta, tf, limit, range);
+        if (td.bars.length > 0) {
+          if (!range?.to) {
+            writeTradeVaultCandleCache(meta, tf.cacheInterval, td.bars);
           }
+          const now = Date.now();
+          this.memoryCache.set(memKey, {
+            bars: td.bars,
+            source: 'twelvedata',
+            savedAt: now,
+            note: fallbackNote,
+          });
+          this.onStatus?.({
+            source: 'twelvedata',
+            ticker: meta.ticker,
+            timeframe: tf.velaTf,
+            barCount: td.bars.length,
+            updatedAt: now,
+            note: fallbackNote,
+          });
+          return td.bars;
+        }
+        if (td.errorNote) {
+          fallbackNote = td.errorNote;
+        }
+      } else {
+        const binBars = await this.fetchFromBinance(meta, tf, limit, range);
+        if (binBars.length > 0) {
+          if (!range?.to) {
+            writeTradeVaultCandleCache(meta, tf.cacheInterval, binBars);
+          }
+          const now = Date.now();
+          this.memoryCache.set(memKey, {
+            bars: binBars,
+            source: 'binance',
+            savedAt: now,
+            note: fallbackNote,
+          });
+          this.onStatus?.({
+            source: 'binance',
+            ticker: meta.ticker,
+            timeframe: tf.velaTf,
+            barCount: binBars.length,
+            updatedAt: now,
+            note: fallbackNote,
+          });
+          return binBars;
         }
       }
     }
 
-    // 3. Honest offline cache fallback (shared TradeVault candle cache)
+    // Honest offline cache fallback (shared TradeVault candle cache)
     const cached = sanitizeVelaBars(
       readTradeVaultCandleCache(meta, tf.cacheInterval),
       meta.is24x7,
@@ -512,18 +674,19 @@ export class TradeVaultVelaProvider implements DataProvider {
         timeframe: tf.velaTf,
         barCount: cached.length,
         updatedAt: Date.now(),
+        note: fallbackNote,
       });
       return cached;
     }
 
-    // 4. Honest unavailable state — never fabricate fake candles silently
+    // Honest unavailable state — never fabricate fake candles silently
     this.onStatus?.({
       source: 'unavailable',
       ticker: meta.ticker,
       timeframe: tf.velaTf,
       barCount: 0,
       updatedAt: Date.now(),
-      note: 'Feed offline & cache belum tersedia',
+      note: fallbackNote || 'Feed offline & cache belum tersedia',
     });
     return [];
   }

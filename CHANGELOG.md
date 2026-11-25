@@ -1,5 +1,8 @@
 # Changelog
 
+## v1.3.6 · #VLO-2611-APK09 (2026-11-25)
+- Vela Replay Chart, Auto-Fullscreen, APK Cache-Purge Native & Diagnostik Lengkap: Menghapus Light Chart dan menjadikan Vela Replay sebagai chart kedua dengan Twelve Data + proxy fallback, Bar Replay, Sesi Trading Kustom, dan Auto-Fullscreen; menambahkan pembersihan HTTP cache WebView native di MainActivity saat upgrade APK; menyinkronkan Trade News, Fundamental Gold, dan Cycle Confluence; serta memperluas panel Diagnostik APK & OCR di Pengaturan.
+
 ## v1.3.5 · #VLO-2611-AUD08 (2026-11-24)
 - Forensic Offline OCR diagnostics, build identity & Android high-res lossless pipeline: Added deterministic build identity (Git SHA, timestamp, CI run, OCR pipeline version), forensic OCR diagnostics inspector, full legacy Service Worker & OCR CacheStorage purge with forced reload on upgrade, lossless high-res PNG preprocessing for tall Android MT5 screenshots, and restored multi-pass completeness gate.
 

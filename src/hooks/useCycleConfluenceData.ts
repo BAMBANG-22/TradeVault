@@ -36,6 +36,8 @@ import {
   computeIntradayMacroTacticalOverlay,
   computeMacroThreeSystemState,
   ensureHistoricalActualsArchiveSeeded,
+  FUNDAMENTAL_GOLD_SNAPSHOT_STORAGE_KEY,
+  loadLocalCachedFundamentalGoldSnapshotSync,
   loadLocalCachedMacroSnapshotSync,
   loadMonthlyNewsSpeechArchive,
   MACRO_ACTUALS_ARCHIVE_STORAGE_KEY,
@@ -938,13 +940,33 @@ export function resolveSyncedMacroContext(
       remoteFreshMs > localFreshMs + 60_000
   );
 
+  const localFundamental = loadLocalCachedFundamentalGoldSnapshotSync();
+  const fundamentalBiasMapped: MacroBiasDirection =
+    localFundamental?.overallBias === 'BULLISH'
+      ? 'BUY'
+      : localFundamental?.overallBias === 'BEARISH'
+      ? 'SELL'
+      : 'MIXED';
+  const fundamentalFreshMs = localFundamental?.analyzedAt
+    ? Date.parse(localFundamental.analyzedAt)
+    : 0;
+  const preferFundamentalFallback = Boolean(
+    fundamentalBiasMapped !== 'MIXED' &&
+      (!localMacro ||
+        (Number.isFinite(fundamentalFreshMs) && fundamentalFreshMs > localFreshMs + 60_000))
+  );
+
   const effectiveFundamentalBias: MacroBiasDirection = preferRemote
     ? remoteMacro!.bias
-    : threeSystem
+    : threeSystem && threeSystem.effectiveFundamentalBias !== 'MIXED'
     ? threeSystem.effectiveFundamentalBias
+    : preferFundamentalFallback
+    ? fundamentalBiasMapped
     : localMacro && (localMacro.dominantBias === 'BUY' || localMacro.dominantBias === 'SELL')
     ? localMacro.dominantBias
-    : remoteMacro?.bias || 'MIXED';
+    : remoteMacro?.bias && remoteMacro.bias !== 'MIXED'
+    ? remoteMacro.bias
+    : fundamentalBiasMapped;
 
   const topSpeech =
     mergedBreaking.find((b) => b.channelType === 'FED_SPEECH') ||
@@ -1077,6 +1099,7 @@ export function useCycleConfluenceData(
         syncOffline();
       } else if (
         e.key === MACRO_SNAPSHOT_LOCAL_STORAGE_KEY ||
+        e.key === FUNDAMENTAL_GOLD_SNAPSHOT_STORAGE_KEY ||
         e.key === MACRO_ACTUALS_ARCHIVE_STORAGE_KEY ||
         e.key === MACRO_MONTHLY_NEWS_SPEECH_ARCHIVE_KEY ||
         e.key === MACRO_POST_NEWS_ARCHIVE_KEY ||
