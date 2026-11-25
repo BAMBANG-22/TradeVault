@@ -1665,6 +1665,45 @@ STRICT EXTRACTION RULES:
 // ============================================================================
 
 const newsQuotaCooldownUntilByModel = new Map<string, number>();
+// Separate cooldown map for googleSearch grounding calls so grounding 429s never block generateContent synthesis
+const newsGroundingQuotaCooldownUntilByModel = new Map<string, number>();
+
+type SanitizedNewsAiErrorCode =
+  | 'NO_API_KEY'
+  | 'KEY_INVALID'
+  | 'QUOTA_429'
+  | 'MODEL_404'
+  | 'TIMEOUT'
+  | 'SERVER_503'
+  | 'BAD_REQUEST_400'
+  | 'INVALID_JSON'
+  | 'EMPTY_RESPONSE'
+  | 'COOLDOWN_ACTIVE'
+  | 'INTERNAL_ERROR'
+  | 'UNKNOWN';
+
+function resolveNewsAiErrorCode(
+  failures: Array<{ model: string; code: string }>,
+  skippedByCooldownCount: number
+): SanitizedNewsAiErrorCode {
+  if (failures.length === 0) {
+    return skippedByCooldownCount > 0 ? 'COOLDOWN_ACTIVE' : 'EMPTY_RESPONSE';
+  }
+  const priority: SanitizedNewsAiErrorCode[] = [
+    'KEY_INVALID',
+    'QUOTA_429',
+    'MODEL_404',
+    'TIMEOUT',
+    'SERVER_503',
+    'BAD_REQUEST_400',
+    'INVALID_JSON',
+    'EMPTY_RESPONSE',
+  ];
+  for (const code of priority) {
+    if (failures.some((f) => f.code === code)) return code;
+  }
+  return 'UNKNOWN';
+}
 let cachedMacroFeeds: {
   fetchedAt: number;
   calendarEvents: MacroCalendarEvent[];
@@ -1852,7 +1891,7 @@ Return ONLY a valid JSON array (no markdown fences) where each object has:
 CRITICAL RULE: Do NOT invent or fabricate numbers. Only include events whose exact Previous and Forecast (and Actual if released) are verified from live search results. If no verified calendar figures are found, return [].`;
 
   for (const model of candidateModels) {
-    const cooldownUntil = newsQuotaCooldownUntilByModel.get(model) || 0;
+    const cooldownUntil = newsGroundingQuotaCooldownUntilByModel.get(model) || 0;
     if (Date.now() < cooldownUntil) continue;
 
     try {
@@ -1880,7 +1919,7 @@ CRITICAL RULE: Do NOT invent or fabricate numbers. Only include events whose exa
       if (Array.isArray(parsed) && parsed.length > 0) return parsed;
     } catch (err: any) {
       if (isGeminiQuotaError(err) || isGeminiModelUnavailableError(err)) {
-        newsQuotaCooldownUntilByModel.set(model, Date.now() + 30 * 60 * 1000);
+        newsGroundingQuotaCooldownUntilByModel.set(model, Date.now() + 30 * 60 * 1000);
       }
       continue;
     }
@@ -2019,7 +2058,7 @@ Return ONLY a valid JSON object (no markdown fences) with these exact fields:
 CRITICAL RULE: Do not invent numbers. If search results do not contain the exact percentage figures, set "isAvailable": false so our live 30-Day Fed Funds Futures (ZQ=F) and ^IRX calculator provides the real-time implied rate probabilities.`;
 
   for (const model of candidateModels) {
-    const cooldownUntil = newsQuotaCooldownUntilByModel.get(model) || 0;
+    const cooldownUntil = newsGroundingQuotaCooldownUntilByModel.get(model) || 0;
     if (Date.now() < cooldownUntil) continue;
 
     try {
@@ -2092,7 +2131,7 @@ CRITICAL RULE: Do not invent numbers. If search results do not contain the exact
       }
     } catch (err: any) {
       if (isGeminiQuotaError(err) || isGeminiModelUnavailableError(err)) {
-        newsQuotaCooldownUntilByModel.set(model, Date.now() + 30 * 60 * 1000);
+        newsGroundingQuotaCooldownUntilByModel.set(model, Date.now() + 30 * 60 * 1000);
       }
       continue;
     }
@@ -3594,7 +3633,7 @@ async function fetchPastActualsViaGoogleSearch(missingEvents: MacroCalendarEvent
   });
 
   for (const model of candidateModels) {
-    const cooldownUntil = newsQuotaCooldownUntilByModel.get(model) || 0;
+    const cooldownUntil = newsGroundingQuotaCooldownUntilByModel.get(model) || 0;
     if (Date.now() < cooldownUntil) continue;
 
     try {
@@ -3625,7 +3664,7 @@ async function fetchPastActualsViaGoogleSearch(missingEvents: MacroCalendarEvent
       return out;
     } catch (err: any) {
       if (isGeminiQuotaError(err) || isGeminiModelUnavailableError(err)) {
-        newsQuotaCooldownUntilByModel.set(model, Date.now() + 30 * 60 * 1000);
+        newsGroundingQuotaCooldownUntilByModel.set(model, Date.now() + 30 * 60 * 1000);
       }
       continue;
     }
@@ -3880,6 +3919,7 @@ app.post('/api/macro-news/analyze', async (req, res) => {
     if (
       !forceRefresh &&
       lastServerMacroSnapshot &&
+      lastServerMacroSnapshot.sourceMode === 'GEMINI_AI' &&
       isSnapshotFresh(lastServerMacroSnapshot, 30) &&
       lastServerMacroSnapshot.dataFingerprint === baselineSnapshot.dataFingerprint &&
       (!selectedEventId ||
@@ -3888,6 +3928,10 @@ app.post('/api/macro-news/analyze', async (req, res) => {
       res.json({
         success: true,
         cached: true,
+        fallbackUsed: false,
+        sourceMode: 'GEMINI_AI',
+        modelUsed: lastServerMacroSnapshot.modelUsed,
+        cmeFedWatch: feeds.cmeFedWatch,
         snapshot: {
           ...lastServerMacroSnapshot,
           intermarketPulse: feeds.intermarketPulse,
@@ -3901,10 +3945,12 @@ app.post('/api/macro-news/analyze', async (req, res) => {
     const newsApiKey = getNewsGeminiApiKeys()[0] || '';
 
     if (!newsApiKey) {
-      lastServerMacroSnapshot = baselineSnapshot;
       res.json({
         success: true,
         fallbackUsed: true,
+        sourceMode: 'CLIENT_FALLBACK',
+        aiErrorCode: 'NO_API_KEY',
+        cmeFedWatch: feeds.cmeFedWatch,
         snapshot: baselineSnapshot,
       });
       return;
@@ -4004,10 +4050,15 @@ app.post('/api/macro-news/analyze', async (req, res) => {
 
     let aiResponseText = '';
     let usedModel = '';
+    const modelFailures: Array<{ model: string; code: string }> = [];
+    let skippedByCooldownCount = 0;
 
     for (const model of candidateModels) {
       const cooldownUntil = newsQuotaCooldownUntilByModel.get(model) || 0;
-      if (Date.now() < cooldownUntil) continue;
+      if (Date.now() < cooldownUntil) {
+        skippedByCooldownCount += 1;
+        continue;
+      }
 
       try {
         const response = await withTimeoutAbort(
@@ -4123,12 +4174,20 @@ app.post('/api/macro-news/analyze', async (req, res) => {
           `Macro AI (${model})`
         );
 
-        if (response && response.text) {
-          aiResponseText = response.text;
-          usedModel = model;
-          break;
+        if (response && response.text && response.text.trim()) {
+          const candidateParsed = parseAiJsonResponse(response.text);
+          if (Object.keys(candidateParsed).length > 0) {
+            aiResponseText = response.text;
+            usedModel = model;
+            break;
+          }
+          modelFailures.push({ model, code: 'INVALID_JSON' });
+          continue;
         }
+        modelFailures.push({ model, code: 'EMPTY_RESPONSE' });
       } catch (err: any) {
+        const classified = classifyGeminiFailure(err);
+        modelFailures.push({ model, code: classified.code });
         if (isGeminiQuotaError(err) || isGeminiModelUnavailableError(err)) {
           newsQuotaCooldownUntilByModel.set(model, Date.now() + 30 * 60 * 1000);
         }
@@ -4136,12 +4195,15 @@ app.post('/api/macro-news/analyze', async (req, res) => {
       }
     }
 
-    // If Gemini hit 429 or failed, silently return the deterministic rule-based snapshot (zero user-facing error)
-    if (!aiResponseText) {
-      lastServerMacroSnapshot = baselineSnapshot;
+    // If Gemini hit 429 or failed, return the deterministic rule-based snapshot with explicit fallback mode & sanitized error code
+    if (!aiResponseText || !usedModel) {
+      const aiErrorCode = resolveNewsAiErrorCode(modelFailures, skippedByCooldownCount);
       res.json({
         success: true,
         fallbackUsed: true,
+        sourceMode: 'CLIENT_FALLBACK',
+        aiErrorCode,
+        cmeFedWatch: feeds.cmeFedWatch,
         snapshot: baselineSnapshot,
       });
       return;
@@ -4241,7 +4303,7 @@ app.post('/api/macro-news/analyze', async (req, res) => {
       ...baselineSnapshot,
       analyzedAt: new Date().toISOString(),
       sourceMode: 'GEMINI_AI',
-      modelUsed: usedModel || 'gemini-4-hydrogen',
+      modelUsed: usedModel,
       impactLevel,
       dominantBias,
       cmeFedWatch: feeds.cmeFedWatch,
@@ -4279,10 +4341,13 @@ app.post('/api/macro-news/analyze', async (req, res) => {
     res.json({
       success: true,
       fallbackUsed: false,
+      sourceMode: 'GEMINI_AI',
+      modelUsed: usedModel,
+      cmeFedWatch: feeds.cmeFedWatch,
       snapshot: enrichedSnapshot,
     });
-  } catch (err: any) {
-    // Even on unexpected server error, return deterministic fallback so the user never sees an error screen
+  } catch {
+    // Even on unexpected server error, return deterministic fallback with explicit error code so the user never sees a broken screen
     const fallbackFeeds = await gatherMacroPublicFeeds(false);
     const fallbackSnap = computeDeterministicMacroSnapshot({
       calendarEvents: fallbackFeeds.calendarEvents,
@@ -4295,6 +4360,9 @@ app.post('/api/macro-news/analyze', async (req, res) => {
     res.json({
       success: true,
       fallbackUsed: true,
+      sourceMode: 'CLIENT_FALLBACK',
+      aiErrorCode: 'INTERNAL_ERROR',
+      cmeFedWatch: fallbackFeeds.cmeFedWatch,
       snapshot: fallbackSnap,
     });
   }
@@ -4598,6 +4666,8 @@ app.get('/api/macro-news/fundamental-feeds', async (req, res) => {
 
 // Fundamental Gold (XAU/USD) Structural AI Narrative Synthesis endpoint
 app.post('/api/macro-news/fundamental', async (req, res) => {
+  let baselineSnapshot: FundamentalGoldSnapshot | null = null;
+  let resolvedFedWatch: CmeFedWatchState | undefined = undefined;
   try {
     const {
       forceRefresh = false,
@@ -4607,8 +4677,8 @@ app.post('/api/macro-news/fundamental', async (req, res) => {
       contextSummary,
     } = req.body || {};
 
-    let baselineSnapshot: FundamentalGoldSnapshot | null = clientBaseline || null;
-    let resolvedFedWatch: CmeFedWatchState | undefined = clientFedWatch;
+    baselineSnapshot = clientBaseline || null;
+    resolvedFedWatch = clientFedWatch;
 
     if (!baselineSnapshot || !baselineSnapshot.horizons) {
       const [macroFeeds, extendedFeeds] = await Promise.all([
@@ -4664,6 +4734,9 @@ app.post('/api/macro-news/fundamental', async (req, res) => {
       res.json({
         success: true,
         cached: true,
+        fallbackUsed: false,
+        sourceMode: 'GEMINI_AI',
+        modelUsed: lastServerFundamentalGoldSnapshot.modelUsed,
         cmeFedWatch: resolvedFedWatch,
         snapshot: {
           ...baselineSnapshot,
@@ -4677,12 +4750,18 @@ app.post('/api/macro-news/fundamental', async (req, res) => {
 
     const newsApiKey = getNewsGeminiApiKeys()[0] || '';
     if (!newsApiKey) {
-      lastServerFundamentalGoldSnapshot = baselineSnapshot;
+      const fallbackSnapshot: FundamentalGoldSnapshot = {
+        ...baselineSnapshot,
+        sourceMode: 'DETERMINISTIC_FALLBACK',
+        modelUsed: 'deterministic-fundamental-v1',
+      };
       res.json({
         success: true,
         fallbackUsed: true,
+        sourceMode: 'CLIENT_FALLBACK',
+        aiErrorCode: 'NO_API_KEY',
         cmeFedWatch: resolvedFedWatch,
-        snapshot: baselineSnapshot,
+        snapshot: fallbackSnapshot,
       });
       return;
     }
@@ -4734,10 +4813,15 @@ CRITICAL RULES:
 
     let aiResponseText = '';
     let usedModel = '';
+    const modelFailures: Array<{ model: string; code: string }> = [];
+    let skippedByCooldownCount = 0;
 
     for (const model of NEWS_MODEL_CASCADE) {
       const cooldownUntil = newsQuotaCooldownUntilByModel.get(model) || 0;
-      if (Date.now() < cooldownUntil) continue;
+      if (Date.now() < cooldownUntil) {
+        skippedByCooldownCount += 1;
+        continue;
+      }
 
       try {
         const response = await withTimeoutAbort(
@@ -4824,12 +4908,20 @@ CRITICAL RULES:
           `Fundamental Gold AI (${model})`
         );
 
-        if (response && response.text) {
-          aiResponseText = response.text;
-          usedModel = model;
-          break;
+        if (response && response.text && response.text.trim()) {
+          const candidateParsed = parseAiJsonResponse(response.text);
+          if (Object.keys(candidateParsed).length > 0) {
+            aiResponseText = response.text;
+            usedModel = model;
+            break;
+          }
+          modelFailures.push({ model, code: 'INVALID_JSON' });
+          continue;
         }
+        modelFailures.push({ model, code: 'EMPTY_RESPONSE' });
       } catch (err: any) {
+        const classified = classifyGeminiFailure(err);
+        modelFailures.push({ model, code: classified.code });
         if (isGeminiQuotaError(err) || isGeminiModelUnavailableError(err)) {
           newsQuotaCooldownUntilByModel.set(model, Date.now() + 30 * 60 * 1000);
         }
@@ -4837,13 +4929,20 @@ CRITICAL RULES:
       }
     }
 
-    if (!aiResponseText) {
-      lastServerFundamentalGoldSnapshot = baselineSnapshot;
+    if (!aiResponseText || !usedModel) {
+      const aiErrorCode = resolveNewsAiErrorCode(modelFailures, skippedByCooldownCount);
+      const fallbackSnapshot: FundamentalGoldSnapshot = {
+        ...baselineSnapshot,
+        sourceMode: 'DETERMINISTIC_FALLBACK',
+        modelUsed: 'deterministic-fundamental-v1',
+      };
       res.json({
         success: true,
         fallbackUsed: true,
+        sourceMode: 'CLIENT_FALLBACK',
+        aiErrorCode,
         cmeFedWatch: resolvedFedWatch,
-        snapshot: baselineSnapshot,
+        snapshot: fallbackSnapshot,
       });
       return;
     }
@@ -4853,7 +4952,7 @@ CRITICAL RULES:
       ...baselineSnapshot,
       analyzedAt: new Date().toISOString(),
       sourceMode: 'GEMINI_AI',
-      modelUsed: usedModel || 'gemini-4-hydrogen',
+      modelUsed: usedModel,
       narrative: {
         id: {
           headlineSummary: sanitizeNoBuySellServer(
@@ -4908,10 +5007,27 @@ CRITICAL RULES:
     res.json({
       success: true,
       fallbackUsed: false,
+      sourceMode: 'GEMINI_AI',
+      modelUsed: usedModel,
       cmeFedWatch: resolvedFedWatch,
       snapshot: enrichedSnapshot,
     });
   } catch {
+    if (baselineSnapshot) {
+      res.json({
+        success: true,
+        fallbackUsed: true,
+        sourceMode: 'CLIENT_FALLBACK',
+        aiErrorCode: 'INTERNAL_ERROR',
+        cmeFedWatch: resolvedFedWatch,
+        snapshot: {
+          ...baselineSnapshot,
+          sourceMode: 'DETERMINISTIC_FALLBACK',
+          modelUsed: 'deterministic-fundamental-v1',
+        },
+      });
+      return;
+    }
     res.status(500).json({
       success: false,
       error: 'Gagal menyusun analisis Fundamental Gold.',
