@@ -44,6 +44,9 @@ export interface BackendDiagnosticResult {
   service?: string;
   scannerGeminiConfigured: boolean;
   newsGeminiConfigured: boolean;
+  groqConfigured?: boolean;
+  openRouterConfigured?: boolean;
+  agentDeskReady?: boolean;
   apiKeysStrictlySeparated: boolean;
   proxyCapabilities?: {
     polymarket: boolean;
@@ -265,6 +268,9 @@ async function probeBackendHealth(offlineMode: boolean): Promise<BackendDiagnost
     if (status >= 200 && status < 300 && json?.ok) {
       const scannerOk = Boolean(json.scannerGeminiConfigured ?? json.geminiConfigured);
       const newsOk = Boolean(json.newsGeminiConfigured ?? json.geminiConfigured);
+      const groqOk = Boolean(json.groqConfigured);
+      const openRouterOk = Boolean(json.openRouterConfigured);
+      const agentDeskOk = Boolean(json.agentDeskReady ?? (scannerOk || newsOk || groqOk || openRouterOk));
       const proxyCaps =
         json.proxyCapabilities && typeof json.proxyCapabilities === 'object'
           ? {
@@ -284,6 +290,9 @@ async function probeBackendHealth(offlineMode: boolean): Promise<BackendDiagnost
         service: String(json.service || 'backend'),
         scannerGeminiConfigured: scannerOk,
         newsGeminiConfigured: newsOk,
+        groqConfigured: groqOk,
+        openRouterConfigured: openRouterOk,
+        agentDeskReady: agentDeskOk,
         apiKeysStrictlySeparated: Boolean(json.apiKeysStrictlySeparated),
         proxyCapabilities: proxyCaps,
         latencyMs,

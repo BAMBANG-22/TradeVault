@@ -70,6 +70,7 @@ import {
   applyPendingQueueToTrades,
   type OfflineSyncOperation,
 } from './utils/offlineSyncQueue';
+import { installGlobalErrorRecorder } from './utils/devDiagnosticsStore';
 
 // Layout
 import { Sidebar } from './components/layout/Sidebar';
@@ -218,6 +219,9 @@ const RiskCalculatorView = lazyWithRetry(() =>
 const MarketChartView = lazyWithRetry(() =>
   import('./components/chart/MarketChartView').then((m) => ({ default: m.MarketChartView }))
 );
+const AgentDeskView = lazyWithRetry(() =>
+  import('./components/ai/AgentDeskView').then((m) => ({ default: m.AgentDeskView }))
+);
 const MacroNewsView = lazyWithRetry(() =>
   import('./components/news/MacroNewsView').then((m) => ({ default: m.MacroNewsView }))
 );
@@ -294,20 +298,28 @@ export default function App() {
   const [shouldPromptOnboarding, setShouldPromptOnboarding] = useState<boolean>(false);
   const [isDeveloperMode, setIsDeveloperMode] = useState<boolean>(() => {
     try {
-      if (typeof import.meta !== 'undefined' && (import.meta as any).env?.DEV) {
-        return true;
-      }
-      return typeof sessionStorage !== 'undefined' && sessionStorage.getItem('vlo_dev_mode') === '1';
+      return typeof sessionStorage !== 'undefined' && sessionStorage.getItem(DEV_MODE_SESSION_KEY) === '1';
     } catch {
       return false;
     }
   });
+
+  useEffect(() => {
+    installGlobalErrorRecorder();
+  }, []);
 
   const handleUnlockDeveloperMode = useCallback(() => {
     try {
       sessionStorage.setItem(DEV_MODE_SESSION_KEY, '1');
     } catch {}
     setIsDeveloperMode(true);
+  }, []);
+
+  const handleLockDeveloperMode = useCallback(() => {
+    try {
+      sessionStorage.removeItem(DEV_MODE_SESSION_KEY);
+    } catch {}
+    setIsDeveloperMode(false);
   }, []);
 
   // Modal and editing states
@@ -2972,6 +2984,17 @@ export default function App() {
                 </div>
               )}
 
+              {(activeTab === 'ai-desk' || visitedTabs['ai-desk']) && (
+                <div className={activeTab === 'ai-desk' ? 'block vlo-view-enter' : 'hidden'} aria-hidden={activeTab !== 'ai-desk'}>
+                  <AgentDeskView
+                    trades={scopedTrades}
+                    settings={scopedSettings}
+                    isActive={activeTab === 'ai-desk'}
+                    onNavigate={handleNavigateTab}
+                  />
+                </div>
+              )}
+
               {(activeTab === 'market-chart' || visitedTabs['market-chart']) && (
                 <div className={activeTab === 'market-chart' ? 'block vlo-view-fade' : 'hidden'} aria-hidden={activeTab !== 'market-chart'}>
                   <MarketChartView
@@ -3039,6 +3062,7 @@ export default function App() {
                     onReloadFromCloud={handleReloadFromCloud}
                     isDeveloperMode={isDeveloperMode}
                     onUnlockDeveloperMode={handleUnlockDeveloperMode}
+                    onLockDeveloperMode={handleLockDeveloperMode}
                     onUserUpdated={(updatedUser) => setCurrentUser(updatedUser)}
                     onOpenPlaybook={() => setIsPlaybookModalOpen(true)}
                     onOpenAccountSwitcher={() => setIsAccountSwitcherOpen(true)}

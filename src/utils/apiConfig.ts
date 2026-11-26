@@ -18,6 +18,8 @@ const SUPABASE_EDGE_SUPPORTED_PATHS = new Set([
   '/api/extract-mt5-history',
   '/api/macro-news/analyze',
   '/api/macro-news/fundamental',
+  '/api/agent-desk/chat',
+  '/api/agent-desk/qa-diagnose',
 ]);
 
 /**

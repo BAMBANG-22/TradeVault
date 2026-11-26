@@ -2351,6 +2351,14 @@ async function handleMacroNewsAnalyze(req: Request): Promise<Response> {
     const modelFailures: Array<{ model: string; code: string }> = [];
     let skippedByCooldownCount = 0;
 
+    const macroStaffDraft = await edgeRunSpecialistNewsDraft({
+      division: 'TRADE_NEWS',
+      dataset: promptPayload,
+    });
+    const macroStaffDraftBlock = macroStaffDraft.used
+      ? `\n\n[DRAFT MEMO DIVISI BERITA (${macroStaffDraft.provider?.toUpperCase()} / ${macroStaffDraft.model}) — AUDIT & ACC OLEH BOSS GEMINI: Periksa terhadap dataset mentah di atas; perbaiki jika ada kekeliruan arah/spike/angka, lalu terbitkan JSON final yang di-ACC]:\n${macroStaffDraft.draftText}`
+      : '';
+
     for (const model of NEWS_MODEL_CASCADE) {
       const cooldownUntil = newsQuotaCooldownByModel.get(model) || 0;
       if (Date.now() < cooldownUntil) {
@@ -2364,7 +2372,7 @@ async function handleMacroNewsAnalyze(req: Request): Promise<Response> {
               model,
               contents: `Analyze this real-time XAU/USD macro dataset (including CME FedWatch probabilities, simultaneous USD High-Impact events, and preNewsFlow intelligence such as Leading Indicator Chain, Consensus Tightness, 2s10s Yield Curve Spread, VIX risk regime, Gold 3-day GC=F positioning, and FOMC Blackout window while strictly preserving Master Playbook rules) and return the structured JSON Scenario Matrix in both Bahasa Indonesia (Id) and English (En):\n${JSON.stringify(
                 promptPayload
-              )}`,
+              )}${macroStaffDraftBlock}`,
               config: {
                 abortSignal,
                 systemInstruction: XAUUSD_MACRO_MASTER_PLAYBOOK_SYSTEM_INSTRUCTION,
@@ -2414,7 +2422,9 @@ async function handleMacroNewsAnalyze(req: Request): Promise<Response> {
           const candidateParsed = parseAiJsonResponse(response.text);
           if (Object.keys(candidateParsed).length > 0) {
             aiResponseText = response.text;
-            usedModel = model;
+            usedModel = macroStaffDraft.used
+              ? `${macroStaffDraft.provider}+gemini-acc(${model})`
+              : model;
             break;
           }
           modelFailures.push({ model, code: 'INVALID_JSON' });
@@ -2757,6 +2767,14 @@ CRITICAL RULES:
     const modelFailures: Array<{ model: string; code: string }> = [];
     let skippedByCooldownCount = 0;
 
+    const fundamentalStaffDraft = await edgeRunSpecialistNewsDraft({
+      division: 'FUNDAMENTAL_GOLD',
+      dataset: promptData,
+    });
+    const fundamentalStaffDraftBlock = fundamentalStaffDraft.used
+      ? `\n\n[DRAFT MEMO DIVISI FUNDAMENTAL (${fundamentalStaffDraft.provider?.toUpperCase()} / ${fundamentalStaffDraft.model}) — AUDIT & ACC OLEH BOSS GEMINI: Verifikasi terhadap angka mentah & aturan anti-BUY/SELL di atas, perbaiki bila ada penyimpangan, lalu terbitkan JSON final yang di-ACC]:\n${fundamentalStaffDraft.draftText}`
+      : '';
+
     for (const model of NEWS_MODEL_CASCADE) {
       const cooldownUntil = newsQuotaCooldownByModel.get(model) || 0;
       if (Date.now() < cooldownUntil) {
@@ -2770,7 +2788,7 @@ CRITICAL RULES:
               model,
               contents: `Synthesize this verified XAU/USD multi-horizon dataset into a crisp, authoritative A-Z Macro Desk Brief in Bahasa Indonesia (Id) and English (En):\n${JSON.stringify(
                 promptData
-              )}`,
+              )}${fundamentalStaffDraftBlock}`,
               config: {
                 abortSignal,
                 systemInstruction: fundamentalSystemInstruction,
@@ -2815,7 +2833,9 @@ CRITICAL RULES:
           const candidateParsed = parseAiJsonResponse(response.text);
           if (Object.keys(candidateParsed).length > 0) {
             aiResponseText = response.text;
-            usedModel = model;
+            usedModel = fundamentalStaffDraft.used
+              ? `${fundamentalStaffDraft.provider}+gemini-acc(${model})`
+              : model;
             break;
           }
           modelFailures.push({ model, code: 'INVALID_JSON' });
@@ -2932,6 +2952,849 @@ CRITICAL RULES:
   }
 }
 
+// ============================================================================
+// MULTI-AGENT OFFICE ORCHESTRATOR ("Tanya AI" — Boss Gemini + Divisi Makro [Groq] + Divisi Jurnal [OpenRouter])
+// ============================================================================
+
+const AGENT_GEMINI_BOSS_MODELS = ['gemini-4-hydrogen', 'gemini-3.1-flash-lite'];
+const AGENT_GEMINI_STAFF_MODELS = ['gemini-3.1-flash-lite', 'gemini-4-hydrogen'];
+const AGENT_GROQ_MODELS = ['llama-3.3-70b-versatile', 'llama-3.1-8b-instant'];
+const AGENT_OPENROUTER_FREE_MODELS = [
+  'meta-llama/llama-3.3-70b-instruct:free',
+  'qwen/qwen3-32b:free',
+  'deepseek/deepseek-r1-0528:free',
+];
+
+function parseEdgeKeyList(raw: string | undefined): string[] {
+  if (!raw || typeof raw !== 'string') return [];
+  return Array.from(
+    new Set(
+      raw
+        .split(',')
+        .map((k) => k.trim())
+        .filter((k) => k.length >= 8)
+    )
+  );
+}
+
+function getEdgeAgentDeskKeys() {
+  const geminiKeys = Array.from(
+    new Set([...getNewsGeminiApiKeys(), ...getScannerGeminiApiKeys()])
+  );
+  const groqKeys = parseEdgeKeyList(Deno.env.get('GROQ_API_KEY'));
+  const openRouterKeys = parseEdgeKeyList(Deno.env.get('OPENROUTER_API_KEY'));
+  return { geminiKeys, groqKeys, openRouterKeys };
+}
+
+function sanitizeEdgeAgentError(err: unknown): string {
+  return String((err as any)?.message || err || 'Unknown error')
+    .replace(/AIza[0-9A-Za-z\-_]{16,}/g, '[REDACTED_KEY]')
+    .replace(/gsk_[0-9A-Za-z\-_]{16,}/g, '[REDACTED_KEY]')
+    .replace(/sk-or-[a-zA-Z0-9\-_]{16,}/g, '[REDACTED_KEY]')
+    .replace(/Bearer\s+[A-Za-z0-9\-_.]{12,}/gi, 'Bearer [REDACTED]')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 180);
+}
+
+function parseEdgeJsonLoose(rawText: string): Record<string, any> | null {
+  if (!rawText || typeof rawText !== 'string') return null;
+  const cleaned = rawText
+    .replace(/<think>[\s\S]*?<\/think>/gi, '')
+    .replace(/^```(?:json)?\s*/i, '')
+    .replace(/\s*```$/i, '')
+    .trim();
+  try {
+    const parsed = JSON.parse(cleaned);
+    if (parsed && typeof parsed === 'object') return parsed;
+  } catch {
+    const start = cleaned.indexOf('{');
+    const end = cleaned.lastIndexOf('}');
+    if (start >= 0 && end > start) {
+      try {
+        const parsed = JSON.parse(cleaned.slice(start, end + 1));
+        if (parsed && typeof parsed === 'object') return parsed;
+      } catch {
+        return null;
+      }
+    }
+  }
+  return null;
+}
+
+async function edgeCallGeminiAgent(params: {
+  keys: string[];
+  models: string[];
+  systemInstruction: string;
+  userPrompt: string;
+  expectJson: boolean;
+  timeoutMs: number;
+}) {
+  if (params.keys.length === 0) throw new Error('Gemini API key not configured');
+  let lastErr: unknown = new Error('Gemini call failed');
+  for (const model of params.models) {
+    for (const apiKey of params.keys) {
+      const start = Date.now();
+      const ai = new GoogleGenAI({
+        apiKey,
+        httpOptions: {
+          headers: { 'User-Agent': 'aistudio-build' },
+          retryOptions: { attempts: 1 },
+        },
+      });
+      try {
+        const response = await withTimeoutAbort(
+          (abortSignal) =>
+            ai.models.generateContent({
+              model,
+              contents: params.userPrompt,
+              config: {
+                abortSignal,
+                systemInstruction: params.systemInstruction,
+                ...(model === 'gemini-4-hydrogen'
+                  ? { thinkingConfig: { thinkingLevel: ThinkingLevel.LOW } }
+                  : {}),
+                ...(params.expectJson ? { responseMimeType: 'application/json' } : {}),
+              },
+            }),
+          params.timeoutMs,
+          `EdgeGemini(${model})`
+        );
+        const text = (response?.text || '').trim();
+        if (text) {
+          const json = params.expectJson ? parseEdgeJsonLoose(text) : null;
+          if (!params.expectJson || json) {
+            return { provider: 'gemini', model, text, json, latencyMs: Date.now() - start };
+          }
+          lastErr = new Error(`Gemini(${model}) non-JSON`);
+        }
+      } catch (err) {
+        lastErr = err;
+      }
+    }
+  }
+  throw new Error(sanitizeEdgeAgentError(lastErr));
+}
+
+async function edgeCallOpenAiCompatibleAgent(params: {
+  provider: 'groq' | 'openrouter';
+  endpoint: string;
+  keys: string[];
+  models: string[];
+  systemInstruction: string;
+  userPrompt: string;
+  expectJson: boolean;
+  timeoutMs: number;
+}) {
+  if (params.keys.length === 0) throw new Error(`${params.provider} API key not configured`);
+  let lastErr: unknown = new Error(`${params.provider} call failed`);
+  for (const model of params.models) {
+    for (const apiKey of params.keys) {
+      const start = Date.now();
+      try {
+        const headers: Record<string, string> = {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${apiKey}`,
+        };
+        if (params.provider === 'openrouter') {
+          headers['HTTP-Referer'] = 'https://tradevault.app';
+          headers['X-Title'] = 'TradeVault AI Desk';
+        }
+        const body: Record<string, unknown> = {
+          model,
+          messages: [
+            { role: 'system', content: params.systemInstruction },
+            { role: 'user', content: params.userPrompt },
+          ],
+          temperature: 0.2,
+          max_tokens: 1100,
+        };
+        if (params.expectJson && params.provider === 'groq') {
+          body.response_format = { type: 'json_object' };
+        }
+        const res = await withTimeoutAbort(
+          (signal) => fetch(params.endpoint, { method: 'POST', headers, body: JSON.stringify(body), signal }),
+          params.timeoutMs,
+          `Edge-${params.provider}(${model})`
+        );
+        if (!res.ok) {
+          const txt = await res.text().catch(() => '');
+          lastErr = new Error(`HTTP ${res.status}: ${txt.slice(0, 100)}`);
+          continue;
+        }
+        const data = await res.json();
+        const text = String(data?.choices?.[0]?.message?.content || '').trim();
+        if (!text) continue;
+        const json = params.expectJson ? parseEdgeJsonLoose(text) : null;
+        if (!params.expectJson || json) {
+          return { provider: params.provider, model, text, json, latencyMs: Date.now() - start };
+        }
+        lastErr = new Error(`${params.provider}(${model}) invalid JSON`);
+      } catch (err) {
+        lastErr = err;
+      }
+    }
+  }
+  throw new Error(sanitizeEdgeAgentError(lastErr));
+}
+
+async function edgeRunAgentCascade(params: {
+  order: Array<'gemini' | 'groq' | 'openrouter'>;
+  keys: ReturnType<typeof getEdgeAgentDeskKeys>;
+  isBoss?: boolean;
+  systemInstruction: string;
+  userPrompt: string;
+  expectJson: boolean;
+  timeoutMs: number;
+}) {
+  const errors: string[] = [];
+  for (const prov of params.order) {
+    try {
+      if (prov === 'groq' && params.keys.groqKeys.length > 0) {
+        return await edgeCallOpenAiCompatibleAgent({
+          provider: 'groq',
+          endpoint: 'https://api.groq.com/openai/v1/chat/completions',
+          keys: params.keys.groqKeys,
+          models: AGENT_GROQ_MODELS,
+          systemInstruction: params.systemInstruction,
+          userPrompt: params.userPrompt,
+          expectJson: params.expectJson,
+          timeoutMs: params.timeoutMs,
+        });
+      }
+      if (prov === 'openrouter' && params.keys.openRouterKeys.length > 0) {
+        return await edgeCallOpenAiCompatibleAgent({
+          provider: 'openrouter',
+          endpoint: 'https://openrouter.ai/api/v1/chat/completions',
+          keys: params.keys.openRouterKeys,
+          models: AGENT_OPENROUTER_FREE_MODELS,
+          systemInstruction: params.systemInstruction,
+          userPrompt: params.userPrompt,
+          expectJson: params.expectJson,
+          timeoutMs: params.timeoutMs,
+        });
+      }
+      if (prov === 'gemini' && params.keys.geminiKeys.length > 0) {
+        return await edgeCallGeminiAgent({
+          keys: params.keys.geminiKeys,
+          models: params.isBoss ? AGENT_GEMINI_BOSS_MODELS : AGENT_GEMINI_STAFF_MODELS,
+          systemInstruction: params.systemInstruction,
+          userPrompt: params.userPrompt,
+          expectJson: params.expectJson,
+          timeoutMs: params.timeoutMs,
+        });
+      }
+    } catch (err) {
+      errors.push(`${prov}: ${sanitizeEdgeAgentError(err)}`);
+    }
+  }
+  throw new Error(errors.join(' | ') || 'No configured AI provider succeeded');
+}
+
+async function edgeRunSpecialistNewsDraft(params: {
+  division: 'TRADE_NEWS' | 'FUNDAMENTAL_GOLD';
+  dataset: Record<string, unknown>;
+}): Promise<{ used: boolean; provider: string | null; model: string | null; draftText: string }> {
+  const keys = getEdgeAgentDeskKeys();
+  if (keys.groqKeys.length === 0 && keys.openRouterKeys.length === 0) {
+    return { used: false, provider: null, model: null, draftText: '' };
+  }
+  const order: Array<'groq' | 'openrouter'> =
+    params.division === 'TRADE_NEWS' ? ['groq', 'openrouter'] : ['openrouter', 'groq'];
+  const systemInstruction =
+    params.division === 'TRADE_NEWS'
+      ? `Kamu adalah Divisi Riset Berita & Spike XAU/USD. Susun DRAFT MEMO padat (maks 280 kata) dari data nyata untuk diaudit & di-ACC Boss Gemini: arah dominan (BUY/SELL/MIXED), pola 1-Arah vs 2-Arah Sweep First (Fase 0-5m vs 15m+), jebakan speech/priced-in, dan tesis lintas aset.`
+      : `Kamu adalah Divisi Riset Fundamental Emas (XAU/USD). DILARANG menulis kata "BUY" atau "SELL" — pakai BULLISH/BEARISH/NEUTRAL. Susun DRAFT MEMO padat (maks 320 kata) untuk diaudit & di-ACC Boss Gemini: rezim makro, Real Yield/US10Y/DXY/FedWatch, arus modal lintas pasar, dan proyeksi 1D/1W/1M.`;
+  try {
+    const res = await edgeRunAgentCascade({
+      order,
+      keys,
+      isBoss: false,
+      systemInstruction,
+      userPrompt: `Dataset ${params.division}:\n${JSON.stringify(params.dataset).slice(0, 13_500)}\nSusun draft memo riset untuk Boss Gemini.`,
+      expectJson: false,
+      timeoutMs: 7000,
+    });
+    if (res.provider === 'groq' || res.provider === 'openrouter') {
+      return { used: true, provider: res.provider, model: res.model, draftText: res.text.slice(0, 2600) };
+    }
+  } catch {
+    // Non-blocking fallback directly to Boss Gemini
+  }
+  return { used: false, provider: null, model: null, draftText: '' };
+}
+
+function edgeGetPersonaStyle(persona: string, agentName: string, isEn: boolean): string {
+  if (isEn) {
+    if (persona === 'concise') return `Your name is ${agentName}. Reply super crisp and concise (2-5 short lines), like a sharp trading partner on DM. Zero formal templates.`;
+    if (persona === 'mentor') return `Your name is ${agentName}. Reply like a calm, experienced trading mentor on chat — honest, grounded, never robotic.`;
+    return `Your name is ${agentName}. Reply like a real, friendly trading partner chatting on WhatsApp/DM — relaxed, direct, flexible, human, and zero rigid templates.`;
+  }
+  if (persona === 'concise') return `Namamu ${agentName}. Balas super singkat, lugas, langsung inti (2-5 baris pendek) seperti rekan trading chat lewat DM. Tanpa template kaku.`;
+  if (persona === 'mentor') return `Namamu ${agentName}. Balas seperti mentor trading berpengalaman — tegas, jujur, tapi tetap luwes diajak ngobrol di chat.`;
+  return `Namamu ${agentName}. Balas dengan gaya ngobrol santai, akrab, lugas, dan fleksibel seperti teman trading beneran di WhatsApp / DM Instagram. Jangan pakai format laporan kaku ("1. ... 2. ... 3. ...") kecuali benar-benar perlu.`;
+}
+
+function edgeIsLightFollowUp(message: string, history: any[]): boolean {
+  const q = message.trim().toLowerCase();
+  if (q.length <= 28 && /^(halo|hai|hi|hey|pagi|siang|sore|malam|tes|test|oke|ok|siap|makasih|thanks|thank you|sip|mantap|paham|noted|oh gitu|ohh|hmm|haha|wkwk)[\s!?.]*$/i.test(q)) {
+    return true;
+  }
+  if (history.length >= 2 && q.length <= 95) {
+    const asksFreshAudit =
+      /\b(cek ulang|audit|evaluasi jurnal|rekap|fundamental|polymarket|fedwatch|posisi aktif|win\s?rate|drawdown|profit factor|update terbaru|berita baru)\b/i.test(q);
+    const isCue = /^(jadi|berarti|oh|ohh|terus|trus|maksudnya|kalau gitu|kalo gitu|so|meaning|wait|tunggu|oke|ok|bener|yakin|kenapa|kok|gimana|gmn)\b/i.test(q);
+    if (isCue && !asksFreshAudit) return true;
+  }
+  return false;
+}
+
+async function handleAgentDeskChat(req: Request): Promise<Response> {
+  const startedAt = Date.now();
+  try {
+    const rawBody = (await req.json()) || {};
+    const message = typeof rawBody.message === 'string' ? rawBody.message.trim().slice(0, 2000) : '';
+    const language: 'id' | 'en' = rawBody.language === 'en' ? 'en' : 'id';
+    const isEn = language === 'en';
+    const rawPersona = String(rawBody.persona || 'casual').toLowerCase();
+    const persona = rawPersona === 'concise' || rawPersona === 'mentor' ? rawPersona : 'casual';
+    const agentName =
+      typeof rawBody.agentName === 'string' && rawBody.agentName.trim()
+        ? rawBody.agentName.trim().slice(0, 40)
+        : 'Head Desk';
+
+    if (!message) {
+      return jsonResponse({ success: false, error: 'Pertanyaan tidak boleh kosong.' }, 400);
+    }
+
+    const keys = getEdgeAgentDeskKeys();
+    if (keys.geminiKeys.length + keys.groqKeys.length + keys.openRouterKeys.length === 0) {
+      return jsonResponse(
+        {
+          success: false,
+          error: isEn
+            ? 'No AI provider key configured in Supabase Secrets.'
+            : 'Belum ada API Key AI yang terpasang di Supabase Secrets.',
+        },
+        503
+      );
+    }
+
+    const history = (Array.isArray(rawBody.history) ? rawBody.history : [])
+      .slice(-10)
+      .filter(
+        (h: any) =>
+          h &&
+          (h.role === 'user' || h.role === 'assistant') &&
+          typeof h.content === 'string' &&
+          h.content.trim().length > 0
+      )
+      .map((h: any) => ({ role: h.role, content: String(h.content).trim().slice(0, 800) }));
+
+    const contextObj =
+      rawBody.context && typeof rawBody.context === 'object' && !Array.isArray(rawBody.context)
+        ? rawBody.context
+        : {};
+
+    const historyText =
+      history.length > 0
+        ? history.slice(-8).map((h: any) => `${h.role === 'user' ? 'USER' : 'AGENT'}: ${h.content}`).join('\n')
+        : '(Belum ada riwayat percakapan)';
+
+    const fmtProv = (p: string) => (p === 'gemini' ? 'Gemini' : p === 'groq' ? 'Groq' : p === 'openrouter' ? 'OpenRouter' : 'System');
+
+    // Smart Routing for lightweight follow-up chat (fast & quota-friendly)
+    if (edgeIsLightFollowUp(message, history)) {
+      try {
+        const personaGuide = edgeGetPersonaStyle(persona, agentName, isEn);
+        const directRes = await edgeRunAgentCascade({
+          order: ['gemini', 'groq', 'openrouter'],
+          keys,
+          isBoss: true,
+          systemInstruction: `${personaGuide}\nBalas obrolan lanjutan secara natural, singkat, dan mengalir seperti chat WhatsApp/DM dengan orang sungguhan. Jangan mengarang angka baru.`,
+          userPrompt: `Riwayat obrolan:\n${historyText}\nRingkasan konteks: ${JSON.stringify({
+            macroBias: contextObj?.macroNews?.dominantBias ?? null,
+            fundamentalBias: contextObj?.fundamentalGold?.overallBias ?? null,
+            tradesCount: contextObj?.journal?.summary?.closedTradesCount ?? 0,
+          })}\nPesan terbaru user: "${message}"`,
+          expectJson: false,
+          timeoutMs: 9000,
+        });
+        return jsonResponse({
+          success: true,
+          routeType: 'DIRECT_FOLLOWUP',
+          answer: directRes.text.trim(),
+          actionCard: {
+            directionClarity: 'INFO_ONLY',
+            directionLabel: isEn ? 'Desk Chat' : 'Obrolan Desk',
+            spikeWarning: '-',
+            riskReminder: '-',
+          },
+          workflowTrace: [
+            {
+              stepNumber: 1,
+              role: 'BOSS_DIRECT',
+              divisionName: `${agentName} (Smart Direct)`,
+              provider: directRes.provider,
+              model: directRes.model,
+              action: isEn ? 'Direct Conversational Reply' : 'Balasan Langsung (Hemat Kuota)',
+              status: 'completed',
+              summary: isEn
+                ? 'Light follow-up replied directly without re-running full division meeting.'
+                : 'Obrolan lanjutan dibalas langsung tanpa rapat ulang divisi.',
+              latencyMs: directRes.latencyMs,
+            },
+          ],
+          revisionTriggered: false,
+          activeProviders: [fmtProv(directRes.provider)],
+          totalLatencyMs: Date.now() - startedAt,
+        });
+      } catch {
+        // fall through to full office pipeline
+      }
+    }
+
+    const q = message.toLowerCase();
+    const asksJournal =
+      /\b(jurnal|journal|trade|trading saya|win\s?rate|profit|loss|rugi|drawdown|lot|risiko|risk|posisi|open|planned|history|riwayat|evaluasi|kesalahan|mistake|emosi|fomo|sesi|session|equity|saldo|balance|guardrail|target)\b/i.test(
+        q
+      );
+    const asksMacro =
+      /\b(news|berita|makro|macro|fundamental|gold|emas|xau|spike|sweep|arah|buy|sell|fomc|fed|cpi|ppi|nfp|pmi|dxy|yield|us10y|us02y|oil|polymarket|smc|cycle|confluence|bearish|bullish|priced|speech|pidato|rilis|entry|ambil)\b/i.test(
+        q
+      );
+
+    const hasMacroData = Boolean(contextObj?.macroNews || contextObj?.fundamentalGold || contextObj?.polymarket);
+    const hasJournalData = Boolean(contextObj?.journal);
+
+    let runMacro = true;
+    let runJournal = true;
+    let intentLabel = isEn ? 'Integrated Desk Briefing (Macro + Journal)' : 'Briefing Terpadu Meja Trading (Makro + Jurnal)';
+    if (asksJournal && !asksMacro) {
+      runMacro = hasMacroData && /\b(posisi|open|planned|entry|ambil|aman|hari ini|sekarang)\b/i.test(q);
+      runJournal = true;
+      intentLabel = isEn ? 'Journal, Positions & Risk Audit' : 'Audit Jurnal, Posisi & Manajemen Risiko';
+    } else if (asksMacro && !asksJournal) {
+      runMacro = true;
+      runJournal = hasJournalData && /\b(posisi|saya|ambil|lot|risiko|akun|aman)\b/i.test(q);
+      intentLabel = isEn ? 'Trade News, Spike/Sweep & Fundamental Analysis' : 'Analisis Trade News, Spike/Sweep & Fundamental Emas';
+    }
+
+    const workflowTrace: any[] = [];
+    const providersUsed = new Set<string>();
+
+    const delegatedNames = [
+      runMacro ? (isEn ? 'Macro & News Division' : 'Divisi Makro & Berita') : null,
+      runJournal ? (isEn ? 'Journal & Risk Division' : 'Divisi Jurnal & Risiko') : null,
+    ].filter(Boolean);
+
+    workflowTrace.push({
+      stepNumber: 1,
+      role: 'BOSS_DISPATCH',
+      divisionName: isEn ? 'Head of Desk (Boss)' : 'Boss Meja Trading (Gemini)',
+      provider: keys.geminiKeys.length > 0 ? 'gemini' : keys.groqKeys.length > 0 ? 'groq' : 'openrouter',
+      model: 'router-v1',
+      action: isEn ? 'Task Delegation' : 'Pembagian Tugas Divisi',
+      status: 'completed',
+      summary: isEn
+        ? `Intent: ${intentLabel} -> Delegated to ${delegatedNames.join(' & ')}.`
+        : `Fokus: ${intentLabel} -> Menugaskan ${delegatedNames.join(' & ')}.`,
+      latencyMs: 1,
+    });
+
+    const macroSystem = `Kamu adalah KEPALA DIVISI MAKRO, BERITA & FUNDAMENTAL EMAS (XAUUSD) di kantor riset TradeVault.
+ATURAN MUTLAK ANTI-SALAH BACA:
+1. Terjemahkan istilah teknikal/makro ke bahasa aksi yang TIDAK BISA DISALAHPAHAMI:
+   - "Bearish Spike awal" = harga XAUUSD TURUN tajam lebih dulu, BUKAN sinyal BUY langsung!
+   - "Bullish Spike awal" = harga XAUUSD NAIK tajam lebih dulu, BUKAN otomatis aman dikejar BUY jika bias utama SELL!
+   - "TWO_WAY_SWEEP_FIRST" = rawan tipuan di Fase 1 (menit 0-5), tunggu sapuan selesai lalu ikuti Fase 2 (menit 15+).
+2. DILARANG mengarang angka/jadwal/harga yang tidak ada di data.
+3. Jawab HANYA JSON valid: {"headlineVerdict":string,"plainDirection":"BUY"|"SELL"|"WAIT_MIXED"|"NO_DATA","directionExplanation":string,"spikeAnalysis":string,"alignmentCheck":string,"keyEvidence":string[],"caveats":string}`;
+
+    const journalSystem = `Kamu adalah KEPALA DIVISI JURNAL, PSIKOLOGI & MANAJEMEN RISIKO di kantor TradeVault.
+ATURAN MUTLAK:
+1. Gunakan HANYA angka nyata dari data jurnal offline trader.
+2. Cek daily loss, consecutive loss, drawdown, posisi OPEN/PLANNED, mistake tags & emosi.
+3. Jawab HANYA JSON valid: {"journalHealthVerdict":string,"riskGuardrailStatus":"SAFE"|"CAUTION"|"BREACHED"|"NO_DATA","riskDetail":string,"openPositionsCheck":string,"keyPatterns":string[],"coachingNote":string}`;
+
+    const buildMacroUser = (rev?: string) =>
+      `Bahasa: ${isEn ? 'English' : 'Bahasa Indonesia'}\nPertanyaan Trader: "${message}"\nRiwayat:\n${historyText}\nData Makro/News/Fundamental:\n${JSON.stringify({
+        runtime: contextObj?.runtime ?? null,
+        macroNews: contextObj?.macroNews ?? null,
+        fundamentalGold: contextObj?.fundamentalGold ?? null,
+        cmeFedWatch: contextObj?.cmeFedWatch ?? null,
+        polymarket: contextObj?.polymarket ?? null,
+        smcSignal: contextObj?.smcSignal ?? null,
+        syncStatus: contextObj?.syncStatus ?? null,
+      }).slice(0, 14_000)}${rev ? `\n\n[PERINTAH REVISI BOSS GEMINI]: ${rev}` : ''}\nKeluarkan HANYA JSON.`;
+
+    const buildJournalUser = (rev?: string) =>
+      `Bahasa: ${isEn ? 'English' : 'Bahasa Indonesia'}\nPertanyaan Trader: "${message}"\nRiwayat:\n${historyText}\nData Jurnal Offline:\n${JSON.stringify({
+        journal: contextObj?.journal ?? null,
+        runtime: contextObj?.runtime ?? null,
+      }).slice(0, 11_000)}${rev ? `\n\n[PERINTAH REVISI BOSS GEMINI]: ${rev}` : ''}\nKeluarkan HANYA JSON.`;
+
+    let macroMemo: any = null;
+    let journalMemo: any = null;
+    let macroProv: string | null = null;
+    let journalProv: string | null = null;
+
+    const tasks: Array<Promise<void>> = [];
+    if (runMacro) {
+      tasks.push(
+        (async () => {
+          try {
+            const res = await edgeRunAgentCascade({
+              order: ['groq', 'openrouter', 'gemini'],
+              keys,
+              isBoss: false,
+              systemInstruction: macroSystem,
+              userPrompt: buildMacroUser(),
+              expectJson: true,
+              timeoutMs: 9500,
+            });
+            macroMemo = res.json || { headlineVerdict: res.text.slice(0, 260) };
+            macroProv = res.provider;
+            providersUsed.add(fmtProv(res.provider));
+            workflowTrace.push({
+              stepNumber: workflowTrace.length + 1,
+              role: 'DIVISI_MAKRO',
+              divisionName: isEn ? 'Macro & News Division' : 'Divisi Makro & Berita',
+              provider: res.provider,
+              model: res.model,
+              action: isEn ? 'Macro, Spike & Fundamental Audit' : 'Riset Berita, Spike & Fundamental',
+              status: res.provider === 'groq' ? 'completed' : 'fallback',
+              summary: String(macroMemo.headlineVerdict || 'Memo makro dikirim ke Boss.').slice(0, 180),
+              latencyMs: res.latencyMs,
+            });
+          } catch {
+            workflowTrace.push({
+              stepNumber: workflowTrace.length + 1,
+              role: 'DIVISI_MAKRO',
+              divisionName: isEn ? 'Macro & News Division' : 'Divisi Makro & Berita',
+              provider: 'system',
+              model: 'direct-context-passthrough',
+              action: isEn ? 'Raw Context Escalation' : 'Eskalasi Data Langsung ke Boss',
+              status: 'fallback',
+              summary: isEn ? 'Macro data forwarded directly to Boss.' : 'Data makro mentah diteruskan langsung ke Boss.',
+              latencyMs: 0,
+            });
+          }
+        })()
+      );
+    }
+
+    if (runJournal) {
+      tasks.push(
+        (async () => {
+          try {
+            const res = await edgeRunAgentCascade({
+              order: ['openrouter', 'groq', 'gemini'],
+              keys,
+              isBoss: false,
+              systemInstruction: journalSystem,
+              userPrompt: buildJournalUser(),
+              expectJson: true,
+              timeoutMs: 9500,
+            });
+            journalMemo = res.json || { journalHealthVerdict: res.text.slice(0, 260) };
+            journalProv = res.provider;
+            providersUsed.add(fmtProv(res.provider));
+            workflowTrace.push({
+              stepNumber: workflowTrace.length + 1,
+              role: 'DIVISI_JURNAL',
+              divisionName: isEn ? 'Journal & Risk Division' : 'Divisi Jurnal & Risiko',
+              provider: res.provider,
+              model: res.model,
+              action: isEn ? 'Offline Journal & Risk Audit' : 'Audit Jurnal Offline & Guardrail Risiko',
+              status: res.provider === 'openrouter' ? 'completed' : 'fallback',
+              summary: String(journalMemo.journalHealthVerdict || 'Memo jurnal dikirim ke Boss.').slice(0, 180),
+              latencyMs: res.latencyMs,
+            });
+          } catch {
+            workflowTrace.push({
+              stepNumber: workflowTrace.length + 1,
+              role: 'DIVISI_JURNAL',
+              divisionName: isEn ? 'Journal & Risk Division' : 'Divisi Jurnal & Risiko',
+              provider: 'system',
+              model: 'direct-context-passthrough',
+              action: isEn ? 'Raw Context Escalation' : 'Eskalasi Data Jurnal ke Boss',
+              status: 'fallback',
+              summary: isEn ? 'Journal stats forwarded directly to Boss.' : 'Data jurnal mentah diteruskan langsung ke Boss.',
+              latencyMs: 0,
+            });
+          }
+        })()
+      );
+    }
+
+    await Promise.all(tasks);
+
+    const buildBossPrompt = (allowRev: boolean) => {
+      const personaGuide = edgeGetPersonaStyle(persona, agentName, isEn);
+      const sys = `Kamu adalah BOSS / HEAD OF TRADING DESK (Gemini) sekaligus teman ngobrol trader di aplikasi ini.
+${personaGuide}
+1. AUDIT FAKTA: Cocokkan memo divisi dengan DATA MENTAH perangkat. Jika arah BUY/SELL terbalik, salah paham Bearish Spike (turun tajam awal != sinyal buy), atau angka keliru -> ${
+        allowRev
+          ? 'set needsRevision=true, pilih revisionTarget ("MACRO_NEWS" atau "JOURNAL_RISK"), dan tulis revisionInstruction spesifik.'
+          : 'Ini tahap final sign-off; set needsRevision=false.'
+      }
+2. BALASAN CHAT NATURAL: Balas SEPERTI ORANG BENERAN LAGI CHAT DI WA / DM INSTAGRAM — santai, lugas, fleksibel, tidak kaku/template ("1. ... 2. ... 3. ..."). Selipkan fakta angka/spike secara mengalir dan pastikan arti arah tidak membingungkan.
+Keluarkan HANYA JSON valid:
+{"auditPassed":boolean,"needsRevision":boolean,"revisionTarget":"NONE"|"MACRO_NEWS"|"JOURNAL_RISK","auditNotes":string,"revisionInstruction":string,"finalAnswer":string,"actionCard":{"directionClarity":"BUY"|"SELL"|"WAIT_MIXED"|"INFO_ONLY","directionLabel":string,"spikeWarning":string,"riskReminder":string}}`;
+
+      const anchor = {
+        runtime: contextObj?.runtime ?? null,
+        macroFacts: contextObj?.macroNews
+          ? {
+              dominantBias: contextObj.macroNews.dominantBias,
+              buyProb: contextObj.macroNews.buyProbability,
+              sellProb: contextObj.macroNews.sellProbability,
+              mixedProb: contextObj.macroNews.mixedProbability,
+              movementType: contextObj.macroNews.dualHorizon?.movementType,
+              initialCatalystBias: contextObj.macroNews.dualHorizon?.initialCatalystBias,
+              phase1: contextObj.macroNews.dualHorizon?.phase1Minute0to5,
+              phase2: contextObj.macroNews.dualHorizon?.phase2Minute15Plus,
+              hasSpeechEvent: contextObj.macroNews.dualHorizon?.hasSpeechEvent,
+              isPricedIn: contextObj.macroNews.dualHorizon?.isPricedIn,
+              primaryEvent: contextObj.macroNews.primaryEvent,
+            }
+          : null,
+        fundamentalFacts: contextObj?.fundamentalGold
+          ? {
+              overallBias: contextObj.fundamentalGold.overallBias,
+              bullishPct: contextObj.fundamentalGold.bullishProbability,
+              bearishPct: contextObj.fundamentalGold.bearishProbability,
+              daily1D: contextObj.fundamentalGold.horizons?.daily1D,
+              weekly1W: contextObj.fundamentalGold.horizons?.weekly1W,
+              monthly1M: contextObj.fundamentalGold.horizons?.monthly1M,
+            }
+          : null,
+        journalFacts: contextObj?.journal?.summary ?? null,
+        openPositions: contextObj?.journal?.openOrPlannedTrades ?? [],
+      };
+
+      const usr = `Bahasa: ${isEn ? 'English' : 'Bahasa Indonesia'}\nPertanyaan: "${message}"\nRiwayat:\n${historyText}\n\nFAKTA MENTAH:\n${JSON.stringify(anchor).slice(0, 7000)}\n\nMEMO DIVISI MAKRO:\n${macroMemo ? JSON.stringify(macroMemo).slice(0, 4500) : '(tidak aktif)'}\n\nMEMO DIVISI JURNAL:\n${journalMemo ? JSON.stringify(journalMemo).slice(0, 4500) : '(tidak aktif)'}\n\nAudit & jawab HANYA JSON.`;
+      return { sys, usr };
+    };
+
+    const bossPrompt1 = buildBossPrompt(Boolean(macroMemo || journalMemo));
+    const bossRes = await edgeRunAgentCascade({
+      order: ['gemini', 'groq', 'openrouter'],
+      keys,
+      isBoss: true,
+      systemInstruction: bossPrompt1.sys,
+      userPrompt: bossPrompt1.usr,
+      expectJson: true,
+      timeoutMs: 13_000,
+    });
+
+    providersUsed.add(fmtProv(bossRes.provider));
+    let bossJson: any = bossRes.json || {};
+    const needsRevision =
+      Boolean(bossJson.needsRevision) &&
+      (bossJson.revisionTarget === 'MACRO_NEWS' || bossJson.revisionTarget === 'JOURNAL_RISK') &&
+      typeof bossJson.revisionInstruction === 'string' &&
+      bossJson.revisionInstruction.trim().length > 5 &&
+      Date.now() - startedAt < 24_000;
+
+    workflowTrace.push({
+      stepNumber: workflowTrace.length + 1,
+      role: 'BOSS_AUDIT',
+      divisionName: isEn ? 'Head of Desk Audit (Boss)' : 'Audit Kualitas Boss (Gemini)',
+      provider: bossRes.provider,
+      model: bossRes.model,
+      action: needsRevision
+        ? isEn
+          ? `Revision Ordered -> ${bossJson.revisionTarget}`
+          : `Minta Revisi -> ${bossJson.revisionTarget === 'MACRO_NEWS' ? 'Divisi Makro' : 'Divisi Jurnal'}`
+        : isEn
+        ? 'Cross-Check Passed & Signed Off'
+        : 'Cek Fakta Lolos & Disetujui',
+      status: needsRevision ? 'revised' : 'completed',
+      summary: String(bossJson.auditNotes || bossJson.revisionInstruction || 'Lolos verifikasi Boss.').slice(0, 190),
+      latencyMs: bossRes.latencyMs,
+    });
+
+    let revisionTriggered = false;
+    if (needsRevision) {
+      revisionTriggered = true;
+      const target = bossJson.revisionTarget;
+      const revInstr = String(bossJson.revisionInstruction).trim().slice(0, 400);
+      try {
+        if (target === 'MACRO_NEWS') {
+          const revRes = await edgeRunAgentCascade({
+            order: macroProv === 'groq' ? ['openrouter', 'gemini', 'groq'] : ['groq', 'openrouter', 'gemini'],
+            keys,
+            isBoss: false,
+            systemInstruction: macroSystem,
+            userPrompt: buildMacroUser(revInstr),
+            expectJson: true,
+            timeoutMs: 9000,
+          });
+          macroMemo = revRes.json || macroMemo;
+          providersUsed.add(fmtProv(revRes.provider));
+          workflowTrace.push({
+            stepNumber: workflowTrace.length + 1,
+            role: 'REVISION',
+            divisionName: isEn ? 'Macro Division (Revised)' : 'Revisi Divisi Makro',
+            provider: revRes.provider,
+            model: revRes.model,
+            action: isEn ? 'Corrected Macro Memo' : 'Perbaikan Memo Makro',
+            status: 'revised',
+            summary: String(macroMemo?.headlineVerdict || 'Revisi selesai.').slice(0, 180),
+            latencyMs: revRes.latencyMs,
+          });
+        } else {
+          const revRes = await edgeRunAgentCascade({
+            order: journalProv === 'openrouter' ? ['groq', 'gemini', 'openrouter'] : ['openrouter', 'groq', 'gemini'],
+            keys,
+            isBoss: false,
+            systemInstruction: journalSystem,
+            userPrompt: buildJournalUser(revInstr),
+            expectJson: true,
+            timeoutMs: 9000,
+          });
+          journalMemo = revRes.json || journalMemo;
+          providersUsed.add(fmtProv(revRes.provider));
+          workflowTrace.push({
+            stepNumber: workflowTrace.length + 1,
+            role: 'REVISION',
+            divisionName: isEn ? 'Journal Division (Revised)' : 'Revisi Divisi Jurnal',
+            provider: revRes.provider,
+            model: revRes.model,
+            action: isEn ? 'Corrected Journal Memo' : 'Perbaikan Memo Jurnal',
+            status: 'revised',
+            summary: String(journalMemo?.journalHealthVerdict || 'Revisi selesai.').slice(0, 180),
+            latencyMs: revRes.latencyMs,
+          });
+        }
+
+        const bossPrompt2 = buildBossPrompt(false);
+        const signOffRes = await edgeRunAgentCascade({
+          order: ['gemini', 'groq', 'openrouter'],
+          keys,
+          isBoss: true,
+          systemInstruction: bossPrompt2.sys,
+          userPrompt: bossPrompt2.usr,
+          expectJson: true,
+          timeoutMs: 11_000,
+        });
+        if (signOffRes.json?.finalAnswer) {
+          bossJson = signOffRes.json;
+        }
+        providersUsed.add(fmtProv(signOffRes.provider));
+        workflowTrace.push({
+          stepNumber: workflowTrace.length + 1,
+          role: 'BOSS_SIGNOFF',
+          divisionName: isEn ? 'Head of Desk Sign-Off' : 'Finalisasi Boss (Gemini)',
+          provider: signOffRes.provider,
+          model: signOffRes.model,
+          action: isEn ? 'Final Verified Briefing' : 'Jawaban Final Terverifikasi',
+          status: 'completed',
+          summary: isEn ? 'Revision verified into final answer.' : 'Revisi diverifikasi & disahkan Boss.',
+          latencyMs: signOffRes.latencyMs,
+        });
+      } catch {
+        // Keep initial boss response if revision sub-call times out
+      }
+    }
+
+    workflowTrace.forEach((step, idx) => {
+      step.stepNumber = idx + 1;
+    });
+
+    const dirRaw = String(bossJson?.actionCard?.directionClarity || 'INFO_ONLY').toUpperCase();
+    const directionClarity =
+      dirRaw === 'BUY' || dirRaw === 'SELL' || dirRaw === 'WAIT_MIXED' ? dirRaw : 'INFO_ONLY';
+
+    return jsonResponse({
+      success: true,
+      answer: String(bossJson?.finalAnswer || bossRes.text || '').trim(),
+      actionCard: {
+        directionClarity,
+        directionLabel: String(bossJson?.actionCard?.directionLabel || 'Briefing Meja Trading').slice(0, 120),
+        spikeWarning: String(bossJson?.actionCard?.spikeWarning || '-').slice(0, 220),
+        riskReminder: String(bossJson?.actionCard?.riskReminder || '-').slice(0, 220),
+      },
+      workflowTrace,
+      revisionTriggered,
+      activeProviders: Array.from(providersUsed),
+      totalLatencyMs: Date.now() - startedAt,
+    });
+  } catch (err) {
+    return jsonResponse(
+      {
+        success: false,
+        answer: '',
+        workflowTrace: [],
+        revisionTriggered: false,
+        activeProviders: [],
+        totalLatencyMs: Date.now() - startedAt,
+        error: `Gangguan ruang rapat Multi-Agent AI: ${sanitizeEdgeAgentError(err)}`,
+      },
+      502
+    );
+  }
+}
+
+async function handleAgentDeskQaDiagnose(req: Request): Promise<Response> {
+  const startedAt = Date.now();
+  try {
+    const body = (await req.json()) || {};
+    const language: 'id' | 'en' = body.language === 'en' ? 'en' : 'id';
+    const isEn = language === 'en';
+    const diagnostics = body.diagnostics && typeof body.diagnostics === 'object' ? body.diagnostics : null;
+    if (!diagnostics) {
+      return jsonResponse({ success: false, error: isEn ? 'Missing diagnostics payload.' : 'Payload diagnostik kosong.' }, 400);
+    }
+    const keys = getEdgeAgentDeskKeys();
+    if (keys.geminiKeys.length + keys.groqKeys.length + keys.openRouterKeys.length === 0) {
+      return jsonResponse({ success: false, error: 'Belum ada API key AI aktif di Supabase Secrets.' }, 503);
+    }
+    const sys = `Kamu adalah DIVISI QA / CLEANING SERVICE ENGINEER untuk TradeVault (Web & Android APK Capacitor).
+Analisis JSON diagnostik + log error secara objektif. Jangan mengarang masalah yang tidak ada di data.
+Keluarkan HANYA JSON valid: {"healthGrade":"HEALTHY"|"WARNING"|"CRITICAL","summary":string,"rootCauses":string[],"recommendedActions":string[]}`;
+    const res = await edgeRunAgentCascade({
+      order: ['groq', 'gemini', 'openrouter'],
+      keys,
+      isBoss: false,
+      systemInstruction: sys,
+      userPrompt: `Bahasa: ${isEn ? 'English' : 'Bahasa Indonesia'}\nData Diagnostik:\n${JSON.stringify(diagnostics).slice(0, 15_000)}\nKeluarkan HANYA JSON.`,
+      expectJson: true,
+      timeoutMs: 11_000,
+    });
+    const parsed = res.json || {};
+    const gradeRaw = String(parsed.healthGrade || 'WARNING').toUpperCase();
+    const healthGrade = gradeRaw === 'HEALTHY' || gradeRaw === 'CRITICAL' ? gradeRaw : 'WARNING';
+    return jsonResponse({
+      success: true,
+      healthGrade,
+      summary: String(parsed.summary || '').slice(0, 600),
+      rootCauses: Array.isArray(parsed.rootCauses) ? parsed.rootCauses.slice(0, 6).map((x: any) => String(x).slice(0, 220)) : [],
+      recommendedActions: Array.isArray(parsed.recommendedActions)
+        ? parsed.recommendedActions.slice(0, 6).map((x: any) => String(x).slice(0, 220))
+        : [],
+      providerUsed: res.provider === 'gemini' ? 'Gemini' : res.provider === 'groq' ? 'Groq' : 'OpenRouter',
+      modelUsed: res.model,
+      latencyMs: Date.now() - startedAt,
+    });
+  } catch (err) {
+    return jsonResponse(
+      {
+        success: false,
+        healthGrade: 'WARNING',
+        summary: '',
+        rootCauses: [],
+        recommendedActions: [],
+        latencyMs: Date.now() - startedAt,
+        error: sanitizeEdgeAgentError(err),
+      },
+      502
+    );
+  }
+}
+
 Deno.serve(async (req: Request) => {
   if (req.method === 'OPTIONS') {
     return new Response(null, { status: 204, headers: CORS_HEADERS });
@@ -2943,12 +3806,20 @@ Deno.serve(async (req: Request) => {
   if (req.method === 'GET' && (path.endsWith('/api/health') || path.endsWith('/tradevault-api'))) {
     const scannerKeys = getScannerGeminiApiKeys();
     const newsKeys = getNewsGeminiApiKeys();
+    const agentKeys = getEdgeAgentDeskKeys();
     return jsonResponse({
       ok: true,
       service: 'tradevault-supabase-edge-api',
       geminiConfigured: Boolean(scannerKeys.length > 0 || newsKeys.length > 0),
       scannerGeminiConfigured: scannerKeys.length > 0,
       newsGeminiConfigured: newsKeys.length > 0,
+      groqConfigured: agentKeys.groqKeys.length > 0,
+      openRouterConfigured: agentKeys.openRouterKeys.length > 0,
+      agentDeskReady: Boolean(
+        agentKeys.geminiKeys.length > 0 ||
+          agentKeys.groqKeys.length > 0 ||
+          agentKeys.openRouterKeys.length > 0
+      ),
       apiKeysStrictlySeparated: true,
       scannerModelCascade: SCANNER_MODEL_CASCADE,
       proxyCapabilities: {
@@ -2982,6 +3853,14 @@ Deno.serve(async (req: Request) => {
 
   if (req.method === 'POST' && path.endsWith('/api/macro-news/fundamental')) {
     return handleFundamentalGoldAnalyze(req);
+  }
+
+  if (req.method === 'POST' && path.endsWith('/api/agent-desk/chat')) {
+    return handleAgentDeskChat(req);
+  }
+
+  if (req.method === 'POST' && path.endsWith('/api/agent-desk/qa-diagnose')) {
+    return handleAgentDeskQaDiagnose(req);
   }
 
   return jsonResponse(

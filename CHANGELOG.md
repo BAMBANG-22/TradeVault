@@ -1,5 +1,8 @@
 # Changelog
 
+## v1.3.7 · #VLO-2611-AGT10 (2026-11-25)
+- Multi-Agent News + ACC Boss Gemini, Chat AI Kustom (WA/IG DM) & Developer Console Tersembunyi: Membagi beban Trade News (Groq → OpenRouter) dan Fundamental Emas (OpenRouter → Groq) dengan review & ACC wajib Boss Gemini; meluncurkan Tanya AI bergaya WhatsApp/IG DM yang santai, dinamis, hemat kuota (Smart Direct), dan dapat dikustom (foto profil, nama, gaya bahasa, warna bubble/background dengan kontras otomatis WCAG, serta wallpaper); serta menyembunyikan Cloud, Backend & Diagnostik di balik gerbang Pengembang (7x tap versi + kode seri SHA-256) lengkap dengan tombol Sembunyikan (Hide), Cleaning Service (Auto-Repair cache aman), Perekam Error otomatis, dan Analisa AI QA.
+
 ## v1.3.6 · #VLO-2611-APK09 (2026-11-25)
 - Vela Replay Chart, Auto-Fullscreen, APK Cache-Purge Native & Diagnostik Lengkap: Menghapus Light Chart dan menjadikan Vela Replay sebagai chart kedua dengan Twelve Data + proxy fallback, Bar Replay, Sesi Trading Kustom, dan Auto-Fullscreen; menambahkan pembersihan HTTP cache WebView native di MainActivity saat upgrade APK; menyinkronkan Trade News, Fundamental Gold, dan Cycle Confluence; serta memperluas panel Diagnostik APK & OCR di Pengaturan.
 

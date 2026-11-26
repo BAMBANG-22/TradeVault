@@ -19,8 +19,8 @@ declare const __BUILD_RUN_NUMBER__: string | undefined;
 declare const __TESSERACT_VERSION__: string | undefined;
 declare const __TESSERACT_CORE_VERSION__: string | undefined;
 
-export const APP_VERSION = '1.3.6';
-export const APP_CHANGE_CODE = 'VLO-2611-APK09';
+export const APP_VERSION = '1.3.7';
+export const APP_CHANGE_CODE = 'VLO-2611-AGT10';
 export const APP_RELEASE_DATE = '2026-11-25';
 export const OCR_PIPELINE_VERSION = 'offline-mt5-ocr-v3.2-lossless-png';
 
@@ -71,6 +71,17 @@ export function getAppBuildIdentity(): AppBuildIdentity {
 }
 
 export const APP_VERSION_HISTORY: AppVersionEntry[] = [
+  {
+    version: '1.3.7',
+    changeCode: 'VLO-2611-AGT10',
+    date: '2026-11-25',
+    titleId: 'Multi-Agent News + ACC Boss Gemini, Chat AI Kustom (WA/IG DM) & Developer Console Tersembunyi',
+    titleEn: 'Multi-Agent News + Boss Gemini ACC, Customizable AI Messenger & Hidden Developer Console',
+    summaryId:
+      'Membagi beban analisis Trade News (Groq) & Fundamental Emas (OpenRouter) dengan validasi ACC wajib Boss Gemini; meluncurkan chat Tanya AI bergaya WhatsApp/IG DM yang santai, dinamis, hemat kuota (Smart Direct), dan bisa dikustom penuh (foto profil, nama, gaya bicara, warna bubble, wallpaper); serta menyembunyikan seluruh menu Cloud, Backend & Diagnostik di balik akses Pengembang (7x tap + kode seri) lengkap dengan tombol Sembunyikan, Cleaning Service (Auto-Repair aman), Perekam Error, dan Analisa AI QA.',
+    summaryEn:
+      'Distributed Trade News (Groq) & Fundamental Gold (OpenRouter) analysis with mandatory Boss Gemini ACC sign-off; launched customizable WhatsApp/IG DM-style Tanya AI messenger (profile photo, name, persona, bubble colors, wallpaper, Smart Direct routing, and offline fallback); and gated Cloud, Backend & Diagnostics behind a hidden Developer Console (7x tap + serial code) with Hide toggle, safe Cleaning Service auto-repair, Error Recorder, and AI QA Diagnosis.',
+  },
   {
     version: '1.3.6',
     changeCode: 'VLO-2611-APK09',

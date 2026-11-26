@@ -45,6 +45,12 @@ import {
   normalizeCanonicalMacroTitleKey,
 } from './src/utils/macroNewsEngine';
 import { isMarketDay } from './src/utils/date';
+import {
+  resolveAgentDeskEnvKeys,
+  runAgentDeskOrchestration,
+  runSpecialistNewsDraft,
+  runAiQaDiagnostics,
+} from './src/server/agentDeskOrchestrator';
 
 dotenv.config();
 
@@ -302,6 +308,7 @@ function withTimeoutAbort<T>(
 app.get('/api/health', (_req, res) => {
   const scannerKeys = getScannerGeminiApiKeys();
   const newsKeys = getNewsGeminiApiKeys();
+  const agentKeys = resolveAgentDeskEnvKeys();
   res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
   return res.json({
     ok: true,
@@ -309,6 +316,13 @@ app.get('/api/health', (_req, res) => {
     geminiConfigured: Boolean(scannerKeys.length > 0 || newsKeys.length > 0),
     scannerGeminiConfigured: scannerKeys.length > 0,
     newsGeminiConfigured: newsKeys.length > 0,
+    groqConfigured: agentKeys.groqKeys.length > 0,
+    openRouterConfigured: agentKeys.openRouterKeys.length > 0,
+    agentDeskReady: Boolean(
+      agentKeys.geminiKeys.length > 0 ||
+        agentKeys.groqKeys.length > 0 ||
+        agentKeys.openRouterKeys.length > 0
+    ),
     apiKeysStrictlySeparated: true,
     scannerModelCascade: SCANNER_MODEL_CASCADE,
     proxyCapabilities: {
@@ -4065,6 +4079,16 @@ app.post('/api/macro-news/analyze', async (req, res) => {
       },
     };
 
+    // Multi-Agent Office Division A (Trade News): Groq primary -> OpenRouter backup drafts initial memo,
+    // then Boss Gemini audits against raw facts & signs off (ACC) before publishing to the App.
+    const macroStaffDraft = await runSpecialistNewsDraft({
+      division: 'TRADE_NEWS',
+      dataset: promptPayload,
+    });
+    const macroStaffDraftBlock = macroStaffDraft.used
+      ? `\n\n[DRAFT MEMO DIVISI BERITA (${macroStaffDraft.provider?.toUpperCase()} / ${macroStaffDraft.model}) — AUDIT & ACC OLEH BOSS GEMINI: Periksa terhadap dataset mentah di atas; perbaiki jika ada kekeliruan arah/spike/angka, lalu terbitkan JSON final yang di-ACC]:\n${macroStaffDraft.draftText}`
+      : '';
+
     let aiResponseText = '';
     let usedModel = '';
     const modelFailures: Array<{ model: string; code: string }> = [];
@@ -4084,7 +4108,7 @@ app.post('/api/macro-news/analyze', async (req, res) => {
               model,
               contents: `Analyze this real-time XAU/USD macro dataset (including CME FedWatch probabilities, simultaneous USD High-Impact events, and preNewsFlow intelligence such as Leading Indicator Chain, Consensus Tightness, 2s10s Yield Curve Spread, VIX risk regime, Gold 3-day GC=F positioning, and FOMC Blackout window while strictly preserving Master Playbook rules) and return the structured JSON Scenario Matrix in both Bahasa Indonesia (Id) and English (En):\n${JSON.stringify(
                 promptPayload
-              )}`,
+              )}${macroStaffDraftBlock}`,
               config: {
                 abortSignal,
                 systemInstruction: XAUUSD_MACRO_MASTER_PLAYBOOK_SYSTEM_INSTRUCTION,
@@ -4195,7 +4219,9 @@ app.post('/api/macro-news/analyze', async (req, res) => {
           const candidateParsed = parseAiJsonResponse(response.text);
           if (Object.keys(candidateParsed).length > 0) {
             aiResponseText = response.text;
-            usedModel = model;
+            usedModel = macroStaffDraft.used
+              ? `${macroStaffDraft.provider}+gemini-acc(${model})`
+              : model;
             break;
           }
           modelFailures.push({ model, code: 'INVALID_JSON' });
@@ -4828,6 +4854,16 @@ CRITICAL RULES:
 4. HONESTY RULE: If isDataUnchangedFromLastCheck is true, explicitly open headline/dataStatusNote/sectionA stating honestly that core fundamental drivers have not shifted since the last check (zero manufactured drama).
 5. Connect the full A-to-Z macro picture seamlessly: (A) Macro Regime & what shifted, (B) Fed rates, Real Yields, US10Y & DXY opportunity-cost engine (explicitly note if tacticalOverlay.dxyDistortionDetected is true so traders see EUR/USD weakness distorting DXY without yield support), (C) Cross-market capital flows (Wall Street risk appetite, VIX / Dash-for-Cash risk, GLD ETF, CFTC COT, Asia/China FX & oil), and (D) Clear 1-Day vs 1-Week vs 1-Month roadmap — explicitly distinguishing structural 1W/1M bias from any active intraday tacticalOverlay risk (e.g. 0-4h medium-impact surprises, oversold short-covering bounces, or two-way volatility) plus concrete invalidation triggers.`;
 
+    // Multi-Agent Office Division B (Fundamental Gold): OpenRouter primary -> Groq backup drafts cross-asset brief,
+    // then Boss Gemini audits against raw facts & signs off (ACC) before publishing to the App.
+    const fundamentalStaffDraft = await runSpecialistNewsDraft({
+      division: 'FUNDAMENTAL_GOLD',
+      dataset: promptData,
+    });
+    const fundamentalStaffDraftBlock = fundamentalStaffDraft.used
+      ? `\n\n[DRAFT MEMO DIVISI FUNDAMENTAL (${fundamentalStaffDraft.provider?.toUpperCase()} / ${fundamentalStaffDraft.model}) — AUDIT & ACC OLEH BOSS GEMINI: Verifikasi terhadap angka mentah & aturan anti-BUY/SELL di atas, perbaiki bila ada penyimpangan, lalu terbitkan JSON final yang di-ACC]:\n${fundamentalStaffDraft.draftText}`
+      : '';
+
     let aiResponseText = '';
     let usedModel = '';
     const modelFailures: Array<{ model: string; code: string }> = [];
@@ -4847,7 +4883,7 @@ CRITICAL RULES:
               model,
               contents: `Synthesize this verified XAU/USD multi-horizon dataset into a crisp, authoritative A-Z Macro Desk Brief in Bahasa Indonesia (Id) and English (En):\n${JSON.stringify(
                 promptData
-              )}`,
+              )}${fundamentalStaffDraftBlock}`,
               config: {
                 abortSignal,
                 systemInstruction: fundamentalSystemInstruction,
@@ -4929,7 +4965,9 @@ CRITICAL RULES:
           const candidateParsed = parseAiJsonResponse(response.text);
           if (Object.keys(candidateParsed).length > 0) {
             aiResponseText = response.text;
-            usedModel = model;
+            usedModel = fundamentalStaffDraft.used
+              ? `${fundamentalStaffDraft.provider}+gemini-acc(${model})`
+              : model;
             break;
           }
           modelFailures.push({ model, code: 'INVALID_JSON' });
@@ -5048,6 +5086,52 @@ CRITICAL RULES:
     res.status(500).json({
       success: false,
       error: 'Gagal menyusun analisis Fundamental Gold.',
+    });
+  }
+});
+
+// Multi-Agent Office Chat Desk ("Tanya AI" — Boss Gemini + Divisi Makro [Groq] + Divisi Jurnal [OpenRouter])
+app.post('/api/agent-desk/chat', async (req, res) => {
+  try {
+    const keys = resolveAgentDeskEnvKeys();
+    const result = await runAgentDeskOrchestration(req.body, keys);
+    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
+    res.status(result.status).json(result.payload);
+  } catch (err: any) {
+    res.status(500).json({
+      success: false,
+      answer: '',
+      actionCard: {
+        directionClarity: 'INFO_ONLY',
+        directionLabel: 'Error Internal',
+        spikeWarning: '-',
+        riskReminder: '-',
+      },
+      workflowTrace: [],
+      revisionTriggered: false,
+      activeProviders: [],
+      totalLatencyMs: 0,
+      error: 'Terjadi gangguan pada ruang rapat Multi-Agent AI. Silakan coba lagi.',
+    });
+  }
+});
+
+// Developer QA / Cleaning Service AI Diagnostics Analyst
+app.post('/api/agent-desk/qa-diagnose', async (req, res) => {
+  try {
+    const keys = resolveAgentDeskEnvKeys();
+    const result = await runAiQaDiagnostics(req.body, keys);
+    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
+    res.status(result.status).json(result.payload);
+  } catch {
+    res.status(500).json({
+      success: false,
+      healthGrade: 'WARNING',
+      summary: '',
+      rootCauses: [],
+      recommendedActions: [],
+      latencyMs: 0,
+      error: 'Gagal menjalankan analisa QA AI.',
     });
   }
 });
