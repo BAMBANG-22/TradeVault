@@ -84,10 +84,30 @@ export interface AgentDeskEnvKeys {
   openRouterKeys: string[];
 }
 
-const GEMINI_FAST_CHAT_MODELS = ['gemini-3.1-flash-lite', 'gemini-4-hydrogen'] as const;
+const GEMINI_FAST_CHAT_MODELS = ['gemini-3.1-flash-lite', 'gemini-3.1-flash-lite', 'gemini-4-hydrogen'] as const;
 const GEMINI_DEEP_CHAT_MODELS = ['gemini-4-hydrogen', 'gemini-3.1-flash-lite'] as const;
 const GROQ_MODELS = ['llama-3.3-70b-versatile', 'llama-3.1-8b-instant'] as const;
 const OPENROUTER_FREE_MODELS = ['meta-llama/llama-3.3-70b-instruct:free'] as const;
+
+// Short in-memory cooldown when an external provider fails with 401/402/403/404/429
+// so subsequent chat turns skip broken/unavailable providers in 0ms.
+const providerCooldownUntil = new Map<string, { until: number; reason: string }>();
+const PROVIDER_COOLDOWN_MS = 120_000;
+
+function isProviderOnCooldown(provider: string): string | null {
+  const entry = providerCooldownUntil.get(provider);
+  if (!entry) return null;
+  if (Date.now() < entry.until) return entry.reason;
+  providerCooldownUntil.delete(provider);
+  return null;
+}
+
+function markProviderCooldown(provider: string, reason: string): void {
+  providerCooldownUntil.set(provider, {
+    until: Date.now() + PROVIDER_COOLDOWN_MS,
+    reason,
+  });
+}
 
 export function parseEnvKeyList(raw: string | undefined): string[] {
   if (!raw || typeof raw !== 'string') return [];
@@ -203,10 +223,14 @@ async function callGeminiProvider(params: {
     throw new Error('Gemini API key not configured');
   }
   let lastErr: unknown = new Error('Gemini call failed');
+  const deadKeys = new Set<string>();
 
   for (const model of params.models) {
+    const modelCapMs =
+      model === 'gemini-3.1-flash-lite' ? Math.min(params.timeoutMs, 6_800) : Math.min(params.timeoutMs, 9_000);
     for (const apiKey of params.keys) {
-      const budgetMs = getRemainingBudgetMs(params.deadlineMs, params.timeoutMs);
+      if (deadKeys.has(apiKey)) continue;
+      const budgetMs = getRemainingBudgetMs(params.deadlineMs, modelCapMs);
       if (budgetMs < 1500) {
         throw new Error(sanitizeAgentError(lastErr || new Error('Request deadline reached')));
       }
@@ -228,6 +252,7 @@ async function callGeminiProvider(params: {
               config: {
                 abortSignal,
                 systemInstruction: params.systemInstruction,
+                maxOutputTokens: 1400,
                 ...(typeof params.temperature === 'number' ? { temperature: params.temperature } : {}),
                 ...(model === 'gemini-4-hydrogen'
                   ? { thinkingConfig: { thinkingLevel: ThinkingLevel.LOW } }
@@ -258,8 +283,9 @@ async function callGeminiProvider(params: {
       } catch (err) {
         lastErr = err;
         const msg = sanitizeAgentError(err);
-        if (/\b(401|403|API_KEY_INVALID)\b/i.test(msg)) {
-          continue; // try next key, don't retry same broken key across models
+        if (/\b(401|403|429|API_KEY_INVALID|RESOURCE_EXHAUSTED)\b/i.test(msg)) {
+          deadKeys.add(apiKey);
+          continue;
         }
       }
     }
@@ -311,7 +337,7 @@ async function callOpenAiCompatibleProvider(params: {
             { role: 'user', content: params.userPrompt },
           ],
           temperature: params.temperature ?? (params.expectJson ? 0.35 : 0.7),
-          max_tokens: 950,
+          max_tokens: 1300,
         };
         if (params.expectJson && params.provider === 'groq') {
           body.response_format = { type: 'json_object' };
@@ -332,9 +358,16 @@ async function callOpenAiCompatibleProvider(params: {
         if (!res.ok) {
           const errText = await res.text().catch(() => '');
           lastErr = new Error(`HTTP ${res.status}: ${errText.slice(0, 120)}`);
-          // Fast circuit-breaker: 401/402/403/429 on this key won't succeed on other models of same key
-          if (res.status === 401 || res.status === 402 || res.status === 403 || res.status === 429) {
+          // Fast circuit-breaker: 401/402/403/404/429 won't succeed on sibling models of same key
+          if (
+            res.status === 401 ||
+            res.status === 402 ||
+            res.status === 403 ||
+            res.status === 404 ||
+            res.status === 429
+          ) {
             keyFatal = true;
+            markProviderCooldown(params.provider, `HTTP ${res.status}`);
           }
           continue;
         }
@@ -390,6 +423,13 @@ async function runWithProviderCascade(params: {
       errors.push(`${prov}: skipped (deadline budget reached)`);
       break;
     }
+    if (prov !== 'gemini') {
+      const cdReason = isProviderOnCooldown(prov);
+      if (cdReason) {
+        errors.push(`${prov}: cooldown (${cdReason})`);
+        continue;
+      }
+    }
     try {
       if (prov === 'groq' && params.keys.groqKeys.length > 0) {
         const res = await callOpenAiCompatibleProvider({
@@ -428,7 +468,7 @@ async function runWithProviderCascade(params: {
           systemInstruction: params.systemInstruction,
           userPrompt: params.userPrompt,
           expectJson: params.expectJson,
-          timeoutMs: Math.min(params.timeoutMs, 9_500),
+          timeoutMs: Math.min(params.timeoutMs, 11_500),
           temperature: params.temperature,
           deadlineMs: params.deadlineMs,
         });
@@ -671,7 +711,9 @@ function formatHistoryBlock(history: AgentDeskChatHistoryItem[]): string {
 
 function preClassifySpeedHint(message: string): {
   likelyHeavyMarket: boolean;
+  likelyMarketOutlook: boolean;
   likelyLivePrice: boolean;
+  likelyJournalOrApp: boolean;
 } {
   const q = message.trim().toLowerCase();
   const hasPriceCue =
@@ -680,26 +722,57 @@ function preClassifySpeedHint(message: string): {
     );
   const hasAssetCue = /\b(xau|xauusd|gold|emas|dxy|us10y|us02y|usoil|oil|btc|eurusd)\b/i.test(q);
   const asksDeepAnalysis =
-    /\b(kenapa|mengapa|analisis|analisa|fundamental|berita|news|jurnal|journal|spike|sweep|prediksi|arah|kemana|ke mana|buy|sell|entry|posisi|risiko|risk|drawdown|win\s?rate|fomc|cpi|nfp|evaluasi|audit|bagusnya|ambil)\b/i.test(
+    /\b(kenapa|mengapa|analisis|analisa|fundamental|berita|news|jurnal|journal|spike|sweep|prediksi|arah|kemana|ke mana|buy|sell|entry|posisi|risiko|risk|drawdown|win\s?rate|fomc|cpi|nfp|evaluasi|audit|bagusnya|ambil|grow|growth|selisih|compound|monte\s?carlo|simulasi|cycle|siklus|confluence|astronacci|seasonality|smc)\b/i.test(
       q
     );
   const asksLivePrice = hasPriceCue && hasAssetCue && !asksDeepAnalysis;
-  const asksMarketOrJournal =
-    /\b(xau|xauusd|gold|emas|dxy|yield|us10y|us02y|usoil|oil|forex|market|pasar|chart|candle|news|berita|makro|macro|fundamental|fomc|fed|fedwatch|cpi|ppi|nfp|pmi|powell|polymarket|cycle|confluence|smc|heatmap|spike|sweep|whipsaw|buy|sell|long|short|entry|sl|tp|jurnal|journal|trade|trading|posisi|open|planned|lot|risiko|risk|drawdown|dd|win\s?rate|profit|loss|rugi|equity|saldo|balance|guardrail|evaluasi|audit|rekap)\b/i.test(
+
+  const asksJournalOrApp =
+    /\b(jurnal|journal|trade|trading|posisi|open|planned|lot|risiko|risk|drawdown|dd|win\s?rate|profit|loss|rugi|equity|saldo|balance|guardrail|evaluasi|audit|rekap|grow|growth|pertumbuhan|selisih|kemarin|kemaren|tgl|tanggal|minggu\s+(?:ini|lalu)|bulan\s+(?:ini|lalu)|hari\s+ini|persen|persentase|modal|compound|compounding|monte\s?carlo|simulasi|simulation|expectancy|profit\s?factor|r[\s-]?multiple|kalkulator|calculator|playbook|radar|ocr|scan|screenshot|vela|replay|strategi|strategy|streak|komisi|commission|swap|pip|pips|hit\s*tp|hit\s*sl|manual\s*close|close\s*manual|rasio|rr|disiplin|kebiasaan|bocor|kesalahan|mistake|emosi|checklist|fitur|menu|cara\s+(?:pakai|input|buka|gunakan|catat|cek|export)|struktur\s+app|kurang\s+paham|belum\s+paham|gak\s+paham|ga\s+paham|bingung|jelasin|jelaskan|maksud|maksudnya|simpel|sederhana)\b/i.test(
       q
     );
+
+  // Explicit market/macro/fundamental/cycle/news/direction cues
+  const explicitMarketNewsOrCycleCue =
+    /\b(news|berita|makro|macro|fundamental|fomc|fed|fedwatch|cpi|ppi|nfp|pmi|powell|polymarket|cot|cftc|real\s*yield|dxy|yield|us10y|us02y|usoil|oil|cycle|siklus|confluence|astronacci|lunar|bulan\s+purnama|seasonality|smc|heatmap|spike|sweep|whipsaw|arah\s+(?:emas|gold|xau|market|pasar)|(?:emas|gold|xau|xauusd|market|pasar)\s+(?:mau\s+)?(?:kemana|ke\s+mana|naik|turun|hari\s+ini)|sentimen|outlook|bias\s+(?:emas|gold|xau|hari\s+ini|market)|kalender\s+ekonomi|jadwal\s+news|ada\s+news|ga\s*ada\s+news|gak\s+ada\s+news|tidak\s+ada\s+news)\b/i.test(
+      q
+    );
+
+  // Asset/direction words ONLY count as Market Outlook if user is NOT purely asking about their own journal trades!
+  const isPureJournalMentioningGold =
+    asksJournalOrApp &&
+    !explicitMarketNewsOrCycleCue &&
+    /\b(jurnal|journal|trade\s+(?:saya|ku|aku|kemarin|kemaren|hari|tgl)|profit|loss|hit\s*tp|hit\s*sl|manual|rasio|rr|disiplin|evaluasi|audit|rekap|selisih|grow|growth|kebiasaan|bocor|tgl|tanggal|kemarin|kemaren|cara\s+(?:pakai|input|buka)|fitur|menu|monte\s?carlo|compound)\b/i.test(
+      q
+    );
+
+  const genericMarketCue =
+    /\b(xau|xauusd|gold|emas|forex|market|pasar|chart|candle|buy|sell|long|short|bullish|bearish|entry)\b/i.test(
+      q
+    );
+
+  const likelyMarketOutlook =
+    explicitMarketNewsOrCycleCue || (genericMarketCue && !isPureJournalMentioningGold);
+
   return {
-    likelyHeavyMarket: asksMarketOrJournal && !asksLivePrice,
+    likelyHeavyMarket: (likelyMarketOutlook || asksJournalOrApp) && !asksLivePrice,
+    likelyMarketOutlook,
     likelyLivePrice: asksLivePrice,
+    likelyJournalOrApp: asksJournalOrApp,
   };
 }
 
 function buildCompactDeviceContext(contextObj: Record<string, any>): Record<string, unknown> {
+  // Put runtime.localClock, liveMarketQuote, marketAlertBadge, and journal FIRST so heavy market text never truncates journal math!
   return {
     runtime: contextObj?.runtime ?? null,
     liveMarketQuote: contextObj?.liveMarketQuote ?? null,
+    marketAlertBadge: contextObj?.marketAlertBadge ?? null,
+    journal: contextObj?.journal ?? null,
+    // Module 1: Berita Trading (intraday/event catalyst & 1-Way vs 2-Way Sweep First)
     macroNews: contextObj?.macroNews
       ? {
+          moduleName: 'Berita Trading (Trade News / Event Intraday)',
           analyzedAt: contextObj.macroNews.analyzedAt,
           dominantBias: contextObj.macroNews.dominantBias,
           buyProbability: contextObj.macroNews.buyProbability,
@@ -714,8 +787,10 @@ function buildCompactDeviceContext(contextObj: Record<string, any>): Record<stri
           topHeadlines: contextObj.macroNews.topHeadlines,
         }
       : null,
+    // Module 2: Fundamental Emas (multi-horizon macro regime 1D/1W/1M — strictly BULLISH/BEARISH/NEUTRAL)
     fundamentalGold: contextObj?.fundamentalGold
       ? {
+          moduleName: 'Fundamental Emas (Makro Multi-Horizon 1D/1W/1M)',
           analyzedAt: contextObj.fundamentalGold.analyzedAt,
           overallBias: contextObj.fundamentalGold.overallBias,
           bullishProbability: contextObj.fundamentalGold.bullishProbability,
@@ -727,10 +802,11 @@ function buildCompactDeviceContext(contextObj: Record<string, any>): Record<stri
           headlineSummary: contextObj.fundamentalGold.headlineSummary,
         }
       : null,
+    // Module 3: Siklus & Confluence (WIB session, Astronacci lunar/solar/Fib time, XAU seasonality, AMD/SMC)
+    cycleConfluence: contextObj?.cycleConfluence ?? null,
     cmeFedWatch: contextObj?.cmeFedWatch ?? null,
     polymarket: contextObj?.polymarket ?? null,
     smcSignal: contextObj?.smcSignal ?? null,
-    journal: contextObj?.journal ?? null,
     syncStatus: contextObj?.syncStatus ?? null,
   };
 }
@@ -759,7 +835,7 @@ export async function runAgentDeskOrchestration(
   keys: AgentDeskEnvKeys
 ): Promise<{ status: number; payload: AgentDeskResponsePayload }> {
   const startedAt = Date.now();
-  const deadlineMs = startedAt + 18_500; // Strict global budget so APK NEVER hits 38s timeout!
+  const deadlineMs = startedAt + 21_000; // Fast & resilient budget well under client 26s timeout
 
   const validated = sanitizeIncomingPayload(rawBody);
   if (!validated.valid) {
@@ -804,11 +880,23 @@ export async function runAgentDeskOrchestration(
   const memoryText = formatMemoryListForPrompt(validated.contextObj);
   const personaGuide = getPersonaStyleGuide(validated.persona, validated.agentName, isEn);
 
-  // Only include heavy market/journal JSON when message is likely about trading/price/journal,
-  // keeping casual banter ultra-light, fast, and 100% immune to accidental data leakage!
-  const includeFullData = speedHint.likelyHeavyMarket || speedHint.likelyLivePrice || validated.history.length >= 2;
-  const compactContext = includeFullData
+  // Smart context routing:
+  // - Market outlook / live price -> full 3-module market context + journal + localClock + marketAlertBadge
+  // - Pure journal / app / ongoing chat -> runtime.localClock + marketAlertBadge (peripheral awareness only!) + full micro-forensic journal (NO heavy news dump that causes news-bleeding!)
+  // - Pure small talk -> minimal runtime + spot quote only
+  const needsMarketData = speedHint.likelyMarketOutlook || speedHint.likelyLivePrice;
+  const needsJournalData = speedHint.likelyJournalOrApp || validated.history.length >= 2;
+  const compactContext = needsMarketData
     ? buildCompactDeviceContext(validated.contextObj)
+    : needsJournalData
+    ? {
+        runtime: validated.contextObj?.runtime ?? null,
+        liveMarketQuote: validated.contextObj?.liveMarketQuote?.xauusd
+          ? { xauusd: validated.contextObj.liveMarketQuote.xauusd }
+          : null,
+        marketAlertBadge: validated.contextObj?.marketAlertBadge ?? null,
+        journal: validated.contextObj?.journal ?? null,
+      }
     : {
         runtime: validated.contextObj?.runtime ?? null,
         liveMarketQuote: validated.contextObj?.liveMarketQuote?.xauusd
@@ -818,31 +906,91 @@ export async function runAgentDeskOrchestration(
 
   const systemInstruction = `${personaGuide}
 
-TUGAS UTAMA (OTAK TUNGGAL CERDAS):
-Pahami MAKSUD & KONTEKS pesan user secara menyeluruh dari riwayat obrolan, lalu pilih SATU jalur paling tepat di field "intent":
-1. "SMALL_TALK" — Sapaan, perkenalan, obrolan santai, curhat ringan, terima kasih, atau user memberi nama panggilan baru (mis. "saya panggil kamu Wowo yaa").
-   - ATURAN KERAS: DILARANG membocorkan/membahas arah market, bias BUY/SELL, harga XAU, berita, atau data jurnal jika user tidak menanyakannya!
-   - Jika user memberi nama panggilan baru, isi "renamedTo" HANYA dengan NAMA BERSIHNYA saja tanpa kata penyambung/partikel (contoh: "saya panggil kamu Wowo yaa" -> renamedTo: "Wowo", BUKAN "Wowo yaa").
-2. "OUT_OF_SCOPE" — Pertanyaan topik umum di luar trading & TradeVault (cuaca, bola, resep makanan, gosip, film, obat, dll).
-   - Tolak dengan santai, sopan, dan tetap hangat sesuai karaktermu; jelaskan ranah tugasmu khusus di market XAU/USD, berita makro, fundamental emas, dan jurnal trading TradeVault. Jangan pernah mengarang jawaban topik di luar ranah itu.
-3. "LIVE_PRICE_CHECK" — User menanyakan harga spot terkini (mis. harga XAU/USD sekarang berapa).
-   - Gunakan HANYA angka nyata dari "DATA PERANGKAT -> liveMarketQuote". Sebutkan angka + sumber + jam update dengan natural. DILARANG mengarang harga jika data kosong/offline.
-4. "DIRECT_FOLLOWUP" — Tanggapan lanjutan singkat dalam obrolan trading yang sedang berlangsung.
-5. "FULL_OFFICE" — Analisis arah market XAU/USD, Trade News, Spike/Sweep, Fundamental Gold, Polymarket, FedWatch, evaluasi jurnal offline, posisi aktif, atau manajemen risiko.
-   - ATURAN ANTI-SALAH BACA:
-     * "Bearish Spike awal" = harga XAU/USD berpotensi TURUN tajam dulu, BUKAN sinyal BUY langsung!
-     * "Bullish Spike awal" = harga XAU/USD berpotensi NAIK tajam dulu, jangan dikejar buta jika bias utama SELL!
-     * "TWO_WAY_SWEEP_FIRST" = rawan sapuan 2 arah di menit 0–5, tunggu konfirmasi struktur di menit 15+.
-   - Gunakan HANYA data nyata dari DATA PERANGKAT. Jangan mengarang angka.
-   - Jelaskan mengalir seperti partner trading di chat WA (bukan laporan template bernomor kaku).
+IDENTITAS & JIWA ASISTEN (ALFRED / JARVIS PRIBADI DI TRADEVAULT / VLO JOURNAL):
+Kamu adalah partner trading pribadi yang hidup, peka konteks, luwes, dan sangat teliti. Kamu BUKAN bot kaku yang menjawab dengan template berita setiap saat.
+- ALUR PERCAKAPAN NON-LINEAR: User bebas lompat topik kapan saja (misalnya dari audit jurnal -> tiba-tiba tanya arah emas hari ini -> tanya cara pakai fitur app -> balik lagi ke detail jurnal). Selalu ikuti konteks terbaru secara mulus dan pahami rujukan obrolan sebelumnya ("kemarin", "yang tadi", "total profitnya berapa", "kebiasaan yang bocor apa").
+- INSTING FLEKSIBEL (ANTI-MEMAKSA NEWS!):
+  * Saat user sedang membahas **jurnal trade murni**, audit eksekusi, perhitungan growth/compounding/Monte Carlo, atau cara pakai app -> fokus 100% pada jurnal/topik itu. **DILARANG** memaksakan komentar berita makro/news kecuali user sendiri yang menyinggungnya atau catatan trade memang menyebut news!
+  * Saat user menanyakan **arah market / outlook emas** (mis. "hari ini emas mau kemana?", "gold gimana hari ini?") -> berikan analisis utuh dengan membedakan 3 modul pasar secara jelas, DAN **secara proaktif cek \`marketAlertBadge.hasHighImpactNews\`**:
+    - Jika \`hasHighImpactNews === true\`, WAJIB ingatkan user ada berita/katalis berdampak tinggi (\`primaryEventTitle\`, \`primaryEventImpact\`, pola 1-Arah vs 2-Arah Sweep First) yang berpotensi mengguncang emas supaya tidak terlewat!
+    - Jika \`hasHighImpactNews === false\` (atau \`macroNews\` sepi), sampaikan dengan jujur bahwa kalender berita sedang relatif sepi/tidak ada katalis besar, lalu fokuskan bacaan ke Fundamental Emas & Siklus/Confluence tanpa mengarang narasi berita!
+- PROAKTIF ALA ALFRED/JARVIS: Beri arahan bijak, peringatan risiko, atau larangan halus saat memang penting bagi keselamatan akun user (mis. batas rugi harian kena, kebiasaan close manual kepagian di bawah 60% TP, rasio RR terbalik SL > TP, lot kegedean/over-risk, atau ada jadwal rilis high-impact sebentar lagi) — sampaikan dengan bahasa manusiawi yang hangat, bukan menggurui.
+
+PILIH SATU JALUR PALING TEPAT DI FIELD "intent":
+1. "SMALL_TALK" — Sapaan, perkenalan, obrolan santai, terima kasih, atau ganti nama panggilan ("saya panggil kamu Wowo yaa").
+   - ATURAN KERAS: DILARANG membocorkan arah market, harga XAU, berita, atau isi jurnal jika user tidak menanyakannya!
+   - Jika ganti nama, isi "renamedTo" HANYA nama bersih tanpa partikel ("Wowo yaa" -> "Wowo").
+2. "OUT_OF_SCOPE" — Topik umum di luar trading, matematika keuangan/trading, & aplikasi TradeVault (resep, bola, gosip, obat, film, dll). Tolak hangat sesuai karaktermu.
+3. "LIVE_PRICE_CHECK" — User hanya menanyakan harga spot terkini (mis. harga XAU/USD sekarang berapa). Gunakan HANYA angka nyata dari \`liveMarketQuote\`.
+4. "DIRECT_FOLLOWUP" — Pertanyaan/tanggapan lanjutan singkat dalam obrolan yang sedang berjalan (mis. "total profitnya berapa?", "kurang paham", "jelasin lebih simpel", "balik lagi ke jurnal").
+5. "FULL_OFFICE" — Analisis arah market XAU/USD, Berita Trading, Fundamental Emas, Siklus & Confluence, evaluasi/forensik jurnal, selisih growth, hitungan compounding/lot/risiko, atau panduan fitur & struktur aplikasi TradeVault.
+
+ATURAN JAM LOKAL, TANGGAL & KALKULASI PRESISI (0% SALAH TANGGAL, 0% SALAH HITUNG!):
+- SELALU baca \`runtime.localClock\` terlebih dahulu:
+  * \`localReadableId\` (tanggal lokal user hari ini, mis. "Jumat, 27 November 2026"), \`localTimeHHMM\` + \`timezone\` (mis. "01:05 WIB"), \`yesterdayReadableId\` (tanggal "kemarin" yang BENAR menurut jam lokal user!).
+  * Perhatikan \`isEarlyMorningLocal\`: jika user chat jam 00:00–05:59 dini hari, "kemarin" adalah \`yesterdayDateKey\` (\`yesterdayReadableId\`), BUKAN minggu sebelumnya!
+- SELALU baca \`journal.focusedPeriod\` untuk pertanyaan tentang tanggal/hari/minggu/bulan tertentu (termasuk pertanyaan lanjutan seperti "total profitnya kemarin berapa persisnya?" karena resolver otomatis membaca riwayat chat!):
+  * Gunakan ANGKA DETERMINISTIK langsung dari \`journal.focusedPeriod\`: \`label\`, \`startDate\`, \`endDate\`, \`matchedFrom\`, \`tradesCount\`, \`wins\`, \`losses\`, \`breakeven\`, \`winRatePct\`, \`totalGrossProfit\`, \`totalCommission\`, \`totalSwap\`, \`totalNetProfit\`, \`periodGainDeltaOnStartingBalancePct\`, \`totalR\`, \`avgR\`, \`avgPlannedRR\`, \`closeTypeCounts\` (\`hitTP\`, \`hitSL\`, \`manualProfit\`, \`manualLoss\`, \`manualBE\`), \`auditSummary\`, dan daftar \`trades\` di periode tersebut.
+  * **DILARANG KERAS** menjumlahkan profit secara manual jika sudah ada \`focusedPeriod.totalNetProfit\` atau \`dailyHistory[i].netProfit\`! Gunakan angka persisnya (termasuk gross, komisi, swap, dan net jika relevan) agar 100% akurat hingga sen!
+  * Jika \`focusedPeriod.tradesCount === 0\`, sampaikan jujur belum ada trade selesai di tanggal tersebut, lalu boleh tawarkan melihat hari aktif terdekat dari \`journal.dailyHistory\`.
+- Untuk pertanyaan SELISIH GROWTH kemarin vs hari ini, gunakan \`journal.growthComparison\`:
+  * \`beforeTodayCumulativeGainPct\` (total grow s/d kemarin), \`currentTotalGainPct\` (total grow sekarang), **\`todayCumulativeGainDeltaPct\`** (SELISIH total persen grow hari ini), \`todayCompoundedReturnPct\` (return harian terhadap ekuitas kemarin), \`todayClosedTradesCount\`, \`todayNetProfit\`.
+
+FORENSIK MIKRO JURNAL (WAJIB PAHAM SAMPAI DETAIL TERKECIL!):
+Kamu bisa melihat setiap trade hingga detail mikro di \`journal.focusedPeriod.trades\`, \`journal.recentClosedTrades\`, \`journal.openOrPlannedTrades\`, \`journal.microPatternsSummary\`, \`journal.dailyHistory\` (30 hari), \`journal.strategyBreakdown\`, \`journal.sessionBreakdown\`, \`journal.topMistakes\`, \`journal.playbooks\`, dan \`journal.riskGuardrails\`:
+- **Cara Close (\`closeType\`)**: bedakan dengan tajam antara **HIT_TP** (kena Take Profit penuh), **HIT_SL** (kena Stop Loss sesuai rencana), **MANUAL_PROFIT** (ditutup manual saat profit — cek \`tpCompletionPct\`! Jika < 65% artinya tutup kepagian / profit terpotong), **MANUAL_LOSS** (cut loss manual sebelum SL), dan **MANUAL_BE** (tutup impas).
+- **Rasio & Kualitas Setup**: bandingkan \`plannedRR\` (rasio TP vs SL awal) dengan \`realizedR\` (hasil R nyata). Soroti jika ada flag mikro di \`microAuditFlags\`:
+  * \`INVERTED_RR\` (rasio terbalik: jarak SL lebih lebar dari TP / RR < 1:1 — ini risiko bocor besar!)
+  * \`EARLY_MANUAL_PROFIT\` (close manual kepagian jauh sebelum TP)
+  * \`MANUAL_CUT_LOSS\` (panik cut loss manual sebelum kena SL)
+  * \`OVER_RISK\` (risiko trade melebihi batas maxTradeRiskPercent user)
+  * \`NO_SL\` (entry tanpa Stop Loss!)
+  * \`SL_MODIFIED\` / \`TP_MODIFIED\` (menggeser SL/TP saat posisi berjalan)
+  * \`HIGH_FEE_DRAG\` (komisi + swap menggerus porsi besar profit)
+  * \`RULE_VIOLATED\` / \`CHECKLIST_SKIPPED\` (melanggar aturan / melewatkan checklist SOP)
+- **Psikologi & Catatan Trade**: baca \`disciplineRating\` (1–5), \`emotionTag\`, \`mistakeTags\`, \`entryReason\`, \`notes\`, \`postTradeEvaluation\`, \`executionNotes\`, dan kesesuaian dengan \`playbooks\` user.
+- Saat user meminta analisis trade (harian/periode/keseluruhan), sebutkan temuan mikro konkret (mis. "dari 3 trade kemarin, 1 kena TP penuh, 1 kamu close manual kepagian padahal baru 45% jalan ke TP, dan 1 lagi RR-nya terbalik 1:0.6 karena SL lebih lebar dari TP").
+
+PEMISAHAN TEGAS 3 MODUL INTELIJEN PASAR (JANGAN PERNAH DICAMPURADUKKAN!):
+Kamu WAJIB membedakan dengan jelas karakter & sumber data dari 3 modul pasar di TradeVault:
+1. **Berita Trading (\`macroNews\`)** — Fokus **katalis jangka pendek / intraday / kalender rilis**. Membaca pola **1-Arah (ONE_WAY_IMPULSE)** vs **2-Arah Sweep First (TWO_WAY_SWEEP_FIRST: Fase 0–5 menit rawan sapuan tipuan, arah bersih terlihat menit 15+)**, \`primaryEvent\`, \`dominantBias\` (BUY/SELL/MIXED), \`whipsawWarning\`, \`intermarketPulse\` (DXY, US02Y, US10Y, USOIL).
+   * Anti salah baca: "Bearish Spike awal" = XAU/USD berpotensi TURUN tajam dulu, BUKAN sinyal BUY langsung!
+2. **Fundamental Emas (\`fundamentalGold\`)** — Fokus **rezim makro multi-horizon (1D / 1W / 1M)**. Membaca struktur makro: Real Yield, US10Y, DXY, FedWatch (\`cmeFedWatch\`), CFTC COT, arus ETF/GLD, geopolitik/Polymarket (\`polymarket\`), dan Intraday Tactical Overlay.
+   * WAJIB gunakan istilah **BULLISH / BEARISH / NEUTRAL** saat membahas Fundamental Emas (bedakan dari sinyal intraday Berita Trading!).
+3. **Siklus & Confluence (\`cycleConfluence\`)** — Fokus **timing waktu, siklus, musiman & struktur teknikal**. Membaca:
+   * Sesi trading WIB aktif (\`activeSessionWib\`: Asia / London / New York / Overlap)
+   * Siklus Astronacci (\`astronacciCycle\`: fase bulan/lunar, Solar Cardinal, Fibonacci Time Cluster, astroScore)
+   * Seasonality bulanan historis XAU/USD (\`monthlySeasonalityXauUsd\`: win rate & rata-rata return historis bulan berjalan + overextension)
+   * Mode Confluence aktif (\`activeTradingMode\`: Swing / Scalp), AMD Phase, dan Sinyal SMC (\`smcSignal\` / \`latestSmcSignal\`).
+- Saat menjawab pertanyaan arah pasar, jelaskan hubungan ketiganya secara jernih (misalnya: Fundamental 1W masih Bullish, Siklus masuk sesi London + seasonality positif, sementara Berita Trading hari ini ada rilis CPI high-impact rawan sweep 2 arah).
+
+PENGUASAAN LENGKAP STRUKTUR & CARA PAKAI APLIKASI TRADEVAULT (VLO JOURNAL):
+Kamu menguasai seluruh peta navigasi Sidebar & cara penggunaan tiap fitur di aplikasi ini:
+- **Grup Jurnal**:
+  1) **Dasbor** (\`Dasbor\`): Ringkasan ekuitas, kurva pertumbuhan, KPI utama (Win Rate, Profit Factor, Expectancy, Max DD), statistik harian, dan ringkasan posisi aktif.
+  2) **Jurnal Trade** (\`Jurnal Trade\`): Tempat mencatat & mengelola semua trade (Open / Planned / Closed).
+     * **Cara input trade**: Klik tombol **+ Catat Trade / Tambah Trade** -> bisa isi manual (pair, BUY/SELL, entry, SL, TP, lot, komisi, swap, emosi, alasan entry, checklist SOP, strategi/Playbook) ATAU pakai **Scan Kilat AI / Offline OCR Screenshot MT5** (upload screenshot riwayat/order MT5 -> otomatis mengekstrak pair, arah, entry, SL, TP, lot, dan profit!).
+     * Klik trade untuk melihat detail forensik, edit SL/TP/close type, konteks macro news saat trade, atau ekspor **Laporan PDF / Shareable PNG Card**.
+  3) **Analitik** (\`Analitik\`): Bedah mendalam Win Rate, Profit Factor, Expectancy, R-Multiple, **Radar 5-Dimensi**, performa per Sesi/Strategi/Pair, **Cost of Mistakes** (berapa uang bocor gara-gara emosi/kesalahan), **Playbook Setup A+**, dan **Review Mingguan/Bulanan**.
+  4) **Manajemen Risiko** (\`Manajemen Risiko\`): Berisi **Kalkulator Risiko & Lot** (standar XAU/USD di app: 1 pip = 0.10, mis. 4000 -> 3995 = 50 pips; mendukung USD <-> IDR), **Guardrail Risiko** (batas rugi harian, max loss beruntun, max drawdown), **Kalkulator Compounding / Growth Plan** (Mode Compounding \`Modal × (1 + r)^n\` vs Mode Profit Tetap/Ditarik), dan **Simulasi Trade & Monte Carlo** (1.000–10.000 acakan urutan trade -> lihat Median P50, Best P95, Worst P5, Probabilitas Profit, & Rata-rata Max DD).
+- **Grup Market Insight**:
+  5) **Tanya AI** (\`Tanya AI\`): Ruang obrolan denganmu (bisa ganti persona Santai/Ringkas/Mentor, ganti nama panggilan, kelola Memori Jangka Panjang di menu Tema, dan tombol **Akhiri Sesi** untuk merangkum & menyimpan pelajaran penting ke memori).
+  6) **Chart Pasar** (\`Chart Pasar\`): Dua mode chart — **TradingView** dan **Vela Replay** (dilengkapi Bar Replay untuk backtest, penanda Sesi Kustom WIB, dan Auto-Fullscreen).
+  7) **Berita Trading** (\`Berita Trading\`): Kalender ekonomi, rilis aktual real-time, Dual-Horizon 1-Arah vs 2-Arah Sweep First, dan intermarket pulse.
+  8) **Fundamental Emas** (\`Fundamental Emas\`): Peta makro XAU/USD 1D/1W/1M (Real Yield, US10Y, DXY, FedWatch, CFTC COT, Polymarket, Tactical Overlay).
+  9) **Siklus & Confluence** (\`Siklus & Confluence\`): Sesi WIB aktif, Siklus Astronacci (Lunar/Solar/Fib Time), Seasonality bulanan XAU/USD, AMD Phase, dan confluence Swing/Scalp.
+  10) **Sinyal SMC** (\`Sinyal SMC\`): Smart Money Concept heatmap, struktur, POI, dan zona likuiditas XAU/USD.
+- **Pengaturan** (\`Pengaturan\`): Multi-Akun / Sub-Portofolio, Mata Uang USD <-> IDR, Standar Broker & Pip, Suara Notifikasi/Tactile Click, Mode Offline, Backup & Restore JSON, Tema Light/Dark, serta Diagnostik Sistem APK.
+- **Pintasan Cepat**: Mendukung **Cmd/Ctrl + K** (Quick Command) untuk lompat cepat antar menu.
+- **ATURAN MENGAJAR ADAPTIF**: Jika user tanya cara pakai fitur atau konsep (Monte Carlo, Compounding, Expectancy, dll.), jelaskan langkahnya urut & jelas. Jika user bilang "kurang paham", "bingung", atau "jelasin lebih simpel", segera pakai analogi dunia nyata yang super sederhana (lempar koin, dagang warung, celengan harian) tanpa istilah statistik rumit!
 
 ATURAN MEMORI:
-- Isi "newMemories" (0–2 item singkat) HANYA jika ada fakta baru yang benar-benar penting diingat untuk hari-hari mendatang (mis. nama panggilan baru, preferensi user, level XAU penting, atau pola jurnal penting). Jangan simpan basa-basi kosong.
+- Isi "newMemories" (0–2 item singkat) HANYA jika ada fakta baru yang benar-benar penting diingat untuk hari-hari mendatang (nama panggilan baru, kebiasaan jurnal penting, level XAU patokan, atau preferensi user).
 
 Keluarkan HANYA JSON valid:
 {
   "intent": "SMALL_TALK" | "OUT_OF_SCOPE" | "LIVE_PRICE_CHECK" | "DIRECT_FOLLOWUP" | "FULL_OFFICE",
-  "reply": "Balasan percakapan natural & manusiawi dalam ${isEn ? 'English' : 'Bahasa Indonesia'}",
+  "reply": "Balasan percakapan natural, cerdas & manusiawi dalam ${isEn ? 'English' : 'Bahasa Indonesia'}",
   "renamedTo": null | "NamaPanggilanBersih",
   "directionClarity": "BUY" | "SELL" | "WAIT_MIXED" | "INFO_ONLY",
   "newMemories": [{"text": "1 kalimat fakta penting", "category": "preference" | "market" | "journal" | "general"}]
@@ -857,31 +1005,28 @@ ${memoryText}
 RIWAYAT OBROLAN TERAKHIR:
 ${formatHistoryBlock(validated.history)}
 
-DATA PERANGKAT (hanya baca jika user memang bertanya soal harga/market/jurnal):
-${JSON.stringify(compactContext).slice(0, 13_500)}
+DATA PERANGKAT (baca sesuai konteks pertanyaan user — jangan memaksakan bahas news jika user hanya bahas jurnal!):
+${JSON.stringify(compactContext).slice(0, 18_000)}
 
 PESAN TERBARU USER:
 "${validated.message}"
 
 Keluarkan HANYA JSON valid.`;
 
-  // Provider order optimized for speed + low quota usage:
-  // - Casual / banter / follow-up: Groq first (ultra fast) -> Gemini Flash-Lite (high RPM) -> OpenRouter
-  // - Heavy market / live price: Gemini Hydrogen/Flash-Lite (high fact accuracy) -> Groq -> OpenRouter
-  const order: Array<'gemini' | 'groq' | 'openrouter'> = speedHint.likelyHeavyMarket
-    ? ['gemini', 'groq', 'openrouter']
-    : ['groq', 'gemini', 'openrouter'];
+  // Always prioritize Gemini Flash-Lite first (1.2s–4.5s, zero thinking stalls, zero Groq 404 waste),
+  // with Gemini Hydrogen, Groq, and OpenRouter as automatic fast fallbacks.
+  const order: Array<'gemini' | 'groq' | 'openrouter'> = ['gemini', 'groq', 'openrouter'];
 
   try {
     const res = await runWithProviderCascade({
       order,
       keys,
-      preferDeepGemini: speedHint.likelyHeavyMarket,
+      preferDeepGemini: false,
       systemInstruction,
       userPrompt,
       expectJson: true,
-      timeoutMs: 9_500,
-      temperature: speedHint.likelyHeavyMarket || speedHint.likelyLivePrice ? 0.35 : 0.7,
+      timeoutMs: 11_500,
+      temperature: speedHint.likelyHeavyMarket || speedHint.likelyLivePrice || speedHint.likelyJournalOrApp ? 0.25 : 0.65,
       deadlineMs,
     });
 
@@ -1083,8 +1228,9 @@ Keluarkan HANYA JSON.`;
 
   try {
     const res = await runWithProviderCascade({
-      order: ['groq', 'gemini', 'openrouter'],
+      order: ['gemini', 'groq', 'openrouter'],
       keys,
+      preferDeepGemini: false,
       isBoss: false,
       systemInstruction,
       userPrompt,
@@ -1202,8 +1348,9 @@ ATURAN:
 
   try {
     const res = await runWithProviderCascade({
-      order: ['groq', 'gemini', 'openrouter'],
+      order: ['gemini', 'groq', 'openrouter'],
       keys,
+      preferDeepGemini: false,
       isBoss: false,
       systemInstruction,
       userPrompt,
