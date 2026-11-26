@@ -19,9 +19,9 @@ declare const __BUILD_RUN_NUMBER__: string | undefined;
 declare const __TESSERACT_VERSION__: string | undefined;
 declare const __TESSERACT_CORE_VERSION__: string | undefined;
 
-export const APP_VERSION = '1.3.7';
-export const APP_CHANGE_CODE = 'VLO-2611-AGT10';
-export const APP_RELEASE_DATE = '2026-11-25';
+export const APP_VERSION = '1.3.8';
+export const APP_CHANGE_CODE = 'VLO-2611-JRV11';
+export const APP_RELEASE_DATE = '2026-11-26';
 export const OCR_PIPELINE_VERSION = 'offline-mt5-ocr-v3.2-lossless-png';
 
 export const BUILD_GIT_SHA: string =
@@ -72,15 +72,24 @@ export function getAppBuildIdentity(): AppBuildIdentity {
 
 export const APP_VERSION_HISTORY: AppVersionEntry[] = [
   {
+    version: '1.3.8',
+    changeCode: 'VLO-2611-JRV11',
+    date: '2026-11-26',
+    titleId: "Asisten Pribadi AI ala Jarvis/Alfred, Live XAUUSD & Memori Offline",
+    titleEn: "Asisten Pribadi AI ala Jarvis/Alfred, Live XAUUSD & Memori Offline",
+    summaryId: "Menambahkan 4-jalur router cerdas (basa-basi & ganti panggilan nama tanpa bocor data market, penjaga batas ranah, cek harga XAU/USD real-time dari Vela, serta auto-sync latar belakang berita/fundamental/Polymarket), memori jangka panjang offline (maks. 25 catatan + pengelola di menu Tema), serta tombol Akhiri Sesi & Auto-New-Day rollover (sinkron penuh dengan Supabase Edge Function).",
+    summaryEn: "Menambahkan 4-jalur router cerdas (basa-basi & ganti panggilan nama tanpa bocor data market, penjaga batas ranah, cek harga XAU/USD real-time dari Vela, serta auto-sync latar belakang berita/fundamental/Polymarket), memori jangka panjang offline (maks. 25 catatan + pengelola di menu Tema), serta tombol Akhiri Sesi & Auto-New-Day rollover (sinkron penuh dengan Supabase Edge Function).",
+  },
+  {
     version: '1.3.7',
     changeCode: 'VLO-2611-AGT10',
     date: '2026-11-25',
     titleId: 'Multi-Agent News + ACC Boss Gemini, Chat AI Kustom (WA/IG DM) & Developer Console Tersembunyi',
     titleEn: 'Multi-Agent News + Boss Gemini ACC, Customizable AI Messenger & Hidden Developer Console',
     summaryId:
-      'Membagi beban analisis Trade News (Groq) & Fundamental Emas (OpenRouter) dengan validasi ACC wajib Boss Gemini; meluncurkan chat Tanya AI bergaya WhatsApp/IG DM yang santai, dinamis, hemat kuota (Smart Direct), dan bisa dikustom penuh (foto profil, nama, gaya bicara, warna bubble, wallpaper); serta menyembunyikan seluruh menu Cloud, Backend & Diagnostik di balik akses Pengembang (7x tap + kode seri) lengkap dengan tombol Sembunyikan, Cleaning Service (Auto-Repair aman), Perekam Error, dan Analisa AI QA.',
+      'Membagi beban analisis Trade News (Groq) & Fundamental Emas (OpenRouter) dengan validasi ACC wajib Boss Gemini; meningkatkan Tanya AI menjadi asisten pribadi ala Jarvis/Alfred dengan 4-jalur router cerdas (basa-basi & panggilan nama tanpa bocor data market, tolak sopan di luar ranah, cek harga XAU/USD real-time dari Vela, dan auto-sync background berita/fundamental/Polymarket), memori jangka panjang offline (hingga 25 fakta), tombol Akhiri Sesi + Auto-New-Day rollover, serta Developer Console tersembunyi (7x tap + kode seri, Cleaning Service, Perekam Error & Analisa AI QA).',
     summaryEn:
-      'Distributed Trade News (Groq) & Fundamental Gold (OpenRouter) analysis with mandatory Boss Gemini ACC sign-off; launched customizable WhatsApp/IG DM-style Tanya AI messenger (profile photo, name, persona, bubble colors, wallpaper, Smart Direct routing, and offline fallback); and gated Cloud, Backend & Diagnostics behind a hidden Developer Console (7x tap + serial code) with Hide toggle, safe Cleaning Service auto-repair, Error Recorder, and AI QA Diagnosis.',
+      'Distributed Trade News (Groq) & Fundamental Gold (OpenRouter) analysis with mandatory Boss Gemini ACC sign-off; upgraded Tanya AI into a Jarvis/Alfred-style personal assistant featuring a 4-path intent router (zero-leak small talk & nickname detection, polite out-of-scope guard, real-time Vela XAU/USD spot lookup, and background Trade News/Fundamental/Polymarket auto-sync), persistent offline long-term memory (up to 25 items), Akhiri Sesi / Auto-New-Day rollover, and hidden Developer Console (7x tap + serial code, safe Cleaning Service, Error Recorder & AI QA Diagnosis).',
   },
   {
     version: '1.3.6',

@@ -22,6 +22,8 @@ import {
   WifiOff,
   Check,
   Sparkles,
+  Sun,
+  Brain,
 } from 'lucide-react';
 import { Trade } from '../../types/trade';
 import { AppSettings } from '../../types/settings';
@@ -33,13 +35,22 @@ import {
   AgentChatPersona,
   AgentChatThemeConfig,
   AgentDeskMessage,
+  AgentMemoryItem,
   buildAgentDeskContext,
+  clearAgentMemory,
   compressImageFileToDataUrl,
+  deleteAgentMemoryItem,
+  endAgentDeskSession,
   getContrastPalette,
+  getTodayLocalDateKey,
   loadAgentChatTheme,
+  loadAgentMemory,
+  loadLastSessionDayKey,
   resetAgentChatTheme,
   saveAgentChatTheme,
+  saveLastSessionDayKey,
   sendAgentDeskChatMessage,
+  syncAgentDeskLiveContext,
 } from '../../utils/agentDeskContext';
 
 interface AgentDeskViewProps {
@@ -125,6 +136,10 @@ export const AgentDeskView: React.FC<AgentDeskViewProps> = ({ trades, settings, 
   const [messages, setMessages] = useState<AgentDeskMessage[]>(() => loadStoredMessages());
   const [input, setInput] = useState('');
   const [isSending, setIsSending] = useState(false);
+  const [isEndingSession, setIsEndingSession] = useState(false);
+  const [syncStatusText, setSyncStatusText] = useState<string | null>(null);
+  const [sessionNotice, setSessionNotice] = useState<string | null>(null);
+  const [memoryItems, setMemoryItems] = useState<AgentMemoryItem[]>(() => loadAgentMemory());
   const [expandedTraceIds, setExpandedTraceIds] = useState<Record<string, boolean>>({});
   const [chatTheme, setChatTheme] = useState<AgentChatThemeConfig>(() =>
     loadAgentChatTheme(isDark)
@@ -136,10 +151,12 @@ export const AgentDeskView: React.FC<AgentDeskViewProps> = ({ trades, settings, 
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const avatarInputRef = useRef<HTMLInputElement | null>(null);
   const wallpaperInputRef = useRef<HTMLInputElement | null>(null);
+  const lastBgSyncRef = useRef<number>(0);
+  const rolloverCheckedRef = useRef<boolean>(false);
 
   const { absorbedSummary } = useMemo(
     () => buildAgentDeskContext(trades, settings, language),
-    [trades, settings, language]
+    [trades, settings, language, messages.length, syncStatusText, memoryItems.length]
   );
 
   const userContrast = useMemo(
@@ -167,6 +184,60 @@ export const AgentDeskView: React.FC<AgentDeskViewProps> = ({ trades, settings, 
       messagesEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
     }
   }, [messages.length, isSending, isActive]);
+
+  // Quiet background auto-sync of XAUUSD live spot + stale market feeds when chat opens
+  useEffect(() => {
+    if (!isActive) return;
+    if (absorbedSummary.isOfflineMode || !absorbedSummary.isNavigatorOnline) return;
+    const now = Date.now();
+    if (now - lastBgSyncRef.current < 60_000) return;
+    lastBgSyncRef.current = now;
+    void syncAgentDeskLiveContext({
+      forcePrice: false,
+      syncMarketFeeds: true,
+      language,
+      onStatus: setSyncStatusText,
+    });
+  }, [isActive, absorbedSummary.isOfflineMode, absorbedSummary.isNavigatorOnline, language]);
+
+  // Auto-New-Day Rollover: distill previous day's chat into offline memory on a new calendar date
+  useEffect(() => {
+    if (!isActive || rolloverCheckedRef.current) return;
+    rolloverCheckedRef.current = true;
+
+    const today = getTodayLocalDateKey();
+    const lastDay = loadLastSessionDayKey();
+    const stored = loadStoredMessages();
+    const lastMsgDay =
+      stored.length > 0 && stored[stored.length - 1]?.createdAt
+        ? getTodayLocalDateKey(new Date(stored[stored.length - 1].createdAt))
+        : null;
+
+    const isFromPreviousDay =
+      stored.length > 0 && ((lastDay && lastDay !== today) || (!lastDay && lastMsgDay && lastMsgDay !== today));
+
+    if (isFromPreviousDay) {
+      void (async () => {
+        setIsEndingSession(true);
+        try {
+          const result = await endAgentDeskSession({ messages: stored, language });
+          setMessages([]);
+          setExpandedTraceIds({});
+          saveStoredMessages([]);
+          setMemoryItems(loadAgentMemory());
+          setSessionNotice(
+            language === 'en'
+              ? `New Day started · Previous session archived (${result.savedMemoriesCount} memories kept).`
+              : `Hari baru dimulai · Sesi sebelumnya diarsipkan (${result.savedMemoriesCount} catatan memori aktif).`
+          );
+        } finally {
+          setIsEndingSession(false);
+        }
+      })();
+    } else if (!lastDay) {
+      saveLastSessionDayKey(today);
+    }
+  }, [isActive, language]);
 
   const updateChatTheme = (patch: Partial<AgentChatThemeConfig>) => {
     setChatTheme((prev) => {
@@ -222,15 +293,15 @@ export const AgentDeskView: React.FC<AgentDeskViewProps> = ({ trades, settings, 
     () =>
       language === 'en'
         ? [
-            'What is the market direction today? Will it spike first?',
+            'Where is live XAU/USD price right now?',
+            'What is today’s market direction? Will it spike first?',
             'Check my journal performance & active risk right now',
-            'Explain what initial Bearish Spike actually means',
             'Are my open positions aligned with today’s news?',
           ]
         : [
-            'Hari ini XAU arahnya kemana? Bakal spike dulu ga?',
+            'Harga XAUUSD saat ini di angka berapa?',
+            'Hari ini market mau kemana? Bakal spike dulu ga?',
             'Cek perkembangan jurnal & risiko akun saya sekarang',
-            'Jelasin dong maksud Bearish Spike awal biar ga salah arah',
             'Posisi aktif saya aman ga sama berita hari ini?',
           ],
     [language]
@@ -238,8 +309,9 @@ export const AgentDeskView: React.FC<AgentDeskViewProps> = ({ trades, settings, 
 
   const handleSend = async (overrideText?: string) => {
     const text = (overrideText ?? input).trim();
-    if (!text || isSending) return;
+    if (!text || isSending || isEndingSession) return;
 
+    setSessionNotice(null);
     const userMsg: AgentDeskMessage = {
       id: `u-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
       role: 'user',
@@ -249,6 +321,7 @@ export const AgentDeskView: React.FC<AgentDeskViewProps> = ({ trades, settings, 
 
     const nextHistory = [...messages, userMsg];
     setMessages(nextHistory);
+    saveLastSessionDayKey(getTodayLocalDateKey());
     setInput('');
     setIsSending(true);
     if (textareaRef.current) {
@@ -264,7 +337,13 @@ export const AgentDeskView: React.FC<AgentDeskViewProps> = ({ trades, settings, 
         language,
         persona: chatTheme.persona,
         agentName: chatTheme.agentName,
+        onSyncStatus: setSyncStatusText,
       });
+
+      if (reply.detectedAgentName) {
+        updateChatTheme({ agentName: reply.detectedAgentName });
+      }
+      setMemoryItems(loadAgentMemory());
 
       const assistantMsg: AgentDeskMessage = {
         id: `a-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
@@ -286,6 +365,7 @@ export const AgentDeskView: React.FC<AgentDeskViewProps> = ({ trades, settings, 
       };
       setMessages((prev) => [...prev, fallbackErr]);
     } finally {
+      setSyncStatusText(null);
       setIsSending(false);
     }
   };
@@ -303,14 +383,38 @@ export const AgentDeskView: React.FC<AgentDeskViewProps> = ({ trades, settings, 
     saveStoredMessages([]);
   };
 
+  const handleEndSession = async () => {
+    if (messages.length === 0 || isSending || isEndingSession) return;
+    setIsEndingSession(true);
+    try {
+      const result = await endAgentDeskSession({ messages, language });
+      setMessages([]);
+      setExpandedTraceIds({});
+      saveStoredMessages([]);
+      setMemoryItems(loadAgentMemory());
+      setSessionNotice(
+        tr(
+          `Sesi diakhiri · Intisari disimpan ke memori offline (${result.savedMemoriesCount} catatan).`,
+          `Session ended · Key facts saved to offline memory (${result.savedMemoriesCount} total).`
+        )
+      );
+    } finally {
+      setIsEndingSession(false);
+    }
+  };
+
   const toggleTrace = (id: string) => {
     setExpandedTraceIds((prev) => ({ ...prev, [id]: !prev[id] }));
   };
 
   const isOfflineNow = absorbedSummary.isOfflineMode || !absorbedSummary.isNavigatorOnline;
 
-  const statusLine = isSending
+  const statusLine = isEndingSession
+    ? tr('menyimpan memori sesi...', 'saving session memory...')
+    : isSending
     ? tr('sedang mengetik...', 'typing...')
+    : syncStatusText
+    ? syncStatusText
     : isOfflineNow
     ? tr('mode offline (data lokal)', 'offline mode (local data)')
     : chatTheme.agentSubtitle || tr('online', 'online');
@@ -342,9 +446,12 @@ export const AgentDeskView: React.FC<AgentDeskViewProps> = ({ trades, settings, 
       <header className="shrink-0 px-3.5 sm:px-4 py-2.5 bg-white dark:bg-[#101318] border-b border-[#E4E4E7] dark:border-[#20252D] flex items-center justify-between gap-3 z-10">
         <button
           type="button"
-          onClick={() => setIsCustomizeOpen(true)}
+          onClick={() => {
+            setMemoryItems(loadAgentMemory());
+            setIsCustomizeOpen(true);
+          }}
           className="flex items-center gap-3 min-w-0 text-left group cursor-pointer focus-visible:outline-none"
-          title={tr('Ketuk untuk kustom profil & tema chat', 'Tap to customize profile & chat theme')}
+          title={tr('Ketuk untuk kustom profil, memori & tema chat', 'Tap to customize profile, memory & theme')}
         >
           <div className="relative shrink-0">
             {renderAvatar('h-10 w-10', 'text-xs')}
@@ -362,7 +469,7 @@ export const AgentDeskView: React.FC<AgentDeskViewProps> = ({ trades, settings, 
             </div>
             <p
               className={`text-[11px] truncate ${
-                isSending
+                isSending || syncStatusText || isEndingSession
                   ? 'text-[#059669] dark:text-[#34D399] font-medium'
                   : 'text-[#64748B] dark:text-[#929BA9]'
               }`}
@@ -382,26 +489,33 @@ export const AgentDeskView: React.FC<AgentDeskViewProps> = ({ trades, settings, 
               {tr('Offline', 'Offline')}
             </span>
           )}
+          {messages.length > 0 && (
+            <button
+              type="button"
+              disabled={isSending || isEndingSession}
+              onClick={() => void handleEndSession()}
+              className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-full border border-[#E4E4E7] dark:border-[#20252D] text-[11px] font-medium text-[#0F172A] dark:text-[#F2F4F7] hover:bg-[#F4F4F5] dark:hover:bg-[#161B24] disabled:opacity-40 transition-colors cursor-pointer"
+              title={tr(
+                'Akhiri sesi hari ini, simpan intisari ke memori offline & mulai kanvas hari baru',
+                'End today’s session, save key facts to offline memory & start a fresh day'
+              )}
+            >
+              <Sun className="h-3.5 w-3.5" />
+              <span>{tr('Akhiri Sesi', 'New Day')}</span>
+            </button>
+          )}
           <button
             type="button"
-            onClick={() => setIsCustomizeOpen(true)}
+            onClick={() => {
+              setMemoryItems(loadAgentMemory());
+              setIsCustomizeOpen(true);
+            }}
             className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-full border border-[#E4E4E7] dark:border-[#20252D] text-[11px] font-medium text-[#0F172A] dark:text-[#F2F4F7] hover:bg-[#F4F4F5] dark:hover:bg-[#161B24] transition-colors cursor-pointer"
-            title={tr('Kustomisasi Tampilan Chat', 'Customize Chat Appearance')}
+            title={tr('Kustomisasi Tampilan & Memori AI', 'Customize Chat & Memory')}
           >
             <Palette className="h-3.5 w-3.5" />
             <span className="hidden sm:inline">{tr('Tema', 'Theme')}</span>
           </button>
-          {messages.length > 0 && (
-            <button
-              type="button"
-              onClick={handleClearChat}
-              className="p-2 rounded-full text-[#64748B] dark:text-[#929BA9] hover:text-[#E11D48] hover:bg-[#F4F4F5] dark:hover:bg-[#161B24] transition-colors cursor-pointer"
-              title={tr('Bersihkan Riwayat Chat', 'Clear Chat History')}
-              aria-label={tr('Bersihkan Riwayat Chat', 'Clear Chat History')}
-            >
-              <Trash2 className="h-4 w-4" />
-            </button>
-          )}
         </div>
       </header>
 
@@ -430,6 +544,19 @@ export const AgentDeskView: React.FC<AgentDeskViewProps> = ({ trades, settings, 
         )}
 
         <div className="relative z-10 flex flex-col min-h-full space-y-2.5">
+          {sessionNotice && (
+            <div className="mx-auto max-w-md w-full px-3 py-1.5 rounded-full bg-black/25 backdrop-blur-xs text-[11px] text-white flex items-center justify-between gap-2">
+              <span className="truncate">{sessionNotice}</span>
+              <button
+                type="button"
+                onClick={() => setSessionNotice(null)}
+                className="shrink-0 opacity-75 hover:opacity-100 cursor-pointer"
+                aria-label={tr('Tutup notifikasi', 'Dismiss notice')}
+              >
+                <X className="h-3 w-3" />
+              </button>
+            </div>
+          )}
           {messages.length === 0 ? (
             <div className="my-auto py-8 flex flex-col items-center text-center max-w-md mx-auto space-y-4">
               {renderAvatar('h-16 w-16', 'text-lg')}
@@ -445,10 +572,18 @@ export const AgentDeskView: React.FC<AgentDeskViewProps> = ({ trades, settings, 
                   style={{ color: bgContrast.muted }}
                 >
                   {tr(
-                    'Ngobrol santai soal jurnal trading, posisi aktif, atau arah berita & fundamental XAUUSD. Semua data sudah tersinkron otomatis di belakang layar.',
-                    'Chat naturally about your trading journal, open positions, or XAUUSD news & fundamentals. All your app data is synced quietly behind the scenes.'
+                    'Asisten pribadi TradeVault siap sedia. Sapa santai, cek harga XAUUSD live, atau tanya arah berita & jurnal — semua data disinkronkan otomatis dengan memori jangka panjang.',
+                    'Your TradeVault personal assistant is standing by. Chat casually, check live XAUUSD quotes, or analyze news & your journal — with auto-synced data & persistent memory.'
                   )}
                 </p>
+                {memoryItems.length > 0 && (
+                  <p className="text-[11px] pt-0.5" style={{ color: bgContrast.muted }}>
+                    {tr(
+                      `${memoryItems.length} catatan memori aktif dari sesi sebelumnya.`,
+                      `${memoryItems.length} persistent memories active from previous sessions.`
+                    )}
+                  </p>
+                )}
               </div>
 
               {/* Conversational Quick Starters */}
@@ -530,7 +665,13 @@ export const AgentDeskView: React.FC<AgentDeskViewProps> = ({ trades, settings, 
                         >
                           <Sparkles className="h-3 w-3" />
                           <span>
-                            {msg.routeType === 'DIRECT_FOLLOWUP'
+                            {msg.routeType === 'SMALL_TALK'
+                              ? tr('Mode Asisten', 'Assistant Mode')
+                              : msg.routeType === 'OUT_OF_SCOPE'
+                              ? tr('Batas Ranah', 'Scope Guard')
+                              : msg.routeType === 'LIVE_PRICE_CHECK'
+                              ? tr('Harga Live', 'Live Price')
+                              : msg.routeType === 'DIRECT_FOLLOWUP'
                               ? tr('Smart Direct', 'Smart Direct')
                               : tr(
                                   `Alur divisi (${msg.workflowTrace!.length})${
@@ -934,7 +1075,72 @@ export const AgentDeskView: React.FC<AgentDeskViewProps> = ({ trades, settings, 
               )}
             </div>
 
-            {/* 6. Division Trace Toggle */}
+            {/* 6. Offline Persistent Memory Manager */}
+            <div className="space-y-2.5 pt-2 border-t border-[#E4E4E7] dark:border-[#20252D]">
+              <div className="flex items-center justify-between gap-2">
+                <div className="flex items-center gap-1.5">
+                  <Brain className="h-3.5 w-3.5 text-[#526071] dark:text-[#929BA9]" />
+                  <span className="text-[10.5px] font-semibold uppercase tracking-wider text-[#64748B] dark:text-[#929BA9]">
+                    {tr(
+                      `Memori Offline (${memoryItems.length}/25)`,
+                      `Offline Memory (${memoryItems.length}/25)`
+                    )}
+                  </span>
+                </div>
+                {memoryItems.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => setMemoryItems(clearAgentMemory())}
+                    className="text-[11px] text-[#E11D48] hover:underline cursor-pointer"
+                  >
+                    {tr('Hapus Semua', 'Clear All')}
+                  </button>
+                )}
+              </div>
+
+              {memoryItems.length === 0 ? (
+                <p className="text-[11px] text-[#64748B] dark:text-[#929BA9] leading-relaxed">
+                  {tr(
+                    'Belum ada memori tersimpan. Nama panggilan baru, level penting, atau ringkasan saat klik "Akhiri Sesi" akan otomatis disimpan di sini.',
+                    'No memories saved yet. Nicknames, key market levels, or summaries when ending a session will be stored locally here.'
+                  )}
+                </p>
+              ) : (
+                <div className="max-h-40 overflow-y-auto space-y-1.5 pr-1">
+                  {memoryItems.map((mem) => (
+                    <div
+                      key={mem.id}
+                      className="flex items-start justify-between gap-2 px-2.5 py-2 rounded-xl bg-[#FAFAFA] dark:bg-[#0B0E13] border border-[#E4E4E7] dark:border-[#20252D]"
+                    >
+                      <div className="min-w-0 space-y-0.5">
+                        <span className="inline-block text-[9.5px] font-semibold uppercase tracking-wider text-[#64748B] dark:text-[#929BA9]">
+                          {mem.category === 'preference'
+                            ? tr('Preferensi', 'Preference')
+                            : mem.category === 'market'
+                            ? tr('Market', 'Market')
+                            : mem.category === 'journal'
+                            ? tr('Jurnal', 'Journal')
+                            : tr('Umum', 'General')}
+                        </span>
+                        <p className="text-[11px] text-[#0F172A] dark:text-[#F2F4F7] leading-snug break-words">
+                          {mem.text}
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setMemoryItems(deleteAgentMemoryItem(mem.id))}
+                        className="shrink-0 p-1 rounded-full text-[#64748B] hover:text-[#E11D48] hover:bg-[#F4F4F5] dark:hover:bg-[#161B24] cursor-pointer"
+                        title={tr('Hapus memori ini', 'Delete this memory')}
+                      >
+                        <X className="h-3 w-3" />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* 7. Division Trace Toggle */}
             <div className="flex items-center justify-between gap-3 pt-2 border-t border-[#E4E4E7] dark:border-[#20252D]">
               <div className="min-w-0">
                 <span className="text-xs font-medium text-[#0F172A] dark:text-[#F2F4F7] block">
@@ -967,15 +1173,30 @@ export const AgentDeskView: React.FC<AgentDeskViewProps> = ({ trades, settings, 
             </div>
 
             {/* Footer Buttons */}
-            <div className="flex items-center justify-between gap-2 pt-2 border-t border-[#E4E4E7] dark:border-[#20252D]">
-              <button
-                type="button"
-                onClick={handleResetTheme}
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[11px] font-medium text-[#64748B] dark:text-[#929BA9] hover:text-[#0F172A] dark:hover:text-[#F2F4F7] hover:bg-[#F4F4F5] dark:hover:bg-[#161B24] cursor-pointer"
-              >
-                <RotateCcw className="h-3.5 w-3.5" />
-                <span>{tr('Reset Default', 'Reset Default')}</span>
-              </button>
+            <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-[#E4E4E7] dark:border-[#20252D]">
+              <div className="flex items-center gap-1">
+                <button
+                  type="button"
+                  onClick={handleResetTheme}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[11px] font-medium text-[#64748B] dark:text-[#929BA9] hover:text-[#0F172A] dark:hover:text-[#F2F4F7] hover:bg-[#F4F4F5] dark:hover:bg-[#161B24] cursor-pointer"
+                >
+                  <RotateCcw className="h-3.5 w-3.5" />
+                  <span>{tr('Reset Tema', 'Reset Theme')}</span>
+                </button>
+                {messages.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      handleClearChat();
+                      setIsCustomizeOpen(false);
+                    }}
+                    className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-full text-[11px] font-medium text-[#E11D48] hover:bg-[#FEF2F2] dark:hover:bg-[#2A1215] cursor-pointer"
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                    <span>{tr('Hapus Chat', 'Wipe Chat')}</span>
+                  </button>
+                )}
+              </div>
               <button
                 type="button"
                 onClick={() => setIsCustomizeOpen(false)}

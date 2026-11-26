@@ -19,6 +19,7 @@ const SUPABASE_EDGE_SUPPORTED_PATHS = new Set([
   '/api/macro-news/analyze',
   '/api/macro-news/fundamental',
   '/api/agent-desk/chat',
+  '/api/agent-desk/end-session',
   '/api/agent-desk/qa-diagnose',
 ]);
 

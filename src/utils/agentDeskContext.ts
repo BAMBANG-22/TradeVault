@@ -25,10 +25,18 @@ import {
   loadLocalCachedMacroSnapshotSync,
   loadOfflineActualsArchive,
 } from './macroNewsEngine';
-import { loadCachedPolymarketMacroSnapshot } from './polymarketMacroSentiment';
+import { loadCachedPolymarketMacroSnapshot, fetchPolymarketMacroSentiment } from './polymarketMacroSentiment';
 import { SMC_OFFLINE_SIGNALS_STORAGE_KEY } from './xauSmartHeatmap';
 import { inspectMacroSyncConsistency } from './apkDiagnostics';
 import { recordAppDiagnosticEvent } from './devDiagnosticsStore';
+import {
+  TradeVaultVelaProvider,
+  getCachedLatestXauUsdQuoteSync,
+} from './velaTradeVaultProvider';
+import {
+  executeClientSideFundamentalGoldAnalysis,
+  executeClientSideMacroAnalysis,
+} from './clientSideMacroAnalyzer';
 
 export type AgentChatPersona = 'casual' | 'concise' | 'mentor';
 
@@ -296,12 +304,18 @@ export interface AgentDeskMessage {
   content: string;
   createdAt: string;
   mode?: 'ONLINE_MULTI_AGENT' | 'OFFLINE_LOCAL';
-  routeType?: 'DIRECT_FOLLOWUP' | 'FULL_OFFICE';
+  routeType?:
+    | 'SMALL_TALK'
+    | 'OUT_OF_SCOPE'
+    | 'LIVE_PRICE_CHECK'
+    | 'DIRECT_FOLLOWUP'
+    | 'FULL_OFFICE';
   actionCard?: AgentDeskActionCardClient;
   workflowTrace?: AgentWorkflowStepClient[];
   revisionTriggered?: boolean;
   activeProviders?: string[];
   totalLatencyMs?: number;
+  detectedAgentName?: string;
 }
 
 export interface AgentDeskAbsorbedSummary {
@@ -314,11 +328,388 @@ export interface AgentDeskAbsorbedSummary {
   fundamentalBias: string | null;
   fundamentalAnalyzedAt: string | null;
   polymarketCount: number;
+  xauPrice: number | null;
+  xauSource: string | null;
+  memoryCount: number;
   isOfflineMode: boolean;
   isNavigatorOnline: boolean;
 }
 
+export type AgentMemoryCategory = 'preference' | 'market' | 'journal' | 'general';
+
+export interface AgentMemoryItem {
+  id: string;
+  text: string;
+  category: AgentMemoryCategory;
+  createdAt: string;
+}
+
+export interface AgentSessionArchiveItem {
+  id: string;
+  endedAt: string;
+  messageCount: number;
+  summary: string;
+}
+
+export interface LiveXauUsdQuote {
+  price: number;
+  open15m: number | null;
+  high15m: number | null;
+  low15m: number | null;
+  changePct15m: number | null;
+  barTimeIso: string;
+  fetchedAt: string;
+  source: 'twelvedata' | 'binance' | 'cache';
+}
+
 export const AGENT_DESK_CHAT_STORAGE_KEY = 'tradevault_agent_desk_chat_v1';
+export const AGENT_MEMORY_STORAGE_KEY = 'tradevault_agent_memory_v1';
+export const AGENT_SESSION_DAY_KEY = 'tradevault_agent_last_session_day_v1';
+export const AGENT_SESSION_ARCHIVE_KEY = 'tradevault_agent_session_archive_v1';
+const LAST_XAU_QUOTE_STORAGE_KEY = 'tradevault_last_xau_quote_v1';
+
+const MAX_AGENT_MEMORY_ITEMS = 25;
+const MAX_SESSION_ARCHIVE_ITEMS = 15;
+const XAU_LIVE_TTL_MS = 50_000;
+const MACRO_AUTO_SYNC_MAX_AGE_MS = 25 * 60_000;
+const FUNDAMENTAL_AUTO_SYNC_MAX_AGE_MS = 30 * 60_000;
+const POLYMARKET_AUTO_SYNC_MAX_AGE_MS = 25 * 60_000;
+
+let cachedLiveXauQuote: LiveXauUsdQuote | null = null;
+let inFlightSyncPromise: Promise<void> | null = null;
+
+// ============================================================================
+// OFFLINE LONG-TERM MEMORY & SESSION ROLLOVER STORAGE
+// ============================================================================
+
+export function getTodayLocalDateKey(date = new Date()): string {
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, '0');
+  const d = String(date.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
+}
+
+export function loadLastSessionDayKey(): string | null {
+  if (typeof window === 'undefined' || typeof window.localStorage === 'undefined') return null;
+  try {
+    const val = window.localStorage.getItem(AGENT_SESSION_DAY_KEY);
+    return val && /^\d{4}-\d{2}-\d{2}$/.test(val.trim()) ? val.trim() : null;
+  } catch {
+    return null;
+  }
+}
+
+export function saveLastSessionDayKey(dayKey = getTodayLocalDateKey()): void {
+  if (typeof window === 'undefined' || typeof window.localStorage === 'undefined') return;
+  try {
+    window.localStorage.setItem(AGENT_SESSION_DAY_KEY, dayKey);
+  } catch {
+    // ignore storage errors
+  }
+}
+
+export function loadAgentMemory(): AgentMemoryItem[] {
+  if (typeof window === 'undefined' || typeof window.localStorage === 'undefined') return [];
+  try {
+    const raw = window.localStorage.getItem(AGENT_MEMORY_STORAGE_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed
+      .filter((item: any) => item && typeof item.text === 'string' && item.text.trim().length > 0)
+      .slice(0, MAX_AGENT_MEMORY_ITEMS)
+      .map((item: any) => ({
+        id: String(item.id || `mem-${Math.random().toString(36).slice(2, 8)}`),
+        text: String(item.text).trim().slice(0, 220),
+        category:
+          item.category === 'preference' || item.category === 'market' || item.category === 'journal'
+            ? item.category
+            : 'general',
+        createdAt: String(item.createdAt || new Date().toISOString()),
+      }));
+  } catch {
+    return [];
+  }
+}
+
+function saveAgentMemory(items: AgentMemoryItem[]): void {
+  if (typeof window === 'undefined' || typeof window.localStorage === 'undefined') return;
+  try {
+    window.localStorage.setItem(
+      AGENT_MEMORY_STORAGE_KEY,
+      JSON.stringify(items.slice(0, MAX_AGENT_MEMORY_ITEMS))
+    );
+  } catch {
+    // ignore storage errors
+  }
+}
+
+export function addAgentMemoryNotes(
+  notes: Array<{ text: string; category?: AgentMemoryCategory }>
+): AgentMemoryItem[] {
+  if (!Array.isArray(notes) || notes.length === 0) return loadAgentMemory();
+  const current = loadAgentMemory();
+  const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 70);
+
+  let updated = [...current];
+  for (const note of notes) {
+    const cleanText = typeof note?.text === 'string' ? note.text.trim().slice(0, 220) : '';
+    if (cleanText.length < 5) continue;
+    const category: AgentMemoryCategory =
+      note.category === 'preference' || note.category === 'market' || note.category === 'journal'
+        ? note.category
+        : 'general';
+
+    const incomingKey = norm(cleanText);
+    const isNicknameUpdate =
+      category === 'preference' && /memanggil asisten dengan nama|user calls assistant/i.test(cleanText);
+
+    updated = updated.filter((existing) => {
+      if (isNicknameUpdate && /memanggil asisten dengan nama|user calls assistant/i.test(existing.text)) {
+        return false;
+      }
+      return norm(existing.text) !== incomingKey;
+    });
+
+    updated.unshift({
+      id: `mem-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+      text: cleanText,
+      category,
+      createdAt: new Date().toISOString(),
+    });
+  }
+
+  const trimmed = updated.slice(0, MAX_AGENT_MEMORY_ITEMS);
+  saveAgentMemory(trimmed);
+  return trimmed;
+}
+
+export function deleteAgentMemoryItem(id: string): AgentMemoryItem[] {
+  const next = loadAgentMemory().filter((item) => item.id !== id);
+  saveAgentMemory(next);
+  return next;
+}
+
+export function clearAgentMemory(): AgentMemoryItem[] {
+  if (typeof window !== 'undefined' && typeof window.localStorage !== 'undefined') {
+    try {
+      window.localStorage.removeItem(AGENT_MEMORY_STORAGE_KEY);
+    } catch {
+      // ignore
+    }
+  }
+  return [];
+}
+
+export function loadAgentSessionArchive(): AgentSessionArchiveItem[] {
+  if (typeof window === 'undefined' || typeof window.localStorage === 'undefined') return [];
+  try {
+    const raw = window.localStorage.getItem(AGENT_SESSION_ARCHIVE_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed.slice(0, MAX_SESSION_ARCHIVE_ITEMS) : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveSessionArchiveEntry(summary: string, messageCount: number): void {
+  if (typeof window === 'undefined' || typeof window.localStorage === 'undefined') return;
+  try {
+    const current = loadAgentSessionArchive();
+    const next: AgentSessionArchiveItem[] = [
+      {
+        id: `sess-${Date.now()}`,
+        endedAt: new Date().toISOString(),
+        messageCount,
+        summary: summary.trim().slice(0, 280),
+      },
+      ...current,
+    ].slice(0, MAX_SESSION_ARCHIVE_ITEMS);
+    window.localStorage.setItem(AGENT_SESSION_ARCHIVE_KEY, JSON.stringify(next));
+  } catch {
+    // ignore storage errors
+  }
+}
+
+// ============================================================================
+// REAL-TIME XAU/USD SPOT QUOTE & ON-DEMAND AUTO-SYNC ENGINE
+// ============================================================================
+
+function persistLiveXauQuote(quote: LiveXauUsdQuote): void {
+  cachedLiveXauQuote = quote;
+  if (typeof window === 'undefined' || typeof window.localStorage === 'undefined') return;
+  try {
+    window.localStorage.setItem(LAST_XAU_QUOTE_STORAGE_KEY, JSON.stringify(quote));
+  } catch {
+    // ignore quota errors
+  }
+}
+
+export function getLatestKnownXauUsdQuote(): LiveXauUsdQuote | null {
+  if (cachedLiveXauQuote) return cachedLiveXauQuote;
+
+  if (typeof window !== 'undefined' && typeof window.localStorage !== 'undefined') {
+    try {
+      const raw = window.localStorage.getItem(LAST_XAU_QUOTE_STORAGE_KEY);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (parsed && typeof parsed.price === 'number' && Number.isFinite(parsed.price)) {
+          cachedLiveXauQuote = parsed as LiveXauUsdQuote;
+          return cachedLiveXauQuote;
+        }
+      }
+    } catch {
+      // ignore
+    }
+  }
+
+  const syncBar = getCachedLatestXauUsdQuoteSync();
+  if (syncBar) {
+    const changePct15m =
+      syncBar.open > 0 ? Number((((syncBar.price - syncBar.open) / syncBar.open) * 100).toFixed(3)) : null;
+    return {
+      price: syncBar.price,
+      open15m: syncBar.open,
+      high15m: syncBar.high,
+      low15m: syncBar.low,
+      changePct15m,
+      barTimeIso: new Date(syncBar.barTimeMs).toISOString(),
+      fetchedAt: new Date(syncBar.barTimeMs).toISOString(),
+      source: 'cache',
+    };
+  }
+  return null;
+}
+
+export async function fetchLiveXauUsdQuote(forceRefresh = false): Promise<LiveXauUsdQuote | null> {
+  const isOfflineMode = isNewsCycleOfflineMode();
+  const isNavigatorOnline = typeof navigator !== 'undefined' ? navigator.onLine !== false : true;
+  const existing = getLatestKnownXauUsdQuote();
+
+  if (isOfflineMode || !isNavigatorOnline) {
+    return existing;
+  }
+
+  if (
+    !forceRefresh &&
+    cachedLiveXauQuote &&
+    cachedLiveXauQuote.source !== 'cache' &&
+    Date.now() - new Date(cachedLiveXauQuote.fetchedAt).getTime() < XAU_LIVE_TTL_MS
+  ) {
+    return cachedLiveXauQuote;
+  }
+
+  try {
+    let detectedSource: 'twelvedata' | 'binance' | 'cache' = 'twelvedata';
+    const provider = new TradeVaultVelaProvider({
+      preferredFeed: 'twelvedata',
+      onStatus: (st) => {
+        if (st.source === 'twelvedata' || st.source === 'binance' || st.source === 'cache') {
+          detectedSource = st.source;
+        }
+      },
+    });
+    const bars = await provider.getBars('XAUUSD', '15', { limit: 12 });
+    if (bars.length > 0) {
+      const last = bars[bars.length - 1];
+      const changePct15m =
+        last.open > 0 ? Number((((last.close - last.open) / last.open) * 100).toFixed(3)) : null;
+      const quote: LiveXauUsdQuote = {
+        price: Number(last.close.toFixed(2)),
+        open15m: Number(last.open.toFixed(2)),
+        high15m: Number(last.high.toFixed(2)),
+        low15m: Number(last.low.toFixed(2)),
+        changePct15m,
+        barTimeIso: new Date(last.time).toISOString(),
+        fetchedAt: new Date().toISOString(),
+        source: detectedSource,
+      };
+      persistLiveXauQuote(quote);
+      return quote;
+    }
+  } catch {
+    // fall through to cached quote
+  }
+
+  return getLatestKnownXauUsdQuote();
+}
+
+function isTimestampStale(isoString: string | undefined | null, maxAgeMs: number): boolean {
+  if (!isoString) return true;
+  const ts = new Date(isoString).getTime();
+  if (!Number.isFinite(ts) || ts <= 0) return true;
+  return Date.now() - ts > maxAgeMs;
+}
+
+export async function syncAgentDeskLiveContext(options?: {
+  forcePrice?: boolean;
+  syncMarketFeeds?: boolean;
+  language?: 'id' | 'en';
+  onStatus?: (text: string | null) => void;
+}): Promise<void> {
+  const isOfflineMode = isNewsCycleOfflineMode();
+  const isNavigatorOnline = typeof navigator !== 'undefined' ? navigator.onLine !== false : true;
+  if (isOfflineMode || !isNavigatorOnline) return;
+
+  if (inFlightSyncPromise) {
+    await inFlightSyncPromise;
+    return;
+  }
+
+  const isEn = options?.language === 'en';
+  const existingQuote = getLatestKnownXauUsdQuote();
+  const needXau =
+    Boolean(options?.forcePrice) ||
+    !existingQuote ||
+    existingQuote.source === 'cache' ||
+    isTimestampStale(existingQuote.fetchedAt, XAU_LIVE_TTL_MS);
+
+  const macro = loadLocalCachedMacroSnapshotSync();
+  const fundamental = loadLocalCachedFundamentalGoldSnapshotSync();
+  const polymarket = loadCachedPolymarketMacroSnapshot();
+
+  const needMacro =
+    Boolean(options?.syncMarketFeeds) &&
+    (!macro || isTimestampStale(macro.analyzedAt, MACRO_AUTO_SYNC_MAX_AGE_MS));
+  const needFundamental =
+    Boolean(options?.syncMarketFeeds) &&
+    (!fundamental || isTimestampStale(fundamental.analyzedAt, FUNDAMENTAL_AUTO_SYNC_MAX_AGE_MS));
+  const needPolymarket =
+    Boolean(options?.syncMarketFeeds) &&
+    (!polymarket || !polymarket.events?.length || isTimestampStale(polymarket.fetchedAt, POLYMARKET_AUTO_SYNC_MAX_AGE_MS));
+
+  if (!needXau && !needMacro && !needFundamental && !needPolymarket) {
+    return;
+  }
+
+  inFlightSyncPromise = (async () => {
+    try {
+      options?.onStatus?.(
+        isEn ? 'syncing live market...' : 'menyinkronkan data live...'
+      );
+      const tasks: Array<Promise<unknown>> = [];
+      if (needXau) {
+        tasks.push(fetchLiveXauUsdQuote(Boolean(options?.forcePrice)));
+      }
+      if (needMacro) {
+        tasks.push(executeClientSideMacroAnalysis(undefined, true));
+      }
+      if (needFundamental) {
+        tasks.push(executeClientSideFundamentalGoldAnalysis({ forceRefresh: false }));
+      }
+      if (needPolymarket) {
+        tasks.push(fetchPolymarketMacroSentiment({ forceRefresh: true }));
+      }
+      await Promise.allSettled(tasks);
+    } finally {
+      options?.onStatus?.(null);
+      inFlightSyncPromise = null;
+    }
+  })();
+
+  await inFlightSyncPromise;
+}
 
 function readLatestSmcSignalCompact(): Record<string, unknown> | null {
   if (typeof window === 'undefined' || typeof window.localStorage === 'undefined') return null;
@@ -629,6 +1020,34 @@ export function buildAgentDeskContext(
       }
     : null;
 
+  const xauQuote = getLatestKnownXauUsdQuote();
+  const savedMemories = loadAgentMemory();
+
+  const liveMarketQuote = {
+    xauusd: xauQuote
+      ? {
+          price: xauQuote.price,
+          open15m: xauQuote.open15m,
+          high15m: xauQuote.high15m,
+          low15m: xauQuote.low15m,
+          changePct15m: xauQuote.changePct15m,
+          barTimeIso: xauQuote.barTimeIso,
+          fetchedAt: xauQuote.fetchedAt,
+          source: xauQuote.source,
+        }
+      : null,
+    intermarket:
+      macroCompact?.intermarketPulse ||
+      (fundamental?.evidenceSummary?.dxyPrice
+        ? {
+            dxy: {
+              price: fundamental.evidenceSummary.dxyPrice,
+              changePct: fundamental.evidenceSummary.dxyChangePct ?? null,
+            },
+          }
+        : null),
+  };
+
   const context: Record<string, unknown> = {
     runtime: {
       capturedAt: new Date().toISOString(),
@@ -637,6 +1056,11 @@ export function buildAgentDeskContext(
       currency: settings.currency,
       currencySymbol: settings.currencySymbol,
     },
+    liveMarketQuote,
+    memoryNotes: savedMemories.slice(0, 20).map((m) => ({
+      category: m.category,
+      text: m.text,
+    })),
     journal: {
       summary: {
         totalRecords: trades.length,
@@ -703,26 +1127,175 @@ export function buildAgentDeskContext(
       fundamentalBias: fundamental?.overallBias || null,
       fundamentalAnalyzedAt: fundamental?.analyzedAt || null,
       polymarketCount: polymarket?.events?.length || 0,
+      xauPrice: xauQuote?.price ?? null,
+      xauSource: xauQuote?.source ?? null,
+      memoryCount: savedMemories.length,
       isOfflineMode,
       isNavigatorOnline,
     },
   };
 }
 
+function extractClientNicknameRename(message: string): string | undefined {
+  const m = message.match(
+    /(?:panggil(?:\s+kamu|\s+lu|\s+lo|\s+anda)?(?:\s+dengan)?|namamu(?:\s+sekarang)?|mulai\s+sekarang\s+(?:kamu\s+)?(?:saya\s+)?panggil(?:\s+kamu)?|call\s+you|your\s+name\s+is)\s+["']?([A-Za-z][A-Za-z0-9._\- ]{1,24})["']?/i
+  );
+  if (!m || !m[1]) return undefined;
+  const candidate = m[1]
+    .replace(/\b(ya|dong|aja|saja|nih|lah|yah|please|ok)\b.*$/i, '')
+    .trim();
+  if (candidate.length >= 2 && candidate.length <= 24) {
+    return candidate.charAt(0).toUpperCase() + candidate.slice(1);
+  }
+  return undefined;
+}
+
+function classifyClientSyncNeed(message: string): {
+  intentKind: 'SMALL_TALK' | 'OUT_OF_SCOPE' | 'LIVE_PRICE_CHECK' | 'MARKET_OR_JOURNAL';
+  needsPrice: boolean;
+  needsMarket: boolean;
+} {
+  const q = message.trim().toLowerCase();
+  const tradingKeywords =
+    /\b(xau|xauusd|gold|emas|dxy|yield|us10y|us02y|usoil|oil|forex|pair|market|pasar|chart|candle|harga|price|spot|news|berita|makro|macro|fundamental|fomc|fed|fedwatch|cpi|ppi|nfp|pmi|powell|polymarket|cycle|confluence|smc|heatmap|spike|sweep|whipsaw|buy|sell|long|short|entry|exit|sl|tp|stoploss|takeprofit|jurnal|journal|trade|trading|posisi|open|planned|lot|risiko|risk|drawdown|dd|win\s?rate|profit|loss|rugi|equity|saldo|balance|akun|playbook|guardrail|psikologi|emosi|fomo|sesi|session|london|new york|asia|evaluasi|audit|rekap)\b/i;
+  const hasTradingTopic = tradingKeywords.test(q);
+
+  const asksLivePrice =
+    /\b(harga|price|spot|level|posisi harga|berapa skrg|berapa sekarang|di angka berapa|brp skrg|lagi di berapa|running di|running price)\b/i.test(
+      q
+    ) && /\b(xau|xauusd|gold|emas|dxy|us10y|us02y|usoil|oil|btc|eurusd|market|pasar)\b/i.test(q);
+
+  if (asksLivePrice && !/\b(kenapa|analisis|analisa|fundamental|berita|news|jurnal|spike|prediksi)\b/i.test(q)) {
+    return { intentKind: 'LIVE_PRICE_CHECK', needsPrice: true, needsMarket: false };
+  }
+
+  const outOfScopeTopics =
+    /\b(cuaca|hujan|panas|mendung|suhu|bmkg|resep|masak|makanan|minuman|resto|nasi goreng|bola|skor|pertandingan|liga|timnas|film|anime|drakor|lagu|musik|artis|gosip|jodoh|pacar|zodiak|ramalan|tebak|pantun|puisi|game|mobile legends|pubg|ff|obat|sakit|dokter)\b/i;
+  if (!hasTradingTopic && outOfScopeTopics.test(q)) {
+    return { intentKind: 'OUT_OF_SCOPE', needsPrice: false, needsMarket: false };
+  }
+
+  const smallTalkPatterns =
+    /^(halo|hai|hi|hello|hey|selamat pagi|selamat siang|selamat sore|selamat malam|pagi|siang|sore|malam|assalamualaikum|permisi|tes|test|testing|apa kabar|gm|gn|oke|ok|siap|makasih|terima kasih|thanks|thank you|sip|mantap|keren|good|nice|paham|noted|oh gitu|ohh|hmm|haha|wkwk|bro|bos)\b/i;
+  const renamePattern =
+    /\b(panggil\s+(?:kamu|lu|lo|anda)|namamu|mulai\s+sekarang.*panggil|ganti\s+nama|call\s+you|name\s+is)\b/i;
+
+  if (
+    !hasTradingTopic &&
+    (renamePattern.test(q) ||
+      smallTalkPatterns.test(q) ||
+      q.length <= 45 ||
+      (q.length <= 65 &&
+        /\b(siapa kamu|siapa lu|lu siapa|kamu siapa|perkenalkan|kenalan|lagi apa|lg apa|bisa apa|tugasmu)\b/i.test(
+          q
+        )))
+  ) {
+    return { intentKind: 'SMALL_TALK', needsPrice: false, needsMarket: false };
+  }
+
+  const asksMacroOrMarket =
+    /\b(xau|xauusd|gold|emas|market|pasar|news|berita|makro|macro|fundamental|fomc|fed|fedwatch|cpi|ppi|nfp|pmi|dxy|yield|oil|polymarket|cycle|confluence|spike|sweep|arah|buy|sell|hari ini|sekarang)\b/i.test(
+      q
+    );
+
+  return {
+    intentKind: 'MARKET_OR_JOURNAL',
+    needsPrice: asksMacroOrMarket,
+    needsMarket: asksMacroOrMarket,
+  };
+}
+
 /**
  * Deterministic Offline Fallback Engine when Offline Mode is enabled or internet is unavailable.
- * Ensures the trader can still inspect journal metrics, risk guardrails, and cached macro/spike meaning locally.
+ * Respects Small Talk, Out-of-Scope, Live Price lookup, and Journal+Market synthesis cleanly.
  */
 export function buildOfflineAgentDeskReply(params: {
   message: string;
   trades: Trade[];
   settings: AppSettings;
   language: 'id' | 'en';
+  agentName?: string;
   reasonNote?: string;
 }): Omit<AgentDeskMessage, 'id' | 'role' | 'createdAt'> {
   const startedAt = Date.now();
   const isEn = params.language === 'en';
+  const detectedRename = extractClientNicknameRename(params.message);
+  const effectiveName = detectedRename || params.agentName || 'Head Desk';
+  const syncNeed = classifyClientSyncNeed(params.message);
+
+  // Path 1: Small talk offline (ZERO market dump!)
+  if (syncNeed.intentKind === 'SMALL_TALK') {
+    if (detectedRename) {
+      addAgentMemoryNotes([
+        {
+          text: `User memanggil asisten dengan nama "${detectedRename}".`,
+          category: 'preference',
+        },
+      ]);
+    }
+    const content = detectedRename
+      ? isEn
+        ? `Copy that — from now on you can call me ${detectedRename}. Whenever you're ready to check XAU/USD, macro news, or your TradeVault journal, just say the word.`
+        : `Siap, mulai sekarang panggil saja saya ${detectedRename}. Kapan pun kamu siap cek arah XAU/USD, berita makro, atau evaluasi jurnal TradeVault, tinggal kabari ya.`
+      : isEn
+      ? `Hey! ${effectiveName} here and ready. Whenever you want to check today's XAU/USD pulse, news, or your TradeVault journal, let's dive in.`
+      : `Halo! ${effectiveName} standby di sini. Kapan pun kamu mau cek kondisi market XAU/USD, berita makro, atau catatan jurnal TradeVault, tinggal tanya saja ya.`;
+
+    return {
+      content,
+      mode: 'OFFLINE_LOCAL',
+      routeType: 'SMALL_TALK',
+      detectedAgentName: detectedRename,
+      workflowTrace: [],
+      revisionTriggered: false,
+      activeProviders: ['Offline Local'],
+      totalLatencyMs: Math.max(1, Date.now() - startedAt),
+    };
+  }
+
+  // Path 2: Out-of-scope guardrail offline
+  if (syncNeed.intentKind === 'OUT_OF_SCOPE') {
+    return {
+      content: isEn
+        ? `That's outside my duties as ${effectiveName} — I'm strictly dedicated to XAU/USD market context, macro news, fundamentals, and your TradeVault journal & risk.`
+        : `Mohon maaf, hal itu di luar ranah tugas saya sebagai ${effectiveName}. Fokus saya khusus mendampingi soal market XAU/USD, berita makro, fundamental emas, dan jurnal trading kamu di TradeVault.`,
+      mode: 'OFFLINE_LOCAL',
+      routeType: 'OUT_OF_SCOPE',
+      workflowTrace: [],
+      revisionTriggered: false,
+      activeProviders: ['Offline Local'],
+      totalLatencyMs: Math.max(1, Date.now() - startedAt),
+    };
+  }
+
   const { context } = buildAgentDeskContext(params.trades, params.settings, params.language);
+  const liveQuote = (context.liveMarketQuote as any)?.xauusd || null;
+
+  // Path 3: Live price check offline (never fabricate!)
+  if (syncNeed.intentKind === 'LIVE_PRICE_CHECK') {
+    const content = liveQuote
+      ? isEn
+        ? `Offline/Cached XAU/USD spot is around **$${liveQuote.price}** (last cached bar ${new Date(
+            liveQuote.barTimeIso
+          ).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}, source: ${liveQuote.source}). Connect to the internet & turn off Offline Mode to pull a fresh live tick.`
+        : `Data harga terakhir **XAU/USD** yang tersimpan di perangkat berada di sekitar **$${liveQuote.price}** (bar terakhir pukul ${new Date(
+            liveQuote.barTimeIso
+          ).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}, sumber: ${liveQuote.source}). Hubungkan internet agar saya bisa tarik tick live terbaru.`
+      : isEn
+      ? 'Live XAU/USD price is currently unavailable because the device is offline and no recent Vela candle cache was found yet.'
+      : 'Harga live XAU/USD belum bisa diambil karena perangkat sedang offline/Mode Offline dan belum ada cache chart XAUUSD terbaru di perangkat.';
+
+    return {
+      content,
+      mode: 'OFFLINE_LOCAL',
+      routeType: 'LIVE_PRICE_CHECK',
+      workflowTrace: [],
+      revisionTriggered: false,
+      activeProviders: ['Offline Local'],
+      totalLatencyMs: Math.max(1, Date.now() - startedAt),
+    };
+  }
+
   const journal = (context.journal as any) || {};
   const jSum = journal.summary || {};
   const macro = (context.macroNews as any) || null;
@@ -750,10 +1323,18 @@ export function buildOfflineAgentDeskReply(params: {
     );
   }
 
+  if (liveQuote) {
+    lines.push(
+      isEn
+        ? `• **Last Cached XAU/USD**: **$${liveQuote.price}** (${liveQuote.source})`
+        : `• **Harga Cache XAU/USD Terakhir**: **$${liveQuote.price}** (${liveQuote.source})`
+    );
+  }
+
   let directionClarity: AgentDeskActionCardClient['directionClarity'] = 'INFO_ONLY';
   let directionLabel = isEn ? 'Local Offline Briefing' : 'Briefing Lokal (Offline)';
   let spikeWarning = '-';
-  let riskReminder = jSum.isDailyLossExceeded
+  const riskReminder = jSum.isDailyLossExceeded
     ? isEn
       ? 'Daily loss limit reached — pause trading today.'
       : 'Batas rugi harian sudah tercapai — hentikan entry hari ini.'
@@ -876,6 +1457,7 @@ export function buildOfflineAgentDeskReply(params: {
   return {
     content: lines.join('\n'),
     mode: 'OFFLINE_LOCAL',
+    routeType: 'FULL_OFFICE',
     actionCard: {
       directionClarity,
       directionLabel,
@@ -888,7 +1470,7 @@ export function buildOfflineAgentDeskReply(params: {
         role: 'OFFLINE_ENGINE',
         divisionName: isEn ? 'Local Offline Engine' : 'Mesin Lokal Offline',
         provider: 'offline',
-        model: 'deterministic-local-v1',
+        model: 'deterministic-local-v2',
         action: isEn ? 'Local Journal + Cache Synthesis' : 'Baca Jurnal Offline & Cache Lokal',
         status: 'fallback',
         summary: isEn
@@ -911,6 +1493,7 @@ export async function sendAgentDeskChatMessage(params: {
   language: 'id' | 'en';
   persona?: AgentChatPersona;
   agentName?: string;
+  onSyncStatus?: (text: string | null) => void;
 }): Promise<Omit<AgentDeskMessage, 'id' | 'role' | 'createdAt'>> {
   const isOfflineMode = isNewsCycleOfflineMode();
   const isNavigatorOnline = typeof navigator !== 'undefined' ? navigator.onLine !== false : true;
@@ -921,6 +1504,18 @@ export async function sendAgentDeskChatMessage(params: {
       trades: params.trades,
       settings: params.settings,
       language: params.language,
+      agentName: params.agentName,
+    });
+  }
+
+  // On-demand real-time background sync ONLY when user asks price or market/news questions
+  const syncNeed = classifyClientSyncNeed(params.message);
+  if (syncNeed.needsPrice || syncNeed.needsMarket) {
+    await syncAgentDeskLiveContext({
+      forcePrice: syncNeed.intentKind === 'LIVE_PRICE_CHECK',
+      syncMarketFeeds: syncNeed.needsMarket,
+      language: params.language,
+      onStatus: params.onSyncStatus,
     });
   }
 
@@ -945,20 +1540,44 @@ export async function sendAgentDeskChatMessage(params: {
   for (const url of candidates) {
     const res = await nativeAwarePostJson(url, payload, 38_000);
     if (res.ok && res.json?.success && typeof res.json.answer === 'string' && res.json.answer.trim()) {
+      const incomingMemories = Array.isArray(res.json.newMemoryNotes) ? res.json.newMemoryNotes : [];
+      if (incomingMemories.length > 0) {
+        addAgentMemoryNotes(incomingMemories);
+      }
+
+      const routeRaw = String(res.json.routeType || 'FULL_OFFICE');
+      const routeType: AgentDeskMessage['routeType'] =
+        routeRaw === 'SMALL_TALK' ||
+        routeRaw === 'OUT_OF_SCOPE' ||
+        routeRaw === 'LIVE_PRICE_CHECK' ||
+        routeRaw === 'DIRECT_FOLLOWUP'
+          ? routeRaw
+          : 'FULL_OFFICE';
+
+      const detectedAgentName =
+        typeof res.json.detectedAgentName === 'string' && res.json.detectedAgentName.trim()
+          ? res.json.detectedAgentName.trim().slice(0, 40)
+          : undefined;
+
       return {
         content: res.json.answer.trim(),
         mode: 'ONLINE_MULTI_AGENT',
-        routeType: res.json.routeType === 'DIRECT_FOLLOWUP' ? 'DIRECT_FOLLOWUP' : 'FULL_OFFICE',
+        routeType,
         actionCard: res.json.actionCard,
         workflowTrace: Array.isArray(res.json.workflowTrace) ? res.json.workflowTrace : [],
         revisionTriggered: Boolean(res.json.revisionTriggered),
         activeProviders: Array.isArray(res.json.activeProviders) ? res.json.activeProviders : [],
         totalLatencyMs: Number(res.json.totalLatencyMs) || 0,
+        detectedAgentName,
       };
     }
     if (res.errorMessage) {
       lastErrorMsg = res.errorMessage;
-      recordAppDiagnosticEvent('AI_DESK', `Agent chat request failed (${res.status || 'network'})`, `${url}: ${res.errorMessage}`);
+      recordAppDiagnosticEvent(
+        'AI_DESK',
+        `Agent chat request failed (${res.status || 'network'})`,
+        `${url}: ${res.errorMessage}`
+      );
     }
   }
 
@@ -973,6 +1592,108 @@ export async function sendAgentDeskChatMessage(params: {
     trades: params.trades,
     settings: params.settings,
     language: params.language,
+    agentName: params.agentName,
     reasonNote: fallbackNote,
   });
+}
+
+function distillLocalFallbackFacts(messages: AgentDeskMessage[]): Array<{ text: string; category: AgentMemoryCategory }> {
+  const facts: Array<{ text: string; category: AgentMemoryCategory }> = [];
+  for (const m of messages) {
+    if (m.role === 'user') {
+      const rename = extractClientNicknameRename(m.content);
+      if (rename) {
+        facts.push({
+          text: `User memanggil asisten dengan nama "${rename}".`,
+          category: 'preference',
+        });
+      }
+    }
+  }
+  const lastAssistant = [...messages]
+    .reverse()
+    .find((m) => m.role === 'assistant' && m.routeType !== 'SMALL_TALK' && m.routeType !== 'OUT_OF_SCOPE');
+  if (lastAssistant) {
+    const firstSentence = lastAssistant.content.replace(/\*\*/g, '').split(/\n|\.\s/)[0]?.trim();
+    if (firstSentence && firstSentence.length >= 16) {
+      facts.push({
+        text: `Pembahasan sesi sebelumnya: ${firstSentence.slice(0, 175)}.`,
+        category: 'general',
+      });
+    }
+  }
+  return facts.slice(0, 3);
+}
+
+export async function endAgentDeskSession(params: {
+  messages: AgentDeskMessage[];
+  language: 'id' | 'en';
+}): Promise<{
+  archivedCount: number;
+  savedMemoriesCount: number;
+  sessionSummary: string;
+}> {
+  const isEn = params.language === 'en';
+  if (!Array.isArray(params.messages) || params.messages.length === 0) {
+    saveLastSessionDayKey(getTodayLocalDateKey());
+    return {
+      archivedCount: 0,
+      savedMemoriesCount: loadAgentMemory().length,
+      sessionSummary: isEn ? 'Ready for a fresh New Day.' : 'Siap memulai hari baru.',
+    };
+  }
+
+  const isOfflineMode = isNewsCycleOfflineMode();
+  const isNavigatorOnline = typeof navigator !== 'undefined' ? navigator.onLine !== false : true;
+  const existingMemories = loadAgentMemory();
+
+  if (!isOfflineMode && isNavigatorOnline) {
+    const compactHistory = params.messages.slice(-24).map((m) => ({
+      role: m.role,
+      content: m.content.slice(0, 600),
+    }));
+    const payload = {
+      language: params.language,
+      history: compactHistory,
+      existingMemories: existingMemories.map((m) => m.text),
+    };
+
+    const candidates = getApiEndpointCandidates('/api/agent-desk/end-session');
+    for (const url of candidates) {
+      try {
+        const res = await nativeAwarePostJson(url, payload, 15_000);
+        if (res.ok && res.json?.success) {
+          const facts = Array.isArray(res.json.memoryFacts) ? res.json.memoryFacts : [];
+          const nextMemories = addAgentMemoryNotes(facts);
+          const summary = String(
+            res.json.sessionSummary ||
+              (isEn ? 'Previous session distilled into long-term memory.' : 'Sesi sebelumnya diringkas ke memori asisten.')
+          );
+          saveSessionArchiveEntry(summary, params.messages.length);
+          saveLastSessionDayKey(getTodayLocalDateKey());
+          return {
+            archivedCount: facts.length,
+            savedMemoriesCount: nextMemories.length,
+            sessionSummary: summary,
+          };
+        }
+      } catch {
+        // try next candidate
+      }
+    }
+  }
+
+  // Deterministic local fallback when offline or backend unreachable
+  const localFacts = distillLocalFallbackFacts(params.messages);
+  const nextMemories = addAgentMemoryNotes(localFacts);
+  const fallbackSummary = isEn
+    ? `Session (${params.messages.length} msgs) archived locally.`
+    : `Sesi (${params.messages.length} pesan) diringkas & disimpan lokal.`;
+  saveSessionArchiveEntry(fallbackSummary, params.messages.length);
+  saveLastSessionDayKey(getTodayLocalDateKey());
+  return {
+    archivedCount: localFacts.length,
+    savedMemoriesCount: nextMemories.length,
+    sessionSummary: fallbackSummary,
+  };
 }

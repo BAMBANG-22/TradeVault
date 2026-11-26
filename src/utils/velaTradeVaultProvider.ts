@@ -387,6 +387,44 @@ function writeTradeVaultCandleCache(
   }
 }
 
+export function getCachedLatestXauUsdQuoteSync(): {
+  price: number;
+  open: number;
+  high: number;
+  low: number;
+  barTimeMs: number;
+  timeframe: string;
+} | null {
+  if (typeof window === 'undefined' || typeof window.localStorage === 'undefined') return null;
+  const meta = findSymbolMeta('XAUUSD');
+  const intervals = ['15', '5', '60', '1'];
+  let best: {
+    price: number;
+    open: number;
+    high: number;
+    low: number;
+    barTimeMs: number;
+    timeframe: string;
+  } | null = null;
+
+  for (const tf of intervals) {
+    const bars = readTradeVaultCandleCache(meta, tf);
+    if (bars.length === 0) continue;
+    const last = bars[bars.length - 1];
+    if (!best || last.time > best.barTimeMs) {
+      best = {
+        price: Number(last.close.toFixed(2)),
+        open: Number(last.open.toFixed(2)),
+        high: Number(last.high.toFixed(2)),
+        low: Number(last.low.toFixed(2)),
+        barTimeMs: last.time,
+        timeframe: tf,
+      };
+    }
+  }
+  return best;
+}
+
 export class TradeVaultVelaProvider implements DataProvider {
   private readonly onStatus?: (status: VelaFeedStatus) => void;
   private readonly preferredFeed: VelaFeedPreference;

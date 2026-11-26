@@ -49,6 +49,7 @@ import {
   resolveAgentDeskEnvKeys,
   runAgentDeskOrchestration,
   runSpecialistNewsDraft,
+  runEndSessionMemoryDistillation,
   runAiQaDiagnostics,
 } from './src/server/agentDeskOrchestrator';
 
@@ -5112,6 +5113,24 @@ app.post('/api/agent-desk/chat', async (req, res) => {
       activeProviders: [],
       totalLatencyMs: 0,
       error: 'Terjadi gangguan pada ruang rapat Multi-Agent AI. Silakan coba lagi.',
+    });
+  }
+});
+
+// End-Session Memory Distillation ("Akhiri Sesi / New Day")
+app.post('/api/agent-desk/end-session', async (req, res) => {
+  try {
+    const keys = resolveAgentDeskEnvKeys();
+    const result = await runEndSessionMemoryDistillation(req.body, keys);
+    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
+    res.status(result.status).json(result.payload);
+  } catch {
+    res.status(500).json({
+      success: false,
+      sessionSummary: '',
+      memoryFacts: [],
+      latencyMs: 0,
+      error: 'Gagal merangkum memori sesi.',
     });
   }
 });

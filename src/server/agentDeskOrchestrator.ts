@@ -52,15 +52,29 @@ export interface AgentDeskChatHistoryItem {
   content: string;
 }
 
+export type AgentDeskRouteType =
+  | 'SMALL_TALK'
+  | 'OUT_OF_SCOPE'
+  | 'LIVE_PRICE_CHECK'
+  | 'DIRECT_FOLLOWUP'
+  | 'FULL_OFFICE';
+
+export interface AgentExtractedMemoryFact {
+  text: string;
+  category: 'preference' | 'market' | 'journal' | 'general';
+}
+
 export interface AgentDeskResponsePayload {
   success: boolean;
   answer: string;
-  routeType?: 'DIRECT_FOLLOWUP' | 'FULL_OFFICE';
+  routeType?: AgentDeskRouteType;
   actionCard: AgentDeskActionCard;
   workflowTrace: AgentWorkflowStep[];
   revisionTriggered: boolean;
   activeProviders: string[];
   totalLatencyMs: number;
+  detectedAgentName?: string;
+  newMemoryNotes?: AgentExtractedMemoryFact[];
   error?: string;
 }
 
@@ -532,30 +546,106 @@ function sanitizeIncomingPayload(raw: unknown): {
 function getPersonaStyleGuide(persona: AgentChatPersona, agentName: string, isEn: boolean): string {
   if (isEn) {
     if (persona === 'concise') {
-      return `Your name is ${agentName}. Reply super crisp, direct, and concise (2-5 short lines), like a sharp trading partner texting on DM. Zero fluff or formal templates.`;
+      return `Your name is ${agentName}, the user's personal trading assistant inside TradeVault (like Jarvis/Alfred). Reply crisp, sharp, and natural (2-5 lines max). Zero stiff report templates.`;
     }
     if (persona === 'mentor') {
-      return `Your name is ${agentName}. Reply like a calm, experienced desk mentor on chat — sharp, honest, structured only when truly helpful, never robotic.`;
+      return `Your name is ${agentName}, the user's trusted personal trading partner & mentor inside TradeVault (like Alfred/Jarvis). Warm, honest, grounded, never robotic.`;
     }
-    return `Your name is ${agentName}. Reply like a real, friendly trading partner chatting on WhatsApp/DM — relaxed, direct, flexible, human, and zero stiff/formal report templates.`;
+    return `Your name is ${agentName}, the user's personal trading assistant inside TradeVault (like Jarvis/Alfred). Reply like a loyal, witty, real human partner on WhatsApp/DM — relaxed, direct, natural, zero robotic templates.`;
   }
   if (persona === 'concise') {
-    return `Namamu ${agentName}. Balas super ringkas, lugas, dan langsung ke intinya (2–5 baris pendek) seperti rekan meja trading chat lewat DM. Tanpa basa-basi atau format laporan kaku.`;
+    return `Namamu ${agentName}, asisten pribadi trading di dalam aplikasi TradeVault (seperti Jarvis / Alfred). Balas ringkas, lugas, dan tepat sasaran (2–5 baris pendek). Tanpa basa-basi kaku atau format laporan bot.`;
   }
   if (persona === 'mentor') {
-    return `Namamu ${agentName}. Balas seperti mentor trading berpengalaman yang tegas, jujur, tapi tetap enak diajak ngobrol di chat — jelas, membumi, dan tidak kaku seperti robot.`;
+    return `Namamu ${agentName}, asisten pribadi sekaligus mentor trading di TradeVault (seperti Alfred bagi Batman). Tenang, jujur, tajam saat membaca risiko, tetap hangat dan membumi.`;
   }
-  return `Namamu ${agentName}. Balas dengan gaya ngobrol yang santai, akrab, lugas, dan fleksibel seperti teman/partner trading beneran di WhatsApp atau DM Instagram. Jangan pakai template kaku ("1. ... 2. ... 3. ...") kecuali benar-benar perlu; sesuaikan panjang jawaban dengan pertanyaan user.`;
+  return `Namamu ${agentName}, asisten pribadi trading pengguna di dalam TradeVault (nuansa seperti Jarvis / Alfred). Balas dengan gaya ngobrol santai, akrab, natural, dan manusiawi layaknya chat WhatsApp/DM dengan orang beneran. Dilarang memakai format laporan kaku ("1. ... 2. ... 3. ...").`;
 }
 
-function isLightweightFollowUp(message: string, history: AgentDeskChatHistoryItem[]): boolean {
-  const q = message.trim().toLowerCase();
-  if (q.length <= 28 && /^(halo|hai|hi|hey|pagi|siang|sore|malam|tes|test|oke|ok|siap|makasih|thanks|thank you|sip|mantap|paham|noted|oh gitu|ohh|hmm|haha|wkwk)[\s!?.]*$/i.test(q)) {
-    return true;
+function extractNicknameRenameFromMessage(message: string): string | undefined {
+  const m = message.match(
+    /(?:panggil(?:\s+kamu|\s+lu|\s+lo|\s+anda)?(?:\s+dengan)?|namamu(?:\s+sekarang)?|mulai\s+sekarang\s+(?:kamu\s+)?(?:saya\s+)?panggil(?:\s+kamu)?|call\s+you|your\s+name\s+is)\s+["']?([A-Za-z][A-Za-z0-9._\- ]{1,24})["']?/i
+  );
+  if (!m || !m[1]) return undefined;
+  const candidate = m[1]
+    .replace(/\b(ya|dong|aja|saja|nih|lah|yah|please|ok)\b.*$/i, '')
+    .trim();
+  if (candidate.length >= 2 && candidate.length <= 24) {
+    return candidate.charAt(0).toUpperCase() + candidate.slice(1);
   }
+  return undefined;
+}
+
+function formatMemoryListForPrompt(contextObj: Record<string, any>): string {
+  const rawList = Array.isArray(contextObj?.memoryNotes) ? contextObj.memoryNotes : [];
+  if (rawList.length === 0) return '(Belum ada memori tersimpan)';
+  return rawList
+    .slice(0, 20)
+    .map((item: any, idx: number) => {
+      if (typeof item === 'string') return `${idx + 1}. ${item.slice(0, 200)}`;
+      if (item && typeof item.text === 'string') {
+        return `${idx + 1}. [${String(item.category || 'general')}] ${item.text.slice(0, 200)}`;
+      }
+      return '';
+    })
+    .filter(Boolean)
+    .join('\n');
+}
+
+function classifyChatIntent(
+  message: string,
+  history: AgentDeskChatHistoryItem[]
+): AgentDeskRouteType {
+  const q = message.trim().toLowerCase();
+
+  const tradingKeywords =
+    /\b(xau|xauusd|gold|emas|dxy|yield|us10y|us02y|usoil|oil|forex|pair|market|pasar|chart|candle|harga|price|spot|news|berita|makro|macro|fundamental|fomc|fed|fedwatch|cpi|ppi|nfp|pmi|powell|polymarket|cycle|confluence|smc|heatmap|spike|sweep|whipsaw|buy|sell|long|short|entry|exit|sl|tp|stoploss|takeprofit|jurnal|journal|trade|trading|posisi|open|planned|lot|risiko|risk|drawdown|dd|win\s?rate|profit|loss|rugi|equity|saldo|balance|akun|playbook|guardrail|psikologi|emosi|fomo|sesi|session|london|new york|asia|evaluasi|audit|rekap)\b/i;
+
+  const hasTradingTopic = tradingKeywords.test(q);
+
+  // 1. Live price checks specifically asking current market price/level
+  const asksLivePrice =
+    /\b(harga|price|spot|level|posisi harga|berapa skrg|berapa sekarang|di angka berapa|brp skrg|lagi di berapa|running di|running price)\b/i.test(
+      q
+    ) && /\b(xau|xauusd|gold|emas|dxy|us10y|us02y|usoil|oil|btc|eurusd|market|pasar)\b/i.test(q);
+  if (asksLivePrice && !/\b(kenapa|analisis|analisa|fundamental|berita|news|jurnal|spike|prediksi)\b/i.test(q)) {
+    return 'LIVE_PRICE_CHECK';
+  }
+
+  // 2. Out-of-scope general questions (weather, food, sports, movies, coding homework, etc.)
+  const outOfScopeTopics =
+    /\b(cuaca|hujan|panas|mendung|suhu|bmkg|resep|masak|makanan|minuman|resto|nasi goreng|bola|skor|pertandingan|liga|timnas|film|anime|drakor|lagu|musik|artis|gosip|jodoh|pacar|zodiak|ramalan|tebak|pantun|puisi|game|mobile legends|pubg|ff|nilai tukar baju|obat|sakit|dokter)\b/i;
+  if (!hasTradingTopic && outOfScopeTopics.test(q)) {
+    return 'OUT_OF_SCOPE';
+  }
+
+  // 3. Small talk / greetings / assistant naming / polite banter (ZERO market dump!)
+  const smallTalkPatterns =
+    /^(halo|hai|hi|hello|hey|selamat pagi|selamat siang|selamat sore|selamat malam|pagi|siang|sore|malam|assalamualaikum|permisi|tes|test|testing|apa kabar|gm|gn|oke|ok|siap|makasih|terima kasih|thanks|thank you|sip|mantap|keren|good|nice|paham|noted|oh gitu|ohh|hmm|haha|wkwk|bro|bos)\b/i;
+  const renamePattern =
+    /\b(panggil\s+(?:kamu|lu|lo|anda)|namamu|mulai\s+sekarang.*panggil|ganti\s+nama|call\s+you|name\s+is)\b/i;
+
+  if (
+    !hasTradingTopic &&
+    (renamePattern.test(q) ||
+      smallTalkPatterns.test(q) ||
+      (q.length <= 65 &&
+        /\b(siapa kamu|siapa lu|lu siapa|kamu siapa|perkenalkan|kenalan|lagi apa|lg apa|bisa apa|tugasmu)\b/i.test(
+          q
+        )))
+  ) {
+    return 'SMALL_TALK';
+  }
+
+  // If message is very short casual conversation with NO trading topic and no obvious out-of-scope keyword:
+  if (!hasTradingTopic && q.length <= 45) {
+    return 'SMALL_TALK';
+  }
+
+  // 4. Lightweight follow-up in active thread
   if (history.length >= 2 && q.length <= 95) {
     const asksFreshAudit =
-      /\b(cek ulang|audit|evaluasi jurnal|rekap|fundamental|polymarket|fedwatch|posisi aktif|win\s?rate|drawdown|profit factor|update terbaru|berita baru)\b/i.test(
+      /\b(cek ulang|audit|evaluasi jurnal|rekap|fundamental|polymarket|fedwatch|posisi aktif|win\s?rate|drawdown|profit factor|update terbaru|berita baru|harga sekarang)\b/i.test(
         q
       );
     const isFollowUpCue =
@@ -563,10 +653,11 @@ function isLightweightFollowUp(message: string, history: AgentDeskChatHistoryIte
         q
       );
     if (isFollowUpCue && !asksFreshAudit) {
-      return true;
+      return 'DIRECT_FOLLOWUP';
     }
   }
-  return false;
+
+  return 'FULL_OFFICE';
 }
 
 function planDivisionDispatch(
@@ -642,6 +733,7 @@ function buildMacroDivisionPrompt(params: {
   const macroSlice = {
     isOfflineMode: params.contextObj?.runtime?.isOfflineMode ?? false,
     generatedAt: params.contextObj?.runtime?.capturedAt ?? null,
+    liveMarketQuote: params.contextObj?.liveMarketQuote ?? null,
     macroNews: params.contextObj?.macroNews ?? null,
     fundamentalGold: params.contextObj?.fundamentalGold ?? null,
     cmeFedWatch: params.contextObj?.cmeFedWatch ?? null,
@@ -724,43 +816,13 @@ function buildBossAuditAndSynthesisPrompt(params: {
   const isEn = params.language === 'en';
   const personaGuide = getPersonaStyleGuide(params.persona, params.agentName, isEn);
 
-  const system = `Kamu adalah BOSS / HEAD OF TRADING DESK (Gemini) sekaligus teman ngobrol langsung trader di aplikasi ini.
-${personaGuide}
-
-TUGAS 1 — AUDIT FAKTA DI BELAKANG LAYAR:
-- Cocokkan memo divisi dengan DATA MENTAH perangkat trader.
-- Jika ada kesalahan arah BUY/SELL, salah mengartikan Bearish Spike (turun tajam awal != sinyal buy), atau angka keliru -> ${
-    params.allowRevisionRequest
-      ? 'set "needsRevision": true, pilih "revisionTarget" ("MACRO_NEWS" atau "JOURNAL_RISK"), dan tulis "revisionInstruction" konkret.'
-      : 'Ini final sign-off; set "needsRevision": false.'
-  }
-
-TUGAS 2 — BALASAN CHAT KE TRADER (HARUS NATURAL & MANUSIAWI!):
-- Balas SEPERTI ORANG BENERAN LAGI CHAT DI WHATSAPP / DM INSTAGRAM!
-- DILARANG pakai format kaku yang selalu berulang ("1. Analisis ... 2. Kondisi Jurnal ... 3. Saran ..."), dilarang terdengar seperti bot atau laporan birokratis.
-- Jawab langsung sesuai pertanyaan & konteks obrolan terakhir. Kalau user tanya pendek, balas padat dan enak dibaca. Kalau butuh rincian angka/spike, selipkan secara natural dalam obrolan.
-- Pastikan istilah seperti Bearish Spike / Sweep First selalu dijelaskan artinya secara gamblang (turun dulu / naik dulu / tunggu) agar trader tidak salah pencet arah.
-
-Keluarkan HANYA JSON valid:
-{
-  "auditPassed": boolean,
-  "needsRevision": boolean,
-  "revisionTarget": "NONE" | "MACRO_NEWS" | "JOURNAL_RISK",
-  "auditNotes": "1 kalimat singkat catatan audit internal",
-  "revisionInstruction": "Instruksi revisi jika needsRevision=true, else string kosong",
-  "finalAnswer": "Balasan chat natural, luwes & manusiawi dalam ${isEn ? 'English' : 'Bahasa Indonesia'}",
-  "actionCard": {
-    "directionClarity": "BUY" | "SELL" | "WAIT_MIXED" | "INFO_ONLY",
-    "directionLabel": "Label sangat singkat jika relevan",
-    "spikeWarning": "'-' jika tidak relevan",
-    "riskReminder": "'-' jika tidak relevan"
-  }
-}`;
-
+  const memoryText = formatMemoryListForPrompt(params.contextObj);
   const rawFactsAnchor = {
     runtime: params.contextObj?.runtime ?? null,
+    liveMarketQuote: params.contextObj?.liveMarketQuote ?? null,
     macroFacts: params.contextObj?.macroNews
       ? {
+          analyzedAt: params.contextObj.macroNews.analyzedAt,
           dominantBias: params.contextObj.macroNews.dominantBias,
           buyProb: params.contextObj.macroNews.buyProbability,
           sellProb: params.contextObj.macroNews.sellProbability,
@@ -776,6 +838,7 @@ Keluarkan HANYA JSON valid:
       : null,
     fundamentalFacts: params.contextObj?.fundamentalGold
       ? {
+          analyzedAt: params.contextObj.fundamentalGold.analyzedAt,
           overallBias: params.contextObj.fundamentalGold.overallBias,
           bullishPct: params.contextObj.fundamentalGold.bullishProbability,
           bearishPct: params.contextObj.fundamentalGold.bearishProbability,
@@ -788,13 +851,51 @@ Keluarkan HANYA JSON valid:
     openPositions: params.contextObj?.journal?.openOrPlannedTrades ?? [],
   };
 
+  const system = `Kamu adalah BOSS / HEAD OF TRADING DESK (Gemini) sekaligus asisten pribadi trader di aplikasi TradeVault (seperti Jarvis / Alfred).
+${personaGuide}
+
+TUGAS 1 — AUDIT FAKTA DI BELAKANG LAYAR:
+- Cocokkan memo divisi dengan DATA MENTAH perangkat trader (termasuk harga XAUUSD di liveMarketQuote bila ada).
+- DILARANG keras mengarang harga XAUUSD atau angka yang tidak ada di data mentah.
+- Jika ada kesalahan arah BUY/SELL, salah mengartikan Bearish Spike (turun tajam awal != sinyal buy), atau angka keliru -> ${
+    params.allowRevisionRequest
+      ? 'set "needsRevision": true, pilih "revisionTarget" ("MACRO_NEWS" atau "JOURNAL_RISK"), dan tulis "revisionInstruction" konkret.'
+      : 'Ini final sign-off; set "needsRevision": false.'
+  }
+
+TUGAS 2 — BALASAN CHAT KE TRADER (HARUS NATURAL & MANUSIAWI!):
+- Balas SEPERTI ORANG BENERAN LAGI CHAT DI WHATSAPP / DM INSTAGRAM!
+- DILARANG pakai format kaku yang selalu berulang ("1. Analisis ... 2. Kondisi Jurnal ... 3. Saran ..."), dilarang terdengar seperti bot.
+- Jawab langsung sesuai pertanyaan & manfaatkan MEMORI JANGKA PANJANG jika relevan dengan kebiasaan/topik sebelumnya.
+- Jika ada fakta baru yang penting diingat untuk sesi mendatang (mis. kesimpulan utama / level penting / preferensi user), tulis 0–2 poin singkat di array "newMemoryNotes".
+
+Keluarkan HANYA JSON valid:
+{
+  "auditPassed": boolean,
+  "needsRevision": boolean,
+  "revisionTarget": "NONE" | "MACRO_NEWS" | "JOURNAL_RISK",
+  "auditNotes": "1 kalimat singkat catatan audit internal",
+  "revisionInstruction": "Instruksi revisi jika needsRevision=true, else string kosong",
+  "finalAnswer": "Balasan chat natural, luwes & manusiawi dalam ${isEn ? 'English' : 'Bahasa Indonesia'}",
+  "newMemoryNotes": [{"text": "1 kalimat singkat fakta penting", "category": "market" | "journal" | "preference"}],
+  "actionCard": {
+    "directionClarity": "BUY" | "SELL" | "WAIT_MIXED" | "INFO_ONLY",
+    "directionLabel": "Label sangat singkat jika relevan",
+    "spikeWarning": "'-' jika tidak relevan",
+    "riskReminder": "'-' jika tidak relevan"
+  }
+}`;
+
   const user = `Bahasa: ${isEn ? 'English' : 'Bahasa Indonesia'}
 Pesan User: "${params.message}"
 Riwayat Obrolan:
 ${formatHistoryBlock(params.history)}
 
+MEMORI JANGKA PANJANG ASISTEN:
+${memoryText}
+
 FAKTA MENTAH PERANGKAT:
-${JSON.stringify(rawFactsAnchor).slice(0, 7000)}
+${JSON.stringify(rawFactsAnchor).slice(0, 7500)}
 
 MEMO DIVISI MAKRO:
 ${params.macroMemo ? JSON.stringify(params.macroMemo).slice(0, 4500) : '(tidak dipanggil)'}
@@ -872,22 +973,232 @@ export async function runAgentDeskOrchestration(
   const isEn = validated.language === 'en';
   const workflowTrace: AgentWorkflowStep[] = [];
   const providersUsed = new Set<string>();
+  const detectedAgentName = extractNicknameRenameFromMessage(validated.message);
+  const effectiveAgentName = detectedAgentName || validated.agentName;
+  const intentRoute = classifyChatIntent(validated.message, validated.history);
+  const memoryText = formatMemoryListForPrompt(validated.contextObj);
+  const personaGuide = getPersonaStyleGuide(validated.persona, effectiveAgentName, isEn);
 
-  // Smart Routing: quick conversational follow-ups skip full office meeting (fast + saves API quota!)
-  if (isLightweightFollowUp(validated.message, validated.history)) {
-    const personaGuide = getPersonaStyleGuide(validated.persona, validated.agentName, isEn);
+  // Path 1: SMALL_TALK — Pure assistant banter/greeting/naming WITHOUT leaking market or journal data!
+  if (intentRoute === 'SMALL_TALK') {
+    const smallTalkSystem = `${personaGuide}
+ATURAN MUTLAK JALUR SAPAAN / BASA-BASI:
+- User sedang menyapa, berbasa-basi, berkenalan, atau memberi nama panggilan baru kepadamu.
+- DILARANG KERAS membahas arah market, bias BUY/SELL, berita, fundamental, atau data jurnal kecuali user bertanya tentang itu nanti!
+- Balas santai, hangat, sigap seperti Jarvis / Alfred yang siap membantu kapan saja user siap bahas market atau jurnal.
+- Gunakan Memori Jangka Panjang hanya jika membantu mengenali panggilan nama atau kedekatan obrolan.`;
+
+    const smallTalkUser = `Bahasa: ${isEn ? 'English' : 'Bahasa Indonesia'}
+Memori asisten:\n${memoryText}
+Riwayat obrolan:\n${formatHistoryBlock(validated.history)}
+Pesan user: "${validated.message}"
+${detectedAgentName ? `(User baru saja memanggilmu "${detectedAgentName}" — terima panggilan baru ini dengan natural!)` : ''}
+Balas singkat dan natural (1-3 kalimat saja).`;
+
+    try {
+      const res = await runWithProviderCascade({
+        order: ['groq', 'gemini', 'openrouter'],
+        keys,
+        isBoss: true,
+        systemInstruction: smallTalkSystem,
+        userPrompt: smallTalkUser,
+        expectJson: false,
+        timeoutMs: 8000,
+        temperature: 0.75,
+      });
+      providersUsed.add(formatProviderDisplayName(res.provider));
+      const newMemories: AgentExtractedMemoryFact[] = detectedAgentName
+        ? [{ text: `User memanggil asisten dengan nama "${detectedAgentName}".`, category: 'preference' }]
+        : [];
+      return {
+        status: 200,
+        payload: {
+          success: true,
+          routeType: 'SMALL_TALK',
+          answer: res.text.trim(),
+          actionCard: normalizeActionCard(null, validated.language),
+          workflowTrace: [
+            {
+              stepNumber: 1,
+              role: 'BOSS_DIRECT',
+              divisionName: effectiveAgentName,
+              provider: res.provider,
+              model: res.model,
+              action: isEn ? 'Personal Assistant Banter' : 'Mode Asisten (Basa-Basi)',
+              status: 'completed',
+              summary: isEn
+                ? 'Replied naturally without pulling market or journal data.'
+                : 'Membalas sapaan secara natural tanpa membocorkan data market/jurnal.',
+              latencyMs: res.latencyMs,
+            },
+          ],
+          revisionTriggered: false,
+          activeProviders: Array.from(providersUsed),
+          detectedAgentName,
+          newMemoryNotes: newMemories,
+          totalLatencyMs: Date.now() - startedAt,
+        },
+      };
+    } catch {
+      // Fallback below
+    }
+  }
+
+  // Path 2: OUT_OF_SCOPE — Polite in-character refusal for unrelated topics (weather, sports, recipes, etc.)
+  if (intentRoute === 'OUT_OF_SCOPE') {
+    const oosSystem = `${personaGuide}
+ATURAN MUTLAK BATAS RANAH:
+- Pertanyaan user di luar ranah TradeVault & trading (mis. cuaca, olahraga, resep, hiburan, topik umum non-ekonomi).
+- Tolak dengan sopan, santai, dan berkarakter seperti asisten pribadi (Jarvis/Alfred): jelaskan bahwa ranah tugasmu khusus seputar pasar XAU/USD, berita makro, fundamental emas, dan jurnal/risiko trading user di TradeVault.
+- JANGAN pernah mencoba menjawab atau mengarang jawaban topik di luar ranah itu.`;
+
+    const oosUser = `Bahasa: ${isEn ? 'English' : 'Bahasa Indonesia'}
+Pesan user: "${validated.message}"
+Balas singkat (1-2 kalimat) dengan ramah bahwa itu di luar ranah tugasmu.`;
+
+    try {
+      const res = await runWithProviderCascade({
+        order: ['groq', 'gemini', 'openrouter'],
+        keys,
+        isBoss: true,
+        systemInstruction: oosSystem,
+        userPrompt: oosUser,
+        expectJson: false,
+        timeoutMs: 7500,
+        temperature: 0.5,
+      });
+      providersUsed.add(formatProviderDisplayName(res.provider));
+      return {
+        status: 200,
+        payload: {
+          success: true,
+          routeType: 'OUT_OF_SCOPE',
+          answer: res.text.trim(),
+          actionCard: normalizeActionCard(null, validated.language),
+          workflowTrace: [
+            {
+              stepNumber: 1,
+              role: 'BOSS_DIRECT',
+              divisionName: effectiveAgentName,
+              provider: res.provider,
+              model: res.model,
+              action: isEn ? 'Scope Guardrail' : 'Penjaga Batas Ranah',
+              status: 'completed',
+              summary: isEn
+                ? 'Out-of-scope topic politely declined.'
+                : 'Topik di luar ranah trading ditolak secara sopan.',
+              latencyMs: res.latencyMs,
+            },
+          ],
+          revisionTriggered: false,
+          activeProviders: Array.from(providersUsed),
+          totalLatencyMs: Date.now() - startedAt,
+        },
+      };
+    } catch {
+      return {
+        status: 200,
+        payload: {
+          success: true,
+          routeType: 'OUT_OF_SCOPE',
+          answer: isEn
+            ? `That's outside my scope as ${effectiveAgentName} — I'm strictly focused on XAU/USD, macro news, fundamentals, and your TradeVault journal & risk.`
+            : `Wah itu di luar ranah tugas saya sebagai ${effectiveAgentName} — fokus saya khusus bantu pantau market XAU/USD, berita makro, fundamental, dan jurnal trading kamu di TradeVault.`,
+          actionCard: normalizeActionCard(null, validated.language),
+          workflowTrace: [],
+          revisionTriggered: false,
+          activeProviders: [],
+          totalLatencyMs: Date.now() - startedAt,
+        },
+      };
+    }
+  }
+
+  // Path 3: LIVE_PRICE_CHECK — Direct accurate real-time XAU/USD & Intermarket quote readout
+  if (intentRoute === 'LIVE_PRICE_CHECK') {
+    const quote = validated.contextObj?.liveMarketQuote || null;
+    const priceSystem = `${personaGuide}
+ATURAN KERAS HARGA REAL-TIME:
+- Gunakan HANYA data angka dari "DATA HARGA LIVE".
+- Sebutkan angka harga XAU/USD terkini dengan akurat beserta jam update / sumber datanya.
+- JANGAN PERNAH mengarang atau menebak harga dari ingatan model! Jika liveMarketQuote.xauusd null atau unavailable, katakan dengan jujur bahwa harga live sedang tidak tersedia / Mode Offline aktif.`;
+
+    const priceUser = `Bahasa: ${isEn ? 'English' : 'Bahasa Indonesia'}
+Pesan user: "${validated.message}"
+DATA HARGA LIVE:
+${JSON.stringify({
+      capturedAt: validated.contextObj?.runtime?.capturedAt ?? null,
+      isOfflineMode: validated.contextObj?.runtime?.isOfflineMode ?? false,
+      liveMarketQuote: quote,
+    })}
+Jawab singkat, natural, dan akurat.`;
+
+    try {
+      const res = await runWithProviderCascade({
+        order: ['gemini', 'groq', 'openrouter'],
+        keys,
+        isBoss: true,
+        systemInstruction: priceSystem,
+        userPrompt: priceUser,
+        expectJson: false,
+        timeoutMs: 8500,
+      });
+      providersUsed.add(formatProviderDisplayName(res.provider));
+      const xauSpot = quote?.xauusd?.price;
+      const newMemories: AgentExtractedMemoryFact[] =
+        typeof xauSpot === 'number' && Number.isFinite(xauSpot)
+          ? [{ text: `Harga XAU/USD terakhir yang dicek user berada di sekitar ${xauSpot} (${quote?.xauusd?.source || 'live'}).`, category: 'market' }]
+          : [];
+      return {
+        status: 200,
+        payload: {
+          success: true,
+          routeType: 'LIVE_PRICE_CHECK',
+          answer: res.text.trim(),
+          actionCard: normalizeActionCard(null, validated.language),
+          workflowTrace: [
+            {
+              stepNumber: 1,
+              role: 'BOSS_DIRECT',
+              divisionName: `${effectiveAgentName} (Live Price)`,
+              provider: res.provider,
+              model: res.model,
+              action: isEn ? 'Live Market Quote Lookup' : 'Cek Harga Pasar Live',
+              status: 'completed',
+              summary: xauSpot
+                ? `XAU/USD @ ${xauSpot} (${quote?.xauusd?.source || 'live'})`
+                : 'Live price context checked.',
+              latencyMs: res.latencyMs,
+            },
+          ],
+          revisionTriggered: false,
+          activeProviders: Array.from(providersUsed),
+          newMemoryNotes: newMemories,
+          totalLatencyMs: Date.now() - startedAt,
+        },
+      };
+    } catch {
+      // fall through
+    }
+  }
+
+  // Path 4: Smart Routing for lightweight follow-up chat inside an existing market/journal thread
+  if (intentRoute === 'DIRECT_FOLLOWUP') {
     const directSystem = `${personaGuide}
-Kamu sedang membalas obrolan ringan / lanjutan di chat trading TradeVault.
-- Tetap jujur terhadap fakta yang ada di riwayat obrolan & ringkasan konteks singkat ini (jangan mengarang angka baru).
-- Balas natural, singkat, dan mengalir seperti chat WhatsApp/DM dengan orang sungguhan. Tidak perlu format poin kaku.`;
+Kamu sedang membalas obrolan lanjutan di chat trading TradeVault.
+- Tetap jujur terhadap fakta di riwayat obrolan, memori, & ringkasan konteks ini (dilarang mengarang harga atau angka baru).
+- Balas natural, singkat, dan mengalir seperti chat WhatsApp/DM dengan asisten pribadi.`;
     const quickAnchor = {
+      xauusdSpot: validated.contextObj?.liveMarketQuote?.xauusd ?? null,
       macroBias: validated.contextObj?.macroNews?.dominantBias ?? null,
       fundamentalBias: validated.contextObj?.fundamentalGold?.overallBias ?? null,
       tradesCount: validated.contextObj?.journal?.summary?.closedTradesCount ?? 0,
     };
-    const directUser = `Riwayat obrolan:\n${formatHistoryBlock(validated.history)}\n\nRingkasan cepat konteks: ${JSON.stringify(
-      quickAnchor
-    )}\n\nPesan terbaru user: "${validated.message}"`;
+    const directUser = `Memori asisten:\n${memoryText}\n\nRiwayat obrolan:\n${formatHistoryBlock(
+      validated.history
+    )}\n\nRingkasan cepat konteks: ${JSON.stringify(quickAnchor)}\n\nPesan terbaru user: "${
+      validated.message
+    }"`;
 
     try {
       const directRes = await runWithProviderCascade({
@@ -898,20 +1209,20 @@ Kamu sedang membalas obrolan ringan / lanjutan di chat trading TradeVault.
         userPrompt: directUser,
         expectJson: false,
         timeoutMs: 9000,
-        temperature: 0.7,
+        temperature: 0.65,
       });
       providersUsed.add(formatProviderDisplayName(directRes.provider));
       workflowTrace.push({
         stepNumber: 1,
         role: 'BOSS_DIRECT',
-        divisionName: `${validated.agentName} (Smart Direct)`,
+        divisionName: `${effectiveAgentName} (Smart Direct)`,
         provider: directRes.provider,
         model: directRes.model,
         action: isEn ? 'Direct Conversational Reply' : 'Balasan Langsung (Hemat Kuota)',
         status: 'completed',
         summary: isEn
-          ? 'Light follow-up detected — replied directly without calling full division meeting.'
-          : 'Obrolan ringan / lanjutan — dibalas langsung oleh Boss tanpa rapat ulang divisi.',
+          ? 'Light follow-up replied directly without calling full division meeting.'
+          : 'Obrolan lanjutan dibalas langsung tanpa rapat ulang divisi.',
         latencyMs: directRes.latencyMs,
       });
       return {
@@ -924,6 +1235,7 @@ Kamu sedang membalas obrolan ringan / lanjutan di chat trading TradeVault.
           workflowTrace,
           revisionTriggered: false,
           activeProviders: Array.from(providersUsed),
+          detectedAgentName,
           totalLatencyMs: Date.now() - startedAt,
         },
       };
@@ -1269,6 +1581,18 @@ Kamu sedang membalas obrolan ringan / lanjutan di chat trading TradeVault.
     step.stepNumber = idx + 1;
   });
 
+  const rawMemoryNotes = Array.isArray(bossJson.newMemoryNotes) ? bossJson.newMemoryNotes : [];
+  const normalizedMemories: AgentExtractedMemoryFact[] = rawMemoryNotes
+    .slice(0, 3)
+    .filter((m: any) => m && typeof m.text === 'string' && m.text.trim().length > 4)
+    .map((m: any) => ({
+      text: String(m.text).trim().slice(0, 220),
+      category:
+        m.category === 'preference' || m.category === 'market' || m.category === 'journal'
+          ? m.category
+          : 'general',
+    }));
+
   return {
     status: 200,
     payload: {
@@ -1279,9 +1603,145 @@ Kamu sedang membalas obrolan ringan / lanjutan di chat trading TradeVault.
       workflowTrace,
       revisionTriggered,
       activeProviders: Array.from(providersUsed),
+      detectedAgentName,
+      newMemoryNotes: normalizedMemories,
       totalLatencyMs: Date.now() - startedAt,
     },
   };
+}
+
+// ============================================================================
+// 2B. END-SESSION MEMORY DISTILLATION ("Akhiri Sesi / New Day")
+// ============================================================================
+
+export async function runEndSessionMemoryDistillation(
+  rawBody: unknown,
+  keys: AgentDeskEnvKeys
+): Promise<{
+  status: number;
+  payload: {
+    success: boolean;
+    sessionSummary: string;
+    memoryFacts: AgentExtractedMemoryFact[];
+    providerUsed?: string;
+    latencyMs: number;
+    error?: string;
+  };
+}> {
+  const startedAt = Date.now();
+  const body = (rawBody && typeof rawBody === 'object' ? rawBody : {}) as Record<string, unknown>;
+  const language: 'id' | 'en' = body.language === 'en' ? 'en' : 'id';
+  const isEn = language === 'en';
+  const rawHistory = Array.isArray(body.history) ? body.history : [];
+  const history = rawHistory
+    .slice(-24)
+    .filter(
+      (h: any) =>
+        h &&
+        (h.role === 'user' || h.role === 'assistant') &&
+        typeof h.content === 'string' &&
+        h.content.trim().length > 0
+    )
+    .map((h: any) => ({ role: h.role as 'user' | 'assistant', content: String(h.content).trim().slice(0, 600) }));
+
+  if (history.length === 0) {
+    return {
+      status: 200,
+      payload: {
+        success: true,
+        sessionSummary: isEn ? 'Empty session closed.' : 'Sesi kosong ditutup.',
+        memoryFacts: [],
+        latencyMs: 1,
+      },
+    };
+  }
+
+  const existingMemories = Array.isArray(body.existingMemories)
+    ? body.existingMemories
+        .slice(0, 20)
+        .map((m: any) => (typeof m === 'string' ? m : m?.text || ''))
+        .filter(Boolean)
+    : [];
+
+  if (keys.geminiKeys.length + keys.groqKeys.length + keys.openRouterKeys.length === 0) {
+    return {
+      status: 503,
+      payload: {
+        success: false,
+        sessionSummary: '',
+        memoryFacts: [],
+        latencyMs: Date.now() - startedAt,
+        error: isEn ? 'No AI key active on server.' : 'Belum ada API key AI aktif di server.',
+      },
+    };
+  }
+
+  const systemInstruction = `Kamu adalah MANAJER MEMORI ASISTEN PRIBADI TradeVault (seperti sistem ingatan Jarvis / Alfred).
+Tugasmu menyaring sesi obrolan yang baru saja berakhir menjadi:
+1. "sessionSummary": 1 kalimat padat merangkum sesi hari ini.
+2. "memoryFacts": maksimal 3 butir fakta PALING PENTING yang layak diingat untuk sesi-sesi mendatang (mis. nama panggilan baru, kebiasaan/kesalahan trading user yang dibahas, level/arah XAUUSD penting yang sempat jadi patokan, atau preferensi user).
+ATURAN:
+- Jangan ulangi fakta yang sudah persis ada di memori lama.
+- Jangan masukkan basa-basi kosong ("user menyapa halo").
+- Keluarkan HANYA JSON valid:
+  {"sessionSummary":string,"memoryFacts":[{"text":string,"category":"preference"|"market"|"journal"|"general"}]}`;
+
+  const userPrompt = `Bahasa: ${isEn ? 'English' : 'Bahasa Indonesia'}
+Memori lama yang sudah tersimpan:
+${existingMemories.length > 0 ? existingMemories.map((x, i) => `${i + 1}. ${x}`).join('\n') : '(kosong)'}
+
+Transkrip Sesi yang Diakhiri:
+${history.map((h) => `${h.role === 'user' ? 'USER' : 'ASISTEN'}: ${h.content}`).join('\n')}
+
+Keluarkan HANYA JSON.`;
+
+  try {
+    const res = await runWithProviderCascade({
+      order: ['groq', 'gemini', 'openrouter'],
+      keys,
+      isBoss: false,
+      systemInstruction,
+      userPrompt,
+      expectJson: true,
+      timeoutMs: 9000,
+    });
+    const parsed = res.json || {};
+    const facts: AgentExtractedMemoryFact[] = (Array.isArray(parsed.memoryFacts) ? parsed.memoryFacts : [])
+      .slice(0, 3)
+      .filter((f: any) => f && typeof f.text === 'string' && f.text.trim().length > 4)
+      .map((f: any) => ({
+        text: String(f.text).trim().slice(0, 220),
+        category:
+          f.category === 'preference' || f.category === 'market' || f.category === 'journal'
+            ? f.category
+            : 'general',
+      }));
+
+    return {
+      status: 200,
+      payload: {
+        success: true,
+        sessionSummary: String(parsed.sessionSummary || (isEn ? 'Session archived.' : 'Sesi diarsipkan.')).slice(
+          0,
+          280
+        ),
+        memoryFacts: facts,
+        providerUsed: formatProviderDisplayName(res.provider),
+        latencyMs: Date.now() - startedAt,
+      },
+    };
+  } catch (err) {
+    return {
+      status: 502,
+      payload: {
+        success: false,
+        sessionSummary: '',
+        memoryFacts: [],
+        latencyMs: Date.now() - startedAt,
+        error: sanitizeAgentError(err),
+      },
+    };
+  }
 }
 
 // ============================================================================

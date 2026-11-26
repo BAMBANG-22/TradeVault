@@ -3226,27 +3226,87 @@ async function edgeRunSpecialistNewsDraft(params: {
 
 function edgeGetPersonaStyle(persona: string, agentName: string, isEn: boolean): string {
   if (isEn) {
-    if (persona === 'concise') return `Your name is ${agentName}. Reply super crisp and concise (2-5 short lines), like a sharp trading partner on DM. Zero formal templates.`;
-    if (persona === 'mentor') return `Your name is ${agentName}. Reply like a calm, experienced trading mentor on chat — honest, grounded, never robotic.`;
-    return `Your name is ${agentName}. Reply like a real, friendly trading partner chatting on WhatsApp/DM — relaxed, direct, flexible, human, and zero rigid templates.`;
+    if (persona === 'concise') return `Your name is ${agentName}, the user's personal trading assistant inside TradeVault (like Jarvis/Alfred). Reply crisp and concise (2-5 short lines). Zero formal templates.`;
+    if (persona === 'mentor') return `Your name is ${agentName}, the user's trusted personal trading partner & mentor inside TradeVault (like Alfred/Jarvis). Honest, grounded, never robotic.`;
+    return `Your name is ${agentName}, the user's personal trading assistant inside TradeVault (like Jarvis/Alfred). Reply like a loyal, friendly human partner on WhatsApp/DM — relaxed, direct, zero rigid templates.`;
   }
-  if (persona === 'concise') return `Namamu ${agentName}. Balas super singkat, lugas, langsung inti (2-5 baris pendek) seperti rekan trading chat lewat DM. Tanpa template kaku.`;
-  if (persona === 'mentor') return `Namamu ${agentName}. Balas seperti mentor trading berpengalaman — tegas, jujur, tapi tetap luwes diajak ngobrol di chat.`;
-  return `Namamu ${agentName}. Balas dengan gaya ngobrol santai, akrab, lugas, dan fleksibel seperti teman trading beneran di WhatsApp / DM Instagram. Jangan pakai format laporan kaku ("1. ... 2. ... 3. ...") kecuali benar-benar perlu.`;
+  if (persona === 'concise') return `Namamu ${agentName}, asisten pribadi trading di TradeVault (seperti Jarvis / Alfred). Balas ringkas, lugas, langsung inti (2-5 baris pendek). Tanpa template kaku.`;
+  if (persona === 'mentor') return `Namamu ${agentName}, asisten pribadi sekaligus mentor trading di TradeVault (seperti Alfred bagi Batman). Tenang, jujur, tapi tetap luwes diajak ngobrol.`;
+  return `Namamu ${agentName}, asisten pribadi trading pengguna di TradeVault (nuansa Jarvis / Alfred). Balas santai, akrab, lugas, dan manusiawi seperti chat WA/DM. Dilarang memakai format laporan kaku ("1. ... 2. ... 3. ...").`;
 }
 
-function edgeIsLightFollowUp(message: string, history: any[]): boolean {
-  const q = message.trim().toLowerCase();
-  if (q.length <= 28 && /^(halo|hai|hi|hey|pagi|siang|sore|malam|tes|test|oke|ok|siap|makasih|thanks|thank you|sip|mantap|paham|noted|oh gitu|ohh|hmm|haha|wkwk)[\s!?.]*$/i.test(q)) {
-    return true;
+function edgeExtractNickname(message: string): string | undefined {
+  const m = message.match(
+    /(?:panggil(?:\s+kamu|\s+lu|\s+lo|\s+anda)?(?:\s+dengan)?|namamu(?:\s+sekarang)?|mulai\s+sekarang\s+(?:kamu\s+)?(?:saya\s+)?panggil(?:\s+kamu)?|call\s+you|your\s+name\s+is)\s+["']?([A-Za-z][A-Za-z0-9._\- ]{1,24})["']?/i
+  );
+  if (!m || !m[1]) return undefined;
+  const candidate = m[1].replace(/\b(ya|dong|aja|saja|nih|lah|yah|please|ok)\b.*$/i, '').trim();
+  if (candidate.length >= 2 && candidate.length <= 24) {
+    return candidate.charAt(0).toUpperCase() + candidate.slice(1);
   }
+  return undefined;
+}
+
+function edgeFormatMemoryList(contextObj: any): string {
+  const rawList = Array.isArray(contextObj?.memoryNotes) ? contextObj.memoryNotes : [];
+  if (rawList.length === 0) return '(Belum ada memori tersimpan)';
+  return rawList
+    .slice(0, 20)
+    .map((item: any, idx: number) => {
+      if (typeof item === 'string') return `${idx + 1}. ${item.slice(0, 200)}`;
+      if (item && typeof item.text === 'string') return `${idx + 1}. [${String(item.category || 'general')}] ${item.text.slice(0, 200)}`;
+      return '';
+    })
+    .filter(Boolean)
+    .join('\n');
+}
+
+function edgeClassifyChatIntent(
+  message: string,
+  history: any[]
+): 'SMALL_TALK' | 'OUT_OF_SCOPE' | 'LIVE_PRICE_CHECK' | 'DIRECT_FOLLOWUP' | 'FULL_OFFICE' {
+  const q = message.trim().toLowerCase();
+  const tradingKeywords =
+    /\b(xau|xauusd|gold|emas|dxy|yield|us10y|us02y|usoil|oil|forex|pair|market|pasar|chart|candle|harga|price|spot|news|berita|makro|macro|fundamental|fomc|fed|fedwatch|cpi|ppi|nfp|pmi|powell|polymarket|cycle|confluence|smc|heatmap|spike|sweep|whipsaw|buy|sell|long|short|entry|exit|sl|tp|stoploss|takeprofit|jurnal|journal|trade|trading|posisi|open|planned|lot|risiko|risk|drawdown|dd|win\s?rate|profit|loss|rugi|equity|saldo|balance|akun|playbook|guardrail|psikologi|emosi|fomo|sesi|session|london|new york|asia|evaluasi|audit|rekap)\b/i;
+  const hasTradingTopic = tradingKeywords.test(q);
+
+  const asksLivePrice =
+    /\b(harga|price|spot|level|posisi harga|berapa skrg|berapa sekarang|di angka berapa|brp skrg|lagi di berapa|running di|running price)\b/i.test(q) &&
+    /\b(xau|xauusd|gold|emas|dxy|us10y|us02y|usoil|oil|btc|eurusd|market|pasar)\b/i.test(q);
+  if (asksLivePrice && !/\b(kenapa|analisis|analisa|fundamental|berita|news|jurnal|spike|prediksi)\b/i.test(q)) {
+    return 'LIVE_PRICE_CHECK';
+  }
+
+  const outOfScopeTopics =
+    /\b(cuaca|hujan|panas|mendung|suhu|bmkg|resep|masak|makanan|minuman|resto|nasi goreng|bola|skor|pertandingan|liga|timnas|film|anime|drakor|lagu|musik|artis|gosip|jodoh|pacar|zodiak|ramalan|tebak|pantun|puisi|game|mobile legends|pubg|ff|nilai tukar baju|obat|sakit|dokter)\b/i;
+  if (!hasTradingTopic && outOfScopeTopics.test(q)) {
+    return 'OUT_OF_SCOPE';
+  }
+
+  const smallTalkPatterns =
+    /^(halo|hai|hi|hello|hey|selamat pagi|selamat siang|selamat sore|selamat malam|pagi|siang|sore|malam|assalamualaikum|permisi|tes|test|testing|apa kabar|gm|gn|oke|ok|siap|makasih|terima kasih|thanks|thank you|sip|mantap|keren|good|nice|paham|noted|oh gitu|ohh|hmm|haha|wkwk|bro|bos)\b/i;
+  const renamePattern =
+    /\b(panggil\s+(?:kamu|lu|lo|anda)|namamu|mulai\s+sekarang.*panggil|ganti\s+nama|call\s+you|name\s+is)\b/i;
+
+  if (
+    !hasTradingTopic &&
+    (renamePattern.test(q) ||
+      smallTalkPatterns.test(q) ||
+      (q.length <= 65 && /\b(siapa kamu|siapa lu|lu siapa|kamu siapa|perkenalkan|kenalan|lagi apa|lg apa|bisa apa|tugasmu)\b/i.test(q)))
+  ) {
+    return 'SMALL_TALK';
+  }
+  if (!hasTradingTopic && q.length <= 45) {
+    return 'SMALL_TALK';
+  }
+
   if (history.length >= 2 && q.length <= 95) {
     const asksFreshAudit =
-      /\b(cek ulang|audit|evaluasi jurnal|rekap|fundamental|polymarket|fedwatch|posisi aktif|win\s?rate|drawdown|profit factor|update terbaru|berita baru)\b/i.test(q);
+      /\b(cek ulang|audit|evaluasi jurnal|rekap|fundamental|polymarket|fedwatch|posisi aktif|win\s?rate|drawdown|profit factor|update terbaru|berita baru|harga sekarang)\b/i.test(q);
     const isCue = /^(jadi|berarti|oh|ohh|terus|trus|maksudnya|kalau gitu|kalo gitu|so|meaning|wait|tunggu|oke|ok|bener|yakin|kenapa|kok|gimana|gmn)\b/i.test(q);
-    if (isCue && !asksFreshAudit) return true;
+    if (isCue && !asksFreshAudit) return 'DIRECT_FOLLOWUP';
   }
-  return false;
+  return 'FULL_OFFICE';
 }
 
 async function handleAgentDeskChat(req: Request): Promise<Response> {
@@ -3302,17 +3362,138 @@ async function handleAgentDeskChat(req: Request): Promise<Response> {
         : '(Belum ada riwayat percakapan)';
 
     const fmtProv = (p: string) => (p === 'gemini' ? 'Gemini' : p === 'groq' ? 'Groq' : p === 'openrouter' ? 'OpenRouter' : 'System');
+    const detectedAgentName = edgeExtractNickname(message);
+    const effectiveAgentName = detectedAgentName || agentName;
+    const intentRoute = edgeClassifyChatIntent(message, history);
+    const memoryText = edgeFormatMemoryList(contextObj);
+    const personaGuide = edgeGetPersonaStyle(persona, effectiveAgentName, isEn);
 
-    // Smart Routing for lightweight follow-up chat (fast & quota-friendly)
-    if (edgeIsLightFollowUp(message, history)) {
+    // Path 1: SMALL_TALK (zero market/journal dump!)
+    if (intentRoute === 'SMALL_TALK') {
       try {
-        const personaGuide = edgeGetPersonaStyle(persona, agentName, isEn);
+        const res = await edgeRunAgentCascade({
+          order: ['groq', 'gemini', 'openrouter'],
+          keys,
+          isBoss: true,
+          systemInstruction: `${personaGuide}\nATURAN MUTLAK BASA-BASI:\n- User sedang menyapa, berbasa-basi, atau memberi nama panggilan baru.\n- DILARANG KERAS membahas arah market, bias BUY/SELL, berita, fundamental, atau data jurnal!\n- Balas hangat, santai, dan sigap layaknya asisten pribadi Jarvis/Alfred (1-3 kalimat).`,
+          userPrompt: `Bahasa: ${isEn ? 'English' : 'Bahasa Indonesia'}\nMemori asisten:\n${memoryText}\nRiwayat:\n${historyText}\nPesan user: "${message}"\n${detectedAgentName ? `(User baru saja memanggilmu "${detectedAgentName}" — sambut nama barumu dengan natural!)` : ''}`,
+          expectJson: false,
+          timeoutMs: 8000,
+        });
+        return jsonResponse({
+          success: true,
+          routeType: 'SMALL_TALK',
+          answer: res.text.trim(),
+          actionCard: {
+            directionClarity: 'INFO_ONLY',
+            directionLabel: effectiveAgentName,
+            spikeWarning: '-',
+            riskReminder: '-',
+          },
+          workflowTrace: [
+            {
+              stepNumber: 1,
+              role: 'BOSS_DIRECT',
+              divisionName: effectiveAgentName,
+              provider: res.provider,
+              model: res.model,
+              action: isEn ? 'Personal Assistant Banter' : 'Mode Asisten (Basa-Basi)',
+              status: 'completed',
+              summary: isEn ? 'Replied naturally without pulling market data.' : 'Membalas sapaan santai tanpa membocorkan data market.',
+              latencyMs: res.latencyMs,
+            },
+          ],
+          revisionTriggered: false,
+          activeProviders: [fmtProv(res.provider)],
+          detectedAgentName,
+          newMemoryNotes: detectedAgentName
+            ? [{ text: `User memanggil asisten dengan nama "${detectedAgentName}".`, category: 'preference' }]
+            : [],
+          totalLatencyMs: Date.now() - startedAt,
+        });
+      } catch {
+        // fallback below
+      }
+    }
+
+    // Path 2: OUT_OF_SCOPE
+    if (intentRoute === 'OUT_OF_SCOPE') {
+      try {
+        const res = await edgeRunAgentCascade({
+          order: ['groq', 'gemini', 'openrouter'],
+          keys,
+          isBoss: true,
+          systemInstruction: `${personaGuide}\nTopik user di luar ranah TradeVault & trading (mis. cuaca, bola, resep, hiburan). Tolak dengan ramah & santai dalam 1-2 kalimat bahwa tugasmu khusus memantau XAU/USD, berita makro, fundamental, dan jurnal trading di TradeVault. Jangan pernah mengarang jawaban topik di luar ranah itu.`,
+          userPrompt: `Bahasa: ${isEn ? 'English' : 'Bahasa Indonesia'}\nPesan user: "${message}"`,
+          expectJson: false,
+          timeoutMs: 7500,
+        });
+        return jsonResponse({
+          success: true,
+          routeType: 'OUT_OF_SCOPE',
+          answer: res.text.trim(),
+          actionCard: { directionClarity: 'INFO_ONLY', directionLabel: effectiveAgentName, spikeWarning: '-', riskReminder: '-' },
+          workflowTrace: [{ stepNumber: 1, role: 'BOSS_DIRECT', divisionName: effectiveAgentName, provider: res.provider, model: res.model, action: isEn ? 'Scope Guardrail' : 'Penjaga Batas Ranah', status: 'completed', summary: isEn ? 'Out-of-scope topic politely declined.' : 'Topik di luar ranah trading ditolak sopan.', latencyMs: res.latencyMs }],
+          revisionTriggered: false,
+          activeProviders: [fmtProv(res.provider)],
+          totalLatencyMs: Date.now() - startedAt,
+        });
+      } catch {
+        return jsonResponse({
+          success: true,
+          routeType: 'OUT_OF_SCOPE',
+          answer: isEn
+            ? `That's outside my scope as ${effectiveAgentName} — I focus on XAU/USD, macro news, fundamentals, and your TradeVault journal.`
+            : `Wah itu di luar ranah saya sebagai ${effectiveAgentName} — fokus saya khusus bantu pantau market XAU/USD, berita makro, fundamental, dan jurnal TradeVault kamu.`,
+          actionCard: { directionClarity: 'INFO_ONLY', directionLabel: effectiveAgentName, spikeWarning: '-', riskReminder: '-' },
+          workflowTrace: [],
+          revisionTriggered: false,
+          activeProviders: [],
+          totalLatencyMs: Date.now() - startedAt,
+        });
+      }
+    }
+
+    // Path 3: LIVE_PRICE_CHECK
+    if (intentRoute === 'LIVE_PRICE_CHECK') {
+      try {
+        const quote = contextObj?.liveMarketQuote || null;
+        const res = await edgeRunAgentCascade({
+          order: ['gemini', 'groq', 'openrouter'],
+          keys,
+          isBoss: true,
+          systemInstruction: `${personaGuide}\nATURAN HARGA REAL-TIME:\n- Gunakan HANYA angka dari DATA HARGA LIVE.\n- Sebutkan angka XAU/USD + sumber + jam update.\n- DILARANG mengarang harga jika data kosong/offline.`,
+          userPrompt: `Bahasa: ${isEn ? 'English' : 'Bahasa Indonesia'}\nPesan user: "${message}"\nDATA HARGA LIVE:\n${JSON.stringify({ capturedAt: contextObj?.runtime?.capturedAt ?? null, isOfflineMode: contextObj?.runtime?.isOfflineMode ?? false, liveMarketQuote: quote })}`,
+          expectJson: false,
+          timeoutMs: 8500,
+        });
+        const xauSpot = quote?.xauusd?.price;
+        return jsonResponse({
+          success: true,
+          routeType: 'LIVE_PRICE_CHECK',
+          answer: res.text.trim(),
+          actionCard: { directionClarity: 'INFO_ONLY', directionLabel: 'Live Price', spikeWarning: '-', riskReminder: '-' },
+          workflowTrace: [{ stepNumber: 1, role: 'BOSS_DIRECT', divisionName: `${effectiveAgentName} (Live Price)`, provider: res.provider, model: res.model, action: isEn ? 'Live Quote Lookup' : 'Cek Harga Live', status: 'completed', summary: xauSpot ? `XAU/USD @ ${xauSpot}` : 'Live price checked.', latencyMs: res.latencyMs }],
+          revisionTriggered: false,
+          activeProviders: [fmtProv(res.provider)],
+          newMemoryNotes: typeof xauSpot === 'number' && Number.isFinite(xauSpot) ? [{ text: `Harga XAU/USD terakhir yang dicek di ${xauSpot} (${quote?.xauusd?.source || 'live'}).`, category: 'market' }] : [],
+          totalLatencyMs: Date.now() - startedAt,
+        });
+      } catch {
+        // fall through
+      }
+    }
+
+    // Path 4: Smart Routing for lightweight follow-up chat
+    if (intentRoute === 'DIRECT_FOLLOWUP') {
+      try {
         const directRes = await edgeRunAgentCascade({
           order: ['gemini', 'groq', 'openrouter'],
           keys,
           isBoss: true,
-          systemInstruction: `${personaGuide}\nBalas obrolan lanjutan secara natural, singkat, dan mengalir seperti chat WhatsApp/DM dengan orang sungguhan. Jangan mengarang angka baru.`,
-          userPrompt: `Riwayat obrolan:\n${historyText}\nRingkasan konteks: ${JSON.stringify({
+          systemInstruction: `${personaGuide}\nBalas obrolan lanjutan secara natural, singkat, dan mengalir seperti chat WhatsApp/DM dengan asisten pribadi. Jangan mengarang harga/angka baru.`,
+          userPrompt: `Memori asisten:\n${memoryText}\nRiwayat obrolan:\n${historyText}\nRingkasan konteks: ${JSON.stringify({
+            xauusdSpot: contextObj?.liveMarketQuote?.xauusd ?? null,
             macroBias: contextObj?.macroNews?.dominantBias ?? null,
             fundamentalBias: contextObj?.fundamentalGold?.overallBias ?? null,
             tradesCount: contextObj?.journal?.summary?.closedTradesCount ?? 0,
@@ -3334,7 +3515,7 @@ async function handleAgentDeskChat(req: Request): Promise<Response> {
             {
               stepNumber: 1,
               role: 'BOSS_DIRECT',
-              divisionName: `${agentName} (Smart Direct)`,
+              divisionName: `${effectiveAgentName} (Smart Direct)`,
               provider: directRes.provider,
               model: directRes.model,
               action: isEn ? 'Direct Conversational Reply' : 'Balasan Langsung (Hemat Kuota)',
@@ -3347,6 +3528,7 @@ async function handleAgentDeskChat(req: Request): Promise<Response> {
           ],
           revisionTriggered: false,
           activeProviders: [fmtProv(directRes.provider)],
+          detectedAgentName,
           totalLatencyMs: Date.now() - startedAt,
         });
       } catch {
@@ -3531,22 +3713,24 @@ ATURAN MUTLAK:
     await Promise.all(tasks);
 
     const buildBossPrompt = (allowRev: boolean) => {
-      const personaGuide = edgeGetPersonaStyle(persona, agentName, isEn);
-      const sys = `Kamu adalah BOSS / HEAD OF TRADING DESK (Gemini) sekaligus teman ngobrol trader di aplikasi ini.
+      const sys = `Kamu adalah BOSS / HEAD OF TRADING DESK (Gemini) sekaligus asisten pribadi trader di aplikasi TradeVault (seperti Jarvis / Alfred).
 ${personaGuide}
-1. AUDIT FAKTA: Cocokkan memo divisi dengan DATA MENTAH perangkat. Jika arah BUY/SELL terbalik, salah paham Bearish Spike (turun tajam awal != sinyal buy), atau angka keliru -> ${
+1. AUDIT FAKTA: Cocokkan memo divisi dengan DATA MENTAH perangkat (termasuk liveMarketQuote XAU/USD bila ada). DILARANG mengarang harga/angka. Jika arah BUY/SELL terbalik, salah paham Bearish Spike (turun tajam awal != sinyal buy), atau angka keliru -> ${
         allowRev
           ? 'set needsRevision=true, pilih revisionTarget ("MACRO_NEWS" atau "JOURNAL_RISK"), dan tulis revisionInstruction spesifik.'
           : 'Ini tahap final sign-off; set needsRevision=false.'
       }
-2. BALASAN CHAT NATURAL: Balas SEPERTI ORANG BENERAN LAGI CHAT DI WA / DM INSTAGRAM — santai, lugas, fleksibel, tidak kaku/template ("1. ... 2. ... 3. ..."). Selipkan fakta angka/spike secara mengalir dan pastikan arti arah tidak membingungkan.
+2. BALASAN CHAT NATURAL: Balas SEPERTI ORANG BENERAN LAGI CHAT DI WA / DM INSTAGRAM — santai, lugas, fleksibel, tidak kaku/template ("1. ... 2. ... 3. ..."). Manfaatkan MEMORI JANGKA PANJANG bila relevan.
+3. Jika ada 0-2 fakta penting yang layak diingat untuk sesi mendatang, tulis di "newMemoryNotes".
 Keluarkan HANYA JSON valid:
-{"auditPassed":boolean,"needsRevision":boolean,"revisionTarget":"NONE"|"MACRO_NEWS"|"JOURNAL_RISK","auditNotes":string,"revisionInstruction":string,"finalAnswer":string,"actionCard":{"directionClarity":"BUY"|"SELL"|"WAIT_MIXED"|"INFO_ONLY","directionLabel":string,"spikeWarning":string,"riskReminder":string}}`;
+{"auditPassed":boolean,"needsRevision":boolean,"revisionTarget":"NONE"|"MACRO_NEWS"|"JOURNAL_RISK","auditNotes":string,"revisionInstruction":string,"finalAnswer":string,"newMemoryNotes":[{"text":string,"category":"preference"|"market"|"journal"|"general"}],"actionCard":{"directionClarity":"BUY"|"SELL"|"WAIT_MIXED"|"INFO_ONLY","directionLabel":string,"spikeWarning":string,"riskReminder":string}}`;
 
       const anchor = {
         runtime: contextObj?.runtime ?? null,
+        liveMarketQuote: contextObj?.liveMarketQuote ?? null,
         macroFacts: contextObj?.macroNews
           ? {
+              analyzedAt: contextObj.macroNews.analyzedAt,
               dominantBias: contextObj.macroNews.dominantBias,
               buyProb: contextObj.macroNews.buyProbability,
               sellProb: contextObj.macroNews.sellProbability,
@@ -3562,6 +3746,7 @@ Keluarkan HANYA JSON valid:
           : null,
         fundamentalFacts: contextObj?.fundamentalGold
           ? {
+              analyzedAt: contextObj.fundamentalGold.analyzedAt,
               overallBias: contextObj.fundamentalGold.overallBias,
               bullishPct: contextObj.fundamentalGold.bullishProbability,
               bearishPct: contextObj.fundamentalGold.bearishProbability,
@@ -3574,7 +3759,7 @@ Keluarkan HANYA JSON valid:
         openPositions: contextObj?.journal?.openOrPlannedTrades ?? [],
       };
 
-      const usr = `Bahasa: ${isEn ? 'English' : 'Bahasa Indonesia'}\nPertanyaan: "${message}"\nRiwayat:\n${historyText}\n\nFAKTA MENTAH:\n${JSON.stringify(anchor).slice(0, 7000)}\n\nMEMO DIVISI MAKRO:\n${macroMemo ? JSON.stringify(macroMemo).slice(0, 4500) : '(tidak aktif)'}\n\nMEMO DIVISI JURNAL:\n${journalMemo ? JSON.stringify(journalMemo).slice(0, 4500) : '(tidak aktif)'}\n\nAudit & jawab HANYA JSON.`;
+      const usr = `Bahasa: ${isEn ? 'English' : 'Bahasa Indonesia'}\nPertanyaan: "${message}"\nRiwayat:\n${historyText}\n\nMEMORI ASISTEN:\n${memoryText}\n\nFAKTA MENTAH:\n${JSON.stringify(anchor).slice(0, 7500)}\n\nMEMO DIVISI MAKRO:\n${macroMemo ? JSON.stringify(macroMemo).slice(0, 4500) : '(tidak aktif)'}\n\nMEMO DIVISI JURNAL:\n${journalMemo ? JSON.stringify(journalMemo).slice(0, 4500) : '(tidak aktif)'}\n\nAudit & jawab HANYA JSON.`;
       return { sys, usr };
     };
 
@@ -3708,8 +3893,21 @@ Keluarkan HANYA JSON valid:
     const directionClarity =
       dirRaw === 'BUY' || dirRaw === 'SELL' || dirRaw === 'WAIT_MIXED' ? dirRaw : 'INFO_ONLY';
 
+    const rawMem = Array.isArray(bossJson?.newMemoryNotes) ? bossJson.newMemoryNotes : [];
+    const normalizedMems = rawMem
+      .slice(0, 3)
+      .filter((m: any) => m && typeof m.text === 'string' && m.text.trim().length > 4)
+      .map((m: any) => ({
+        text: String(m.text).trim().slice(0, 220),
+        category:
+          m.category === 'preference' || m.category === 'market' || m.category === 'journal'
+            ? m.category
+            : 'general',
+      }));
+
     return jsonResponse({
       success: true,
+      routeType: 'FULL_OFFICE',
       answer: String(bossJson?.finalAnswer || bossRes.text || '').trim(),
       actionCard: {
         directionClarity,
@@ -3720,6 +3918,8 @@ Keluarkan HANYA JSON valid:
       workflowTrace,
       revisionTriggered,
       activeProviders: Array.from(providersUsed),
+      detectedAgentName,
+      newMemoryNotes: normalizedMems,
       totalLatencyMs: Date.now() - startedAt,
     });
   } catch (err) {
@@ -3733,6 +3933,70 @@ Keluarkan HANYA JSON valid:
         totalLatencyMs: Date.now() - startedAt,
         error: `Gangguan ruang rapat Multi-Agent AI: ${sanitizeEdgeAgentError(err)}`,
       },
+      502
+    );
+  }
+}
+
+async function handleAgentDeskEndSession(req: Request): Promise<Response> {
+  const startedAt = Date.now();
+  try {
+    const body = (await req.json()) || {};
+    const language: 'id' | 'en' = body.language === 'en' ? 'en' : 'id';
+    const isEn = language === 'en';
+    const history = (Array.isArray(body.history) ? body.history : [])
+      .slice(-24)
+      .filter(
+        (h: any) =>
+          h &&
+          (h.role === 'user' || h.role === 'assistant') &&
+          typeof h.content === 'string' &&
+          h.content.trim().length > 0
+      )
+      .map((h: any) => ({ role: h.role, content: String(h.content).trim().slice(0, 600) }));
+
+    if (history.length === 0) {
+      return jsonResponse({ success: true, sessionSummary: isEn ? 'Empty session closed.' : 'Sesi kosong ditutup.', memoryFacts: [], latencyMs: 1 });
+    }
+
+    const keys = getEdgeAgentDeskKeys();
+    if (keys.geminiKeys.length + keys.groqKeys.length + keys.openRouterKeys.length === 0) {
+      return jsonResponse({ success: false, sessionSummary: '', memoryFacts: [], error: 'No AI key configured.' }, 503);
+    }
+
+    const existingMem = Array.isArray(body.existingMemories)
+      ? body.existingMemories.slice(0, 20).map((m: any) => (typeof m === 'string' ? m : m?.text || '')).filter(Boolean)
+      : [];
+
+    const res = await edgeRunAgentCascade({
+      order: ['groq', 'gemini', 'openrouter'],
+      keys,
+      isBoss: false,
+      systemInstruction: `Kamu adalah MANAJER MEMORI ASISTEN PRIBADI TradeVault.
+Ringkas sesi yang baru selesai menjadi JSON: {"sessionSummary":string,"memoryFacts":[{"text":string,"category":"preference"|"market"|"journal"|"general"}]} (maksimal 3 memoryFacts paling penting, jangan ulangi memori lama atau basa-basi kosong).`,
+      userPrompt: `Bahasa: ${isEn ? 'English' : 'Bahasa Indonesia'}\nMemori lama:\n${existingMem.join('\n') || '(kosong)'}\nTranskrip:\n${history.map((h: any) => `${h.role === 'user' ? 'USER' : 'ASISTEN'}: ${h.content}`).join('\n')}\nKeluarkan HANYA JSON.`,
+      expectJson: true,
+      timeoutMs: 9000,
+    });
+    const parsed = res.json || {};
+    const facts = (Array.isArray(parsed.memoryFacts) ? parsed.memoryFacts : [])
+      .slice(0, 3)
+      .filter((f: any) => f && typeof f.text === 'string' && f.text.trim().length > 4)
+      .map((f: any) => ({
+        text: String(f.text).trim().slice(0, 220),
+        category: f.category === 'preference' || f.category === 'market' || f.category === 'journal' ? f.category : 'general',
+      }));
+
+    return jsonResponse({
+      success: true,
+      sessionSummary: String(parsed.sessionSummary || (isEn ? 'Session archived.' : 'Sesi diarsipkan.')).slice(0, 280),
+      memoryFacts: facts,
+      providerUsed: res.provider,
+      latencyMs: Date.now() - startedAt,
+    });
+  } catch (err) {
+    return jsonResponse(
+      { success: false, sessionSummary: '', memoryFacts: [], latencyMs: Date.now() - startedAt, error: sanitizeEdgeAgentError(err) },
       502
     );
   }
@@ -3857,6 +4121,10 @@ Deno.serve(async (req: Request) => {
 
   if (req.method === 'POST' && path.endsWith('/api/agent-desk/chat')) {
     return handleAgentDeskChat(req);
+  }
+
+  if (req.method === 'POST' && path.endsWith('/api/agent-desk/end-session')) {
+    return handleAgentDeskEndSession(req);
   }
 
   if (req.method === 'POST' && path.endsWith('/api/agent-desk/qa-diagnose')) {
