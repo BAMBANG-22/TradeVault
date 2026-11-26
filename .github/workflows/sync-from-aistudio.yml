@@ -1,1 +1,37 @@
+name: Sync from AI Studio Repo
 
+on:
+  workflow_dispatch:
+    inputs:
+      files:
+        description: 'Daftar file yang mau ditarik (pisahkan spasi)'
+        required: true
+        default: 'package.json src/config/appVersion.ts src/utils/agentDeskContext.ts src/server/agentDeskOrchestrator.ts supabase/functions/tradevault-api/index.ts'
+      commit_message:
+        description: 'Pesan commit'
+        required: true
+        default: 'v1.4.0 (#VLO-2611-JRN13): AI Desk deep journal growth math, full app mastery & zero-stall APK fix'
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repo utama
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.AISTUDIO_SYNC_TOKEN }}
+          fetch-depth: 0
+
+      - name: Tarik file terbaru dari BAMBANG-22/TradeVault-Fix
+        env:
+          SYNC_TOKEN: ${{ secrets.AISTUDIO_SYNC_TOKEN }}
+          FILES_TO_SYNC: ${{ github.event.inputs.files }}
+          COMMIT_MSG: ${{ github.event.inputs.commit_message }}
+        run: |
+          git config user.name "TradeVault Sync Bot"
+          git config user.email "actions@github.com"
+          git remote remove aistudio 2>/dev/null || true
+          git remote add aistudio "https://x-access-token:${SYNC_TOKEN}@github.com/BAMBANG-22/TradeVault-Fix.git"
+          git fetch aistudio main
+          git checkout aistudio/main -- ${FILES_TO_SYNC}
+          git diff --cached --quiet || (git commit -m "${COMMIT_MSG}" && git push origin main)
