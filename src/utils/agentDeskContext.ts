@@ -138,11 +138,16 @@ export function loadAgentChatTheme(isDarkTheme: boolean): AgentChatThemeConfig {
     if (!parsed || typeof parsed !== 'object') return fallback;
     const persona: AgentChatPersona =
       parsed.persona === 'concise' || parsed.persona === 'mentor' ? parsed.persona : 'casual';
-    return {
-      agentName:
-        typeof parsed.agentName === 'string' && parsed.agentName.trim()
-          ? parsed.agentName.trim().slice(0, 40)
-          : fallback.agentName,
+    const rawStoredName =
+      typeof parsed.agentName === 'string' && parsed.agentName.trim()
+        ? parsed.agentName
+            .trim()
+            .replace(/\s+(?:ya+h?|yakk?|de+h+|do+ng+|ni+h+|si+h+|la+h+|a+ja+)$/i, '')
+            .trim()
+            .slice(0, 40)
+        : '';
+    const healedConfig: AgentChatThemeConfig = {
+      agentName: rawStoredName || fallback.agentName,
       agentSubtitle:
         typeof parsed.agentSubtitle === 'string' && parsed.agentSubtitle.trim()
           ? parsed.agentSubtitle.trim().slice(0, 50)
@@ -169,6 +174,19 @@ export function loadAgentChatTheme(isDarkTheme: boolean): AgentChatThemeConfig {
         : fallback.agentBubbleColor,
       showDivisionTrace: Boolean(parsed.showDivisionTrace),
     };
+    // Persist healed nickname immediately so stale "Wowo yaa" never lingers in APK localStorage
+    if (
+      typeof parsed.agentName === 'string' &&
+      rawStoredName &&
+      parsed.agentName.trim() !== rawStoredName
+    ) {
+      try {
+        window.localStorage.setItem(AGENT_CHAT_THEME_STORAGE_KEY, JSON.stringify(healedConfig));
+      } catch {
+        // ignore storage write failure
+      }
+    }
+    return healedConfig;
   } catch {
     return fallback;
   }
@@ -377,6 +395,8 @@ const POLYMARKET_AUTO_SYNC_MAX_AGE_MS = 25 * 60_000;
 
 let cachedLiveXauQuote: LiveXauUsdQuote | null = null;
 let inFlightSyncPromise: Promise<void> | null = null;
+let inFlightSyncIncludedFeeds = false;
+let inFlightSyncForcedPrice = false;
 
 // ============================================================================
 // OFFLINE LONG-TERM MEMORY & SESSION ROLLOVER STORAGE
@@ -415,18 +435,35 @@ export function loadAgentMemory(): AgentMemoryItem[] {
     if (!raw) return [];
     const parsed = JSON.parse(raw);
     if (!Array.isArray(parsed)) return [];
-    return parsed
+    let mutated = false;
+    const cleanedItems: AgentMemoryItem[] = parsed
       .filter((item: any) => item && typeof item.text === 'string' && item.text.trim().length > 0)
       .slice(0, MAX_AGENT_MEMORY_ITEMS)
-      .map((item: any) => ({
-        id: String(item.id || `mem-${Math.random().toString(36).slice(2, 8)}`),
-        text: String(item.text).trim().slice(0, 220),
-        category:
-          item.category === 'preference' || item.category === 'market' || item.category === 'journal'
-            ? item.category
-            : 'general',
-        createdAt: String(item.createdAt || new Date().toISOString()),
-      }));
+      .map((item: any) => {
+        let text = String(item.text).trim().slice(0, 220);
+        // Auto-heal legacy v1.3.8 nickname memories containing trailing conversational particles (e.g. "Wowo yaa" -> "Wowo")
+        const healedText = text.replace(
+          /(nama\s+["'])([^"']+?)\s+(?:ya+h?|yakk?|de+h+|do+ng+|ni+h+|si+h+|la+h+|a+ja+)(["'])/i,
+          '$1$2$3'
+        );
+        if (healedText !== text) {
+          text = healedText;
+          mutated = true;
+        }
+        return {
+          id: String(item.id || `mem-${Math.random().toString(36).slice(2, 8)}`),
+          text,
+          category:
+            item.category === 'preference' || item.category === 'market' || item.category === 'journal'
+              ? item.category
+              : 'general',
+          createdAt: String(item.createdAt || new Date().toISOString()),
+        };
+      });
+    if (mutated) {
+      saveAgentMemory(cleanedItems);
+    }
+    return cleanedItems;
   } catch {
     return [];
   }
@@ -653,8 +690,13 @@ export async function syncAgentDeskLiveContext(options?: {
   if (isOfflineMode || !isNavigatorOnline) return;
 
   if (inFlightSyncPromise) {
+    const coversFeeds = !options?.syncMarketFeeds || inFlightSyncIncludedFeeds;
+    const coversForcePrice = !options?.forcePrice || inFlightSyncForcedPrice;
     await inFlightSyncPromise;
-    return;
+    if (coversFeeds && coversForcePrice) {
+      return;
+    }
+    // In-flight sync was a lighter background check (e.g. price-only on tab open); continue to sync needed feeds!
   }
 
   const isEn = options?.language === 'en';
@@ -683,6 +725,8 @@ export async function syncAgentDeskLiveContext(options?: {
     return;
   }
 
+  inFlightSyncIncludedFeeds = Boolean(options?.syncMarketFeeds);
+  inFlightSyncForcedPrice = Boolean(options?.forcePrice);
   inFlightSyncPromise = (async () => {
     try {
       options?.onStatus?.(
@@ -701,10 +745,13 @@ export async function syncAgentDeskLiveContext(options?: {
       if (needPolymarket) {
         tasks.push(fetchPolymarketMacroSentiment({ forceRefresh: true }));
       }
-      await Promise.allSettled(tasks);
+      const syncCap = new Promise<void>((resolve) => setTimeout(resolve, 8_000));
+      await Promise.race([Promise.allSettled(tasks), syncCap]);
     } finally {
       options?.onStatus?.(null);
       inFlightSyncPromise = null;
+      inFlightSyncIncludedFeeds = false;
+      inFlightSyncForcedPrice = false;
     }
   })();
 
@@ -1136,18 +1183,39 @@ export function buildAgentDeskContext(
   };
 }
 
+function cleanClientExtractedName(raw: unknown): string | undefined {
+  if (typeof raw !== 'string') return undefined;
+  let cleaned = raw
+    .replace(/["'`~!?.,()[\]{}]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!cleaned) return undefined;
+
+  cleaned = cleaned
+    .replace(
+      /\b(ya+h?|yakk?|de+h+|do+ng+|a+ja+|sa+ja+|ni+h+|si+h+|la+h+|ka+n|ko+k|yu+k+|o+ke+y?h?|si+p+|bo+s+|bro+|ga+n|ka+k|bang|min|pls|please|biar|supaya|karena|soal|soalnya|gitu)\b.*$/i,
+      ''
+    )
+    .trim();
+
+  const words = cleaned.split(/\s+/).filter(Boolean).slice(0, 2);
+  cleaned = words.join(' ').trim();
+  if (cleaned.length < 2 || cleaned.length > 24) return undefined;
+  if (/^(kamu|lu|lo|anda|aku|saya|gue|gw|nama|panggil|ai|bot|null|none|undefined)$/i.test(cleaned)) {
+    return undefined;
+  }
+  return cleaned
+    .split(' ')
+    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+    .join(' ');
+}
+
 function extractClientNicknameRename(message: string): string | undefined {
   const m = message.match(
-    /(?:panggil(?:\s+kamu|\s+lu|\s+lo|\s+anda)?(?:\s+dengan)?|namamu(?:\s+sekarang)?|mulai\s+sekarang\s+(?:kamu\s+)?(?:saya\s+)?panggil(?:\s+kamu)?|call\s+you|your\s+name\s+is)\s+["']?([A-Za-z][A-Za-z0-9._\- ]{1,24})["']?/i
+    /(?:panggil(?:\s+kamu|\s+lu|\s+lo|\s+anda)?(?:\s+dengan)?|namamu(?:\s+sekarang)?|mulai\s+sekarang\s+(?:kamu\s+)?(?:saya\s+|aku\s+)?panggil(?:\s+kamu)?|call\s+you|your\s+name\s+is)\s+["']?([A-Za-z][A-Za-z0-9._\- ]{1,30})["']?/i
   );
   if (!m || !m[1]) return undefined;
-  const candidate = m[1]
-    .replace(/\b(ya|dong|aja|saja|nih|lah|yah|please|ok)\b.*$/i, '')
-    .trim();
-  if (candidate.length >= 2 && candidate.length <= 24) {
-    return candidate.charAt(0).toUpperCase() + candidate.slice(1);
-  }
-  return undefined;
+  return cleanClientExtractedName(m[1]);
 }
 
 function classifyClientSyncNeed(message: string): {
@@ -1160,12 +1228,17 @@ function classifyClientSyncNeed(message: string): {
     /\b(xau|xauusd|gold|emas|dxy|yield|us10y|us02y|usoil|oil|forex|pair|market|pasar|chart|candle|harga|price|spot|news|berita|makro|macro|fundamental|fomc|fed|fedwatch|cpi|ppi|nfp|pmi|powell|polymarket|cycle|confluence|smc|heatmap|spike|sweep|whipsaw|buy|sell|long|short|entry|exit|sl|tp|stoploss|takeprofit|jurnal|journal|trade|trading|posisi|open|planned|lot|risiko|risk|drawdown|dd|win\s?rate|profit|loss|rugi|equity|saldo|balance|akun|playbook|guardrail|psikologi|emosi|fomo|sesi|session|london|new york|asia|evaluasi|audit|rekap)\b/i;
   const hasTradingTopic = tradingKeywords.test(q);
 
-  const asksLivePrice =
-    /\b(harga|price|spot|level|posisi harga|berapa skrg|berapa sekarang|di angka berapa|brp skrg|lagi di berapa|running di|running price)\b/i.test(
+  const hasPriceCue =
+    /\b(harga|price|spot|level|berapa|brp|skrg|sekarang|saat ini|di angka|dimana|di mana|running|update harga|cek harga)\b/i.test(
       q
-    ) && /\b(xau|xauusd|gold|emas|dxy|us10y|us02y|usoil|oil|btc|eurusd|market|pasar)\b/i.test(q);
+    );
+  const hasAssetCue = /\b(xau|xauusd|gold|emas|dxy|us10y|us02y|usoil|oil|btc|eurusd)\b/i.test(q);
+  const asksDeepAnalysis =
+    /\b(kenapa|mengapa|analisis|analisa|fundamental|berita|news|jurnal|journal|spike|sweep|prediksi|arah|kemana|ke mana|buy|sell|entry|posisi|risiko|risk|drawdown|win\s?rate|fomc|cpi|nfp|evaluasi|audit|bagusnya|ambil)\b/i.test(
+      q
+    );
 
-  if (asksLivePrice && !/\b(kenapa|analisis|analisa|fundamental|berita|news|jurnal|spike|prediksi)\b/i.test(q)) {
+  if (hasPriceCue && hasAssetCue && !asksDeepAnalysis) {
     return { intentKind: 'LIVE_PRICE_CHECK', needsPrice: true, needsMarket: false };
   }
 
@@ -1205,9 +1278,27 @@ function classifyClientSyncNeed(message: string): {
   };
 }
 
+function formatReadableQuoteTime(iso: string | undefined | null): string {
+  if (!iso) return '';
+  try {
+    const d = new Date(iso);
+    if (Number.isNaN(d.getTime())) return '';
+    return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false });
+  } catch {
+    return '';
+  }
+}
+
+function formatPriceSourceLabel(source: string | undefined): string {
+  if (source === 'twelvedata') return 'TwelveData';
+  if (source === 'binance') return 'Binance';
+  return 'data terakhir perangkat';
+}
+
 /**
- * Deterministic Offline Fallback Engine when Offline Mode is enabled or internet is unavailable.
- * Respects Small Talk, Out-of-Scope, Live Price lookup, and Journal+Market synthesis cleanly.
+ * Natural Human-Tone Local Fallback Engine when Offline Mode is enabled or cloud AI is slow/unreachable.
+ * Respects persona (casual / concise / mentor), Small Talk, Out-of-Scope, Live Price lookup,
+ * and plain-language Market/Journal summaries — zero raw IT errors or jargon walls.
  */
 export function buildOfflineAgentDeskReply(params: {
   message: string;
@@ -1215,10 +1306,12 @@ export function buildOfflineAgentDeskReply(params: {
   settings: AppSettings;
   language: 'id' | 'en';
   agentName?: string;
-  reasonNote?: string;
+  persona?: AgentChatPersona;
+  isCloudFallback?: boolean;
 }): Omit<AgentDeskMessage, 'id' | 'role' | 'createdAt'> {
   const startedAt = Date.now();
   const isEn = params.language === 'en';
+  const persona: AgentChatPersona = params.persona || 'casual';
   const detectedRename = extractClientNicknameRename(params.message);
   const effectiveName = detectedRename || params.agentName || 'Head Desk';
   const syncNeed = classifyClientSyncNeed(params.message);
@@ -1235,11 +1328,15 @@ export function buildOfflineAgentDeskReply(params: {
     }
     const content = detectedRename
       ? isEn
-        ? `Copy that — from now on you can call me ${detectedRename}. Whenever you're ready to check XAU/USD, macro news, or your TradeVault journal, just say the word.`
-        : `Siap, mulai sekarang panggil saja saya ${detectedRename}. Kapan pun kamu siap cek arah XAU/USD, berita makro, atau evaluasi jurnal TradeVault, tinggal kabari ya.`
+        ? `Got it — call me ${detectedRename} from now on. Whenever you want to check XAU/USD or your journal, just ping me.`
+        : persona === 'concise'
+        ? `Oke, panggil saja ${detectedRename}. Ada yang mau dicek dari market atau jurnal?`
+        : `Sip, mulai sekarang panggil aku ${detectedRename} aja ya! Kalau nanti mau cek harga emas, berita makro, atau catatan jurnal, tinggal ngobrol aja.`
       : isEn
-      ? `Hey! ${effectiveName} here and ready. Whenever you want to check today's XAU/USD pulse, news, or your TradeVault journal, let's dive in.`
-      : `Halo! ${effectiveName} standby di sini. Kapan pun kamu mau cek kondisi market XAU/USD, berita makro, atau catatan jurnal TradeVault, tinggal tanya saja ya.`;
+      ? `Hey! ${effectiveName} here. What would you like to check on XAU/USD or your TradeVault journal today?`
+      : persona === 'concise'
+      ? `Halo, ${effectiveName} di sini. Mau cek harga XAU/USD, berita, atau jurnal?`
+      : `Halo! ${effectiveName} di sini. Santai aja, kalau lagi mau cek pergerakan XAU/USD, berita makro, atau evaluasi jurnalmu tinggal bilang ya.`;
 
     return {
       content,
@@ -1257,8 +1354,8 @@ export function buildOfflineAgentDeskReply(params: {
   if (syncNeed.intentKind === 'OUT_OF_SCOPE') {
     return {
       content: isEn
-        ? `That's outside my duties as ${effectiveName} — I'm strictly dedicated to XAU/USD market context, macro news, fundamentals, and your TradeVault journal & risk.`
-        : `Mohon maaf, hal itu di luar ranah tugas saya sebagai ${effectiveName}. Fokus saya khusus mendampingi soal market XAU/USD, berita makro, fundamental emas, dan jurnal trading kamu di TradeVault.`,
+        ? `Haha that's outside my lane as ${effectiveName} — I'm strictly here for XAU/USD, macro news, fundamentals, and your TradeVault journal.`
+        : `Waduh, kalau soal itu di luar keahlianku sebagai ${effectiveName} nih. Fokusku khusus nemenin kamu pantau XAU/USD, berita makro, fundamental emas, sama jurnal trading di TradeVault.`,
       mode: 'OFFLINE_LOCAL',
       routeType: 'OUT_OF_SCOPE',
       workflowTrace: [],
@@ -1271,19 +1368,38 @@ export function buildOfflineAgentDeskReply(params: {
   const { context } = buildAgentDeskContext(params.trades, params.settings, params.language);
   const liveQuote = (context.liveMarketQuote as any)?.xauusd || null;
 
-  // Path 3: Live price check offline (never fabricate!)
+  // Path 3: Live price check (concise, warm, human — ZERO news/fundamental dump!)
   if (syncNeed.intentKind === 'LIVE_PRICE_CHECK') {
-    const content = liveQuote
-      ? isEn
-        ? `Offline/Cached XAU/USD spot is around **$${liveQuote.price}** (last cached bar ${new Date(
-            liveQuote.barTimeIso
-          ).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}, source: ${liveQuote.source}). Connect to the internet & turn off Offline Mode to pull a fresh live tick.`
-        : `Data harga terakhir **XAU/USD** yang tersimpan di perangkat berada di sekitar **$${liveQuote.price}** (bar terakhir pukul ${new Date(
-            liveQuote.barTimeIso
-          ).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}, sumber: ${liveQuote.source}). Hubungkan internet agar saya bisa tarik tick live terbaru.`
-      : isEn
-      ? 'Live XAU/USD price is currently unavailable because the device is offline and no recent Vela candle cache was found yet.'
-      : 'Harga live XAU/USD belum bisa diambil karena perangkat sedang offline/Mode Offline dan belum ada cache chart XAUUSD terbaru di perangkat.';
+    const timeStr = formatReadableQuoteTime(liveQuote?.fetchedAt || liveQuote?.barTimeIso);
+    const srcLabel = formatPriceSourceLabel(liveQuote?.source);
+    const changeStr =
+      typeof liveQuote?.changePct15m === 'number' && Number.isFinite(liveQuote.changePct15m)
+        ? ` (${liveQuote.changePct15m >= 0 ? '+' : ''}${liveQuote.changePct15m.toFixed(2)}% di 15m terakhir)`
+        : '';
+    const changeStrEn =
+      typeof liveQuote?.changePct15m === 'number' && Number.isFinite(liveQuote.changePct15m)
+        ? ` (${liveQuote.changePct15m >= 0 ? '+' : ''}${liveQuote.changePct15m.toFixed(2)}% over last 15m)`
+        : '';
+
+    let content: string;
+    if (liveQuote) {
+      if (isEn) {
+        content =
+          persona === 'concise'
+            ? `XAU/USD is around **$${liveQuote.price}**${changeStrEn} (updated ${timeStr || 'just now'} via ${srcLabel}).`
+            : `XAU/USD is sitting around **$${liveQuote.price}**${changeStrEn}, last updated ${timeStr || 'recently'} from ${srcLabel}. Want me to check today's news direction too?`;
+      } else if (persona === 'concise') {
+        content = `Harga XAU/USD sekarang di sekitar **$${liveQuote.price}**${changeStr} (update ${timeStr || 'terbaru'}, ${srcLabel}).`;
+      } else if (persona === 'mentor') {
+        content = `XAU/USD saat ini bergerak di sekitar **$${liveQuote.price}**${changeStr}, berdasarkan update ${timeStr ? `pukul ${timeStr}` : 'terbaru'} dari ${srcLabel}. Pastikan tetap sabar menunggu area valid sebelum ambil keputusan ya.`;
+      } else {
+        content = `Harga emas (XAU/USD) sekarang lagi di sekitar **$${liveQuote.price}**${changeStr} nih — update terakhir ${timeStr ? `jam ${timeStr}` : 'barusan'} dari ${srcLabel}. Mau sekalian aku cekin arah beritanya hari ini?`;
+      }
+    } else {
+      content = isEn
+        ? `I don't have a fresh XAU/USD quote cached on this device yet. Once your connection is back, I'll pull the live price right away.`
+        : `Aku belum dapat angka live XAU/USD terbaru di perangkat nih. Pastikan internet aktif dan Mode Offline mati ya, nanti langsung aku tarikkan harganya.`;
+    }
 
     return {
       content,
@@ -1296,6 +1412,7 @@ export function buildOfflineAgentDeskReply(params: {
     };
   }
 
+  // Path 4: Plain-language human summary for Market / Journal (NO raw technical dump!)
   const journal = (context.journal as any) || {};
   const jSum = journal.summary || {};
   const macro = (context.macroNews as any) || null;
@@ -1304,7 +1421,7 @@ export function buildOfflineAgentDeskReply(params: {
 
   const q = params.message.toLowerCase();
   const asksMacro =
-    /\b(news|berita|makro|macro|fundamental|gold|emas|xau|spike|sweep|arah|buy|sell|ambil|fomc|cpi|nfp|dxy|bearish|bullish)\b/i.test(
+    /\b(news|berita|makro|macro|fundamental|gold|emas|xau|spike|sweep|arah|buy|sell|ambil|fomc|cpi|nfp|dxy|bearish|bullish|market|pasar|kemana|ke mana)\b/i.test(
       q
     );
   const asksJournal =
@@ -1312,37 +1429,36 @@ export function buildOfflineAgentDeskReply(params: {
       q
     );
 
-  const lines: string[] = [];
-  if (params.reasonNote) {
-    lines.push(params.reasonNote);
-  } else {
-    lines.push(
-      isEn
-        ? 'Offline Mode active — answering directly from your local journal & last cached market snapshot on this device.'
-        : 'Mode Offline aktif — menjawab langsung dari jurnal lokal & cache data pasar terakhir di perangkat ini.'
-    );
-  }
+  const paragraphs: string[] = [];
 
-  if (liveQuote) {
-    lines.push(
+  if (params.isCloudFallback) {
+    paragraphs.push(
       isEn
-        ? `• **Last Cached XAU/USD**: **$${liveQuote.price}** (${liveQuote.source})`
-        : `• **Harga Cache XAU/USD Terakhir**: **$${liveQuote.price}** (${liveQuote.source})`
+        ? `The cloud desk is a bit busy right now, so I'm reading straight from your latest synced data on this device.`
+        : persona === 'concise'
+        ? `Koneksi AI cloud lagi padat, jadi aku rangkum cepat dari data terbaru di perangkat ya.`
+        : `Koneksi ke server AI lagi agak padat nih, jadi aku bantu bacakan langsung dari data terbaru yang ada di perangkatmu ya.`
     );
   }
 
   let directionClarity: AgentDeskActionCardClient['directionClarity'] = 'INFO_ONLY';
-  let directionLabel = isEn ? 'Local Offline Briefing' : 'Briefing Lokal (Offline)';
+  let directionLabel = effectiveName;
   let spikeWarning = '-';
   const riskReminder = jSum.isDailyLossExceeded
     ? isEn
       ? 'Daily loss limit reached — pause trading today.'
-      : 'Batas rugi harian sudah tercapai — hentikan entry hari ini.'
+      : 'Batas rugi harian sudah tercapai — istirahat dulu hari ini.'
     : isEn
-    ? `Equity ${sym}${jSum.currentEquity ?? 0} · Max risk ${params.settings.defaultRiskPercent}%/trade.`
+    ? `Equity ${sym}${jSum.currentEquity ?? 0} · Standard risk ${params.settings.defaultRiskPercent}%/trade.`
     : `Ekuitas ${sym}${jSum.currentEquity ?? 0} · Risiko standar ${params.settings.defaultRiskPercent}%/trade.`;
 
   if (asksMacro || !asksJournal) {
+    const spotNote = liveQuote
+      ? isEn
+        ? `XAU/USD is currently around **$${liveQuote.price}**. `
+        : `Saat ini XAU/USD ada di sekitar **$${liveQuote.price}**. `
+      : '';
+
     if (macro) {
       const bias = macro.dominantBias;
       const dh = macro.dualHorizon;
@@ -1350,112 +1466,106 @@ export function buildOfflineAgentDeskReply(params: {
       directionLabel =
         bias === 'BUY'
           ? isEn
-            ? 'Cached Bias: BUY (Up)'
-            : 'Bias Cache: BUY (Naik)'
+            ? 'Leans BUY'
+            : 'Condong BUY'
           : bias === 'SELL'
           ? isEn
-            ? 'Cached Bias: SELL (Down)'
-            : 'Bias Cache: SELL (Turun)'
+            ? 'Leans SELL'
+            : 'Condong SELL'
           : isEn
-          ? 'Cached Bias: WAIT / MIXED'
-          : 'Bias Cache: TUNGGU / 2 ARAH';
+          ? 'Wait / Mixed'
+          : 'Tunggu / 2 Arah';
 
-      const plainMeaning =
+      const biasSentence =
         bias === 'SELL'
           ? isEn
-            ? 'XAUUSD leans DOWN (SELL pressure).'
-            : 'XAUUSD condong TURUN (tekanan SELL).'
+            ? `From your latest Trade News snapshot, gold leans **downward (SELL)** (Sell ${macro.sellProbability ?? '-'}% vs Buy ${macro.buyProbability ?? '-'}%).`
+            : `Dari data berita terakhir, emas lagi condong **turun (SELL)** (peluang Sell ${macro.sellProbability ?? '-'}% vs Buy ${macro.buyProbability ?? '-'}%).`
           : bias === 'BUY'
           ? isEn
-            ? 'XAUUSD leans UP (BUY pressure).'
-            : 'XAUUSD condong NAIK (tekanan BUY).'
+            ? `From your latest Trade News snapshot, gold leans **upward (BUY)** (Buy ${macro.buyProbability ?? '-'}% vs Sell ${macro.sellProbability ?? '-'}%).`
+            : `Dari data berita terakhir, emas lagi condong **naik (BUY)** (peluang Buy ${macro.buyProbability ?? '-'}% vs Sell ${macro.sellProbability ?? '-'}%).`
           : isEn
-          ? 'Mixed / two-way whipsaw risk — wait for clear confirmation.'
-          : 'Campuran / rawan bolak-balik — lebih aman tunggu konfirmasi.';
+          ? `News sentiment is currently **mixed**, so waiting for cleaner confirmation is safer.`
+          : `Sentimen beritanya lagi **campuran (belum satu arah)**, jadi lebih aman tunggu konfirmasi yang jelas dulu.`;
 
-      lines.push(
-        isEn
-          ? `\n**Trade News (Cached)**: Bias **${bias}** (Buy ${macro.buyProbability ?? '-'}% / Sell ${macro.sellProbability ?? '-'}%). ${plainMeaning}`
-          : `\n**Trade News (Cache Perangkat)**: Bias utama **${bias}** (Buy ${macro.buyProbability ?? '-'}% / Sell ${macro.sellProbability ?? '-'}%). Artinya: ${plainMeaning}`
-      );
-
+      let spikeSentence = '';
       if (dh) {
         const isTwoWay = dh.movementType === 'TWO_WAY_SWEEP_FIRST';
-        const spikeExplain =
-          dh.initialCatalystBias === 'SELL'
-            ? isEn
-              ? 'Initial Bearish Spike = sharp initial DROP (NOT a blind buy signal).'
-              : 'Bearish Spike awal artinya harga berpotensi nyentak TURUN tajam dulu (BUKAN sinyal langsung buy).'
-            : dh.initialCatalystBias === 'BUY'
-            ? isEn
-              ? 'Initial Bullish Spike = sharp initial JUMP (do not chase blindly if main bias is SELL).'
-              : 'Bullish Spike awal artinya harga berpotensi loncat NAIK dulu (jangan dikejar buta jika bias utama SELL).'
-            : isEn
-            ? 'Neutral initial spike — watch post-release structure.'
-            : 'Katalis awal netral — tunggu struktur candle 15 menit setelah rilis.';
-
         spikeWarning = isTwoWay
           ? isEn
-            ? `2-Way Sweep First active: ${dh.phase1Minute0to5}`
-            : `Rawan 2 Arah (Sweep Dulu): ${dh.phase1Minute0to5}`
+            ? '2-Way Sweep First risk at release'
+            : 'Rawan sapuan 2 arah di menit awal rilis'
           : isEn
-          ? `1-Way Direct Move: ${dh.phase1Minute0to5}`
-          : `Pola 1 Arah Langsung: ${dh.phase1Minute0to5}`;
+          ? '1-Way direct impulse pattern'
+          : 'Pola dorongan 1 arah';
 
-        lines.push(
-          isEn
-            ? `• **Spike & Phase**: ${dh.movementBadge}. ${spikeExplain}\n• **Phase 0–5m**: ${dh.phase1Minute0to5}\n• **Phase 15m+**: ${dh.phase2Minute15Plus}`
-            : `• **Pola Spike**: ${dh.movementBadge}. ${spikeExplain}\n• **Fase Menit 0–5**: ${dh.phase1Minute0to5}\n• **Fase Menit 15+**: ${dh.phase2Minute15Plus}`
-        );
+        if (isTwoWay) {
+          spikeSentence = isEn
+            ? ` Heads up though — it shows a **2-way sweep** pattern, meaning price can fake out first in the opening 5 minutes before following the real move after minute 15.`
+            : ` Tapi hati-hati ya, polanya rawan **gerak 2 arah / tipuan dulu** di 5 menit awal rilis, baru arah aslinya kelihatan lebih jelas setelah menit ke-15.`;
+        } else if (dh.initialCatalystBias === 'SELL') {
+          spikeSentence = isEn
+            ? ` Initial catalyst points to a sharp drop first (not a blind buy dip).`
+            : ` Katalis awalnya juga cenderung bikin harga nyentak turun dulu, jadi jangan asal lawan arah.`;
+        } else if (dh.initialCatalystBias === 'BUY') {
+          spikeSentence = isEn
+            ? ` Initial catalyst favors an upward push.`
+            : ` Katalis awalnya cenderung mendorong harga naik duluan.`;
+        }
       }
-    } else {
-      lines.push(
-        isEn
-          ? '\n**Trade News**: No cached snapshot on device yet. Go online and open Trade News once to store the latest data.'
-          : '\n**Trade News**: Belum ada cache berita di perangkat. Aktifkan internet & buka menu Berita Trading sekali agar datanya tersimpan.'
-      );
-    }
 
-    if (fund) {
-      lines.push(
+      const fundSentence = fund
+        ? isEn
+          ? ` Bigger-picture Fundamental Gold is **${fund.overallBias}** (1D ${fund.horizons?.daily1D?.bias || '-'}, 1W ${fund.horizons?.weekly1W?.bias || '-'}).`
+          : ` Dari sisi Fundamental Emas, gambaran besarnya juga masih **${fund.overallBias}** (harian ${fund.horizons?.daily1D?.bias || '-'}, mingguan ${fund.horizons?.weekly1W?.bias || '-'}).`
+        : '';
+
+      paragraphs.push(`${spotNote}${biasSentence}${spikeSentence}${fundSentence}`);
+    } else if (fund) {
+      paragraphs.push(
         isEn
-          ? `• **Fundamental Gold (Cached)**: **${fund.overallBias}** (1D: ${fund.horizons?.daily1D?.bias || '-'}, 1W: ${fund.horizons?.weekly1W?.bias || '-'}, 1M: ${fund.horizons?.monthly1M?.bias || '-'}).`
-          : `• **Fundamental Emas (Cache)**: **${fund.overallBias}** (1D: ${fund.horizons?.daily1D?.bias || '-'}, 1W: ${fund.horizons?.weekly1W?.bias || '-'}, 1M: ${fund.horizons?.monthly1M?.bias || '-'}).`
+          ? `${spotNote}Fundamental Gold currently reads **${fund.overallBias}** (1D ${fund.horizons?.daily1D?.bias || '-'}, 1W ${fund.horizons?.weekly1W?.bias || '-'}).`
+          : `${spotNote}Untuk Fundamental Emas saat ini kecenderungannya **${fund.overallBias}** (harian ${fund.horizons?.daily1D?.bias || '-'}, mingguan ${fund.horizons?.weekly1W?.bias || '-'}).`
+      );
+    } else {
+      paragraphs.push(
+        isEn
+          ? `${spotNote}There isn't a cached Trade News snapshot on this device yet — open Trade News once while online so I can keep it updated for you.`
+          : `${spotNote}Belum ada data berita terbaru yang tersimpan di perangkat ini. Coba buka menu Berita Trading sekali saat online biar aku bisa baca konteks lengkapnya ya.`
       );
     }
   }
 
   if (asksJournal || !asksMacro) {
-    lines.push(
-      isEn
-        ? `\n**Offline Journal Summary**: ${jSum.closedTradesCount ?? 0} closed trades · Win Rate **${jSum.winRatePct ?? 0}%** · Profit Factor **${jSum.profitFactor ?? 0}** · Net PnL **${sym}${jSum.totalNetProfit ?? 0}** · Max DD **${jSum.maxDrawdownPercent ?? 0}%**.`
-        : `\n**Ringkasan Jurnal Offline**: ${jSum.closedTradesCount ?? 0} trade selesai · Win Rate **${jSum.winRatePct ?? 0}%** · Profit Factor **${jSum.profitFactor ?? 0}** · Net PnL **${sym}${jSum.totalNetProfit ?? 0}** · Max DD **${jSum.maxDrawdownPercent ?? 0}%**.`
-    );
-
     const openList = Array.isArray(journal.openOrPlannedTrades) ? journal.openOrPlannedTrades : [];
-    if (openList.length > 0) {
-      const preview = openList
-        .slice(0, 3)
-        .map((p: any) => `${p.lifecycle} ${p.instrument} ${p.position} (${p.lotSize} lot @ ${p.entryPrice})`)
-        .join(', ');
-      lines.push(
-        isEn
-          ? `• **Active / Planned Positions (${openList.length})**: ${preview}.`
-          : `• **Posisi Aktif / Rencana (${openList.length})**: ${preview}.`
-      );
-    }
-    if (Array.isArray(journal.topMistakes) && journal.topMistakes.length > 0) {
-      const topM = journal.topMistakes[0];
-      lines.push(
-        isEn
-          ? `• **Most Frequent Mistake**: ${topM.tag} (${topM.count}x, PnL impact ${sym}${topM.netImpact}).`
-          : `• **Kesalahan Tersering**: ${topM.tag} (${topM.count}x, dampak ${sym}${topM.netImpact}).`
-      );
-    }
+    const topM = Array.isArray(journal.topMistakes) && journal.topMistakes.length > 0 ? journal.topMistakes[0] : null;
+    const openNote =
+      openList.length > 0
+        ? isEn
+          ? ` You currently have **${openList.length}** open/planned position(s).`
+          : ` Saat ini ada **${openList.length}** posisi aktif/rencana yang masih jalan.`
+        : '';
+    const mistakeNote = topM
+      ? isEn
+        ? ` Most common slip to watch: **${topM.tag}** (${topM.count}x).`
+        : ` Catatan yang paling sering kejadian: **${topM.tag}** (${topM.count}x).`
+      : '';
+    const riskNote = jSum.isDailyLossExceeded
+      ? isEn
+        ? ` Note: your daily loss limit is already hit today, better sit out.`
+        : ` Ingat ya, batas rugi harian sudah kena — lebih bijak stop entry dulu hari ini.`
+      : '';
+
+    paragraphs.push(
+      isEn
+        ? `On your journal: **${jSum.closedTradesCount ?? 0}** closed trades, Win Rate **${jSum.winRatePct ?? 0}%**, Profit Factor **${jSum.profitFactor ?? 0}**, Net PnL **${sym}${jSum.totalNetProfit ?? 0}** (Max DD ${jSum.maxDrawdownPercent ?? 0}%).${openNote}${mistakeNote}${riskNote}`
+        : `Untuk jurnalmu, dari **${jSum.closedTradesCount ?? 0}** trade selesai, Win Rate ada di **${jSum.winRatePct ?? 0}%** dengan Profit Factor **${jSum.profitFactor ?? 0}** dan Net PnL **${sym}${jSum.totalNetProfit ?? 0}** (Max DD ${jSum.maxDrawdownPercent ?? 0}%).${openNote}${mistakeNote}${riskNote}`
+    );
   }
 
   return {
-    content: lines.join('\n'),
+    content: paragraphs.join('\n\n'),
     mode: 'OFFLINE_LOCAL',
     routeType: 'FULL_OFFICE',
     actionCard: {
@@ -1468,14 +1578,14 @@ export function buildOfflineAgentDeskReply(params: {
       {
         stepNumber: 1,
         role: 'OFFLINE_ENGINE',
-        divisionName: isEn ? 'Local Offline Engine' : 'Mesin Lokal Offline',
+        divisionName: `${effectiveName} (Lokal)`,
         provider: 'offline',
-        model: 'deterministic-local-v2',
-        action: isEn ? 'Local Journal + Cache Synthesis' : 'Baca Jurnal Offline & Cache Lokal',
+        model: 'human-local-v3',
+        action: isEn ? 'Local Assistant Summary' : 'Ringkasan Lokal Natural',
         status: 'fallback',
         summary: isEn
-          ? 'Answered locally without internet using device journal & cached snapshots.'
-          : 'Dijawab langsung secara lokal dari jurnal offline & cache perangkat tanpa internet.',
+          ? 'Replied naturally from synced device data.'
+          : 'Dijawab natural dari data terbaru di perangkat.',
         latencyMs: Math.max(1, Date.now() - startedAt),
       },
     ],
@@ -1505,6 +1615,8 @@ export async function sendAgentDeskChatMessage(params: {
       settings: params.settings,
       language: params.language,
       agentName: params.agentName,
+      persona: params.persona,
+      isCloudFallback: false,
     });
   }
 
@@ -1520,10 +1632,21 @@ export async function sendAgentDeskChatMessage(params: {
   }
 
   const { context } = buildAgentDeskContext(params.trades, params.settings, params.language);
-  const compactHistory = params.history.slice(-10).map((m) => ({
-    role: m.role,
-    content: m.content.slice(0, 800),
-  }));
+  const compactHistory = params.history
+    .filter(
+      (m) =>
+        !(
+          m.role === 'assistant' &&
+          /^(Server Multi-Agent AI sedang tidak terjangkau|Multi-Agent cloud desk is temporarily unreachable)/i.test(
+            m.content.trim()
+          )
+        )
+    )
+    .slice(-10)
+    .map((m) => ({
+      role: m.role,
+      content: m.content.slice(0, 800),
+    }));
 
   const payload = {
     message: params.message.trim(),
@@ -1535,10 +1658,11 @@ export async function sendAgentDeskChatMessage(params: {
   };
 
   const candidates = getApiEndpointCandidates('/api/agent-desk/chat');
-  let lastErrorMsg = '';
+  // Pure live price queries already have fresh TwelveData/Binance quote locally -> fail fast (7.5s) instead of waiting 26s!
+  const requestTimeoutMs = syncNeed.intentKind === 'LIVE_PRICE_CHECK' ? 7_500 : 26_000;
 
   for (const url of candidates) {
-    const res = await nativeAwarePostJson(url, payload, 38_000);
+    const res = await nativeAwarePostJson(url, payload, requestTimeoutMs);
     if (res.ok && res.json?.success && typeof res.json.answer === 'string' && res.json.answer.trim()) {
       const incomingMemories = Array.isArray(res.json.newMemoryNotes) ? res.json.newMemoryNotes : [];
       if (incomingMemories.length > 0) {
@@ -1554,10 +1678,7 @@ export async function sendAgentDeskChatMessage(params: {
           ? routeRaw
           : 'FULL_OFFICE';
 
-      const detectedAgentName =
-        typeof res.json.detectedAgentName === 'string' && res.json.detectedAgentName.trim()
-          ? res.json.detectedAgentName.trim().slice(0, 40)
-          : undefined;
+      const detectedAgentName = cleanClientExtractedName(res.json.detectedAgentName);
 
       return {
         content: res.json.answer.trim(),
@@ -1572,7 +1693,6 @@ export async function sendAgentDeskChatMessage(params: {
       };
     }
     if (res.errorMessage) {
-      lastErrorMsg = res.errorMessage;
       recordAppDiagnosticEvent(
         'AI_DESK',
         `Agent chat request failed (${res.status || 'network'})`,
@@ -1581,19 +1701,15 @@ export async function sendAgentDeskChatMessage(params: {
     }
   }
 
-  // Graceful fallback to local deterministic offline reader so the trader is never left stranded
-  const isEn = params.language === 'en';
-  const fallbackNote = isEn
-    ? `Multi-Agent cloud desk is temporarily unreachable (${lastErrorMsg || 'network/deploy pending'}). Showing instant local briefing from your device data:`
-    : `Server Multi-Agent AI sedang tidak terjangkau (${lastErrorMsg || 'koneksi / Edge Function belum di-redeploy'}). Berikut rangkuman langsung dari data di perangkat Anda:`;
-
+  // Graceful human-toned local fallback (technical details stay silently inside Dev Diagnostics)
   return buildOfflineAgentDeskReply({
     message: params.message,
     trades: params.trades,
     settings: params.settings,
     language: params.language,
     agentName: params.agentName,
-    reasonNote: fallbackNote,
+    persona: params.persona,
+    isCloudFallback: true,
   });
 }
 
