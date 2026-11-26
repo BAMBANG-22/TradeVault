@@ -185,7 +185,8 @@ export const AgentDeskView: React.FC<AgentDeskViewProps> = ({ trades, settings, 
     }
   }, [messages.length, isSending, isActive]);
 
-  // Quiet background auto-sync of XAUUSD live spot + stale market feeds when chat opens
+  // Quiet background auto-sync of lightweight live XAUUSD spot quote (zero-AI) when chat opens.
+  // Heavy Trade News / Fundamental Gold AI feeds sync on-demand only when the user asks market questions.
   useEffect(() => {
     if (!isActive) return;
     if (absorbedSummary.isOfflineMode || !absorbedSummary.isNavigatorOnline) return;
@@ -194,7 +195,7 @@ export const AgentDeskView: React.FC<AgentDeskViewProps> = ({ trades, settings, 
     lastBgSyncRef.current = now;
     void syncAgentDeskLiveContext({
       forcePrice: false,
-      syncMarketFeeds: true,
+      syncMarketFeeds: false,
       language,
       onStatus: setSyncStatusText,
     });
