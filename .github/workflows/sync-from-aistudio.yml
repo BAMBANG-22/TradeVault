@@ -1,37 +1,59 @@
-name: Sync from AI Studio Repo
+name: Sync from AI Studio
 
 on:
   workflow_dispatch:
     inputs:
       files:
-        description: 'Daftar file yang mau ditarik (pisahkan spasi)'
+        description: 'Files to sync (space-separated)'
         required: true
         default: 'package.json src/config/appVersion.ts src/utils/agentDeskContext.ts src/server/agentDeskOrchestrator.ts supabase/functions/tradevault-api/index.ts'
       commit_message:
-        description: 'Pesan commit'
+        description: 'Commit message'
         required: true
-        default: 'v1.4.0 (#VLO-2611-JRN13): AI Desk deep journal growth math, full app mastery & zero-stall APK fix'
+        default: 'v1.5.0 (#VLO-2611-ALF14): Alfred/Jarvis AI companion, exact local clock & micro-forensic journal'
+
+permissions:
+  contents: write
 
 jobs:
   sync:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout repo utama
+      - name: Checkout TradeVault main
         uses: actions/checkout@v4
         with:
-          token: ${{ secrets.AISTUDIO_SYNC_TOKEN }}
-          fetch-depth: 0
+          token: ${{ secrets.AISTUDIO_SYNC_TOKEN || github.token }}
 
-      - name: Tarik file terbaru dari BAMBANG-22/TradeVault-Fix
+      - name: Clone TradeVault-Fix and copy changed files
         env:
           SYNC_TOKEN: ${{ secrets.AISTUDIO_SYNC_TOKEN }}
-          FILES_TO_SYNC: ${{ github.event.inputs.files }}
-          COMMIT_MSG: ${{ github.event.inputs.commit_message }}
+          FILES: ${{ inputs.files }}
         run: |
-          git config user.name "TradeVault Sync Bot"
-          git config user.email "actions@github.com"
-          git remote remove aistudio 2>/dev/null || true
-          git remote add aistudio "https://x-access-token:${SYNC_TOKEN}@github.com/BAMBANG-22/TradeVault-Fix.git"
-          git fetch aistudio main
-          git checkout aistudio/main -- ${FILES_TO_SYNC}
-          git diff --cached --quiet || (git commit -m "${COMMIT_MSG}" && git push origin main)
+          if [ -n "$SYNC_TOKEN" ]; then
+            git clone --depth 1 "https://x-access-token:${SYNC_TOKEN}@github.com/BAMBANG-22/TradeVault-Fix.git" /tmp/aistudio-src
+          else
+            git clone --depth 1 "https://github.com/BAMBANG-22/TradeVault-Fix.git" /tmp/aistudio-src
+          fi
+          for f in $FILES; do
+            if [ -f "/tmp/aistudio-src/$f" ]; then
+              mkdir -p "$(dirname "$f")"
+              cp "/tmp/aistudio-src/$f" "$f"
+              echo "Copied: $f"
+            else
+              echo "WARNING: File not found in TradeVault-Fix: $f"
+            fi
+          done
+
+      - name: Commit and push to main
+        env:
+          COMMIT_MSG: ${{ inputs.commit_message }}
+        run: |
+          git config user.name "BAMBANG-22"
+          git config user.email "Bambang.andika212@gmail.com"
+          git add -A
+          if git diff --cached --quiet; then
+            echo "No changes detected. Already up to date!"
+          else
+            git commit -m "$COMMIT_MSG"
+            git push origin HEAD:main
+          fi
