@@ -19,8 +19,8 @@ declare const __BUILD_RUN_NUMBER__: string | undefined;
 declare const __TESSERACT_VERSION__: string | undefined;
 declare const __TESSERACT_CORE_VERSION__: string | undefined;
 
-export const APP_VERSION = '1.3.8';
-export const APP_CHANGE_CODE = 'VLO-2611-JRV11';
+export const APP_VERSION = '1.3.9';
+export const APP_CHANGE_CODE = 'VLO-2611-SPC12';
 export const APP_RELEASE_DATE = '2026-11-26';
 export const OCR_PIPELINE_VERSION = 'offline-mt5-ocr-v3.2-lossless-png';
 
@@ -71,6 +71,17 @@ export function getAppBuildIdentity(): AppBuildIdentity {
 }
 
 export const APP_VERSION_HISTORY: AppVersionEntry[] = [
+  {
+    version: '1.3.9',
+    changeCode: 'VLO-2611-SPC12',
+    date: '2026-11-26',
+    titleId: 'Tanya AI Single-Pass Anti-Timeout, Panggilan Bersih & Bahasa Fallback Manusiawi',
+    titleEn: 'Single-Pass Anti-Timeout AI Desk, Clean Nicknames & Humanized Fallback',
+    summaryId:
+      'Mengupgrade Tanya AI (server lokal & Supabase Edge Function) menjadi Single-Pass Smart Assistant dengan batas waktu global 18,5 dtk, fast circuit-breaker (hemat kuota 3–5×), jalur cepat 7,5 dtk khusus cek harga XAU/USD, pembersih partikel panggilan Indonesia ("Wowo yaa" -> "Wowo"), auto-sync latar belakang khusus harga live tanpa tabrakan AI, serta mesin fallback lokal berbahasa manusiawi sesuai persona.',
+    summaryEn:
+      'Upgraded Tanya AI (local server & Supabase Edge Function) to a Single-Pass Smart Assistant with an 18.5s global deadline, fast circuit-breaker (3–5x lower quota usage), 7.5s fast-fail live XAU/USD price lane, Indonesian particle cleanup for agent nicknames, zero-AI background price sync, and natural persona-matched local fallback replies.',
+  },
   {
     version: '1.3.8',
     changeCode: 'VLO-2611-JRV11',
